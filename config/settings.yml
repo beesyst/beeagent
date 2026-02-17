@@ -1,0 +1,15 @@
+app:
+  name: "BeeAgent"
+  env: "dev"
+
+run:
+  mode: "telegram"
+
+telegram:
+  enabled: true
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+
+logging:
+  clear_logs: true
+  utc: true
+  level: "INFO"
