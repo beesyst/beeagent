@@ -3,6 +3,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "beeagent",
+      "initial-version": "0.1.0",
       "extra-files": [
         {
           "type": "toml",
