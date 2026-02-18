@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.2.1...beeagent-v0.3.0) (2026-02-18)
+
+
+### Features
+
+* **telegram:** add bot ux skeleton with allowlist and telemetry ([f0ab046](https://github.com/beesyst/beeagent/commit/f0ab04612dc4e6a6e673954ae71a49a66fb81432))
+
+
+### Bug Fixes
+
+* remove versions.yml ([1389c0f](https://github.com/beesyst/beeagent/commit/1389c0fe6aec642fcf0b79e4949e48d695c0180a))
+
 ## [0.2.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.2.0...beeagent-v0.2.1) (2026-02-18)
 
 
