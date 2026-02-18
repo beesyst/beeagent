@@ -2,7 +2,7 @@
 
 **BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
 
-**Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → (approval позже) → артефакты в storage**
+Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → approval (approve/reject) → артефакты в storage
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -12,7 +12,7 @@
 
 * **telegram** — Telegram бот:
   * команды: `/start`, `/help`, `/run_oos`, `/last`
-  * inline-кнопки: **Run OOS Scan**, **Show Report**
+  * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
   * **allowlist**: доступ только одному admin chat_id (через env)
 
 Режим задаётся в `config/settings.yml`:
@@ -42,7 +42,7 @@
   * `storage/artifacts/<run_id>/report.md` — markdown отчёт
   * `storage/artifacts/<run_id>/report.html` — HTML отчёт
 
-> Сейчас уже есть: LangGraph workflow + run_id + `storage/runs/<run_id>/...`. В следующих итерациях появятся approve/reject и экспорт отчётов.
+> Сейчас уже есть: LangGraph workflow + run_id + approval (approve/reject) + экспорт отчётов (report.md/report.html) и полный набор run-артефактов в `storage/`.
 
 ## Где использовать
 
@@ -236,10 +236,15 @@ beeagent/
 │           └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
 │ 
 ├── storage/
+│   ├── artifacts/
+│   │   └── <run_id>/                        # report.md/report.html
 │   ├── mock/
 │   │   └── <dataset_id>/dataset.json        # появляется при /run_oos, dataset_id детерминирован из mock params
 │   ├── reports/
-│   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
+│   │   ├── last_oos_report.md               # последний Telegram-отчёт (для /last)
+│   │   └── last_run.json                    # маркер последнего run_id
+│   ├── runs/
+│   │   └── <run_id>/                        # run.json/alerts.json/tasks_draft.json/tasks_approved.json
 │   └── telemetry/
 │       └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
 │

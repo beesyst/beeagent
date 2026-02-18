@@ -109,7 +109,7 @@ DoD:
 - если данных нет — понятное сообщение + empty report
 
 ### Итерация 4 — Approval v0 + export (HTML или XLSX)
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: enterprise-вкус: approval before action + красивый артефакт.
 
@@ -127,6 +127,8 @@ DoD:
 DoD:
 - approve/reject сохраняются и видны в `/last`
 - без approve задачи не считаются "готовыми"
+
+---
 
 ## Этап 2 — Pilot-ready (итерации 5–8)
 
