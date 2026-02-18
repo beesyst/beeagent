@@ -2,7 +2,7 @@
 
 **BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
 
-**Telegram → запуск агента (OOS Detector) → отчёт → (approval позже) → артефакты в storage**
+**Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → (approval позже) → артефакты в storage**
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -24,16 +24,20 @@
 * **Telegram bot v0 (UX skeleton)**
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
-  * `/run_oos` выполняет mock-скан OOS и сохраняет отчёт
+  * `/run_oos` выполняет OOS-скан через LangGraph (mock dataset), сохраняет run-артефакты и отправляет отчёт
   * `/last` показывает последний отчёт
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
 * **KISS security**
   * доступ только из одного admin chat_id (allowlist)
 * **Артефакты**
-  * `storage/reports/last_oos_report.md` — последний отчёт (markdown)
+  * `storage/reports/last_oos_report.md` — последний отчёт (markdown) для `/last`
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
+  * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
+  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts)
+  * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
+  * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
 
-> В следующих итерациях появятся: LangGraph workflow, run_id + `storage/runs/<run_id>/...`, approve/reject.
+> Сейчас уже есть: LangGraph workflow + run_id + `storage/runs/<run_id>/...`. В следующих итерациях появятся approve/reject и экспорт отчётов.
 
 ## Где использовать
 
@@ -48,8 +52,7 @@
 * **src-layout** (пакет `beeagent_module` в `src/`)
 * **PyYAML** — конфиг `config/settings.yml`
 * **python-telegram-bot** — Telegram polling bot
-* **pytest** — тесты (`tests/`)
-* **file-based storage** — артефакты в `storage/`
+* **langgraph** — workflow-оркестрация OOS (6 узлов) и запуск через `.invoke(...)`
 * **единый лог** — `logs/app.log`
 
 ## Управление и запуск
@@ -127,6 +130,15 @@ alerts_total: 2
 - STORE-002 | SKU-1012 | shelf_signal=false
 ```
 
+### Run-артефакты LangGraph (Iteration 3)
+
+Папка: `storage/runs/<run_id>/`
+
+Файлы:
+* `run.json` — meta выполнения (run_id, created_at, dataset_id, seed, alerts_count, tasks_count)
+* `alerts.json` — алерты Rule A
+* `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
+
 ### Телеметрия Telegram (опционально)
 
 `storage/telemetry/telegram_updates.jsonl` — **1 строка = 1 событие**.
@@ -156,7 +168,7 @@ alerts_total: 2
 
 3. **UI**
 
-* `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, mock-report, телеметрия
+* `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, запуск LangGraph workflow (/run_oos), телеметрия
 
 ## Структура проекта
 
@@ -201,7 +213,7 @@ beeagent/
 │           └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
 │ 
 ├── storage/
-│   ├── rmock/
+│   ├── mock/
 │   │   └── <dataset_id>/dataset.json        # появляется при /run_oos, dataset_id детерминирован из mock params
 │   ├── reports/
 │   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
@@ -229,6 +241,7 @@ pytest -q
 * `tests/test_smoke.py` — базовая инициализация settings/logs/storage
 * `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last`, телеметрия jsonl, unknown command
 * `tests/test_mock_dataset.py` — детерминизм мок-датасета, forced anomalies, save/load
+* `tests/test_oos_graph.py` — rule A, сборка графа, запуск workflow, создание артефактов, детерминизм по seed
 
 ### Runtime smoke (ручная проверка)
 

@@ -83,7 +83,7 @@ DoD:
 - при `/run_oos` создаётся `storage/mock/<dataset_id>/dataset.json` (параметры берутся из settings.yml)
 
 ### Итерация 3 — LangGraph workflow v0 (OOS detector, dry-run)
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: end-to-end запуск через LangGraph и отчёт в Telegram.
 
