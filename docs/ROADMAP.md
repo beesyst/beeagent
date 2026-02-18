@@ -18,7 +18,7 @@ Telegram → запуск агента (OOS Detector) → отчёт → approve
 ## Этап 1 — Pre-MVP (итерации 0–4)
 
 ### Итерация 0 — Каркас и запуск (skeleton)
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: репозиторий готов к разработке и демо.
 
@@ -37,14 +37,14 @@ DoD:
 - `pytest -q` проходит (smoke test)
 
 ### Итерация 1 — Telegram bot v0 (UX скелет)
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: Telegram бот отвечает и показывает меню.
 
 Сделать:
 - команды: `/start`, `/help`, `/run_oos`, `/last`
 - inline-кнопки: "Run OOS Scan", "Show Report"
-- allowlist (один admin chat_id в config) — KISS security
+- allowlist (один chat_id в config) — KISS security
 
 Артефакты:
 - `storage/telemetry/telegram_updates.jsonl` (optional, 1 строка на событие)
@@ -53,8 +53,6 @@ DoD:
 - бот запускается и отвечает
 - меню и кнопки работают
 - не падает при неизвестной команде
-
----
 
 ### Итерация 2 — Mock data v0 + доменная модель
 **Статус: TODO**

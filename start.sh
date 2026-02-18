@@ -10,6 +10,13 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# Инициализация .env по шаблону (если нет)
+if [ ! -f .env ] && [ -f .env.example ]; then
+  echo "[init] .env not found, creating from .env.example"
+  cp .env.example .env
+  echo "[init] Please edit .env and set real secrets"
+fi
+
 echo "[run] syncing dependencies..."
 uv sync
 echo "[run] starting BeeAgent..."

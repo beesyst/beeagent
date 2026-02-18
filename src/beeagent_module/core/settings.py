@@ -8,13 +8,15 @@ REQUIRED_KEYS = (
     ("run", "mode"),
     ("telegram", "enabled"),
     ("telegram", "bot_token_env"),
+    ("telegram", "chat_id_env"),
+    ("telegram", "telemetry_enabled"),
     ("logging", "clear_logs"),
     ("logging", "utc"),
     ("logging", "level"),
 )
 
 
-# Русский комментарий
+# Загрузка YAML-настройки и валидация обязательных ключей.
 def load_settings(settings_path: Path) -> dict:
     if not settings_path.exists():
         raise RuntimeError(f"Settings file not found: {settings_path}")
@@ -29,7 +31,7 @@ def load_settings(settings_path: Path) -> dict:
     return content
 
 
-# Русский комментарий
+# Чек обязательных ключей и типов настроек.
 def validate_settings(settings: dict) -> None:
     missing_keys: list[str] = []
 
@@ -57,6 +59,14 @@ def validate_settings(settings: dict) -> None:
     if not isinstance(_get_nested_value(settings, ("telegram", "bot_token_env")), str):
         raise RuntimeError("Invalid type for telegram.bot_token_env, expected string")
 
+    if not isinstance(_get_nested_value(settings, ("telegram", "chat_id_env")), str):
+        raise RuntimeError("Invalid type for telegram.chat_id_env, expected string")
+
+    if not isinstance(
+        _get_nested_value(settings, ("telegram", "telemetry_enabled")), bool
+    ):
+        raise RuntimeError("Invalid type for telegram.telemetry_enabled, expected bool")
+
     if not isinstance(_get_nested_value(settings, ("logging", "clear_logs")), bool):
         raise RuntimeError("Invalid type for logging.clear_logs, expected bool")
 
@@ -67,7 +77,7 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for logging.level, expected string")
 
 
-# Русский комментарий
+# Возврат вложенного значения по пути ключей или None.
 def _get_nested_value(settings: dict, key_path: tuple[str, ...]):
     current = settings
     for key in key_path:

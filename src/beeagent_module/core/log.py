@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 
-# Русский комментарий
+# Настройка лога в stdout и файл
 def setup_logging(log_path: Path, level: str, clear_logs: bool, utc: bool) -> None:
 
     log_level = getattr(logging, level.upper(), None)
@@ -35,7 +35,12 @@ def setup_logging(log_path: Path, level: str, clear_logs: bool, utc: bool) -> No
     logger.addHandler(stream_h)
     logger.addHandler(file_h)
 
+    # глушим шумные логгеры, чтобы не утекали URL/токены и не засорять лог
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
-# Русский комментарий
+
+# Возврат именованного logger
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)

@@ -5,7 +5,7 @@ from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_storag
 from beeagent_module.core.settings import load_settings
 
 
-# Русский комментарий
+# Чек: базовая инициализация настроек, логов и storage.
 def test_smoke_startup_initialization(tmp_path: Path) -> None:
     settings_file = tmp_path / "settings.yml"
     settings_file.write_text(
@@ -18,6 +18,8 @@ run:
 telegram:
   enabled: true
   bot_token_env: "TELEGRAM_BOT_TOKEN"
+  chat_id_env: "CHAT_ID"
+  telemetry_enabled: false
 
 logging:
   clear_logs: true

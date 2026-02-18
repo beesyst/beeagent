@@ -6,17 +6,17 @@ from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_projec
 from beeagent_module.core.settings import load_settings
 
 
-# Русский комментарий
 def main() -> None:
     project_root = get_project_root()
+
     env_path = project_root / ".env"
     load_dotenv(dotenv_path=env_path, override=False)
 
     settings_path = project_root / "config" / "settings.yml"
     settings = load_settings(settings_path)
 
-    ensure_dirs(project_root)
-    log_path = get_app_log_path(project_root)
+    ensure_dirs()
+    log_path = get_app_log_path()
 
     log_cfg = settings["logging"]
     setup_logging(
@@ -25,8 +25,8 @@ def main() -> None:
         clear_logs=log_cfg["clear_logs"],
         utc=log_cfg["utc"],
     )
-    logger = get_logger("app")
 
+    logger = get_logger("app")
     run_app(settings=settings, logger=logger)
 
 
