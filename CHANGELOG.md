@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.3.0...beeagent-v0.4.0) (2026-02-18)
+
+
+### Features
+
+* **mock:** add deterministic dataset generator and domain model ([a1ba1c4](https://github.com/beesyst/beeagent/commit/a1ba1c42896e1119de771d9fe49a49a6f83d7a98))
+
 ## [0.3.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.2.1...beeagent-v0.3.0) (2026-02-18)
 
 
