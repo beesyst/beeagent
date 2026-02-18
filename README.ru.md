@@ -1,4 +1,4 @@
-# BeeAgent — AI Сщкз Agent (pre-MVP)
+# BeeAgent — AI Corp Agent (pre-MVP)
 
 **BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
 
@@ -33,7 +33,7 @@
   * `storage/reports/last_oos_report.md` — последний отчёт (markdown)
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
 
-> В следующих итерациях появятся: доменная модель, mock dataset, LangGraph workflow, run_id + `storage/runs/<run_id>/...`, approve/reject.
+> В следующих итерациях появятся: LangGraph workflow, run_id + `storage/runs/<run_id>/...`, approve/reject.
 
 ## Где использовать
 
@@ -97,6 +97,15 @@ bash start.sh
 * `telegram.bot_token_env`: имя переменной окружения для токена (например `TELEGRAM_BOT_TOKEN`)
 * `telegram.chat_id_env`: имя переменной окружения для allowlist chat_id (например `CHAT_ID`)
 * `telegram.telemetry_enabled`: `true|false` — писать телеметрию в jsonl
+
+**Mock dataset**
+* `mock.seed`: int — seed для детерминированного датасета
+* `mock.weeks`: int — длина истории (недель)
+* `mock.stores`: int — число магазинов
+* `mock.skus`: int — число SKU
+* `mock.category`: str — категория (например `"Vitamins"`)
+
+> Примечание: при `/run_oos` BeeAgent генерирует и сохраняет датасет в `storage/mock/<dataset_id>/dataset.json`.
 
 **Логирование**
 * `logging.level`: `DEBUG/INFO/WARNING/ERROR/CRITICAL`
@@ -163,22 +172,14 @@ beeagent/
 │   └── start.py                             # bootstrap: env -> settings -> dirs -> logging -> run_app()
 │
 ├── docs/
-│   ├── SPEC.md                              # что считаем “готово” (DoD / MVP-границы)
-│   ├── ROADMAP.md                           # план итераций (0–N) и цели pre-MVP
 │   ├── ARCHITECTURE.md                      # схема модулей (core/ui/domain/mock/agents/storage)
+│   ├── CONTRIBUTING.md                      # 
 │   ├── DEV_GUIDE.md                         # как запускать, дебажить, проверять
-│   └── CONTRIBUTING.md                      # ветки, conventional commits, PR-flow, релизы
+│   ├── ROADMAP.md                           # план итераций (0–N) и цели pre-MVP
+│   └── SPEC.md                              # что считаем “готово” (DoD / MVP-границы)
 │
 ├── logs/
 │   └── app.log                              # единый файл логов (level/UTC/clear_logs — из settings.yml)
-│
-├── storage/
-│   ├── reports/
-│   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
-│   ├── telemetry/
-│   │   └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
-│   └── mock/
-│       └── <dataset_id>/dataset.json        # мок-датасет для демо (итерация 2)
 │
 ├── src/
 │   └── beeagent_module/                     # основной пакет (src-layout)
@@ -186,22 +187,31 @@ beeagent/
 │       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
 │       │   ├── log.py                       # настройка логгера (stdout + app.log, UTC/local, очистка при старте)
 │       │   ├── paths.py                     # вычисление корня проекта и путей (logs/, storage/)
+│       │   ├── secrets.py                   # 
 │       │   └── settings.py                  # загрузка и fail-fast валидация settings.yml
-│       │
-│       ├── ui/
-│       │   └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
 │       │
 │       ├── domain/
 │       │   ├── models.py                    # доменные dataclass-модели (Store/SKU/SalesRow/...)
 │       │   └── serialization.py             # сериализация доменных моделей в JSON (для dataset.json)
 │       │
-│       └── mock/
-│           └── dataset.py                   # генератор/сейв/лоад мок-датасета (итерация 2)
+│       ├── mock/
+│       │   └── dataset.py                   # генератор/сейв/лоад мок-датасета (итерация 2)
+│       │
+│       └── ui/
+│           └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
+│ 
+├── storage/
+│   ├── rmock/
+│   │   └── <dataset_id>/dataset.json        # появляется при /run_oos, dataset_id детерминирован из mock params
+│   ├── reports/
+│   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
+│   └── telemetry/
+│       └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
 │
 └── tests/
+    ├── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
     ├── test_smoke.py                        # базовый smoke: settings/logs/storage init
-    ├── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
-    └── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
+    └── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
 ```
 
 ## Диагностика и тесты
@@ -218,6 +228,7 @@ pytest -q
 
 * `tests/test_smoke.py` — базовая инициализация settings/logs/storage
 * `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last`, телеметрия jsonl, unknown command
+* `tests/test_mock_dataset.py` — детерминизм мок-датасета, forced anomalies, save/load
 
 ### Runtime smoke (ручная проверка)
 
