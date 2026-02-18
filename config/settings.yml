@@ -8,6 +8,8 @@ run:
 telegram:
   enabled: true
   bot_token_env: "TELEGRAM_BOT_TOKEN"
+  chat_id_env: "CHAT_ID"
+  telemetry_enabled: true
 
 logging:
   clear_logs: true
