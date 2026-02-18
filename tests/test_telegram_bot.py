@@ -58,6 +58,15 @@ def make_context(
             "telemetry_path": tmp_path / "telemetry" / "telegram_updates.jsonl",
             "last_report_path": tmp_path / "reports" / "last_oos_report.md",
             "logger": logging.getLogger("test.telegram"),
+            "settings": {
+                "mock": {
+                    "seed": 42,
+                    "weeks": 4,
+                    "stores": 2,
+                    "skus": 3,
+                    "category": "Vitamins",
+                }
+            },
         }
     )
 

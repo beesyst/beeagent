@@ -25,6 +25,13 @@ logging:
   clear_logs: true
   utc: true
   level: "INFO"
+
+mock:
+  seed: 1
+  weeks: 2
+  stores: 1
+  skus: 2
+  category: "Vitamins"
 """.strip()
         + "\n",
         encoding="utf-8",

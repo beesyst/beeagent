@@ -153,44 +153,55 @@ alerts_total: 2
 
 ```
 beeagent/
-├── pyproject.toml
-├── uv.lock
-├── start.sh
-├── README.ru.md
+├── pyproject.toml                           # зависимости, метаданные пакета, настройки tooling
+├── uv.lock                                  # lock-файл зависимостей (uv)
+├── start.sh                                 # единая точка запуска (KISS): uv sync -> uv run python3 config/start.py
+├── README.ru.md                             # документация на русском
 │
 ├── config/
-│   ├── settings.yml
-│   └── start.py
+│   ├── settings.yml                         # главный конфиг (run.mode, telegram, logging, mock)
+│   └── start.py                             # bootstrap: env -> settings -> dirs -> logging -> run_app()
 │
 ├── docs/
-│   ├── SPEC.md
-│   ├── ROADMAP.md
-│   ├── ARCHITECTURE.md
-│   ├── DEV_GUIDE.md
-│   └── CONTRIBUTING.md
+│   ├── SPEC.md                              # что считаем “готово” (DoD / MVP-границы)
+│   ├── ROADMAP.md                           # план итераций (0–N) и цели pre-MVP
+│   ├── ARCHITECTURE.md                      # схема модулей (core/ui/domain/mock/agents/storage)
+│   ├── DEV_GUIDE.md                         # как запускать, дебажить, проверять
+│   └── CONTRIBUTING.md                      # ветки, conventional commits, PR-flow, релизы
 │
 ├── logs/
-│   └── app.log
+│   └── app.log                              # единый файл логов (level/UTC/clear_logs — из settings.yml)
 │
 ├── storage/
 │   ├── reports/
-│   │   └── last_oos_report.md
-│   └── telemetry/
-│       └── telegram_updates.jsonl
+│   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
+│   ├── telemetry/
+│   │   └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
+│   └── mock/
+│       └── <dataset_id>/dataset.json        # мок-датасет для демо (итерация 2)
 │
 ├── src/
-│   └── beeagent_module/
+│   └── beeagent_module/                     # основной пакет (src-layout)
 │       ├── core/
-│       │   ├── app.py
-│       │   ├── log.py
-│       │   ├── paths.py
-│       │   └── settings.py
-│       └── ui/
-│           └── telegram_bot.py
+│       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
+│       │   ├── log.py                       # настройка логгера (stdout + app.log, UTC/local, очистка при старте)
+│       │   ├── paths.py                     # вычисление корня проекта и путей (logs/, storage/)
+│       │   └── settings.py                  # загрузка и fail-fast валидация settings.yml
+│       │
+│       ├── ui/
+│       │   └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
+│       │
+│       ├── domain/
+│       │   ├── models.py                    # доменные dataclass-модели (Store/SKU/SalesRow/...)
+│       │   └── serialization.py             # сериализация доменных моделей в JSON (для dataset.json)
+│       │
+│       └── mock/
+│           └── dataset.py                   # генератор/сейв/лоад мок-датасета (итерация 2)
 │
 └── tests/
-    ├── test_smoke.py
-    └── test_telegram_bot.py
+    ├── test_smoke.py                        # базовый smoke: settings/logs/storage init
+    ├── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
+    └── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
 ```
 
 ## Диагностика и тесты
