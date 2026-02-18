@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.4.0...beeagent-v0.5.0) (2026-02-18)
+
+
+### Features
+
+* **approval:** add task approval and report export artifacts ([1bd5d25](https://github.com/beesyst/beeagent/commit/1bd5d257add05a6eca2dd16a31af73698e548def))
+* **oos:** add langgraph workflow v0 ([993b0a3](https://github.com/beesyst/beeagent/commit/993b0a329e6c1ca4a529826d6f62fcc75815b76f))
+
 ## [0.4.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.3.0...beeagent-v0.4.0) (2026-02-18)
 
 
