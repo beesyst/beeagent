@@ -230,39 +230,18 @@ def _build_main_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
-# Выполнение сценария OOS и сохранение отчета
+# Выполнение сценария OOS через LangGraph и сохранение отчета
 async def _run_oos_and_reply(message: Any, context: Any) -> None:
-    report_text = _build_mock_report()
-
-    settings = context.bot_data["settings"]
-    _persist_mock_dataset(settings)
-
-    report_path = _get_last_report_path(context)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(report_text, encoding="utf-8")
-    await message.reply_text(report_text)
-
-
-# Билд текста mock-отчета
-def _build_mock_report() -> str:
-    created_at = datetime.now(timezone.utc).isoformat()
-    return (
-        "Last OOS report\n"
-        f"created_at: {created_at}\n"
-        "alerts_total: 2\n"
-        "- STORE-001 | SKU-1001 | shelf_signal=false\n"
-        "- STORE-002 | SKU-1012 | shelf_signal=false"
-    )
-
-
-# Принудительное сохранение мокового набора данных при каждом запуске OOS для тестов и демонстрации
-def _persist_mock_dataset(settings: dict) -> None:
+    from beeagent_module.agents.oos.graph import run_oos_workflow
     from beeagent_module.core.paths import get_storage_dir
     from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
 
-    mock_cfg = settings["mock"]
+    settings = context.bot_data["settings"]
+    logger: logging.Logger = context.bot_data["logger"]
     storage_dir = get_storage_dir()
 
+    # генерация mock-данных и сохранение в storage для OOS-сканирования
+    mock_cfg = settings["mock"]
     dataset = generate_mock_dataset(
         seed=mock_cfg["seed"],
         weeks=mock_cfg["weeks"],
@@ -271,6 +250,23 @@ def _persist_mock_dataset(settings: dict) -> None:
         category=mock_cfg["category"],
     )
     save_mock_dataset(dataset=dataset, storage_dir=storage_dir)
+    dataset_id = dataset["meta"]["dataset_id"]
+
+    # запуск OOS-сканирования через LangGraph
+    result = run_oos_workflow(
+        dataset_id=dataset_id,
+        storage_dir=storage_dir,
+        logger=logger,
+    )
+
+    report_text = result["report_text"]
+
+    # сохранение отчета для команды /last
+    report_path = _get_last_report_path(context)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report_text, encoding="utf-8")
+
+    await message.reply_text(report_text)
 
 
 # Возврат пути к последнему отчету

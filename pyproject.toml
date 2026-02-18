@@ -9,6 +9,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "python-telegram-bot>=22.6",
     "pytest>=9.0.2",
+    "langgraph==1.0.8",
 ]
 
 [build-system]
