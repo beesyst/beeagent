@@ -135,6 +135,68 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     return state
 
 
+# Чек статуса задач по run_id
+def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
+    counts = {
+        "draft": 0,
+        "approved": 0,
+        "rejected": 0,
+    }
+
+    for task in tasks:
+        status = getattr(task, "status", "draft")
+        if status in counts:
+            counts[status] += 1
+
+    summary = (
+        "Tasks status: "
+        f"draft={counts['draft']}, "
+        f"approved={counts['approved']}, "
+        f"rejected={counts['rejected']}"
+    )
+    return summary, None
+
+
+# Чек формирования отчета в формате Markdown
+def _build_report_md(report_text: str, summary: str, reject_reason: str | None) -> str:
+    report_md = f"{report_text}\n\n{summary}"
+    if reject_reason:
+        report_md = f"{report_md}\nReject reason: {reject_reason}"
+    return report_md
+
+
+# Чек формирования отчета в формате HTML
+def _build_report_html(report_md: str) -> str:
+    return (
+        "<!doctype html>\n"
+        "<html>\n"
+        "<head>\n"
+        '  <meta charset="utf-8">\n'
+        "  <title>OOS Report</title>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <h1>OOS Report</h1>\n"
+        "  <pre>\n"
+        f"{report_md}\n"
+        "  </pre>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+# Чек записи последнего run_id
+def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
+    reports_dir = storage_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    last_run_path = reports_dir / "last_run.json"
+    payload = {
+        "run_id": run_id,
+        "ts": datetime.now(UTC).isoformat(),
+    }
+    last_run_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return last_run_path
+
+
 # Node 6: сохранение результатов выполнения в storage для последующего доступа и аудита
 def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
@@ -171,10 +233,23 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
         encoding="utf-8",
     )
 
+    report_text = state.get("report_text", "")
+    summary_line, reject_reason = _build_task_status_summary(tasks)
+    report_md = _build_report_md(report_text, summary_line, reject_reason)
+    report_html = _build_report_html(report_md)
+
+    artifacts_dir = storage_dir / "artifacts" / run_id
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (artifacts_dir / "report.html").write_text(report_html, encoding="utf-8")
+
+    _write_last_run_marker(storage_dir, run_id)
+
     logger = state.get("logger")
     if logger:
         logger.info("Persisted run artifacts to %s", run_dir)
         logger.info("  - run.json: %s alerts, %s tasks", len(alerts), len(tasks))
+        logger.info("  - report.md/report.html saved to %s", artifacts_dir)
 
     return state
 
@@ -188,14 +263,12 @@ def build_oos_graph():
     workflow.add_node("draft_tasks", draft_tasks)
     workflow.add_node("render_report", render_report)
     workflow.add_node("persist_run", persist_run)
-
     workflow.add_edge("collect_input", "load_data")
     workflow.add_edge("load_data", "detect_oos")
     workflow.add_edge("detect_oos", "draft_tasks")
     workflow.add_edge("draft_tasks", "render_report")
     workflow.add_edge("render_report", "persist_run")
     workflow.add_edge("persist_run", END)
-
     workflow.set_entry_point("collect_input")
     return workflow.compile()
 

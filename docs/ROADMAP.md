@@ -108,10 +108,8 @@ DoD:
 - `/run_oos` создаёт run_id, пишет артефакты, возвращает отчёт в Telegram
 - если данных нет — понятное сообщение + empty report
 
----
-
 ### Итерация 4 — Approval v0 + export (HTML или XLSX)
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: enterprise-вкус: approval before action + красивый артефакт.
 
@@ -134,25 +132,146 @@ DoD:
 
 ## Этап 2 — Pilot-ready (итерации 5–8)
 
-### Итерация 5 — Data adapter interface (mock → later 1C)
-Цель: не переписывать граф при подключении 1С.
+Сделать систему **подключаемой к реальным данным и “пилотируемой”**:
+
+* один и тот же граф работает с **любым источником данных** через адаптер
+* есть **автозапуск по расписанию** + обязательный approval gate
+* появляются **минимальные метрики по шагам графа**
+* демонстрируем **расширяемость**: второй агент/граф в проекте
+
+## Итерация 5 — Data Adapter v0 (mock → later 1C)
+
+Цель: граф не знает, откуда данные. Он вызывает `adapter.*` и всё.
 
 Сделать:
-- интерфейс `DataAdapter` (get_sales/get_stock/get_catalog/get_planogram/get_photosignal)
-- `MockAdapter` реализует интерфейс
-- граф использует только adapter
+1. Интерфейс адаптера:
+* `DataAdapter` (protocol/ABC — как проще, KISS)
+* методы (минимально нужные для текущего OOS):
+  * `get_catalog(...)` (stores + skus)
+  * `get_stock(...)`
+  * `get_shelf_signal(...)`
+  * `get_sales(...)` (можно оставить “на будущее”, но уже в интерфейсе)
+  * `get_planogram(...)` / `get_photosignal(...)` — можно заглушками вернуть пусто, но метод должен быть
+2. MockAdapter:
+* внутри использует существующий `load_mock_dataset(...)`
+* ничего “умного”: читает `storage/mock/<dataset_id>/dataset.json` и отдаёт доменные объекты
+3. Graph uses adapter:
+* `load_data` в графе больше не лезет в dataset.json напрямую
+* `load_data` просит `adapter` и записывает в state: stores/skus/sales/stock/shelf_signals
+4. Переключатель в settings.yml:
+* `data.adapter: "mock"` (строка)
+* опционально `data.mock.dataset_id` (если хотим фиксировать набор) либо продолжаем генерить dataset на `/run_oos` как сейчас
+
+Артефакты:
+* без новых обязательных артефактов, но желательно:
+  * `storage/runs/<run_id>/run.json` → поле `"adapter": "mock"`
 
 DoD:
-- один переключатель в settings.yml меняет адаптер (mock)
+* граф работает так же, как раньше
+* один ключ в `settings.yml` выбирает адаптер (пока только mock)
+* `pytest -q` проходит
 
-### Итерация 6 — Scheduler + approval gate
-Цель: автозапуск по расписанию + обязательный approval.
+## Итерация 6 — Scheduler v0 + Approval gate “обязателен”
 
-### Итерация 7 — Мини-observability v0
-Цель: базовая трассировка шагов графа (лог + run step timing).
+**Цель:** автозапуск без ручного `/run_oos`, но **никаких действий без approve**.
 
-### Итерация 8 — Добавить 2-й агент (например "Promo calendar")
-Цель: показать расширяемость каркаса: новый agent = новый graph module.
+### Сделать
+
+1. **Scheduler в режиме telegram (KISS)**
+
+* простой periodic loop (например: каждые N минут) *или* “one shot per start” (по флагу)
+* не усложнять cron/apscheduler, пока не надо
+
+2. **Политика approval**
+
+* после автозапуска:
+
+  * задачи всегда остаются в `draft`
+  * бот пушит сообщение “New run ready → Approve/Reject”
+* опционально: отдельная кнопка “Approve last run”
+
+3. **Новые настройки**
+
+* `scheduler.enabled: bool`
+* `scheduler.interval_sec: int`
+* `scheduler.run_on_start: bool` (опционально)
+
+### Артефакты
+
+* `storage/runs/<run_id>/run.json`:
+
+  * `"trigger": "manual|scheduled"`
+* `storage/telemetry/` можно расширять событиями scheduler (по желанию)
+
+### DoD
+
+* при включенном scheduler бот сам создаёт run раз в interval
+* без approve статус задач остаётся draft
+* approve/reject работает для последнего run
+* `pytest -q` проходит
+
+---
+
+## Итерация 7 — Mini-observability v0 (timing по шагам графа)
+
+**Цель:** видно, сколько занял каждый node, и это сохраняется как артефакт.
+
+### Сделать
+
+1. **Сбор таймингов nodes**
+
+* фиксировать `start_ts/end_ts/duration_ms` для каждого узла
+* минимально: внутри каждого node либо через общий wrapper (но без “архитектурного” монстра)
+
+2. **Логирование**
+
+* в `logs/app.log` одна строка на node:
+
+  * `step=load_data duration_ms=...`
+
+3. **Артефакт**
+
+* `storage/runs/<run_id>/trace.json` (или `steps.json`)
+
+  * список шагов с длительностью и статусом
+
+### DoD
+
+* после `/run_oos` появляется trace/steps файл
+* `/last` (или отчёт) может кратко показать “timings: ...” (опционально)
+* `pytest -q` проходит
+
+---
+
+## Итерация 8 — 2-й агент v0 (например Promo Calendar / Price Check)
+
+**Цель:** показать, что это платформа: новый агент = новый модуль графа + кнопка в Telegram.
+
+### Вариант “на минималках”
+
+* агент “Promo Calendar”:
+
+  * читает mock “promo events” (можно 3–5 событий)
+  * формирует report + tasks draft (например “проверить выкладку промо-SKU”)
+
+### Сделать
+
+1. новый модуль `beeagent_module/agents/promo/graph.py`
+2. Telegram:
+
+* команда `/run_promo`
+* кнопка “Run Promo Scan”
+
+3. persist_run:
+
+* сохранять артефакты аналогично OOS (run.json, tasks_draft, report.md/html)
+* либо отдельный namespace `storage/runs/<run_id>` с `"agent": "promo"`
+
+### DoD
+
+* второй агент запускается end-to-end
+* артефакты создаются по тому же стандарту
+* `pytest -q` проходит
 
 ---
 

@@ -2,7 +2,7 @@
 
 **BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
 
-**Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → (approval позже) → артефакты в storage**
+Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → approval (approve/reject) → артефакты в storage
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -12,7 +12,7 @@
 
 * **telegram** — Telegram бот:
   * команды: `/start`, `/help`, `/run_oos`, `/last`
-  * inline-кнопки: **Run OOS Scan**, **Show Report**
+  * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
   * **allowlist**: доступ только одному admin chat_id (через env)
 
 Режим задаётся в `config/settings.yml`:
@@ -25,19 +25,24 @@
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
   * `/run_oos` выполняет OOS-скан через LangGraph (mock dataset), сохраняет run-артефакты и отправляет отчёт
-  * `/last` показывает последний отчёт
+  * `/last` показывает последний отчёт + summary по статусу задач
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
+  * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
 * **KISS security**
   * доступ только из одного admin chat_id (allowlist)
 * **Артефакты**
   * `storage/reports/last_oos_report.md` — последний отчёт (markdown) для `/last`
+  * `storage/reports/last_run.json` — указатель на последний run_id
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
   * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
   * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts)
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
+  * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
+  * `storage/artifacts/<run_id>/report.md` — markdown отчёт
+  * `storage/artifacts/<run_id>/report.html` — HTML отчёт
 
-> Сейчас уже есть: LangGraph workflow + run_id + `storage/runs/<run_id>/...`. В следующих итерациях появятся approve/reject и экспорт отчётов.
+> Сейчас уже есть: LangGraph workflow + run_id + approval (approve/reject) + экспорт отчётов (report.md/report.html) и полный набор run-артефактов в `storage/`.
 
 ## Где использовать
 
@@ -108,6 +113,9 @@ bash start.sh
 * `mock.skus`: int — число SKU
 * `mock.category`: str — категория (например `"Vitamins"`)
 
+**Approval**
+* `approval.reject_reason`: str — причина для reject
+
 > Примечание: при `/run_oos` BeeAgent генерирует и сохраняет датасет в `storage/mock/<dataset_id>/dataset.json`.
 
 **Логирование**
@@ -123,11 +131,18 @@ bash start.sh
 
 Пример:
 ```
-Last OOS report
-created_at: 2026-02-18T11:02:30.309645+00:00
-alerts_total: 2
-- STORE-001 | SKU-1001 | shelf_signal=false
-- STORE-002 | SKU-1012 | shelf_signal=false
+📊 OOS Detection Report
+Run ID: run-1234567890ab
+Dataset: seed-42-w4-s3-k12-vitamins
+
+🚨 Alerts: 2
+  - High severity: 2
+  - Affected stores: 2
+  - Affected SKUs: 2
+
+✅ Tasks: 2
+
+Tasks status: draft=2, approved=0, rejected=0
 ```
 
 ### Run-артефакты LangGraph (Iteration 3)
@@ -138,6 +153,14 @@ alerts_total: 2
 * `run.json` — meta выполнения (run_id, created_at, dataset_id, seed, alerts_count, tasks_count)
 * `alerts.json` — алерты Rule A
 * `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
+
+### Approval + Export (Iteration 4)
+
+Папки:
+* `storage/runs/<run_id>/tasks_approved.json`
+* `storage/artifacts/<run_id>/report.md`
+* `storage/artifacts/<run_id>/report.html`
+* `storage/reports/last_run.json`
 
 ### Телеметрия Telegram (опционально)
 
@@ -213,10 +236,15 @@ beeagent/
 │           └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
 │ 
 ├── storage/
+│   ├── artifacts/
+│   │   └── <run_id>/                        # report.md/report.html
 │   ├── mock/
 │   │   └── <dataset_id>/dataset.json        # появляется при /run_oos, dataset_id детерминирован из mock params
 │   ├── reports/
-│   │   └── last_oos_report.md               # последний Telegram-отчёт (итерация 1, мок)
+│   │   ├── last_oos_report.md               # последний Telegram-отчёт (для /last)
+│   │   └── last_run.json                    # маркер последнего run_id
+│   ├── runs/
+│   │   └── <run_id>/                        # run.json/alerts.json/tasks_draft.json/tasks_approved.json
 │   └── telemetry/
 │       └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
 │
