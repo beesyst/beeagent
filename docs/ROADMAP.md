@@ -55,7 +55,7 @@ DoD:
 - не падает при неизвестной команде
 
 ### Итерация 2 — Mock data v0 + доменная модель
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: воспроизводимый мок данных для демо.
 
@@ -67,6 +67,12 @@ DoD:
   - 10–30 SKU с маржой/ценой
   - 4–12 недель daily sales + daily stock
   - shelf_signal (boolean) + несколько forced anomalies
+- конфиг параметров мок-датасета в `config/settings.yml` (без хардкода, fail-fast):
+  - `mock.seed`
+  - `mock.weeks`
+  - `mock.stores`
+  - `mock.skus`
+  - `mock.category`
 
 Артефакты:
 - `storage/mock/<dataset_id>/dataset.json` (или набор csv/json)
@@ -74,8 +80,7 @@ DoD:
 DoD:
 - генерация даёт одинаковый результат при одинаковом seed
 - мок можно загрузить одной функцией `load_mock_dataset(...)`
-
----
+- при `/run_oos` создаётся `storage/mock/<dataset_id>/dataset.json` (параметры берутся из settings.yml)
 
 ### Итерация 3 — LangGraph workflow v0 (OOS detector, dry-run)
 **Статус: TODO**

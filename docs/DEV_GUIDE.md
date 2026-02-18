@@ -135,20 +135,13 @@
 <опиши задачу одной фразой>
 
 **Файлы**
-- README.ru.md (если есть)
-- docs/SPEC.md
-- docs/ROADMAP.md
+- README.ru.md
 - config/start.py
 - config/settings.yml
 - src/beeagent_module/core/settings.py
 - src/beeagent_module/core/paths.py
 - src/beeagent_module/core/log.py
 - src/beeagent_module/ui/telegram_bot.py
-- src/beeagent_module/agents/oos/graph.py
-- src/beeagent_module/agents/oos/rules.py
-- src/beeagent_module/adapters/mock.py
-- src/beeagent_module/storage/fs.py
-(добавь другие, если нужно)
 
 **Ожидаемый результат**
 - `bash start.sh` работает

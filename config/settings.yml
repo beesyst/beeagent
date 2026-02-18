@@ -15,3 +15,10 @@ logging:
   clear_logs: true
   utc: true
   level: "INFO"
+
+mock:
+  seed: 42
+  weeks: 4
+  stores: 3
+  skus: 12
+  category: "Vitamins"

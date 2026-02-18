@@ -37,6 +37,7 @@ def start_telegram_mode(settings: dict, logger: logging.Logger) -> None:
         chat_id=chat_id,
         telemetry_enabled=telegram_cfg["telemetry_enabled"],
         logger=logger,
+        settings=settings,
     )
     logger.info("telegram bot polling started")
     application.run_polling(drop_pending_updates=True)
@@ -48,6 +49,7 @@ def _build_application(
     chat_id: int,
     telemetry_enabled: bool,
     logger: logging.Logger,
+    settings: dict,
 ):
     from telegram.ext import (
         ApplicationBuilder,
@@ -62,6 +64,7 @@ def _build_application(
 
     application.bot_data["chat_id"] = chat_id
     application.bot_data["telemetry_enabled"] = telemetry_enabled
+    application.bot_data["settings"] = settings
     application.bot_data["telemetry_path"] = (
         storage_dir / "telemetry" / "telegram_updates.jsonl"
     )
@@ -227,9 +230,13 @@ def _build_main_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
-# Выполнение mock OOS-скан и отправка отчета
+# Выполнение сценария OOS и сохранение отчета
 async def _run_oos_and_reply(message: Any, context: Any) -> None:
     report_text = _build_mock_report()
+
+    settings = context.bot_data["settings"]
+    _persist_mock_dataset(settings)
+
     report_path = _get_last_report_path(context)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report_text, encoding="utf-8")
@@ -246,6 +253,24 @@ def _build_mock_report() -> str:
         "- STORE-001 | SKU-1001 | shelf_signal=false\n"
         "- STORE-002 | SKU-1012 | shelf_signal=false"
     )
+
+
+# Принудительное сохранение мокового набора данных при каждом запуске OOS для тестов и демонстрации
+def _persist_mock_dataset(settings: dict) -> None:
+    from beeagent_module.core.paths import get_storage_dir
+    from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
+
+    mock_cfg = settings["mock"]
+    storage_dir = get_storage_dir()
+
+    dataset = generate_mock_dataset(
+        seed=mock_cfg["seed"],
+        weeks=mock_cfg["weeks"],
+        stores=mock_cfg["stores"],
+        skus=mock_cfg["skus"],
+        category=mock_cfg["category"],
+    )
+    save_mock_dataset(dataset=dataset, storage_dir=storage_dir)
 
 
 # Возврат пути к последнему отчету

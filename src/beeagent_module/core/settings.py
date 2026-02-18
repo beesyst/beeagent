@@ -13,6 +13,11 @@ REQUIRED_KEYS = (
     ("logging", "clear_logs"),
     ("logging", "utc"),
     ("logging", "level"),
+    ("mock", "seed"),
+    ("mock", "weeks"),
+    ("mock", "stores"),
+    ("mock", "skus"),
+    ("mock", "category"),
 )
 
 
@@ -75,6 +80,21 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("logging", "level")), str):
         raise RuntimeError("Invalid type for logging.level, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("mock", "seed")), int):
+        raise RuntimeError("Invalid type for mock.seed, expected int")
+
+    if not isinstance(_get_nested_value(settings, ("mock", "weeks")), int):
+        raise RuntimeError("Invalid type for mock.weeks, expected int")
+
+    if not isinstance(_get_nested_value(settings, ("mock", "stores")), int):
+        raise RuntimeError("Invalid type for mock.stores, expected int")
+
+    if not isinstance(_get_nested_value(settings, ("mock", "skus")), int):
+        raise RuntimeError("Invalid type for mock.skus, expected int")
+
+    if not isinstance(_get_nested_value(settings, ("mock", "category")), str):
+        raise RuntimeError("Invalid type for mock.category, expected string")
 
 
 # Возврат вложенного значения по пути ключей или None.
