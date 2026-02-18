@@ -18,6 +18,7 @@ REQUIRED_KEYS = (
     ("mock", "stores"),
     ("mock", "skus"),
     ("mock", "category"),
+    ("approval", "reject_reason"),
 )
 
 
@@ -95,6 +96,11 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("mock", "category")), str):
         raise RuntimeError("Invalid type for mock.category, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("approval", "reject_reason")), str):
+        raise RuntimeError(
+            "Invalid type for approval.reject_reason, expected string"
+        )
 
 
 # Возврат вложенного значения по пути ключей или None.

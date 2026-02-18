@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from beeagent_module.ui.telegram_bot import (
+    BUTTON_APPROVE_TASKS,
+    BUTTON_REJECT_TASKS,
     BUTTON_RUN_OOS,
     BUTTON_SHOW_REPORT,
     handle_last,
@@ -65,7 +67,10 @@ def make_context(
                     "stores": 2,
                     "skus": 3,
                     "category": "Vitamins",
-                }
+                },
+                "approval": {
+                    "reject_reason": "Rejected by operator",
+                },
             },
         }
     )
@@ -132,6 +137,7 @@ def test_run_oos_then_last_report(tmp_path: Path) -> None:
 
     assert "📊 OOS Detection Report" in run_update.effective_message.replies[-1]
     assert "🚨 Alerts:" in last_update.effective_message.replies[-1]
+    assert "Tasks status:" in last_update.effective_message.replies[-1]
 
 
 # Чек: кнопки вызывают те же сценарии, что и команды
@@ -150,6 +156,63 @@ def test_buttons_call_same_handlers(tmp_path: Path) -> None:
     assert show_button_update.callback_query.answered is True
     assert "📊 OOS Detection Report" in run_button_update.effective_message.replies[-1]
     assert "📊 OOS Detection Report" in show_button_update.effective_message.replies[-1]
+
+
+# Чек: approve сохраняет tasks_approved.json
+def test_approve_tasks_button(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+
+    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=30)
+    run_async_handler(handle_run_oos, run_update, context)
+
+    approve_update = make_callback_update(
+        chat_id=1,
+        callback_data=BUTTON_APPROVE_TASKS,
+        update_id=31,
+    )
+    run_async_handler(handle_menu_button, approve_update, context)
+
+    assert "Tasks approved" in approve_update.effective_message.replies[-1]
+
+
+# Чек: reject сохраняет reason в tasks_approved.json
+def test_reject_tasks_button(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+
+    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=40)
+    run_async_handler(handle_run_oos, run_update, context)
+
+    reject_update = make_callback_update(
+        chat_id=1,
+        callback_data=BUTTON_REJECT_TASKS,
+        update_id=41,
+    )
+    run_async_handler(handle_menu_button, reject_update, context)
+
+    assert "Tasks rejected" in reject_update.effective_message.replies[-1]
+
+
+# Чек: /last показывает reason для rejected задач
+def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+
+    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=50)
+    run_async_handler(handle_run_oos, run_update, context)
+
+    reject_update = make_callback_update(
+        chat_id=1,
+        callback_data=BUTTON_REJECT_TASKS,
+        update_id=51,
+    )
+    run_async_handler(handle_menu_button, reject_update, context)
+
+    last_update = make_message_update(chat_id=1, text="/last", update_id=52)
+    run_async_handler(handle_last, last_update, context)
+
+    assert (
+        "Reject reason: Rejected by operator"
+        in last_update.effective_message.replies[-1]
+    )
 
 
 # Чек: ответ на неизвестную команду

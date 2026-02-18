@@ -181,6 +181,14 @@ class TestOOSGraph:
             assert alerts_json.exists()
             assert tasks_json.exists()
 
+            report_md = storage_dir / "artifacts" / result["run_id"] / "report.md"
+            report_html = storage_dir / "artifacts" / result["run_id"] / "report.html"
+            last_run_json = storage_dir / "reports" / "last_run.json"
+
+            assert report_md.exists()
+            assert report_html.exists()
+            assert last_run_json.exists()
+
     # Чек: количество сгенерированных задач соответствует количеству обнаруженных алертов (1 задача на 1 алерт)
     def test_run_json_structure(self):
         with TemporaryDirectory() as tmp_dir:

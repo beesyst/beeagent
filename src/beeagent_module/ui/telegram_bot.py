@@ -11,6 +11,8 @@ from beeagent_module.core.secrets import load_secrets
 
 BUTTON_RUN_OOS = "run_oos"
 BUTTON_SHOW_REPORT = "show_report"
+BUTTON_APPROVE_TASKS = "approve_tasks"
+BUTTON_REJECT_TASKS = "reject_tasks"
 
 
 # Запуск Telegram-режим и стартует polling
@@ -155,6 +157,15 @@ async def handle_last(update: Any, context: Any) -> None:
         return
 
     report_text = report_path.read_text(encoding="utf-8")
+    storage_dir = get_storage_dir()
+    run_id = _load_last_run_id(storage_dir)
+    if run_id:
+        summary_line, reject_reason = _load_tasks_status_summary(storage_dir, run_id)
+        report_text = _append_status_to_report(
+            report_text,
+            summary_line,
+            reject_reason,
+        )
     await message.reply_text(report_text)
 
 
@@ -193,7 +204,26 @@ async def handle_menu_button(
             return
 
         report_text = report_path.read_text(encoding="utf-8")
+
+        storage_dir = get_storage_dir()
+        run_id = _load_last_run_id(storage_dir)
+        if run_id:
+            summary_line, reject_reason = _load_tasks_status_summary(
+                storage_dir, run_id
+            )
+            report_text = _append_status_to_report(
+                report_text, summary_line, reject_reason
+            )
+
         await reply(report_text)
+        return
+
+    if query.data == BUTTON_APPROVE_TASKS:
+        await _approve_or_reject_tasks(message, context, decision="approved")
+        return
+
+    if query.data == BUTTON_REJECT_TASKS:
+        await _approve_or_reject_tasks(message, context, decision="rejected")
         return
 
     await reply("Unknown action.")
@@ -226,6 +256,8 @@ def _build_main_menu():
     keyboard = [
         [InlineKeyboardButton("Run OOS Scan", callback_data=BUTTON_RUN_OOS)],
         [InlineKeyboardButton("Show Report", callback_data=BUTTON_SHOW_REPORT)],
+        [InlineKeyboardButton("Approve Tasks", callback_data=BUTTON_APPROVE_TASKS)],
+        [InlineKeyboardButton("Reject Tasks", callback_data=BUTTON_REJECT_TASKS)],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -269,6 +301,116 @@ async def _run_oos_and_reply(message: Any, context: Any) -> None:
     await message.reply_text(report_text)
 
 
+# Путь к маркеру последнего run_id (для approval/status)
+def _get_last_run_path(storage_dir: Path) -> Path:
+    return storage_dir / "reports" / "last_run.json"
+
+
+# Чек наличия последнего run_id для загрузки статуса задач
+def _load_last_run_id(storage_dir: Path) -> str | None:
+    last_run_path = _get_last_run_path(storage_dir)
+    if not last_run_path.exists():
+        return None
+
+    payload = json.loads(last_run_path.read_text(encoding="utf-8"))
+    return payload.get("run_id")
+
+
+# Чек статуса задач по run_id
+def _load_tasks_status_summary(
+    storage_dir: Path,
+    run_id: str,
+) -> tuple[str, str | None]:
+    run_dir = storage_dir / "runs" / run_id
+    approved_path = run_dir / "tasks_approved.json"
+    draft_path = run_dir / "tasks_draft.json"
+
+    if approved_path.exists():
+        tasks = json.loads(approved_path.read_text(encoding="utf-8"))
+    elif draft_path.exists():
+        tasks = json.loads(draft_path.read_text(encoding="utf-8"))
+    else:
+        summary_line = "Tasks status: draft=0, approved=0, rejected=0"
+        return summary_line, None
+
+    counts = {
+        "draft": 0,
+        "approved": 0,
+        "rejected": 0,
+    }
+    reject_reason = None
+
+    for task in tasks:
+        status = task.get("status", "draft")
+        if status in counts:
+            counts[status] += 1
+        if status == "rejected" and task.get("reason"):
+            reject_reason = task.get("reason")
+
+    summary_line = (
+        "Tasks status: "
+        f"draft={counts['draft']}, "
+        f"approved={counts['approved']}, "
+        f"rejected={counts['rejected']}"
+    )
+    return summary_line, reject_reason
+
+
+# Добавление статуса задач в отчет
+def _append_status_to_report(
+    report_text: str,
+    summary_line: str,
+    reject_reason: str | None,
+) -> str:
+    report = f"{report_text}\n\n{summary_line}"
+    if reject_reason:
+        report = f"{report}\nReject reason: {reject_reason}"
+    return report
+
+
+# Обработка одобрения или отклонения задач и сохранение результата
+async def _approve_or_reject_tasks(
+    message: Any,
+    context: Any,
+    decision: str,
+) -> None:
+    settings = context.bot_data["settings"]
+    storage_dir = get_storage_dir()
+    run_id = _load_last_run_id(storage_dir)
+
+    if not run_id:
+        await message.reply_text("No runs yet. Run /run_oos first.")
+        return
+
+    run_dir = storage_dir / "runs" / run_id
+    draft_path = run_dir / "tasks_draft.json"
+    if not draft_path.exists():
+        await message.reply_text("No draft tasks found for last run.")
+        return
+
+    tasks = json.loads(draft_path.read_text(encoding="utf-8"))
+    if decision == "approved":
+        for task in tasks:
+            task["status"] = "approved"
+            task.pop("reason", None)
+    elif decision == "rejected":
+        reject_reason = settings["approval"]["reject_reason"]
+        for task in tasks:
+            task["status"] = "rejected"
+            task["reason"] = reject_reason
+    else:
+        await message.reply_text("Unknown approval decision.")
+        return
+
+    approved_path = run_dir / "tasks_approved.json"
+    approved_path.write_text(
+        json.dumps(tasks, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    await message.reply_text(f"Tasks {decision} for run {run_id}.")
+
+
 # Возврат пути к последнему отчету
 def _get_last_report_path(context: Any) -> Path:
     return context.bot_data["last_report_path"]
@@ -296,7 +438,7 @@ async def _ensure_allowlist(
     return False
 
 
-# Запись телеметрии Telegram-событий в jsonl
+# Чек включена ли телеметрия и запись события
 async def _track_update_event(
     update: Any,
     context: Any,

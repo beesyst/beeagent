@@ -32,6 +32,9 @@ mock:
   stores: 1
   skus: 2
   category: "Vitamins"
+
+approval:
+  reject_reason: "Rejected by operator"
 """.strip()
         + "\n",
         encoding="utf-8",

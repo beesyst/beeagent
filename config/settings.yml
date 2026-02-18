@@ -22,3 +22,6 @@ mock:
   stores: 3
   skus: 12
   category: "Vitamins"
+
+approval:
+  reject_reason: "Rejected by operator"

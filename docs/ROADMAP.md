@@ -108,8 +108,6 @@ DoD:
 - `/run_oos` создаёт run_id, пишет артефакты, возвращает отчёт в Telegram
 - если данных нет — понятное сообщение + empty report
 
----
-
 ### Итерация 4 — Approval v0 + export (HTML или XLSX)
 **Статус: TODO**
 
@@ -129,8 +127,6 @@ DoD:
 DoD:
 - approve/reject сохраняются и видны в `/last`
 - без approve задачи не считаются "готовыми"
-
----
 
 ## Этап 2 — Pilot-ready (итерации 5–8)
 

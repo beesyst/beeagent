@@ -6,6 +6,7 @@ from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_projec
 from beeagent_module.core.settings import load_settings
 
 
+# Главная точка входа: загрузка настроек, инициализация логов и директорий, запуск приложения
 def main() -> None:
     project_root = get_project_root()
 
