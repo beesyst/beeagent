@@ -130,8 +130,8 @@ def test_run_oos_then_last_report(tmp_path: Path) -> None:
     last_update = make_message_update(chat_id=1, text="/last", update_id=11)
     run_async_handler(handle_last, last_update, context)
 
-    assert "Last OOS report" in run_update.effective_message.replies[-1]
-    assert "alerts_total" in last_update.effective_message.replies[-1]
+    assert "📊 OOS Detection Report" in run_update.effective_message.replies[-1]
+    assert "🚨 Alerts:" in last_update.effective_message.replies[-1]
 
 
 # Чек: кнопки вызывают те же сценарии, что и команды
@@ -148,8 +148,8 @@ def test_buttons_call_same_handlers(tmp_path: Path) -> None:
 
     assert run_button_update.callback_query.answered is True
     assert show_button_update.callback_query.answered is True
-    assert "Last OOS report" in run_button_update.effective_message.replies[-1]
-    assert "Last OOS report" in show_button_update.effective_message.replies[-1]
+    assert "📊 OOS Detection Report" in run_button_update.effective_message.replies[-1]
+    assert "📊 OOS Detection Report" in show_button_update.effective_message.replies[-1]
 
 
 # Чек: ответ на неизвестную команду
