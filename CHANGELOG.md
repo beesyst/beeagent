@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.7.0...beeagent-v0.8.0) (2026-02-19)
+
+
+### Features
+
+* **oos:** add steps timing and steps.json trace ([c4d53b1](https://github.com/beesyst/beeagent/commit/c4d53b15db4f541180894838de3db17c75bbe456))
+
 ## [0.7.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.6.0...beeagent-v0.7.0) (2026-02-19)
 
 
