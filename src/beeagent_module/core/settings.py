@@ -19,6 +19,9 @@ REQUIRED_KEYS = (
     ("mock", "skus"),
     ("mock", "category"),
     ("data", "adapter"),
+    ("scheduler", "enabled"),
+    ("scheduler", "interval"),
+    ("scheduler", "start_run"),
     ("approval", "reject_reason"),
 )
 
@@ -110,6 +113,20 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid type for data.mock.dataset_id, expected string or null"
         )
+
+    if not isinstance(_get_nested_value(settings, ("scheduler", "enabled")), bool):
+        raise RuntimeError("Invalid type for scheduler.enabled, expected bool")
+
+    interval = _get_nested_value(settings, ("scheduler", "interval"))
+    if not isinstance(interval, int):
+        raise RuntimeError("Invalid type for scheduler.interval, expected int")
+    if interval <= 0:
+        raise RuntimeError("Invalid value for scheduler.interval, expected > 0")
+
+    if not isinstance(
+        _get_nested_value(settings, ("scheduler", "start_run")), bool
+    ):
+        raise RuntimeError("Invalid type for scheduler.start_run, expected bool")
 
     if not isinstance(_get_nested_value(settings, ("approval", "reject_reason")), str):
         raise RuntimeError(

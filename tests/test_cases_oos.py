@@ -25,6 +25,11 @@ def _settings(dataset_id: str | None = None) -> dict:
                 "dataset_id": dataset_id,
             },
         },
+        "scheduler": {
+            "enabled": False,
+            "interval": 60,
+            "start_run": False,
+        },
         "approval": {
             "reject_reason": "Rejected by operator",
         },
@@ -88,3 +93,18 @@ def test_approve_last_run_case_approved(tmp_path: Path) -> None:
     )
 
     assert response.startswith("Tasks approved for run")
+
+
+# Тест: отклонение последнего запуска кейса OOS с указанием причины
+def test_run_oos_case_scheduled_sets_trigger(tmp_path: Path) -> None:
+    result = run_oos_case(
+        settings=_settings(),
+        storage_dir=tmp_path,
+        logger=logging.getLogger("test.cases"),
+        trigger="scheduled",
+    )
+
+    run_json = tmp_path / "runs" / result["run_id"] / "run.json"
+    run_data = json.loads(run_json.read_text(encoding="utf-8"))
+
+    assert run_data["trigger"] == "scheduled"

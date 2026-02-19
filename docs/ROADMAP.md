@@ -182,6 +182,7 @@ DoD:
 - `pytest -q` проходит
 
 ### Итерация 6 — Scheduler v0 + Approval gate “обязателен”
+**Статус: ГОТОВО**
 
 Цель: автозапуск без ручного `/run_oos`, но никаких “готовых задач” без approve.
 
@@ -194,8 +195,8 @@ DoD:
 - бот отправляет сообщение: “New run ready → Approve/Reject”
 3. Настройки:
 - `scheduler.enabled: bool`
-- `scheduler.interval_sec: int`
-- `scheduler.run_on_start: bool` (опционально)
+- `scheduler.interval: int`
+- `scheduler.start_run: bool` (опционально)
 
 Артефакты:
 - `storage/runs/<run_id>/run.json`:
@@ -209,7 +210,7 @@ DoD:
 
 ### Итерация 7 — Mini-observability v0 (timing шагов)
 
-**Цель:** видеть длительность каждого node и сохранить trace.
+Цель: видеть длительность каждого node и сохранить trace.
 
 Сделать:
 - фиксировать `duration_ms` для каждого node (внутри node или тонким wrapper, без монстров)
@@ -219,8 +220,6 @@ DoD:
 DoD:
 - после run появляется `steps.json`
 - `pytest -q` проходит
-
----
 
 ### Итерация 8 — 2-й агент v0 + multi-channel UI readiness
 

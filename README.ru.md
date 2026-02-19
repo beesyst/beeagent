@@ -19,6 +19,10 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
 
 * `run.mode: telegram`
 
+Важно: **scheduled-run — это не отдельный режим**, а **trigger** выполнения кейса внутри Telegram-процесса:
+* `trigger=manual` — когда запускаем `/run_oos` или кнопку
+* `trigger=scheduled` — когда запускает scheduler (по интервалу)
+
 Принцип: UI-канал — тонкий слой, который вызывает только `cases/*`.
 
 ## Основные возможности (на текущий момент)
@@ -30,6 +34,11 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
   * `/last` читает последний отчёт через case (`get_last_report_case`) + summary по статусу задач
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
   * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
+    * после scheduled-run бот отправляет admin chat сообщение:
+      * `New run ready → Approve/Reject`
+      * `Run ID: <run_id>`
+      * `Alerts: <N>, Tasks: <N>`
 * **KISS security**
   * доступ только из одного admin chat_id (allowlist)
 * **Артефакты**
@@ -118,7 +127,16 @@ bash start.sh
 * `telegram.enabled`: `true|false`
 * `telegram.bot_token_env`: имя переменной окружения для токена (например `TELEGRAM_BOT_TOKEN`)
 * `telegram.chat_id_env`: имя переменной окружения для allowlist chat_id (например `CHAT_ID`)
-* `telegram.telemetry_enabled`: `true|false` — писать телеметрию в jsonl
+* `telegram.telemetry_enabled`: `true|false` — писать телеметрию апдейтов в `storage/telemetry/*.jsonl`
+
+**Scheduler (v0)**
+* `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
+* `scheduler.interval`: `int > 0` — интервал в секундах между scheduled-run
+* `scheduler.start_run`: `true|false`
+  * если `true` — один scheduled-run сразу после старта, затем по интервалу
+  * если `false` — только по интервалу
+
+Поведение: после scheduled-run бот отправляет **admin-only** уведомление: `New run ready → Approve/Reject`.
 
 **Mock dataset**
 * `mock.seed`: int — seed для детерминированного датасета
@@ -132,6 +150,13 @@ bash start.sh
 * `data.mock.dataset_id`: `str | null`
   * если `null` — при `/run_oos` dataset генерируется из `mock.*` и сохраняется в `storage/mock/<dataset_id>/dataset.json`
   * если `str` — используется уже существующий dataset в `storage/mock/<dataset_id>/dataset.json`
+
+**Scheduler (v0)**
+* `scheduler.enabled`: `true|false`
+* `scheduler.interval`: `int > 0` (в сек)
+* `scheduler.start_run`: `true|false`
+  * если `true` — выполняется один scheduled-run сразу после старта, затем по интервалу
+  * если `false` — только по интервалу
 
 **Approval**
 * `approval.reject_reason`: str — причина для reject
@@ -317,10 +342,14 @@ bash start.sh
 2. В Telegram (admin chat):
 
 * `/start` — меню с кнопками
-* `Run OOS Scan` — приходит отчёт
+* `Run OOS Scan` — приходит отчёт (manual run)
 * `/last` — приходит последний отчёт
 
-3. Проверь артефакты:
+3. Если включен scheduler (`scheduler.enabled: true`):
+* дождись сообщения: `New run ready → Approve/Reject`
+* проверь, что в `storage/runs/<run_id>/run.json` стоит `"trigger": "scheduled"`
+
+4. Проверь артефакты:
 
 * `storage/reports/last_oos_report.md` создан/обновляется
 * если включено `telegram.telemetry_enabled: true`:
