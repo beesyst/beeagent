@@ -50,6 +50,7 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
+  * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms каждого шага workflow
   * `storage/artifacts/<run_id>/report.md` — markdown отчёт
   * `storage/artifacts/<run_id>/report.html` — HTML отчёт
 
