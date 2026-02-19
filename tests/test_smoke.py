@@ -38,6 +38,11 @@ data:
   mock:
     dataset_id:
 
+scheduler:
+  enabled: false
+  interval: 60
+  start_run: false
+
 approval:
   reject_reason: "Rejected by operator"
 """.strip()

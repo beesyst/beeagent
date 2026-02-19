@@ -30,6 +30,11 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
   * `/last` читает последний отчёт через case (`get_last_report_case`) + summary по статусу задач
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
   * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
+    * после scheduled-run бот отправляет admin chat сообщение:
+      * `New run ready → Approve/Reject`
+      * `Run ID: <run_id>`
+      * `Alerts: <N>, Tasks: <N>`
 * **KISS security**
   * доступ только из одного admin chat_id (allowlist)
 * **Артефакты**
@@ -132,6 +137,13 @@ bash start.sh
 * `data.mock.dataset_id`: `str | null`
   * если `null` — при `/run_oos` dataset генерируется из `mock.*` и сохраняется в `storage/mock/<dataset_id>/dataset.json`
   * если `str` — используется уже существующий dataset в `storage/mock/<dataset_id>/dataset.json`
+
+**Scheduler (v0)**
+* `scheduler.enabled`: `true|false`
+* `scheduler.interval`: `int > 0` (в сек)
+* `scheduler.start_run`: `true|false`
+  * если `true` — выполняется один scheduled-run сразу после старта, затем по интервалу
+  * если `false` — только по интервалу
 
 **Approval**
 * `approval.reject_reason`: str — причина для reject

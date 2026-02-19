@@ -1,7 +1,7 @@
 import os
 
 
-# Получение обязательного секрета из окружения (fail-fast).
+# Получение обязательного секрета из окружения (fail-fast)
 def get_required_secret(env_key: str) -> str:
     value = os.getenv(env_key)
     if value is None or not value.strip():
@@ -9,7 +9,7 @@ def get_required_secret(env_key: str) -> str:
     return value.strip()
 
 
-# Получение обязательного int из окружения (fail-fast).
+# Получение обязательного int из окружения (fail-fast)
 def get_required_int(env_key: str) -> int:
     raw = get_required_secret(env_key)
     try:
@@ -18,7 +18,7 @@ def get_required_int(env_key: str) -> int:
         raise RuntimeError(f"Invalid int in env {env_key}: {raw!r}") from exc
 
 
-# Загрузка секретов из окружения согласно settings.yml.
+# Загрузка секретов из окружения согласно settings.yml
 def load_secrets(settings: dict) -> dict:
     telegram_cfg = settings.get("telegram", {})
     secrets: dict[str, object] = {}

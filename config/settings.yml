@@ -1,32 +1,37 @@
 app:
-  name: "BeeAgent"
-  env: "dev"
+  name: "BeeAgent" # название приложения
+  env: "dev" # окружение (dev/prod)
 
 run:
-  mode: "telegram"
+  mode: "telegram" # режим запуска UI/transport
 
 telegram:
-  enabled: true
-  bot_token_env: "TELEGRAM_BOT_TOKEN"
-  chat_id_env: "CHAT_ID"
-  telemetry_enabled: true
+  enabled: true # true/false - включить/выключить интеграцию с Telegram
+  bot_token_env: "TELEGRAM_BOT_TOKEN" # название переменной окружения, в которой хранится токен бота
+  chat_id_env: "CHAT_ID" # название переменной окружения, в которой хранится ID чата для отправки сообщений
+  telemetry_enabled: true # true/false - включить/выключить запись телеметрии апдейтов в storage/telemetry (jsonl)
 
 logging:
-  clear_logs: true
-  utc: true
-  level: "INFO"
+  clear_logs: true # true/false - очищать ли логи при каждом запуске приложения
+  utc: true # true/false - использовать ли UTC для отметок времени в логах
+  level: "INFO" # уровень логирования (DEBUG/INFO/WARNING/ERROR/CRITICAL)
 
 mock:
-  seed: 42
-  weeks: 4
-  stores: 3
-  skus: 12
-  category: "Vitamins"
+  seed: 42 # начальное значение для генератора случайных чисел (целое число)
+  weeks: 4 # количество недель для генерации данных (целое число)
+  stores: 3 # количество магазинов для генерации данных (целое число)
+  skus: 12 # количество товаров для генерации данных (целое число)
+  category: "Vitamins" # категория товаров для генерации данных (строка)
 
 data:
-  adapter: "mock"
+  adapter: "mock" # адаптер для получения данных (mock/real)
   mock:
-    dataset_id: null
+    dataset_id: null # идентификатор набора данных для генерации (строка или null)
+
+scheduler:
+  enabled: true # true/false
+  interval: 30 # интервал в секундах между запусками scheduled-run (сек)
+  start_run: true # true/false - запускать scheduled-run при старте приложения
 
 approval:
-  reject_reason: "Rejected by operator"
+  reject_reason: "Rejected by operator" # причина отклонения заявки

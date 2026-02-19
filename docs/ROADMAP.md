@@ -194,8 +194,8 @@ DoD:
 - бот отправляет сообщение: “New run ready → Approve/Reject”
 3. Настройки:
 - `scheduler.enabled: bool`
-- `scheduler.interval_sec: int`
-- `scheduler.run_on_start: bool` (опционально)
+- `scheduler.interval: int`
+- `scheduler.start_run: bool` (опционально)
 
 Артефакты:
 - `storage/runs/<run_id>/run.json`:

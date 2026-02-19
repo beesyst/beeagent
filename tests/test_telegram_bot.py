@@ -12,6 +12,9 @@ from beeagent_module.ui.telegram_bot import (
     BUTTON_REJECT_TASKS,
     BUTTON_RUN_OOS,
     BUTTON_SHOW_REPORT,
+    _run_scheduled_oos_tick,
+    _scheduler_loop,
+    _start_scheduler_if_enabled,
     handle_last,
     handle_menu_button,
     handle_run_oos,
@@ -20,7 +23,7 @@ from beeagent_module.ui.telegram_bot import (
 )
 
 
-# Эмуляция Telegram-сообщения с накоплением ответов
+# Фейк: объекты для имитации Telegram Update, Message, CallbackQuery и Bot в тестах
 class FakeMessage:
     def __init__(self, text: str = "") -> None:
         self.text = text
@@ -31,7 +34,7 @@ class FakeMessage:
         self.replies.append(text)
 
 
-# Эмуляция callback query для inline-кнопок
+# Фейк: CallbackQuery для имитации нажатия кнопок в Telegram
 class FakeCallbackQuery:
     def __init__(self, data: str, message: FakeMessage) -> None:
         self.data = data
@@ -42,12 +45,27 @@ class FakeCallbackQuery:
         self.answered = True
 
 
-# Запууск async-обработчика в синхронном тесте
+# Фейк: Bot для имитации отправки сообщений в Telegram
+class FakeBot:
+    def __init__(self) -> None:
+        self.sent_messages: list[dict[str, Any]] = []
+
+    async def send_message(self, chat_id: int, text: str) -> None:
+        self.sent_messages.append({"chat_id": chat_id, "text": text})
+
+
+# Фейк: App для хранения bot_data и имитации жизненного цикла приложения в тестах
+class FakeApp:
+    def __init__(self, bot_data: dict[str, Any]) -> None:
+        self.bot_data = bot_data
+        self.bot = FakeBot()
+
+
 def run_async_handler(handler: Any, update: Any, context: Any) -> None:
     asyncio.run(handler(update, context))
 
 
-# Создание контекста обработчика с bot_data
+# Вспомогательные функции для создания контекста и обновлений Telegram в тестах, а также тесты для проверки логики бота и сценария OOS
 def make_context(
     tmp_path: Path,
     chat_id: int = 1,
@@ -74,6 +92,11 @@ def make_context(
                         "dataset_id": None,
                     },
                 },
+                "scheduler": {
+                    "enabled": False,
+                    "interval": 60,
+                    "start_run": False,
+                },
                 "approval": {
                     "reject_reason": "Rejected by operator",
                 },
@@ -83,7 +106,7 @@ def make_context(
     )
 
 
-# Создание update для обычной команды
+# Вспомогательные функции для создания обновлений Telegram с сообщениями и кнопками для тестов
 def make_message_update(
     chat_id: int,
     text: str,
@@ -102,7 +125,7 @@ def make_message_update(
     )
 
 
-# Создание update для callback-кнопки
+# Вспомогательная функция для создания обновлений Telegram с данными кнопок для тестов
 def make_callback_update(
     chat_id: int,
     callback_data: str,
@@ -122,7 +145,7 @@ def make_callback_update(
     )
 
 
-# Чек: неразрешенный chat получает отказ
+# Тест: доступ к боту разрешен только для админского чата, остальные получают отказ в доступе
 def test_start_denies_non_admin(tmp_path: Path) -> None:
     update = make_message_update(chat_id=2, text="/start")
     context = make_context(tmp_path=tmp_path, chat_id=1)
@@ -132,7 +155,7 @@ def test_start_denies_non_admin(tmp_path: Path) -> None:
     assert update.effective_message.replies[-1] == "Access denied: admin chat only."
 
 
-# Чек: запись и чтение последнего отчета
+# Тест: выполнение сценария OOS через команду и получение отчета, а также отображение статуса задач и причины отклонения в последнем отчете
 def test_run_oos_then_last_report(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -147,7 +170,7 @@ def test_run_oos_then_last_report(tmp_path: Path) -> None:
     assert "Tasks status:" in last_update.effective_message.replies[-1]
 
 
-# Чек: кнопки вызывают те же сценарии, что и команды
+# Тест: нажатия кнопок "Run OOS" и "Show Report" вызывают одни и те же обработчики и возвращают отчет OOS
 def test_buttons_call_same_handlers(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -165,7 +188,7 @@ def test_buttons_call_same_handlers(tmp_path: Path) -> None:
     assert "📊 OOS Detection Report" in show_button_update.effective_message.replies[-1]
 
 
-# Чек: approve сохраняет tasks_approved.json
+# Тест: нажатия кнопок "Approve Tasks" и "Reject Tasks" возвращают соответствующие ответы и сохраняют статус задач
 def test_approve_tasks_button(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -182,7 +205,7 @@ def test_approve_tasks_button(tmp_path: Path) -> None:
     assert "Tasks approved" in approve_update.effective_message.replies[-1]
 
 
-# Чек: reject сохраняет reason в tasks_approved.json
+# Тест: нажатия кнопки "Reject Tasks" возвращает соответствующий ответ и сохраняет статус задач с причиной отклонения
 def test_reject_tasks_button(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -199,7 +222,7 @@ def test_reject_tasks_button(tmp_path: Path) -> None:
     assert "Tasks rejected" in reject_update.effective_message.replies[-1]
 
 
-# Чек: /last показывает reason для rejected задач
+# Тест: последний отчет OOS содержит статус задач и причину отклонения после нажатия кнопки "Reject Tasks"
 def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -222,7 +245,7 @@ def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
     )
 
 
-# Чек: ответ на неизвестную команду
+# Тест: неизвестная команда не вызывает ошибок и возвращает сообщение об неизвестной команде
 def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
     update = make_message_update(chat_id=1, text="/abc", update_id=20)
     context = make_context(tmp_path=tmp_path, chat_id=1)
@@ -232,7 +255,7 @@ def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
     assert update.effective_message.replies[-1] == "Unknown command. Use /help."
 
 
-# Чек: запись телеметрии в jsonl
+# Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями
 def test_telemetry_writes_jsonl(tmp_path: Path) -> None:
     update = make_message_update(chat_id=1, text="/start", update_id=77)
     context = make_context(tmp_path=tmp_path, chat_id=1, telemetry_enabled=True)
@@ -247,3 +270,105 @@ def test_telemetry_writes_jsonl(tmp_path: Path) -> None:
     assert payload["event"] == "start"
     assert payload["chat_id"] == 1
     assert payload["update_id"] == 77
+
+
+# Тест: при выключенной телеметрии файл не создается и обновления не записываются
+def test_scheduler_not_started_when_disabled(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    app = FakeApp(bot_data=context.bot_data)
+
+    asyncio.run(_start_scheduler_if_enabled(app))
+
+    assert "scheduler_task" not in app.bot_data
+
+
+# Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями при нажатии кнопки "Run OOS"
+def test_scheduler_tick_uses_scheduled_trigger(tmp_path: Path, monkeypatch) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    app = FakeApp(bot_data=context.bot_data)
+    called: dict[str, Any] = {}
+
+    def fake_run_oos_case(
+        settings: dict,
+        storage_dir: Path,
+        logger: logging.Logger,
+        trigger: str,
+    ) -> dict[str, Any]:
+        _ = settings, storage_dir, logger
+        called["trigger"] = trigger
+        return {
+            "run_id": "run-test",
+            "alerts_count": 2,
+            "tasks_count": 2,
+            "report_text": "ok",
+        }
+
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.run_oos_case",
+        fake_run_oos_case,
+    )
+
+    asyncio.run(_run_scheduled_oos_tick(app))
+
+    assert called["trigger"] == "scheduled"
+    assert app.bot.sent_messages[0]["chat_id"] == 1
+    assert "New run ready → Approve/Reject" in app.bot.sent_messages[0]["text"]
+
+
+# Тест: если сценарий OOS в scheduled-run выбрасывает ошибку, она логируется, и цикл продолжает работать
+def test_scheduler_loop_continues_after_case_error(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    context.bot_data["settings"]["scheduler"] = {
+        "enabled": True,
+        "interval": 1,
+        "start_run": True,
+    }
+    app = FakeApp(bot_data=context.bot_data)
+    stop_event = asyncio.Event()
+    call_count = {"value": 0}
+
+    def fake_run_oos_case(
+        settings: dict,
+        storage_dir: Path,
+        logger: logging.Logger,
+        trigger: str,
+    ) -> dict[str, Any]:
+        _ = settings, storage_dir, logger, trigger
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            raise RuntimeError("boom")
+        stop_event.set()
+        return {
+            "run_id": "run-ok",
+            "alerts_count": 1,
+            "tasks_count": 1,
+            "report_text": "ok",
+        }
+
+    async def fast_wait_for(awaitable: Any, timeout: float) -> Any:
+        _ = timeout
+        task = asyncio.create_task(awaitable)
+        await asyncio.sleep(0)
+        if task.done():
+            return task.result()
+        task.cancel()
+        raise TimeoutError()
+
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.run_oos_case",
+        fake_run_oos_case,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.asyncio.wait_for",
+        fast_wait_for,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(_scheduler_loop(app, stop_event))
+
+    assert call_count["value"] == 2
+    assert "scheduled run failed" in caplog.text
