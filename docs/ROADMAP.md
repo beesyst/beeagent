@@ -209,6 +209,7 @@ DoD:
 - `pytest -q` проходит
 
 ### Итерация 7 — Mini-observability v0 (timing шагов)
+**Статус: ГОТОВО**
 
 Цель: видеть длительность каждого node и сохранить trace.
 
@@ -223,19 +224,18 @@ DoD:
 
 ### Итерация 8 — 2-й агент v0 + multi-channel UI readiness
 
-**Цель:** показать расширяемость платформы:
+Цель: показать расширяемость платформы:
 - новый агент = новый `cases/*` + `agents/*` + кнопка/команда в UI
 - и подготовить “каркас” для второго UI-канала (без реализации интеграции в прод)
 
 Сделать:
-1) Второй агент (пример): `Promo Calendar` или `Price Check`:
+1. Второй агент (пример): `Promo Calendar` или `Price Check`:
 - `agents/promo/graph.py` + `cases/promo.py`
 - Telegram:
   - команда `/run_promo`
   - кнопка “Run Promo Scan”
 - persist артефактов аналогично OOS, в `run.json` добавить `"agent": "promo"`
-
-2) UI readiness (без интеграции):
+2. UI readiness (без интеграции):
 - создать `ui/README.md` или секцию в README:
   - правила: UI-канал вызывает только `cases/*`
   - список будущих каналов: slack/discord/whatsapp
@@ -247,7 +247,6 @@ DoD:
 - артефакты создаются по тому же стандарту
 - в доке зафиксирован контракт: UI → cases → agents/adapter/storage
 - `pytest -q` проходит
-
 
 ## Этап 3 — Enterprise hardening (после подтверждения проекта)
 - multi-tenancy (tenants, namespaces, ACL)
