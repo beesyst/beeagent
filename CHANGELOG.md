@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.5.0...beeagent-v0.6.0) (2026-02-19)
+
+
+### Features
+
+* **core:** add cases layer and data adapter for OOS workflow ([a9a463b](https://github.com/beesyst/beeagent/commit/a9a463bb231990eabee4741e060f98942fa0401c))
+
 ## [0.5.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.4.0...beeagent-v0.5.0) (2026-02-18)
 
 
