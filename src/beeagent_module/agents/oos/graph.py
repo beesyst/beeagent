@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -35,18 +36,36 @@ class OOSState(TypedDict, total=False):
     report_text: str
     run_id: str
     artifacts_dir: Path
+    steps: list[dict[str, Any]]
+
+
+# Добавление шага observability в state + логирование длительности
+def _record_step(state: OOSState, step: str, duration_ms: int) -> None:
+    steps: list[dict[str, Any]] = state.setdefault("steps", [])
+    steps.append({"step": step, "duration_ms": duration_ms})
+
+    logger = state.get("logger")
+    if logger:
+        logger.info("step=%s duration_ms=%d", step, duration_ms)
 
 
 # Node 1: сбор пользовательских данных и инициализация состояния рабочего процесса
 def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
+
     state["run_id"] = f"run-{uuid4().hex[:12]}"
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "collect_input", duration_ms)
+
     return state
 
 
 # Node 2: загрузка данных из storage и десериализация в объекты доменной модели
 def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
+
     adapter = state.get("adapter")
     if adapter is None:
         raise ValueError("adapter is required")
@@ -82,12 +101,16 @@ def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState
             seed=0,
         )
 
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "load_data", duration_ms)
+
     return state
 
 
 # Node 3: применение правил OOS-детекции и генерация алертов
 def detect_oos(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
     stock_rows = state.get("stock", [])
     shelf_signals = state.get("shelf_signals", [])
 
@@ -103,12 +126,18 @@ def detect_oos(state: OOSState, config: RunnableConfig | None = None) -> OOSStat
         alerts.extend(rule_a_alerts)
 
     state["alerts"] = alerts
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "detect_oos", duration_ms)
+
     return state
 
 
 # Node 4: генерация задач на основе алертов
 def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
+
     alerts = state.get("alerts", [])
     tasks: list[Task] = []
 
@@ -124,12 +153,18 @@ def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
         )
 
     state["tasks"] = tasks
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "draft_tasks", duration_ms)
+
     return state
 
 
 # Node 5: форматирование алертов и задач в текст отчета для пользователя
 def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
+
     run_id = state.get("run_id", "unknown")
     run_meta = state.get("run_meta")
     alerts = state.get("alerts", [])
@@ -154,6 +189,10 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     ]
 
     state["report_text"] = "\n".join(report_lines)
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "render_report", duration_ms)
+
     return state
 
 
@@ -222,6 +261,8 @@ def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
 # Node 6: сохранение результатов выполнения в storage для последующего доступа и аудита
 def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
+    start_time = time.perf_counter()
+
     storage_dir = state.get("storage_dir")
     run_id = state.get("run_id")
     if not storage_dir or not run_id:
@@ -266,6 +307,15 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     (artifacts_dir / "report.md").write_text(report_md, encoding="utf-8")
     (artifacts_dir / "report.html").write_text(report_html, encoding="utf-8")
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "persist_run", duration_ms)
+
+    steps = state.get("steps", [])
+    (run_dir / "steps.json").write_text(
+        json.dumps(steps, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     _write_last_run_marker(storage_dir, run_id)
 

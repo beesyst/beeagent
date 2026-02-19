@@ -108,3 +108,35 @@ def test_run_oos_case_scheduled_sets_trigger(tmp_path: Path) -> None:
     run_data = json.loads(run_json.read_text(encoding="utf-8"))
 
     assert run_data["trigger"] == "scheduled"
+
+
+# Тест: проверка наличия steps.json в артефактах с временами выполнения узлов
+def test_run_oos_case_creates_steps_artifact(tmp_path: Path) -> None:
+    result = run_oos_case(
+        settings=_settings(),
+        storage_dir=tmp_path,
+        logger=logging.getLogger("test.cases"),
+        trigger="manual",
+    )
+
+    steps_json = tmp_path / "runs" / result["run_id"] / "steps.json"
+    assert steps_json.exists()
+
+    steps = json.loads(steps_json.read_text(encoding="utf-8"))
+    assert isinstance(steps, list)
+    assert len(steps) == 6
+
+    expected_steps = [
+        "collect_input",
+        "load_data",
+        "detect_oos",
+        "draft_tasks",
+        "render_report",
+        "persist_run",
+    ]
+
+    for idx, step in enumerate(steps):
+        assert step["step"] == expected_steps[idx]
+        assert "duration_ms" in step
+        assert isinstance(step["duration_ms"], int)
+        assert step["duration_ms"] >= 0

@@ -1,8 +1,11 @@
-# BeeAgent — AI Corp Agent (pre-MVP)
+# BeeAgent — AI Agent Framework for Corp (pre-MVP)
 
-**BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
+**BeeAgent** — каркас (framework) для написания AI-агентов под корпоративные кейсы с end-to-end демо-потоком.
 
-Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчёт → approval (approve/reject) → артефакты в storage
+Текущий демо-кейс: **OOS Detector**.
+
+Пайплайн демо:
+Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report → approval (approve/reject) → storage artifacts
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -50,6 +53,7 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
+  * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms каждого шага workflow
   * `storage/artifacts/<run_id>/report.md` — markdown отчёт
   * `storage/artifacts/<run_id>/report.html` — HTML отчёт
 
@@ -57,9 +61,10 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
 
 ## Где использовать
 
-* Показать end-to-end UX через Telegram.
-* Быстрые эксперименты с правилами OOS и UX отчёта.
-* Подготовка к этапу LangGraph + реальным интеграциям (1C позже).
+* Быстро собрать MVP агента под новый корпоративный кейс (без переписывания “с нуля”).
+* Показать end-to-end UX через Telegram (или другой UI-канал в будущем).
+* Текущий пример: быстрые эксперименты с правилами OOS и форматом отчёта.
+* Подготовка к интеграциям с реальными данными (1C/BI позже).
 
 ## Технологический стек
 
@@ -71,17 +76,12 @@ Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчё
 * **langgraph** — workflow-оркестрация OOS (6 узлов) и запуск через `.invoke(...)`
 * **единый лог** — `logs/app.log`
 
-## Как это работает (pipeline v0)
+## Как это работает (framework pipeline v0)
 
 1. `start.sh` → `config/start.py` (bootstrap: env → settings → logging → run mode)
-2. `core/app.py` читает `run.mode` и запускает UI transport (сейчас: Telegram)
-3. Telegram UI принимает команду `/run_oos` и вызывает `cases/oos.py`
-4. `cases/oos.py`:
-   - подготавливает dataset (генерирует mock, если `data.mock.dataset_id: null`)
-   - выбирает адаптер через `adapters/factory.py`
-   - запускает LangGraph workflow (`agents/oos/graph.py`)
-5. Workflow детектит OOS, формирует задачи, сохраняет run-артефакты в `storage/`
-6. `/last` читает последний отчёт + статус задач из артефактов последнего run
+2. `core/app.py` читает `run.mode` и запускает UI-канал (сейчас: Telegram)
+3. UI-канал вызывает нужный `cases/*` (сейчас реализован demo-case: `cases/oos.py`)
+4. Case выбирает adapter, запускает workflow и получает результат (report + artifacts)
 
 ## Управление и запуск
 
@@ -190,16 +190,17 @@ Dataset: seed-42-w4-s3-k12-vitamins
 Tasks status: draft=2, approved=0, rejected=0
 ```
 
-### Run-артефакты LangGraph (Iteration 3)
+### Run-артефакты LangGraph (v0)
 
 Папка: `storage/runs/<run_id>/`
 
 Файлы:
-* `run.json` — meta выполнения (run_id, created_at, dataset_id, seed, alerts_count, tasks_count)
+* `run.json` — meta выполнения (dataset_id/seed/counts + `adapter` + `trigger`)
 * `alerts.json` — алерты Rule A
 * `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
+* `steps.json` — observability v0: duration_ms каждого шага workflow
 
-### Approval + Export (Iteration 4)
+### Approval + Export (v0)
 
 Папки:
 * `storage/runs/<run_id>/tasks_approved.json`
@@ -264,12 +265,12 @@ beeagent/
 │       │   └── mock_adapter.py              # MockAdapter (читает storage/mock/<dataset_id>/dataset.json) 
 │       │   
 │       ├── agents/
-│       │   └── oos/                         # 
-│       │   │   ├── graph.py                 # LangGraph workflow OOS (nodes + persist артефактов) 
-│       │   │   └── rules.py                 # правила детекции OOS (Rule A и т.п.) 
+│       │   └── oos/                         # demo-agent: OOS Detector (пример workflow)
+│       │   │   ├── graph.py                 # nodes + persist_run (storage artifacts)
+│       │   │   └── rules.py                 # правила детекции OOS (Rule A и т.п.)
 │       │   │
 │       ├── cases/
-│       │   └── oos.py                       # run/last/approve кейсы (UI вызывает только cases) 
+│       │   └── oos.py                       # demo-case: OOS (UI вызывает только cases)
 │       │   
 │       ├── core/
 │       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
@@ -330,6 +331,7 @@ pytest -q
 * `tests/test_cases_oos.py` — кейсы OOS: run/last/approve + артефакты
 * `tests/test_adapters_mock.py` — MockAdapter + factory get_adapter
 * `tests/test_oos_graph.py` — rule A, сборка графа, workflow, артефакты, детерминизм
+* `tests/test_cases_oos.py` — кейсы OOS: run/last/approve + run-артефакты + steps.json
 
 ### Runtime smoke (ручная проверка)
 
