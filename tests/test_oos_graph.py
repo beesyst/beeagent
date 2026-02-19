@@ -1,11 +1,37 @@
 import json
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from beeagent_module.adapters.factory import get_adapter
 from beeagent_module.agents.oos.graph import build_oos_graph, run_oos_workflow
 from beeagent_module.agents.oos.rules import detect_rule_a
 from beeagent_module.domain.models import ShelfSignal, StockRow
 from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
+
+
+# Тестирование правил OOS и выполнения LangGraph-скрипта с mock-данными
+def _mock_settings(dataset_id: str | None) -> dict:
+    return {
+        "data": {
+            "adapter": "mock",
+            "mock": {
+                "dataset_id": dataset_id,
+            },
+        }
+    }
+
+
+# Вспомогательная функция для выполнения workflow с mock-данными и получения результата
+def _run_workflow(storage_dir: Path, dataset_id: str) -> dict:
+    settings = _mock_settings(dataset_id)
+    adapter = get_adapter(settings=settings, storage_dir=storage_dir)
+    return run_oos_workflow(
+        storage_dir=storage_dir,
+        adapter=adapter,
+        adapter_name=settings["data"]["adapter"],
+        trigger="manual",
+    )
 
 
 # Тест правил OOS и выполнения LangGraph-скрипта с mock-данными
@@ -126,11 +152,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            # выполнение workflow
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
 
             # чек структуры результата
             assert "run_id" in result
@@ -163,12 +185,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            # выполнение workflow
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
-
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             artifacts_dir = result["artifacts_dir"]
             assert artifacts_dir.exists()
 
@@ -204,11 +221,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
-
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             run_json = result["artifacts_dir"] / "run.json"
             run_data = json.loads(run_json.read_text(encoding="utf-8"))
 
@@ -216,9 +229,13 @@ class TestOOSGraph:
             assert "created_at" in run_data
             assert "dataset_id" in run_data
             assert "seed" in run_data
+            assert "adapter" in run_data
+            assert "trigger" in run_data
             assert "alerts_count" in run_data
             assert "tasks_count" in run_data
             assert run_data["dataset_id"] == dataset_id
+            assert run_data["adapter"] == "mock"
+            assert run_data["trigger"] == "manual"
 
     # Чек: alerts.json содержит сериализованные объекты Alert
     def test_alerts_json_serialization(self):
@@ -235,11 +252,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
-
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             alerts_json = result["artifacts_dir"] / "alerts.json"
             alerts_data = json.loads(alerts_json.read_text(encoding="utf-8"))
 
@@ -266,11 +279,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
-
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             tasks_json = result["artifacts_dir"] / "tasks_draft.json"
             tasks_data = json.loads(tasks_json.read_text(encoding="utf-8"))
 
@@ -299,11 +308,7 @@ class TestOOSGraph:
             dataset_id = dataset["meta"]["dataset_id"]
             save_mock_dataset(dataset, storage_dir)
 
-            result = run_oos_workflow(
-                dataset_id=dataset_id,
-                storage_dir=storage_dir,
-            )
-
+            result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             assert result["tasks_count"] == result["alerts_count"]
 
     # Чек: workflow produces deterministic results with same seed
@@ -323,8 +328,13 @@ class TestOOSGraph:
             save_mock_dataset(dataset1, storage_dir)
 
             result1 = run_oos_workflow(
-                dataset_id=dataset_id1,
                 storage_dir=storage_dir,
+                adapter=get_adapter(
+                    settings=_mock_settings(dataset_id1),
+                    storage_dir=storage_dir,
+                ),
+                adapter_name="mock",
+                trigger="manual",
             )
 
             # второй run с тем же seed
@@ -336,9 +346,6 @@ class TestOOSGraph:
                 category="TestCategory",
             )
             dataset_id2 = dataset2["meta"]["dataset_id"]
-            # очистка предыдущих run-артефактов для чистоты эксперимента
-            import shutil
-
             runs_dir = storage_dir / "runs"
             if runs_dir.exists():
                 shutil.rmtree(runs_dir)
@@ -346,8 +353,13 @@ class TestOOSGraph:
             save_mock_dataset(dataset2, storage_dir)
 
             result2 = run_oos_workflow(
-                dataset_id=dataset_id2,
                 storage_dir=storage_dir,
+                adapter=get_adapter(
+                    settings=_mock_settings(dataset_id2),
+                    storage_dir=storage_dir,
+                ),
+                adapter_name="mock",
+                trigger="manual",
             )
 
             # чек: одинаковое количество алертов и задач (одинаковый dataset)
