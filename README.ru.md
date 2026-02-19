@@ -2,13 +2,13 @@
 
 **BeeAgent** — модульный AI-агент для корпоративных клиентов с end-to-end демо-потоком:
 
-Telegram → запуск агента (OOS Detector через LangGraph) → отчёт → approval (approve/reject) → артефакты в storage
+Telegram → cases (OOS) → LangGraph workflow → adapters (mock) → отчёт → approval (approve/reject) → артефакты в storage
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
 ## Режимы работы (v0)
 
-Сейчас реализован один режим запуска:
+Сейчас реализован один режим запуска (UI transport):
 
 * **telegram** — Telegram бот:
   * команды: `/start`, `/help`, `/run_oos`, `/last`
@@ -19,13 +19,15 @@ Telegram → запуск агента (OOS Detector через LangGraph) → �
 
 * `run.mode: telegram`
 
+Принцип: UI-канал — тонкий слой, который вызывает только `cases/*`.
+
 ## Основные возможности (на текущий момент)
 
 * **Telegram bot v0 (UX skeleton)**
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
-  * `/run_oos` выполняет OOS-скан через LangGraph (mock dataset), сохраняет run-артефакты и отправляет отчёт
-  * `/last` показывает последний отчёт + summary по статусу задач
+  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
+  * `/last` читает последний отчёт через case (`get_last_report_case`) + summary по статусу задач
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
   * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
 * **KISS security**
@@ -35,7 +37,7 @@ Telegram → запуск агента (OOS Detector через LangGraph) → �
   * `storage/reports/last_run.json` — указатель на последний run_id
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
   * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
-  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts)
+  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts + `adapter` + `trigger`)
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
@@ -59,6 +61,18 @@ Telegram → запуск агента (OOS Detector через LangGraph) → �
 * **python-telegram-bot** — Telegram polling bot
 * **langgraph** — workflow-оркестрация OOS (6 узлов) и запуск через `.invoke(...)`
 * **единый лог** — `logs/app.log`
+
+## Как это работает (pipeline v0)
+
+1. `start.sh` → `config/start.py` (bootstrap: env → settings → logging → run mode)
+2. `core/app.py` читает `run.mode` и запускает UI transport (сейчас: Telegram)
+3. Telegram UI принимает команду `/run_oos` и вызывает `cases/oos.py`
+4. `cases/oos.py`:
+   - подготавливает dataset (генерирует mock, если `data.mock.dataset_id: null`)
+   - выбирает адаптер через `adapters/factory.py`
+   - запускает LangGraph workflow (`agents/oos/graph.py`)
+5. Workflow детектит OOS, формирует задачи, сохраняет run-артефакты в `storage/`
+6. `/last` читает последний отчёт + статус задач из артефактов последнего run
 
 ## Управление и запуск
 
@@ -112,6 +126,12 @@ bash start.sh
 * `mock.stores`: int — число магазинов
 * `mock.skus`: int — число SKU
 * `mock.category`: str — категория (например `"Vitamins"`)
+
+**Data adapter (v0)**
+* `data.adapter`: сейчас только `"mock"`
+* `data.mock.dataset_id`: `str | null`
+  * если `null` — при `/run_oos` dataset генерируется из `mock.*` и сохраняется в `storage/mock/<dataset_id>/dataset.json`
+  * если `str` — используется уже существующий dataset в `storage/mock/<dataset_id>/dataset.json`
 
 **Approval**
 * `approval.reject_reason`: str — причина для reject
@@ -191,24 +211,19 @@ Tasks status: draft=2, approved=0, rejected=0
 
 3. **UI**
 
-* `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, запуск LangGraph workflow (/run_oos), телеметрия
+* `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, телеметрия; вызывает `cases/*` (не читает storage напрямую)
 
 ## Структура проекта
 
 ```
 beeagent/
-├── pyproject.toml                           # зависимости, метаданные пакета, настройки tooling
-├── uv.lock                                  # lock-файл зависимостей (uv)
-├── start.sh                                 # единая точка запуска (KISS): uv sync -> uv run python3 config/start.py
-├── README.ru.md                             # документация на русском
-│
 ├── config/
 │   ├── settings.yml                         # главный конфиг (run.mode, telegram, logging, mock)
 │   └── start.py                             # bootstrap: env -> settings -> dirs -> logging -> run_app()
 │
 ├── docs/
-│   ├── ARCHITECTURE.md                      # схема модулей (core/ui/domain/mock/agents/storage)
-│   ├── CONTRIBUTING.md                      # 
+│   ├── ARCHITECTURE.md                      # схема модулей (core/ui/cases/adapters/domain/mock/agents/storage)
+│   ├── CONTRIBUTING.md                      # правила веток/PR/Conventional Commits/release-please
 │   ├── DEV_GUIDE.md                         # как запускать, дебажить, проверять
 │   ├── ROADMAP.md                           # план итераций (0–N) и цели pre-MVP
 │   └── SPEC.md                              # что считаем “готово” (DoD / MVP-границы)
@@ -218,11 +233,24 @@ beeagent/
 │
 ├── src/
 │   └── beeagent_module/                     # основной пакет (src-layout)
+│       ├── adapters/
+│       │   ├── base.py                      # DataAdapter protocol
+│       │   ├── factory.py                   # get_adapter(...) по settings.yml 
+│       │   └── mock_adapter.py              # MockAdapter (читает storage/mock/<dataset_id>/dataset.json) 
+│       │   
+│       ├── agents/
+│       │   └── oos/                         # 
+│       │   │   ├── graph.py                 # LangGraph workflow OOS (nodes + persist артефактов) 
+│       │   │   └── rules.py                 # правила детекции OOS (Rule A и т.п.) 
+│       │   │
+│       ├── cases/
+│       │   └── oos.py                       # run/last/approve кейсы (UI вызывает только cases) 
+│       │   
 │       ├── core/
 │       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
 │       │   ├── log.py                       # настройка логгера (stdout + app.log, UTC/local, очистка при старте)
 │       │   ├── paths.py                     # вычисление корня проекта и путей (logs/, storage/)
-│       │   ├── secrets.py                   # 
+│       │   ├── secrets.py                   # загрузка секретов из env по ключам из settings.yml 
 │       │   └── settings.py                  # загрузка и fail-fast валидация settings.yml
 │       │
 │       ├── domain/
@@ -230,10 +258,10 @@ beeagent/
 │       │   └── serialization.py             # сериализация доменных моделей в JSON (для dataset.json)
 │       │
 │       ├── mock/
-│       │   └── dataset.py                   # генератор/сейв/лоад мок-датасета (итерация 2)
+│       │   └── dataset.py                   # генератор/сейв/лоад мок-датасета
 │       │
 │       └── ui/
-│           └── telegram_bot.py              # команды/кнопки Telegram + allowlist + telemetry + мок-репорт
+│           └── telegram_bot.py              # transport: команды/кнопки/allowlist/telemetry; вызывает cases/*
 │ 
 ├── storage/
 │   ├── artifacts/
@@ -248,10 +276,15 @@ beeagent/
 │   └── telemetry/
 │       └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
 │
-└── tests/
-    ├── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
-    ├── test_smoke.py                        # базовый smoke: settings/logs/storage init
-    └── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
+├── tests/
+│   ├── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
+│   ├── test_smoke.py                        # базовый smoke: settings/logs/storage init
+│   └── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
+│
+├── pyproject.toml                           # зависимости, метаданные пакета, настройки tooling
+├── uv.lock                                  # lock-файл зависимостей (uv)
+├── start.sh                                 # единая точка запуска (KISS): uv sync -> uv run python3 config/start.py
+├── README.ru.md                             # документация на русском
 ```
 
 ## Диагностика и тесты
@@ -269,7 +302,9 @@ pytest -q
 * `tests/test_smoke.py` — базовая инициализация settings/logs/storage
 * `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last`, телеметрия jsonl, unknown command
 * `tests/test_mock_dataset.py` — детерминизм мок-датасета, forced anomalies, save/load
-* `tests/test_oos_graph.py` — rule A, сборка графа, запуск workflow, создание артефактов, детерминизм по seed
+* `tests/test_cases_oos.py` — кейсы OOS: run/last/approve + артефакты
+* `tests/test_adapters_mock.py` — MockAdapter + factory get_adapter
+* `tests/test_oos_graph.py` — rule A, сборка графа, workflow, артефакты, детерминизм
 
 ### Runtime smoke (ручная проверка)
 

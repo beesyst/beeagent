@@ -139,6 +139,7 @@ DoD:
 - KISS: минимум абстракций, максимум ясности.
 
 ### Итерация 5 — Cases layer v0 + Data Adapter v0 (mock → later 1C)
+**Статус: ГОТОВО**
 
 Цель: отвязать UI от деталей storage и графа. UI вызывает `cases/*`, граф читает данные только через `adapter`.
 
@@ -182,18 +183,16 @@ DoD:
 
 ### Итерация 6 — Scheduler v0 + Approval gate “обязателен”
 
-**Цель:** автозапуск без ручного `/run_oos`, но никаких “готовых задач” без approve.
+Цель: автозапуск без ручного `/run_oos`, но никаких “готовых задач” без approve.
 
 Сделать:
-1) Scheduler (KISS):
+1. Scheduler (KISS):
 - простой periodic loop: каждые N секунд
 - без cron/apscheduler на этом этапе
-
-2) Политика approval:
+2. Политика approval:
 - после scheduled-run задачи всегда остаются `draft`
 - бот отправляет сообщение: “New run ready → Approve/Reject”
-
-3) Настройки:
+3. Настройки:
 - `scheduler.enabled: bool`
 - `scheduler.interval_sec: int`
 - `scheduler.run_on_start: bool` (опционально)
@@ -207,8 +206,6 @@ DoD:
 - без approve задачи остаются draft
 - approve/reject работает для последнего run
 - `pytest -q` проходит
-
----
 
 ### Итерация 7 — Mini-observability v0 (timing шагов)
 
