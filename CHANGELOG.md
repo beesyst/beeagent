@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.6.0...beeagent-v0.7.0) (2026-02-19)
+
+
+### Features
+
+* **scheduler:** add periodic scheduled OOS runs with mandatory approval ([411fd32](https://github.com/beesyst/beeagent/commit/411fd32793c5f76193a94ad3ac364a9b7f2cdd39))
+
 ## [0.6.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.5.0...beeagent-v0.6.0) (2026-02-19)
 
 
