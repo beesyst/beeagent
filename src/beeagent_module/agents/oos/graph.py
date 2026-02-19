@@ -2,23 +2,25 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from beeagent_module.adapters.base import DataAdapter
 from beeagent_module.agents.oos.rules import detect_rule_a
 from beeagent_module.domain.models import Alert, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
-from beeagent_module.mock.dataset import load_mock_dataset
 
 
 # Схема состояний для workflow (type hints)
 class OOSState(TypedDict, total=False):
-    dataset_id: str
     storage_dir: Path
     logger: logging.Logger
+    adapter: DataAdapter
+    adapter_name: str
+    trigger: str
 
     stores: list[Any]
     skus: list[Any]
@@ -45,20 +47,40 @@ def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSS
 # Node 2: загрузка данных из storage и десериализация в объекты доменной модели
 def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
-    dataset_id = state.get("dataset_id")
-    storage_dir = state.get("storage_dir")
-    if not dataset_id or not storage_dir:
-        raise ValueError("dataset_id and storage_dir required")
+    adapter = state.get("adapter")
+    if adapter is None:
+        raise ValueError("adapter is required")
 
-    dataset_path = storage_dir / "mock" / dataset_id / "dataset.json"
-    loaded = load_mock_dataset(dataset_path)
+    stores, skus = adapter.get_catalog()
+    sales = adapter.get_sales()
+    stock = adapter.get_stock()
+    shelf_signals = adapter.get_shelf_signals()
+    dataset_id = getattr(adapter, "dataset_id", "unknown")
+    get_meta = getattr(adapter, "get_meta", None)
 
-    state["stores"] = loaded.get("stores", [])
-    state["skus"] = loaded.get("skus", [])
-    state["sales"] = loaded.get("sales", [])
-    state["stock"] = loaded.get("stock", [])
-    state["shelf_signals"] = loaded.get("shelf_signals", [])
-    state["run_meta"] = loaded["meta"]
+    state["stores"] = stores
+    state["skus"] = skus
+    state["sales"] = sales
+    state["stock"] = stock
+    state["shelf_signals"] = shelf_signals
+    run_id = state.get("run_id", "unknown")
+
+    if callable(get_meta):
+        meta = cast(RunMeta, get_meta())
+
+        state["run_meta"] = RunMeta(
+            run_id=run_id,
+            created_at=getattr(meta, "created_at", datetime.now(UTC).isoformat()),
+            dataset_id=getattr(meta, "dataset_id", dataset_id),
+            seed=getattr(meta, "seed", 0),
+        )
+    else:
+        state["run_meta"] = RunMeta(
+            run_id=run_id,
+            created_at=datetime.now(UTC).isoformat(),
+            dataset_id=dataset_id,
+            seed=0,
+        )
 
     return state
 
@@ -218,6 +240,8 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
         "created_at": datetime.now(UTC).isoformat(),
         "dataset_id": run_meta.dataset_id if run_meta else None,
         "seed": run_meta.seed if run_meta else None,
+        "adapter": state.get("adapter_name"),
+        "trigger": state.get("trigger", "manual"),
         "alerts_count": len(alerts),
         "tasks_count": len(tasks),
     }
@@ -275,15 +299,19 @@ def build_oos_graph():
 
 # Функция для запуска всего workflow OOS-детекции с заданным dataset_id и storage_dir
 def run_oos_workflow(
-    dataset_id: str,
     storage_dir: Path,
+    adapter: DataAdapter,
+    adapter_name: str,
+    trigger: str,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     graph = build_oos_graph()
 
     initial_state: OOSState = {
-        "dataset_id": dataset_id,
         "storage_dir": storage_dir,
+        "adapter": adapter,
+        "adapter_name": adapter_name,
+        "trigger": trigger,
     }
     if logger is not None:
         initial_state["logger"] = logger

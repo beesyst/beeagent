@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
+from beeagent_module.cases.oos import (
+    approve_last_run_case,
+    get_last_report_case,
+    run_oos_case,
+)
 from beeagent_module.core.paths import get_storage_dir
 from beeagent_module.core.secrets import load_secrets
 
@@ -67,6 +71,7 @@ def _build_application(
     application.bot_data["chat_id"] = chat_id
     application.bot_data["telemetry_enabled"] = telemetry_enabled
     application.bot_data["settings"] = settings
+    application.bot_data["storage_dir"] = storage_dir
     application.bot_data["telemetry_path"] = (
         storage_dir / "telemetry" / "telegram_updates.jsonl"
     )
@@ -147,25 +152,12 @@ async def handle_last(update: Any, context: Any) -> None:
     if message is None:
         return
 
-    report_path = _get_last_report_path(context)
-    if not report_path.exists():
-        reply = getattr(message, "reply_text", None)
-        if reply is None:
-            return
-
-        await reply("No reports yet. Run /run_oos first.")
+    storage_dir = context.bot_data["storage_dir"]
+    report_text = get_last_report_case(storage_dir)
+    if report_text is None:
+        await message.reply_text("No reports yet. Run /run_oos first.")
         return
 
-    report_text = report_path.read_text(encoding="utf-8")
-    storage_dir = get_storage_dir()
-    run_id = _load_last_run_id(storage_dir)
-    if run_id:
-        summary_line, reject_reason = _load_tasks_status_summary(storage_dir, run_id)
-        report_text = _append_status_to_report(
-            report_text,
-            summary_line,
-            reject_reason,
-        )
     await message.reply_text(report_text)
 
 
@@ -198,22 +190,11 @@ async def handle_menu_button(
         return
 
     if query.data == BUTTON_SHOW_REPORT:
-        report_path = _get_last_report_path(context)
-        if not report_path.exists():
+        storage_dir = context.bot_data["storage_dir"]
+        report_text = get_last_report_case(storage_dir)
+        if report_text is None:
             await reply("No reports yet. Run /run_oos first.")
             return
-
-        report_text = report_path.read_text(encoding="utf-8")
-
-        storage_dir = get_storage_dir()
-        run_id = _load_last_run_id(storage_dir)
-        if run_id:
-            summary_line, reject_reason = _load_tasks_status_summary(
-                storage_dir, run_id
-            )
-            report_text = _append_status_to_report(
-                report_text, summary_line, reject_reason
-            )
 
         await reply(report_text)
         return
@@ -264,108 +245,20 @@ def _build_main_menu():
 
 # Выполнение сценария OOS через LangGraph и сохранение отчета
 async def _run_oos_and_reply(message: Any, context: Any) -> None:
-    from beeagent_module.agents.oos.graph import run_oos_workflow
-    from beeagent_module.core.paths import get_storage_dir
-    from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
-
     settings = context.bot_data["settings"]
     logger: logging.Logger = context.bot_data["logger"]
-    storage_dir = get_storage_dir()
+    storage_dir = context.bot_data["storage_dir"]
 
-    # генерация mock-данных и сохранение в storage для OOS-сканирования
-    mock_cfg = settings["mock"]
-    dataset = generate_mock_dataset(
-        seed=mock_cfg["seed"],
-        weeks=mock_cfg["weeks"],
-        stores=mock_cfg["stores"],
-        skus=mock_cfg["skus"],
-        category=mock_cfg["category"],
-    )
-    save_mock_dataset(dataset=dataset, storage_dir=storage_dir)
-    dataset_id = dataset["meta"]["dataset_id"]
-
-    # запуск OOS-сканирования через LangGraph
-    result = run_oos_workflow(
-        dataset_id=dataset_id,
+    result = run_oos_case(
+        settings=settings,
         storage_dir=storage_dir,
         logger=logger,
+        trigger="manual",
     )
 
     report_text = result["report_text"]
 
-    # сохранение отчета для команды /last
-    report_path = _get_last_report_path(context)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(report_text, encoding="utf-8")
-
     await message.reply_text(report_text)
-
-
-# Путь к маркеру последнего run_id (для approval/status)
-def _get_last_run_path(storage_dir: Path) -> Path:
-    return storage_dir / "reports" / "last_run.json"
-
-
-# Чек наличия последнего run_id для загрузки статуса задач
-def _load_last_run_id(storage_dir: Path) -> str | None:
-    last_run_path = _get_last_run_path(storage_dir)
-    if not last_run_path.exists():
-        return None
-
-    payload = json.loads(last_run_path.read_text(encoding="utf-8"))
-    return payload.get("run_id")
-
-
-# Чек статуса задач по run_id
-def _load_tasks_status_summary(
-    storage_dir: Path,
-    run_id: str,
-) -> tuple[str, str | None]:
-    run_dir = storage_dir / "runs" / run_id
-    approved_path = run_dir / "tasks_approved.json"
-    draft_path = run_dir / "tasks_draft.json"
-
-    if approved_path.exists():
-        tasks = json.loads(approved_path.read_text(encoding="utf-8"))
-    elif draft_path.exists():
-        tasks = json.loads(draft_path.read_text(encoding="utf-8"))
-    else:
-        summary_line = "Tasks status: draft=0, approved=0, rejected=0"
-        return summary_line, None
-
-    counts = {
-        "draft": 0,
-        "approved": 0,
-        "rejected": 0,
-    }
-    reject_reason = None
-
-    for task in tasks:
-        status = task.get("status", "draft")
-        if status in counts:
-            counts[status] += 1
-        if status == "rejected" and task.get("reason"):
-            reject_reason = task.get("reason")
-
-    summary_line = (
-        "Tasks status: "
-        f"draft={counts['draft']}, "
-        f"approved={counts['approved']}, "
-        f"rejected={counts['rejected']}"
-    )
-    return summary_line, reject_reason
-
-
-# Добавление статуса задач в отчет
-def _append_status_to_report(
-    report_text: str,
-    summary_line: str,
-    reject_reason: str | None,
-) -> str:
-    report = f"{report_text}\n\n{summary_line}"
-    if reject_reason:
-        report = f"{report}\nReject reason: {reject_reason}"
-    return report
 
 
 # Обработка одобрения или отклонения задач и сохранение результата
@@ -375,45 +268,9 @@ async def _approve_or_reject_tasks(
     decision: str,
 ) -> None:
     settings = context.bot_data["settings"]
-    storage_dir = get_storage_dir()
-    run_id = _load_last_run_id(storage_dir)
-
-    if not run_id:
-        await message.reply_text("No runs yet. Run /run_oos first.")
-        return
-
-    run_dir = storage_dir / "runs" / run_id
-    draft_path = run_dir / "tasks_draft.json"
-    if not draft_path.exists():
-        await message.reply_text("No draft tasks found for last run.")
-        return
-
-    tasks = json.loads(draft_path.read_text(encoding="utf-8"))
-    if decision == "approved":
-        for task in tasks:
-            task["status"] = "approved"
-            task.pop("reason", None)
-    elif decision == "rejected":
-        reject_reason = settings["approval"]["reject_reason"]
-        for task in tasks:
-            task["status"] = "rejected"
-            task["reason"] = reject_reason
-    else:
-        await message.reply_text("Unknown approval decision.")
-        return
-
-    approved_path = run_dir / "tasks_approved.json"
-    approved_path.write_text(
-        json.dumps(tasks, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    await message.reply_text(f"Tasks {decision} for run {run_id}.")
-
-
-# Возврат пути к последнему отчету
-def _get_last_report_path(context: Any) -> Path:
-    return context.bot_data["last_report_path"]
+    storage_dir = context.bot_data["storage_dir"]
+    result_text = approve_last_run_case(settings, storage_dir, decision)
+    await message.reply_text(result_text)
 
 
 # Чек allowlist по chat_id и отклонение чухих чатов

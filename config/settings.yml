@@ -23,5 +23,10 @@ mock:
   skus: 12
   category: "Vitamins"
 
+data:
+  adapter: "mock"
+  mock:
+    dataset_id: null
+
 approval:
   reject_reason: "Rejected by operator"

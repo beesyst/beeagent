@@ -33,6 +33,11 @@ mock:
   skus: 2
   category: "Vitamins"
 
+data:
+  adapter: "mock"
+  mock:
+    dataset_id:
+
 approval:
   reject_reason: "Rejected by operator"
 """.strip()

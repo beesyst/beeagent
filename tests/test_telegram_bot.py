@@ -68,10 +68,17 @@ def make_context(
                     "skus": 3,
                     "category": "Vitamins",
                 },
+                "data": {
+                    "adapter": "mock",
+                    "mock": {
+                        "dataset_id": None,
+                    },
+                },
                 "approval": {
                     "reject_reason": "Rejected by operator",
                 },
             },
+            "storage_dir": tmp_path,
         }
     )
 

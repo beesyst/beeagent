@@ -18,6 +18,7 @@ REQUIRED_KEYS = (
     ("mock", "stores"),
     ("mock", "skus"),
     ("mock", "category"),
+    ("data", "adapter"),
     ("approval", "reject_reason"),
 )
 
@@ -96,6 +97,19 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("mock", "category")), str):
         raise RuntimeError("Invalid type for mock.category, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("data", "adapter")), str):
+        raise RuntimeError("Invalid type for data.adapter, expected string")
+
+    adapter_name = _get_nested_value(settings, ("data", "adapter"))
+    if adapter_name != "mock":
+        raise RuntimeError("Unsupported data.adapter, expected 'mock'")
+
+    dataset_id = _get_nested_value(settings, ("data", "mock", "dataset_id"))
+    if dataset_id is not None and not isinstance(dataset_id, str):
+        raise RuntimeError(
+            "Invalid type for data.mock.dataset_id, expected string or null"
+        )
 
     if not isinstance(_get_nested_value(settings, ("approval", "reject_reason")), str):
         raise RuntimeError(
