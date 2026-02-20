@@ -4,8 +4,10 @@
 
 Текущие демо-кейсы: **OOS Detector** и **Promo Scan**.
 
-Пайплайн демо:
-Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report → approval (approve/reject) → storage artifacts
+Пайплайн демо (v0):
+Telegram → cases (OOS/Promo) → adapters (mock) → LangGraph workflow → report → storage artifacts
+
+Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён.
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -15,7 +17,7 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
 
 * **telegram** — Telegram бот:
   * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
-  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**
   * **allowlist**: доступ только одному admin chat_id (через env)
 
 Режим задаётся в `config/settings.yml`:
@@ -26,6 +28,8 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
 * `trigger=manual` — когда запускаем `/run_oos` или кнопку
 * `trigger=scheduled` — когда запускает scheduler (по интервалу)
 
+В v0 scheduler запускает только OOS case (для демо-потока approval).
+
 Принцип: UI-канал — тонкий слой, который вызывает только `cases/*`.
 
 ## Основные возможности (на текущий момент)
@@ -34,8 +38,8 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
   * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
-  * `/run_promo` вызывает Promo case (`cases/promo.py`) и сохраняет артефакты
-  * `/last` читает последний отчёт через case (`get_last_report_case`) + summary по статусу задач
+  * `/last` показывает последний OOS отчёт через case (`get_last_report_case`) + summary по статусу задач и reject reason
+  * `/run_promo` возвращает promo-отчёт сразу в ответ (v0), а “last report” для promo пока не ведётся
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
   * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
   * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
@@ -46,14 +50,14 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
 * **KISS security**
   * доступ только из одного admin chat_id (allowlist)
 * **Артефакты**
-  * `storage/reports/last_oos_report.md` — последний отчёт (markdown) для `/last`
-  * `storage/reports/last_run.json` — указатель на последний run_id
+  * `storage/reports/last_oos_report.md` — последний OOS отчёт (markdown) для `/last`
+  * `storage/reports/last_run.json` — указатель на последний run_id (v0 используется OOS flow)
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
   * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
   * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
-  * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
+  * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи (v0: только для OOS после approve/reject)
   * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms каждого шага workflow
   * `storage/artifacts/<run_id>/report.md` — markdown отчёт
   * `storage/artifacts/<run_id>/report.html` — HTML отчёт
@@ -130,15 +134,6 @@ bash start.sh
 * `telegram.chat_id_env`: имя переменной окружения для allowlist chat_id (например `CHAT_ID`)
 * `telegram.telemetry_enabled`: `true|false` — писать телеметрию апдейтов в `storage/telemetry/*.jsonl`
 
-**Scheduler (v0)**
-* `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
-* `scheduler.interval`: `int > 0` — интервал в секундах между scheduled-run
-* `scheduler.start_run`: `true|false`
-  * если `true` — один scheduled-run сразу после старта, затем по интервалу
-  * если `false` — только по интервалу
-
-Поведение: после scheduled-run бот отправляет **admin-only** уведомление: `New run ready → Approve/Reject`.
-
 **Mock dataset**
 * `mock.seed`: int — seed для детерминированного датасета
 * `mock.weeks`: int — длина истории (недель)
@@ -157,11 +152,13 @@ bash start.sh
 * `promo.units_max`: int — максимальные продажи за период
 
 **Scheduler (v0)**
-* `scheduler.enabled`: `true|false`
-* `scheduler.interval`: `int > 0` (в сек)
+* `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
+* `scheduler.interval`: `int > 0` — интервал в секундах между scheduled-run
 * `scheduler.start_run`: `true|false`
-  * если `true` — выполняется один scheduled-run сразу после старта, затем по интервалу
+  * если `true` — один scheduled-run сразу после старта, затем по интервалу
   * если `false` — только по интервалу
+
+Поведение: после scheduled-run бот отправляет **admin-only** уведомление: `New run ready → Approve/Reject`.
 
 **Approval**
 * `approval.reject_reason`: str — причина для reject
@@ -307,6 +304,7 @@ beeagent/
 │       │   └── dataset.py                   # генератор/сейв/лоад мок-датасета
 │       │
 │       └── ui/
+│           ├── slack_stub.py                #
 │           └── telegram_bot.py              # transport: команды/кнопки/allowlist/telemetry; вызывает cases/*
 │ 
 ├── storage/
@@ -346,12 +344,12 @@ pytest -q
 Что покрыто:
 
 * `tests/test_smoke.py` — базовая инициализация settings/logs/storage
-* `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last`, телеметрия jsonl, unknown command
+* `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last` (OOS), телеметрия, scheduler tick (OOS), `/run_promo`
 * `tests/test_mock_dataset.py` — детерминизм мок-датасета, forced anomalies, save/load
-* `tests/test_cases_oos.py` — кейсы OOS: run/last/approve + артефакты
 * `tests/test_adapters_mock.py` — MockAdapter + factory get_adapter
 * `tests/test_oos_graph.py` — rule A, сборка графа, workflow, артефакты, детерминизм
-* `tests/test_cases_oos.py` — кейсы OOS: run/last/approve + run-артефакты + steps.json
+* `tests/test_cases_oos.py` — OOS case: run/last/approve + run-артефакты + steps.json
+* `tests/test_cases_promo.py` — Promo case: run + run-артефакты + report.md/report.html
 
 ### Runtime smoke (ручная проверка)
 
