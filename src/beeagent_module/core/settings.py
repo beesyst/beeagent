@@ -23,6 +23,8 @@ REQUIRED_KEYS = (
     ("scheduler", "interval"),
     ("scheduler", "start_run"),
     ("approval", "reject_reason"),
+    ("promo", "stock_min"),
+    ("promo", "units_max"),
 )
 
 
@@ -132,6 +134,18 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid type for approval.reject_reason, expected string"
         )
+
+    promo_stock_min = _get_nested_value(settings, ("promo", "stock_min"))
+    if not isinstance(promo_stock_min, int):
+        raise RuntimeError("Invalid type for promo.stock_min, expected int")
+    if promo_stock_min < 0:
+        raise RuntimeError("Invalid value for promo.stock_min, expected >= 0")
+
+    promo_units_max = _get_nested_value(settings, ("promo", "units_max"))
+    if not isinstance(promo_units_max, int):
+        raise RuntimeError("Invalid type for promo.units_max, expected int")
+    if promo_units_max < 0:
+        raise RuntimeError("Invalid value for promo.units_max, expected >= 0")
 
 
 # Возврат вложенного значения по пути ключей или None.

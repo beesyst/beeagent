@@ -2,7 +2,7 @@
 
 **BeeAgent** — каркас (framework) для написания AI-агентов под корпоративные кейсы с end-to-end демо-потоком.
 
-Текущий демо-кейс: **OOS Detector**.
+Текущие демо-кейсы: **OOS Detector** и **Promo Scan**.
 
 Пайплайн демо:
 Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report → approval (approve/reject) → storage artifacts
@@ -14,8 +14,8 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
 Сейчас реализован один режим запуска (UI transport):
 
 * **telegram** — Telegram бот:
-  * команды: `/start`, `/help`, `/run_oos`, `/last`
-  * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
+  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
   * **allowlist**: доступ только одному admin chat_id (через env)
 
 Режим задаётся в `config/settings.yml`:
@@ -34,9 +34,10 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
   * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
+  * `/run_promo` вызывает Promo case (`cases/promo.py`) и сохраняет артефакты
   * `/last` читает последний отчёт через case (`get_last_report_case`) + summary по статусу задач
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
-  * inline-кнопки: **Run OOS Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
   * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
     * после scheduled-run бот отправляет admin chat сообщение:
       * `New run ready → Approve/Reject`
@@ -49,7 +50,7 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
   * `storage/reports/last_run.json` — указатель на последний run_id
   * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
   * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
-  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts + `adapter` + `trigger`)
+  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи
@@ -80,7 +81,7 @@ Telegram → cases (OOS) → adapters (mock) → LangGraph workflow → report �
 
 1. `start.sh` → `config/start.py` (bootstrap: env → settings → logging → run mode)
 2. `core/app.py` читает `run.mode` и запускает UI-канал (сейчас: Telegram)
-3. UI-канал вызывает нужный `cases/*` (сейчас реализован demo-case: `cases/oos.py`)
+3. UI-канал вызывает нужный `cases/*` (сейчас реализованы demo-cases: `cases/oos.py`, `cases/promo.py`)
 4. Case выбирает adapter, запускает workflow и получает результат (report + artifacts)
 
 ## Управление и запуск
@@ -151,6 +152,10 @@ bash start.sh
   * если `null` — при `/run_oos` dataset генерируется из `mock.*` и сохраняется в `storage/mock/<dataset_id>/dataset.json`
   * если `str` — используется уже существующий dataset в `storage/mock/<dataset_id>/dataset.json`
 
+**Promo (v0)**
+* `promo.stock_min`: int — минимальный остаток для promo-кандидатов
+* `promo.units_max`: int — максимальные продажи за период
+
 **Scheduler (v0)**
 * `scheduler.enabled`: `true|false`
 * `scheduler.interval`: `int > 0` (в сек)
@@ -195,7 +200,7 @@ Tasks status: draft=2, approved=0, rejected=0
 Папка: `storage/runs/<run_id>/`
 
 Файлы:
-* `run.json` — meta выполнения (dataset_id/seed/counts + `adapter` + `trigger`)
+* `run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
 * `alerts.json` — алерты Rule A
 * `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
 * `steps.json` — observability v0: duration_ms каждого шага workflow
@@ -238,6 +243,21 @@ Tasks status: draft=2, approved=0, rejected=0
 3. **UI**
 
 * `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, телеметрия; вызывает `cases/*` (не читает storage напрямую)
+
+### Контракт UI (v0)
+
+UI-каналы — тонкий transport-слой.
+
+Контракт:
+1) UI вызывает только `cases/*`.
+2) `cases/*` запускают `agents/*` и готовят входные параметры.
+3) `agents/*` используют `adapters/*` и пишут артефакты в `storage/`.
+4) UI не читает `storage/*` напрямую.
+
+Будущие каналы (planned):
+- slack
+- discord
+- whatsapp
 
 ## Структура проекта
 

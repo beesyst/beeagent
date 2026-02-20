@@ -18,6 +18,7 @@ from beeagent_module.ui.telegram_bot import (
     handle_last,
     handle_menu_button,
     handle_run_oos,
+    handle_run_promo,
     handle_start,
     handle_unknown_command,
 )
@@ -99,6 +100,10 @@ def make_context(
                 },
                 "approval": {
                     "reject_reason": "Rejected by operator",
+                },
+                "promo": {
+                    "stock_min": 10,
+                    "units_max": 2,
                 },
             },
             "storage_dir": tmp_path,
@@ -372,3 +377,13 @@ def test_scheduler_loop_continues_after_case_error(
 
     assert call_count["value"] == 2
     assert "scheduled run failed" in caplog.text
+
+
+# Тест: нажатия кнопки "Run Promo" вызывает сценарий promo и возвращает отчет promo
+def test_run_promo_returns_report(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+
+    promo_update = make_message_update(chat_id=1, text="/run_promo", update_id=60)
+    run_async_handler(handle_run_promo, promo_update, context)
+
+    assert "Promo Scan Report" in promo_update.effective_message.replies[-1]

@@ -223,6 +223,7 @@ DoD:
 - `pytest -q` проходит
 
 ### Итерация 8 — 2-й агент v0 + multi-channel UI readiness
+**Статус: ГОТОВО**
 
 Цель: показать расширяемость платформы:
 - новый агент = новый `cases/*` + `agents/*` + кнопка/команда в UI
@@ -246,6 +247,56 @@ DoD:
 - второй агент запускается end-to-end через Telegram
 - артефакты создаются по тому же стандарту
 - в доке зафиксирован контракт: UI → cases → agents/adapter/storage
+- `pytest -q` проходит
+
+### Итерация 9 — Quiz Agent v0 (Pharmacy demo) + WOW UX (Telegram)
+
+Цель: сделать “вау-демо” для маркетологов и пилота:
+пользователь задаёт запрос → агент проводит квиз (вопросы/варианты) → собирает ответы → считает результат → выдаёт рекомендации + сохраняет артефакты.
+
+Сделать:
+1. Новый кейс + агент:
+- `cases/quiz.py`:
+  - `start_quiz_case(...)` — старт сессии (создать session_id, первый вопрос)
+  - `answer_quiz_case(...)` — принять ответ, вернуть следующий вопрос или финальный результат
+  - `get_last_quiz_result_case(...)` — вернуть последний результат квиза (для `/last_quiz`)
+- `agents/quiz/graph.py` (LangGraph):
+  - nodes: collect_input → load_quiz_spec → ask_question → record_answer → compute_result → persist_run
+  - граф НЕ знает про Telegram, отдаёт “screen” (текст + варианты) как данные
+2. Quiz spec (контент) без хардкода:
+- хранить спецификацию квиза в `storage/quiz/pharmacy_quiz.json` (или `config/quiz/pharmacy_quiz.yml`)
+- минимальный формат:
+  - title
+  - questions[]: {id, text, options[], correct_option_id?, score_map?}
+  - result_rules[]: границы score → рекомендация
+3. Сессии (state) для чата:
+- хранить состояние квиза по `chat_id` (или session_id) в `storage/sessions/<chat_id>.json`
+- state: agent="quiz", quiz_id, current_question_idx, answers[], score_so_far, run_id
+4. Telegram UX:
+- команда `/quiz_pharmacy` — старт квиза
+- inline-кнопки вариантов ответа (callback_data содержит question_id + option_id)
+- команда `/last_quiz` — показать последний результат квиза
+- allowlist обязателен (как везде)
+5. Артефакты (единый стандарт run):
+- `storage/runs/<run_id>/run.json`:
+  - `"agent": "quiz"`
+  - `"quiz_id": "pharmacy"`
+  - `"trigger": "manual" | "scheduled"`
+- `storage/runs/<run_id>/quiz_answers.json` — ответы пользователя
+- `storage/runs/<run_id>/quiz_result.json` — score + итоговая рекомендация
+- `storage/artifacts/<run_id>/report.md` и `report.html` — человекочитаемый итог
+- `storage/runs/<run_id>/steps.json` — timing шагов (как общий стандарт observability)
+6. Настройки (если нужны новые ключи — обязательно через settings.yml + fail-fast):
+- `quiz.enabled: bool`
+- `quiz.default_id: "pharmacy"`
+- `quiz.storage_dir: "storage/quiz"` (или вычислять от storage, но путь контролируемый)
+
+DoD:
+- `bash start.sh` работает
+- `/quiz_pharmacy` запускает квиз и показывает первый вопрос с кнопками вариантов
+- ответы кнопками проходят весь квиз до финального результата (score + рекомендация)
+- `/last_quiz` показывает последний результат
+- создаются артефакты run + session в `storage/`
 - `pytest -q` проходит
 
 ## Этап 3 — Enterprise hardening (после подтверждения проекта)
