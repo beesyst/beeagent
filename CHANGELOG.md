@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.9.0...beeagent-v0.10.0) (2026-02-20)
+
+
+### Features
+
+* **quiz:** add telegram pharmacy quiz with artifacts and last result ([7ad71f4](https://github.com/beesyst/beeagent/commit/7ad71f4ec4ceb0295b3b9293bed31d1ea02aaf12))
+
 ## [0.9.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.8.0...beeagent-v0.9.0) (2026-02-20)
 
 
