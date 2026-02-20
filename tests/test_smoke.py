@@ -45,6 +45,10 @@ scheduler:
 
 approval:
   reject_reason: "Rejected by operator"
+
+promo:
+  stock_min: 1
+  units_max: 0
 """.strip()
         + "\n",
         encoding="utf-8",

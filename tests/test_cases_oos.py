@@ -33,6 +33,10 @@ def _settings(dataset_id: str | None = None) -> dict:
         "approval": {
             "reject_reason": "Rejected by operator",
         },
+        "promo": {
+            "stock_min": 10,
+            "units_max": 2,
+        },
     }
 
 
@@ -51,6 +55,7 @@ def test_run_oos_case_creates_artifacts_and_report(tmp_path: Path) -> None:
     run_json = tmp_path / "runs" / result["run_id"] / "run.json"
     run_data = json.loads(run_json.read_text(encoding="utf-8"))
 
+    assert run_data["agent"] == "oos"
     assert run_data["adapter"] == "mock"
     assert run_data["trigger"] == "manual"
 

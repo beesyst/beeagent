@@ -35,3 +35,7 @@ scheduler:
 
 approval:
   reject_reason: "Rejected by operator" # причина отклонения заявки
+
+promo:
+  stock_min: 10 # минимальный остаток для promo-кандидатов
+  units_max: 2 # максимальные продажи за период

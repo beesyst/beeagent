@@ -10,18 +10,18 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from beeagent_module.adapters.base import DataAdapter
-from beeagent_module.agents.oos.rules import detect_rule_a
 from beeagent_module.domain.models import Alert, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
 
 
-# Схема состояний для workflow (type hints)
-class OOSState(TypedDict, total=False):
+# Схема состояний для workflow promo
+class PromoState(TypedDict, total=False):
     storage_dir: Path
     logger: logging.Logger
     adapter: DataAdapter
     adapter_name: str
     trigger: str
+    promo_cfg: dict[str, Any]
 
     stores: list[Any]
     skus: list[Any]
@@ -39,8 +39,8 @@ class OOSState(TypedDict, total=False):
     steps: list[dict[str, Any]]
 
 
-# Добавление шага observability в state + логирование длительности
-def _record_step(state: OOSState, step: str, duration_ms: int) -> None:
+# Добавление шага observability в state и логирование
+def _record_step(state: PromoState, step: str, duration_ms: int) -> None:
     steps: list[dict[str, Any]] = state.setdefault("steps", [])
     steps.append({"step": step, "duration_ms": duration_ms})
 
@@ -49,8 +49,10 @@ def _record_step(state: OOSState, step: str, duration_ms: int) -> None:
         logger.info("step=%s duration_ms=%d", step, duration_ms)
 
 
-# Node 1: сбор пользовательских данных и инициализация состояния рабочего процесса
-def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 1: сбор пользовательских данных и инициализация состояния workflow
+def collect_input(
+    state: PromoState, config: RunnableConfig | None = None
+) -> PromoState:
     _ = config
     start_time = time.perf_counter()
 
@@ -61,8 +63,8 @@ def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     return state
 
 
-# Node 2: загрузка данных из storage и десериализация в объекты доменной модели
-def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 2: загрузка данных из adapter и инициализация метаданных запуска
+def load_data(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
 
@@ -107,34 +109,60 @@ def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState
     return state
 
 
-# Node 3: применение правил OOS-детекции и генерация алертов
-def detect_oos(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 3: детекция promo-кандидатов по простым правилам
+def detect_promo_rules(
+    state: PromoState,
+    config: RunnableConfig | None = None,
+) -> PromoState:
     _ = config
     start_time = time.perf_counter()
+
+    promo_cfg = state.get("promo_cfg", {})
+    min_stock = int(promo_cfg.get("stock_min", 0))
+    max_units = int(promo_cfg.get("units_max", 0))
+
     stock_rows = state.get("stock", [])
-    shelf_signals = state.get("shelf_signals", [])
+    sales_rows = state.get("sales", [])
+
+    sales_totals: dict[tuple[str, str], int] = {}
+    for sale in sales_rows:
+        key = (sale.store_id, sale.sku_id)
+        sales_totals[key] = sales_totals.get(key, 0) + sale.units
 
     alerts: list[Alert] = []
+    seen: set[tuple[str, str]] = set()
+
     for stock_row in stock_rows:
-        rule_a_alerts = detect_rule_a(
-            stock_rows=stock_rows,
-            shelf_signals=shelf_signals,
-            sku_id=stock_row.sku_id,
-            store_id=stock_row.store_id,
-            date=stock_row.date,
-        )
-        alerts.extend(rule_a_alerts)
+        key = (stock_row.store_id, stock_row.sku_id)
+        if key in seen:
+            continue
+
+        total_units = sales_totals.get(key, 0)
+        if stock_row.stock_on_hand >= min_stock and total_units <= max_units:
+            alerts.append(
+                Alert(
+                    store_id=stock_row.store_id,
+                    sku_id=stock_row.sku_id,
+                    rule_id="PROMO_LOW_SALES",
+                    severity="medium",
+                    details=(
+                        "promo candidate: stock_on_hand="
+                        f"{stock_row.stock_on_hand}, sales_units={total_units}"
+                    ),
+                )
+            )
+            seen.add(key)
 
     state["alerts"] = alerts
 
     duration_ms = int((time.perf_counter() - start_time) * 1000)
-    _record_step(state, "detect_oos", duration_ms)
+    _record_step(state, "detect_promo_rules", duration_ms)
 
     return state
 
 
-# Node 4: генерация задач на основе алертов
-def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 4: генерация задач promo на основе алертов
+def draft_tasks(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
 
@@ -147,7 +175,7 @@ def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
                 task_id=f"task-{idx:04d}",
                 store_id=alert.store_id,
                 sku_id=alert.sku_id,
-                action="restock_and_display",
+                action="run_promo",
                 status="draft",
             )
         )
@@ -160,8 +188,10 @@ def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     return state
 
 
-# Node 5: форматирование алертов и задач в текст отчета для пользователя
-def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 5: формирование promo-отчета для пользователя
+def render_report(
+    state: PromoState, config: RunnableConfig | None = None
+) -> PromoState:
     _ = config
     start_time = time.perf_counter()
 
@@ -171,21 +201,13 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     tasks = state.get("tasks", [])
 
     dataset_id = run_meta.dataset_id if run_meta else "unknown"
-    high_alerts = [a for a in alerts if a.severity == "high"]
-    affected_stores = {a.store_id for a in alerts}
-    affected_skus = {a.sku_id for a in alerts}
-
     report_lines = [
-        "📊 OOS Detection Report",
+        "Promo Scan Report",
         f"Run ID: {run_id}",
         f"Dataset: {dataset_id}",
         "",
-        f"🚨 Alerts: {len(alerts)}",
-        f"  - High severity: {len(high_alerts)}",
-        f"  - Affected stores: {len(affected_stores)}",
-        f"  - Affected SKUs: {len(affected_skus)}",
-        "",
-        f"✅ Tasks: {len(tasks)}",
+        f"Findings: {len(alerts)}",
+        f"Tasks: {len(tasks)}",
     ]
 
     state["report_text"] = "\n".join(report_lines)
@@ -233,10 +255,10 @@ def _build_report_html(report_md: str) -> str:
         "<html>\n"
         "<head>\n"
         '  <meta charset="utf-8">\n'
-        "  <title>OOS Report</title>\n"
+        "  <title>Promo Report</title>\n"
         "</head>\n"
         "<body>\n"
-        "  <h1>OOS Report</h1>\n"
+        "  <h1>Promo Report</h1>\n"
         "  <pre>\n"
         f"{report_md}\n"
         "  </pre>\n"
@@ -245,21 +267,8 @@ def _build_report_html(report_md: str) -> str:
     )
 
 
-# Чек записи последнего run_id
-def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
-    reports_dir = storage_dir / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    last_run_path = reports_dir / "last_run.json"
-    payload = {
-        "run_id": run_id,
-        "ts": datetime.now(UTC).isoformat(),
-    }
-    last_run_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return last_run_path
-
-
-# Node 6: сохранение результатов выполнения в storage для последующего доступа и аудита
-def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+# Node 6: сохранение результатов promo run в storage
+def persist_run(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
 
@@ -278,7 +287,7 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
 
     run_data = {
         "run_id": run_id,
-        "agent": "oos",
+        "agent": "promo",
         "created_at": datetime.now(UTC).isoformat(),
         "dataset_id": run_meta.dataset_id if run_meta else None,
         "seed": run_meta.seed if run_meta else None,
@@ -318,29 +327,27 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
         encoding="utf-8",
     )
 
-    _write_last_run_marker(storage_dir, run_id)
-
     logger = state.get("logger")
     if logger:
-        logger.info("Persisted run artifacts to %s", run_dir)
+        logger.info("Persisted promo artifacts to %s", run_dir)
         logger.info("  - run.json: %s alerts, %s tasks", len(alerts), len(tasks))
         logger.info("  - report.md/report.html saved to %s", artifacts_dir)
 
     return state
 
 
-# Построение графа рабочего процесса OOS-детекции с 6 узлами
-def build_oos_graph():
-    workflow = StateGraph(OOSState)
+# Построение графа promo workflow
+def build_promo_graph():
+    workflow = StateGraph(PromoState)
     workflow.add_node("collect_input", collect_input)
     workflow.add_node("load_data", load_data)
-    workflow.add_node("detect_oos", detect_oos)
+    workflow.add_node("detect_promo_rules", detect_promo_rules)
     workflow.add_node("draft_tasks", draft_tasks)
     workflow.add_node("render_report", render_report)
     workflow.add_node("persist_run", persist_run)
     workflow.add_edge("collect_input", "load_data")
-    workflow.add_edge("load_data", "detect_oos")
-    workflow.add_edge("detect_oos", "draft_tasks")
+    workflow.add_edge("load_data", "detect_promo_rules")
+    workflow.add_edge("detect_promo_rules", "draft_tasks")
     workflow.add_edge("draft_tasks", "render_report")
     workflow.add_edge("render_report", "persist_run")
     workflow.add_edge("persist_run", END)
@@ -348,20 +355,22 @@ def build_oos_graph():
     return workflow.compile()
 
 
-# Функция для запуска всего workflow OOS-детекции с заданным dataset_id и storage_dir
-def run_oos_workflow(
+# Запуск promo workflow с заданными параметрами
+def run_promo_workflow(
     storage_dir: Path,
     adapter: DataAdapter,
     adapter_name: str,
+    promo_cfg: dict[str, Any],
     trigger: str,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
-    graph = build_oos_graph()
+    graph = build_promo_graph()
 
-    initial_state: OOSState = {
+    initial_state: PromoState = {
         "storage_dir": storage_dir,
         "adapter": adapter,
         "adapter_name": adapter_name,
+        "promo_cfg": promo_cfg,
         "trigger": trigger,
     }
     if logger is not None:
