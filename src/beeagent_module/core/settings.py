@@ -25,6 +25,8 @@ REQUIRED_KEYS = (
     ("approval", "reject_reason"),
     ("promo", "stock_min"),
     ("promo", "units_max"),
+    ("quiz", "enabled"),
+    ("quiz", "path"),
 )
 
 
@@ -146,6 +148,12 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for promo.units_max, expected int")
     if promo_units_max < 0:
         raise RuntimeError("Invalid value for promo.units_max, expected >= 0")
+
+    if not isinstance(_get_nested_value(settings, ("quiz", "enabled")), bool):
+        raise RuntimeError("Invalid type for quiz.enabled, expected bool")
+
+    if not isinstance(_get_nested_value(settings, ("quiz", "path")), str):
+        raise RuntimeError("Invalid type for quiz.path, expected string")
 
 
 # Возврат вложенного значения по пути ключей или None.

@@ -39,3 +39,7 @@ approval:
 promo:
   stock_min: 10 # минимальный остаток для promo-кандидатов
   units_max: 2 # максимальные продажи за период
+
+quiz:
+  enabled: true # true/false - включить/выключить режим квиза
+  path: "config/quiz/pharmacy_quiz.json" # путь к JSON с контентом квиза (относительно корня проекта)

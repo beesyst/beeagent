@@ -250,6 +250,7 @@ DoD:
 - `pytest -q` проходит
 
 ### Итерация 9 — Quiz Agent v0 (Pharmacy demo) + WOW UX (Telegram)
+**Статус: ГОТОВО**
 
 Цель: сделать “вау-демо” для маркетологов и пилота:
 пользователь задаёт запрос → агент проводит квиз (вопросы/варианты) → собирает ответы → считает результат → выдаёт рекомендации + сохраняет артефакты.
@@ -264,7 +265,7 @@ DoD:
   - nodes: collect_input → load_quiz_spec → ask_question → record_answer → compute_result → persist_run
   - граф НЕ знает про Telegram, отдаёт “screen” (текст + варианты) как данные
 2. Quiz spec (контент) без хардкода:
-- хранить спецификацию квиза в `storage/quiz/pharmacy_quiz.json` (или `config/quiz/pharmacy_quiz.yml`)
+- хранить спецификацию квиза в `config/quiz/pharmacy_quiz.json`
 - минимальный формат:
   - title
   - questions[]: {id, text, options[], correct_option_id?, score_map?}
@@ -298,6 +299,61 @@ DoD:
 - `/last_quiz` показывает последний результат
 - создаются артефакты run + session в `storage/`
 - `pytest -q` проходит
+
+### Итерация 10 — Explainable Recommendations v0 (OOS → Action) + LLM summary + WOW demo
+
+**Статус: TODO**
+
+Цель: показать клиенту “реального AI-агента” под ТЗ на минимальном объёме:
+Telegram → запуск OOS → объяснимые рекомендации “что делать” → approve/reject → артефакты + trace.
+
+Сделать:
+
+1. Recommendation Engine v0 (rules + метрики)
+* на базе результатов OOS (alerts/tasks) и мок-данных посчитать **рекомендации** в формате:
+  * action: `restock_shelf` / `increase_order` / `reduce_order` / `rotate_sku`
+  * reason (кратко)
+  * metrics (2–3 числа): напр. `stock_on_hand`, `units_7d`, `days_of_cover`
+  * expected_effect (heuristic): напр. “снизим потери продаж”, “уменьшим заморозку”
+  * confidence: `high|medium|low` по простому правилу
+* рекомендации **детерминированные** (без LLM в расчётах)
+2. LLM summary (API) — только для текста
+* LLM получает structured JSON (рекомендации + метрики) и возвращает:
+  * 5–10 строк “операционного” текста без ML-терминов
+  * **не меняет цифры**, только формулирует
+* если LLM выключен/нет ключа — fallback на шаблонный текст (rules-only)
+3. LangGraph trace (обязателен)
+* OOS workflow должен явно включать шаги:
+  * `collect_input` → `load_data` → `detect_oos` → `draft_tasks`
+  * `build_recommendations` → `llm_explain` (optional) → `render_report` → `persist_run`
+* в логах: `step=<name> duration_ms=<...>`
+* в `storage/runs/<run_id>/steps.json` — тайминги шагов
+4. Артефакты run (единый стандарт)
+* `storage/runs/<run_id>/run.json` (agent=oos, trigger=manual/scheduled, counts)
+* `storage/runs/<run_id>/alerts.json`
+* `storage/runs/<run_id>/tasks*.json`
+* `storage/runs/<run_id>/recommendations.json`
+* `storage/artifacts/<run_id>/report.md` + `report.html`
+* approve/reject сохраняет статус задач как сейчас
+5. Telegram UX (не меняем сильно)
+* `/run_oos` и кнопка “Run OOS Scan” возвращают **report с рекомендациями**
+* `/last` показывает последний report (с рекомендациями)
+* approve/reject работают как раньше
+Настройки (fail-fast, без хардкода):
+* `llm.enabled: bool`
+* `llm.provider: "openai"` (пока один)
+* `llm.model: "gpt-4o-mini"` (пример)
+* `llm.api_key_env: "OPENAI_API_KEY"`
+* `recommendations.enabled: bool`
+* `recommendations.max_items: int` (например 10)
+
+DoD:
+* `bash start.sh` работает
+* `/run_oos` → отчёт + 5–10 строк рекомендаций (action/reason/metrics/effect/confidence)
+* approve/reject работает
+* создаются: `recommendations.json`, `report.md/html`, `steps.json`
+* логи содержат `step=... duration_ms=...` для рекомендаций
+* `pytest -q` проходит (добавить тест на recommendations + fallback LLM off)
 
 ## Этап 3 — Enterprise hardening (после подтверждения проекта)
 - multi-tenancy (tenants, namespaces, ACL)

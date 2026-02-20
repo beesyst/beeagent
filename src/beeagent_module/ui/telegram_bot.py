@@ -12,6 +12,11 @@ from beeagent_module.cases.oos import (
     run_oos_case,
 )
 from beeagent_module.cases.promo import run_promo_case
+from beeagent_module.cases.quiz import (
+    get_last_quiz_case,
+    process_quiz_answer_case,
+    start_quiz_case,
+)
 from beeagent_module.core.paths import get_storage_dir
 from beeagent_module.core.secrets import load_secrets
 
@@ -20,6 +25,7 @@ BUTTON_RUN_PROMO = "run_promo"
 BUTTON_SHOW_REPORT = "show_report"
 BUTTON_APPROVE_TASKS = "approve_tasks"
 BUTTON_REJECT_TASKS = "reject_tasks"
+BUTTON_QUIZ_ANSWER_PREFIX = "qa_"
 
 
 # Запуск Telegram-режим и стартует polling
@@ -94,6 +100,8 @@ def _build_application(
     application.add_handler(CommandHandler("run_oos", handle_run_oos))
     application.add_handler(CommandHandler("run_promo", handle_run_promo))
     application.add_handler(CommandHandler("last", handle_last))
+    application.add_handler(CommandHandler("quiz_pharmacy", handle_quiz_pharmacy))
+    application.add_handler(CommandHandler("last_quiz", handle_last_quiz))
     application.add_handler(CallbackQueryHandler(handle_menu_button))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
 
@@ -237,7 +245,9 @@ async def handle_help(update: Any, context: Any) -> None:
         "/help - show help\n"
         "/run_oos - run mock OOS scan\n"
         "/run_promo - run promo scan\n"
-        "/last - show last report"
+        "/last - show last report\n"
+        "/quiz_pharmacy - start pharmacy quiz\n"
+        "/last_quiz - show last quiz result"
     )
 
 
@@ -289,6 +299,80 @@ async def handle_last(update: Any, context: Any) -> None:
     await message.reply_text(report_text)
 
 
+# Обработка команды /quiz_pharmacy и инициализация квиза
+async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
+    await _track_update_event(update, context, event_type="quiz_pharmacy")
+
+    if not await _ensure_allowlist(update, context):
+        return
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    settings = context.bot_data["settings"]
+    logger: logging.Logger = context.bot_data["logger"]
+    storage_dir = context.bot_data["storage_dir"]
+    chat = update.effective_chat
+    if chat is None:
+        await message.reply_text("Chat not found.")
+        return
+
+    result = start_quiz_case(
+        settings=settings,
+        storage_dir=storage_dir,
+        chat_id=chat.id,
+        logger=logger,
+    )
+
+    if "error" in result:
+        await message.reply_text(f"Error: {result['error']}")
+        return
+
+    run_id = result["run_id"]
+    question_text = result["report_text"]
+    quiz_cfg = settings["quiz"]
+    quiz_spec_path = quiz_cfg.get("path")
+
+    if quiz_spec_path:
+        from beeagent_module.cases.quiz import _load_quiz_spec
+
+        quiz_spec = _load_quiz_spec(quiz_spec_path)
+        questions = quiz_spec.get("questions", [])
+
+        if questions:
+            q = questions[0]
+            options = q.get("options", [])
+            keyboard = _build_answer_keyboard(run_id, options)
+
+            await message.reply_text(question_text, reply_markup=keyboard)
+            return
+
+    await message.reply_text(question_text)
+
+
+# Обработка команды /last_quiz и возврат последнего результата
+async def handle_last_quiz(update: Any, context: Any) -> None:
+    await _track_update_event(update, context, event_type="last_quiz")
+
+    if not await _ensure_allowlist(update, context):
+        return
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    storage_dir = context.bot_data["storage_dir"]
+    chat_id = context.bot_data["chat_id"]
+
+    result = get_last_quiz_case(storage_dir, chat_id)
+    if result is None:
+        await message.reply_text("No quiz results yet. Run /quiz_pharmacy first.")
+        return
+
+    await message.reply_text(result["report_text"])
+
+
 # Обработка нажатий inline-кнопок
 async def handle_menu_button(
     update: Any,
@@ -337,6 +421,10 @@ async def handle_menu_button(
 
     if query.data == BUTTON_REJECT_TASKS:
         await _approve_or_reject_tasks(message, context, decision="rejected")
+        return
+
+    if query.data and query.data.startswith(BUTTON_QUIZ_ANSWER_PREFIX):
+        await _handle_quiz_answer(message, context, query.data)
         return
 
     await reply("Unknown action.")
@@ -475,3 +563,89 @@ async def _track_update_event(
 
     with telemetry_path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+# Билд клавиатуры с вариантами ответов для вопроса квиза
+def _build_quiz_question_keyboard(run_id: str):
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    except ModuleNotFoundError:
+        return None
+
+    return InlineKeyboardMarkup([])
+
+
+# Билд клавиатуры с вариантами ответов для вопроса квиза
+def _build_answer_keyboard(run_id: str, options: list[str]):
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    except ModuleNotFoundError:
+        return None
+
+    keyboard = []
+    for i, opt in enumerate(options):
+        callback_data = f"{BUTTON_QUIZ_ANSWER_PREFIX}{run_id}_{i}"
+        keyboard.append([InlineKeyboardButton(opt, callback_data=callback_data)])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+# Обработка нажатия кнопки ответа в квизе
+async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) -> None:
+    settings = context.bot_data["settings"]
+    logger: logging.Logger = context.bot_data["logger"]
+    storage_dir = context.bot_data["storage_dir"]
+    parts = callback_data.split("_")
+    if len(parts) < 3:
+        await message.reply_text("Invalid quiz data.")
+        return
+
+    run_id = "_".join(parts[1:-1])
+    try:
+        answer_idx = int(parts[-1])
+    except ValueError:
+        await message.reply_text("Invalid answer index.")
+        return
+
+    result = process_quiz_answer_case(
+        settings=settings,
+        storage_dir=storage_dir,
+        run_id=run_id,
+        answer_idx=answer_idx,
+        logger=logger,
+    )
+
+    if "error" in result:
+        await message.reply_text(f"Error: {result['error']}")
+        return
+
+    # ответ на вопрос и показ следующего или результата
+    feedback = result.get("feedback", "")
+    await message.reply_text(feedback)
+
+    if result.get("is_finished"):
+        result_data = result.get("result", {})
+        report_text = result.get("report_text", "")
+        await message.reply_text(report_text)
+        logger.info("quiz_finished run_id=%s", run_id)
+    else:
+        next_question_text = result.get("next_question", "")
+        next_q_idx = result.get("next_q_idx", 0)
+        quiz_cfg = settings.get("quiz", {})
+        quiz_spec_path = quiz_cfg.get("path")
+
+        if quiz_spec_path:
+            from beeagent_module.cases.quiz import _load_quiz_spec
+
+            quiz_spec = _load_quiz_spec(quiz_spec_path)
+            questions = quiz_spec.get("questions", [])
+
+            if next_q_idx < len(questions):
+                q = questions[next_q_idx]
+                options = q.get("options", [])
+                keyboard = _build_answer_keyboard(run_id, options)
+
+                await message.reply_text(next_question_text, reply_markup=keyboard)
+                return
+
+        await message.reply_text(next_question_text)
