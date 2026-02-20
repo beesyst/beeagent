@@ -64,3 +64,23 @@ class RunMeta:
     created_at: str
     dataset_id: str
     seed: int
+
+
+@dataclass(frozen=True)
+class QuizAnswer:
+    q_id: str
+    question: str
+    selected_answer_idx: int
+    correct_answer_idx: int
+    is_correct: bool
+
+
+@dataclass(frozen=True)
+class QuizResult:
+    run_id: str
+    quiz_id: str
+    chat_id: int
+    total_questions: int
+    correct_answers: int
+    score_percent: float
+    created_at: str

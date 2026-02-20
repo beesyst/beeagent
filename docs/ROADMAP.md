@@ -264,7 +264,7 @@ DoD:
   - nodes: collect_input → load_quiz_spec → ask_question → record_answer → compute_result → persist_run
   - граф НЕ знает про Telegram, отдаёт “screen” (текст + варианты) как данные
 2. Quiz spec (контент) без хардкода:
-- хранить спецификацию квиза в `storage/quiz/pharmacy_quiz.json` (или `config/quiz/pharmacy_quiz.yml`)
+- хранить спецификацию квиза в `config/quiz/pharmacy_quiz.json`
 - минимальный формат:
   - title
   - questions[]: {id, text, options[], correct_option_id?, score_map?}

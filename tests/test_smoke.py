@@ -49,6 +49,10 @@ approval:
 promo:
   stock_min: 1
   units_max: 0
+
+quiz:
+  enabled: true
+  path: "config/quiz/pharmacy_quiz.json"
 """.strip()
         + "\n",
         encoding="utf-8",

@@ -2,12 +2,12 @@
 
 **BeeAgent** — каркас (framework) для написания AI-агентов под корпоративные кейсы с end-to-end демо-потоком.
 
-Текущие демо-кейсы: **OOS Detector** и **Promo Scan**.
+Текущие демо-кейсы: **OOS Detector**, **Promo Scan** и **Quiz Agent** (аптечный квиз v0).
 
 Пайплайн демо (v0):
-Telegram → cases (OOS/Promo) → adapters (mock) → LangGraph workflow → report → storage artifacts
+Telegram → cases (OOS/Promo/Quiz) → adapters (mock) + quiz-spec JSON → LangGraph workflow → report → storage artifacts
 
-Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён.
+Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён. Quiz Agent v0 сохраняет ответы и результат по chat_id в storage/runs/.
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -16,8 +16,8 @@ Approval (approve/reject) сейчас реализован для кейса OO
 Сейчас реализован один режим запуска (UI transport):
 
 * **telegram** — Telegram бот:
-  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
-  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**
+  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`, `/quiz_pharmacy`, `/last_quiz`
+  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**, + **Answer buttons** для Quiz
   * **allowlist**: доступ только одному admin chat_id (через env)
 
 Режим задаётся в `config/settings.yml`:
@@ -40,8 +40,10 @@ Approval (approve/reject) сейчас реализован для кейса OO
   * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
   * `/last` показывает последний OOS отчёт через case (`get_last_report_case`) + summary по статусу задач и reject reason
   * `/run_promo` возвращает promo-отчёт сразу в ответ (v0), а “last report” для promo пока не ведётся
+  * `/quiz_pharmacy` запускает квиз с inline-кнопками ответов; сессия по chat_id; результаты в storage/runs/<run_id>/
+  * `/last_quiz` показывает последний результат квиза по chat_id
   * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
-  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**
+  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**, + **Answer buttons** для Quiz
   * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
     * после scheduled-run бот отправляет admin chat сообщение:
       * `New run ready → Approve/Reject`

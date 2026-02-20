@@ -1,0 +1,40 @@
+{
+  "quiz_id": "pharmacy_v1",
+  "title": "Pharmacy Knowledge Quiz",
+  "description": "Test your pharmacy product knowledge",
+  "questions": [
+    {
+      "q_id": "q1",
+      "question": "Which vitamin is essential for bone health?",
+      "options": ["Vitamin A", "Vitamin D", "Vitamin E", "Vitamin B12"],
+      "correct_answer_idx": 1,
+      "difficulty": "easy"
+    },
+    {
+      "q_id": "q2",
+      "question": "What is the recommended daily dosage of Vitamin C for adults?",
+      "options": ["500mg", "750mg", "1000mg", "1500mg"],
+      "correct_answer_idx": 2,
+      "difficulty": "medium"
+    },
+    {
+      "q_id": "q3",
+      "question": "Which mineral helps regulate blood pressure?",
+      "options": ["Iron", "Potassium", "Calcium", "Zinc"],
+      "correct_answer_idx": 1,
+      "difficulty": "medium"
+    },
+    {
+      "q_id": "q4",
+      "question": "What is the primary role of Omega-3 fatty acids?",
+      "options": [
+        "Boost immune system",
+        "Reduce inflammation and support heart health",
+        "Improve bone density",
+        "Enhance memory"
+      ],
+      "correct_answer_idx": 1,
+      "difficulty": "hard"
+    }
+  ]
+}
