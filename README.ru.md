@@ -5,9 +5,13 @@
 Текущие демо-кейсы: **OOS Detector**, **Promo Scan** и **Quiz Agent** (аптечный квиз v0).
 
 Пайплайн демо (v0):
-Telegram → cases (OOS/Promo/Quiz) → adapters (mock) + quiz-spec JSON → LangGraph workflow → report → storage artifacts
+Telegram → cases (OOS/Promo/Quiz) → (mock adapters / quiz-spec JSON) → workflows (LangGraph for OOS, Quiz init v0) → report → storage artifacts
 
-Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён. Quiz Agent v0 сохраняет ответы и результат по chat_id в storage/runs/.
+Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён. Quiz Agent v0 сохраняет:
+- маркер run → chat_id: storage/runs/<run_id>/session_ref.json
+- состояние сессии по chat_id: storage/sessions/<chat_id>.json
+- ответы и результат: storage/runs/<run_id>/quiz_answers.json, storage/runs/<run_id>/quiz_result.json
+- отчёт: storage/artifacts/<run_id>/report.md
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -60,7 +64,11 @@ Approval (approve/reject) сейчас реализован для кейса OO
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи (v0: только для OOS после approve/reject)
-  * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms каждого шага workflow
+  * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms шагов workflow (OOS, Quiz init v0)
+  * `storage/sessions/<chat_id>.json` — Quiz session state (v0)
+  * `storage/runs/<run_id>/session_ref.json` — run → chat_id (Quiz v0)
+  * `storage/runs/<run_id>/quiz_answers.json` — Quiz answers (v0)
+  * `storage/runs/<run_id>/quiz_result.json` — Quiz result (v0)
   * `storage/artifacts/<run_id>/report.md` — markdown отчёт
   * `storage/artifacts/<run_id>/report.html` — HTML отчёт
 
@@ -80,7 +88,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
 * **src-layout** (пакет `beeagent_module` в `src/`)
 * **PyYAML** — конфиг `config/settings.yml`
 * **python-telegram-bot** — Telegram polling bot
-* **langgraph** — workflow-оркестрация OOS (6 узлов) и запуск через `.invoke(...)`
+* **langgraph** — workflow-оркестрация OOS (v0) + Quiz init/render (v0, Iteration 10: full quiz flow)
 * **единый лог** — `logs/app.log`
 
 ## Как это работает (framework pipeline v0)
@@ -248,10 +256,12 @@ Tasks status: draft=2, approved=0, rejected=0
 UI-каналы — тонкий transport-слой.
 
 Контракт:
-1) UI вызывает только `cases/*`.
-2) `cases/*` запускают `agents/*` и готовят входные параметры.
-3) `agents/*` используют `adapters/*` и пишут артефакты в `storage/`.
-4) UI не читает `storage/*` напрямую.
+1. UI вызывает только `cases/*`.
+2. `cases/*` запускают `agents/*` и готовят входные параметры.
+3. `agents/*` используют `adapters/*` и пишут артефакты в `storage/`.
+4. UI не читает `storage/*` напрямую.
+
+Примечание (v0 Quiz): UI читает quiz-spec JSON по пути из `settings.yml` для сборки inline-кнопок. В Iteration 10 это будет вынесено в `cases/quiz.py` (UI останется тонким).
 
 Будущие каналы (planned):
 - slack
