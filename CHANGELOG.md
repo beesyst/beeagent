@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.8.0...beeagent-v0.9.0) (2026-02-20)
+
+
+### Features
+
+* **agents:** add promo agent v0 with telegram command and artifacts ([cb43c18](https://github.com/beesyst/beeagent/commit/cb43c185da056b3905a57b36456f46858224629e))
+
 ## [0.8.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.7.0...beeagent-v0.8.0) (2026-02-19)
 
 
