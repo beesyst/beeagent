@@ -50,6 +50,9 @@ llm:
   model: "gpt-5-nano" # модель LLM (пример)
   api_key_env: "OPENAI_API_KEY" # имя переменной окружения с ключом
   api_url: "https://api.openai.com/v1/responses" # URL endpoint для LLM API
+  throttling:
+    timeout: 60 # timeout LLM request in seconds
+    retries: 2 # retries on TimeoutError
 
 quiz:
   enabled: false # true/false - включить/выключить режим квиза

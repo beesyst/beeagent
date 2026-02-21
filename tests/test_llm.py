@@ -1,6 +1,7 @@
 import json
 import logging
 from unittest.mock import Mock, patch
+from urllib import error
 
 from beeagent_module.core.llm import explain_recommendations
 
@@ -23,6 +24,7 @@ def test_llm_no_api_key() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "MISSING_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -40,6 +42,7 @@ def test_llm_unsupported_provider() -> None:
         "model": "claude-3",
         "api_key_env": "API_KEY",
         "api_url": "https://api.anthropic.com/v1/messages",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -57,6 +60,7 @@ def test_llm_successful_request() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [
         {"sku": "SKU1", "action": "order", "quantity": 50},
@@ -99,6 +103,7 @@ def test_llm_successful_request() -> None:
                 assert headers["Content-Type"] == "application/json"
                 assert headers["Authorization"] == "Bearer test-api-key"
                 assert call_args[1]["method"] == "POST"
+                assert mock_urlopen.call_args[1]["timeout"] == 60
 
                 # чек результат
                 assert result == "Order 50 units of SKU1. Check SKU2 due to low stock."
@@ -112,6 +117,7 @@ def test_llm_empty_choices() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -139,6 +145,7 @@ def test_llm_request_exception() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -161,6 +168,7 @@ def test_llm_custom_api_url() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://custom.openai.proxy.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -189,6 +197,7 @@ def test_llm_missing_api_url_returns_none() -> None:
         "provider": "openai",
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
+        "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -198,3 +207,95 @@ def test_llm_missing_api_url_returns_none() -> None:
 
             assert result is None
             assert mock_request_cls.call_args is None
+
+
+# Тест: timeout retry, затем успешный ответ
+def test_llm_timeout_retries_then_success() -> None:
+    llm_cfg = {
+        "enabled": True,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
+    }
+    recommendations = [{"sku": "SKU1", "action": "order"}]
+
+    mock_response_data = {"output_text": "Recovered after retries"}
+    mock_response = Mock()
+    mock_response.read.return_value = json.dumps(mock_response_data).encode("utf-8")
+    mock_response.__enter__ = Mock(return_value=mock_response)
+    mock_response.__exit__ = Mock(return_value=False)
+
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
+        with patch(
+            "beeagent_module.core.llm.request.urlopen",
+            side_effect=[TimeoutError(), TimeoutError(), mock_response],
+        ) as mock_urlopen:
+            result = explain_recommendations(llm_cfg, recommendations)
+
+    assert result == "Recovered after retries"
+    assert mock_urlopen.call_count == 3
+
+
+# Тест: timeout после ретраев -> WARNING и None
+def test_llm_timeout_after_retries_returns_none(caplog) -> None:
+    llm_cfg = {
+        "enabled": True,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 1},
+    }
+    recommendations = [{"sku": "SKU1", "action": "order"}]
+    logger = logging.getLogger("test_llm_timeout")
+
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
+        with patch(
+            "beeagent_module.core.llm.request.urlopen", side_effect=TimeoutError()
+        ):
+            with caplog.at_level(logging.WARNING):
+                result = explain_recommendations(
+                    llm_cfg, recommendations, logger=logger
+                )
+
+    assert result is None
+    assert "llm timeout, retry 1/1" in caplog.text
+    assert "llm timeout after retries, fallback to rules-only" in caplog.text
+
+
+# Тест: HTTPError логируется как ERROR и возвращает None
+def test_llm_http_error_returns_none(caplog) -> None:
+    llm_cfg = {
+        "enabled": True,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "api_url": "https://api.openai.com/v1/responses",
+        "throttling": {"timeout": 60, "retries": 2},
+    }
+    recommendations = [{"sku": "SKU1", "action": "order"}]
+    logger = logging.getLogger("test_llm_http")
+
+    from email.message import Message
+
+    hdrs = Message()
+
+    http_error = error.HTTPError(
+        url="https://api.openai.com/v1/responses",
+        code=429,
+        msg="Too Many Requests",
+        hdrs=hdrs,
+        fp=None,
+    )
+
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
+        with patch("beeagent_module.core.llm.request.urlopen", side_effect=http_error):
+            with caplog.at_level(logging.ERROR):
+                result = explain_recommendations(
+                    llm_cfg, recommendations, logger=logger
+                )
+
+    assert result is None
+    assert "llm http error status=429" in caplog.text

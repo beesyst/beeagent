@@ -60,6 +60,9 @@ llm:
   model: "gpt-4o-mini"
   api_key_env: "OPENAI_API_KEY"
   api_url: "https://api.openai.com/v1/responses"
+  throttling:
+    timeout: 60
+    retries: 2
 
 quiz:
   enabled: true
