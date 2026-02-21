@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.10.0...beeagent-v0.11.0) (2026-02-21)
+
+
+### Features
+
+* **oos:** add explainable recommendations and optional llm summary ([230869d](https://github.com/beesyst/beeagent/commit/230869d881cb0ec49df8a8a2fdc1325ed0dd1681))
+
 ## [0.10.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.9.0...beeagent-v0.10.0) (2026-02-20)
 
 
