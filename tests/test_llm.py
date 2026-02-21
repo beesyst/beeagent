@@ -23,11 +23,10 @@ def test_llm_no_api_key() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "MISSING_KEY",
         "api_url": "https://api.openai.com/v1/responses",
-        "temperature": 0.2,
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
-    with patch("os.getenv", return_value=""):
+    with patch("beeagent_module.core.llm.os.getenv", return_value=""):
         result = explain_recommendations(llm_cfg, recommendations)
 
     assert result is None
@@ -41,11 +40,10 @@ def test_llm_unsupported_provider() -> None:
         "model": "claude-3",
         "api_key_env": "API_KEY",
         "api_url": "https://api.anthropic.com/v1/messages",
-        "temperature": 0.2,
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
-    with patch("os.getenv", return_value="test-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-key"):
         result = explain_recommendations(llm_cfg, recommendations)
 
     assert result is None
@@ -59,7 +57,6 @@ def test_llm_successful_request() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
-        "temperature": 0.2,
     }
     recommendations = [
         {"sku": "SKU1", "action": "order", "quantity": 50},
@@ -75,7 +72,7 @@ def test_llm_successful_request() -> None:
     mock_response.__enter__ = Mock(return_value=mock_response)
     mock_response.__exit__ = Mock(return_value=False)
 
-    with patch("os.getenv", return_value="test-api-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
         with patch(
             "beeagent_module.core.llm.request.urlopen", return_value=mock_response
         ) as mock_urlopen:
@@ -93,9 +90,8 @@ def test_llm_successful_request() -> None:
                 # чек payload
                 payload = json.loads(call_args[1]["data"].decode("utf-8"))
                 assert payload["model"] == "gpt-4o-mini"
-                assert payload["temperature"] == 0.2
                 assert len(payload["input"]) == 2
-                assert payload["input"][0]["role"] == "system"
+                assert payload["input"][0]["role"] == "developer"
                 assert payload["input"][1]["role"] == "user"
 
                 # чек headers
@@ -116,7 +112,6 @@ def test_llm_empty_choices() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
-        "temperature": 0.2,
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -127,7 +122,7 @@ def test_llm_empty_choices() -> None:
     mock_response.__enter__ = Mock(return_value=mock_response)
     mock_response.__exit__ = Mock(return_value=False)
 
-    with patch("os.getenv", return_value="test-api-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
         with patch(
             "beeagent_module.core.llm.request.urlopen", return_value=mock_response
         ):
@@ -144,11 +139,10 @@ def test_llm_request_exception() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
-        "temperature": 0.2,
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
-    with patch("os.getenv", return_value="test-api-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
         with patch(
             "beeagent_module.core.llm.request.urlopen",
             side_effect=Exception("Network error"),
@@ -167,7 +161,6 @@ def test_llm_custom_api_url() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://custom.openai.proxy.com/v1/responses",
-        "temperature": 0.2,
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
@@ -178,7 +171,7 @@ def test_llm_custom_api_url() -> None:
     mock_response.__enter__ = Mock(return_value=mock_response)
     mock_response.__exit__ = Mock(return_value=False)
 
-    with patch("os.getenv", return_value="test-api-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
         with patch(
             "beeagent_module.core.llm.request.urlopen", return_value=mock_response
         ):
@@ -199,7 +192,7 @@ def test_llm_missing_api_url_returns_none() -> None:
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
 
-    with patch("os.getenv", return_value="test-api-key"):
+    with patch("beeagent_module.core.llm.os.getenv", return_value="test-api-key"):
         with patch("beeagent_module.core.llm.request.Request") as mock_request_cls:
             result = explain_recommendations(llm_cfg, recommendations)
 

@@ -32,7 +32,6 @@ REQUIRED_KEYS = (
     ("llm", "model"),
     ("llm", "api_key_env"),
     ("llm", "api_url"),
-    ("llm", "temperature"),
     ("quiz", "enabled"),
     ("quiz", "path"),
 )
@@ -180,12 +179,6 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("llm", "api_url")), str):
         raise RuntimeError("Invalid type for llm.api_url, expected string")
-
-    temperature = _get_nested_value(settings, ("llm", "temperature"))
-    if not isinstance(temperature, (int, float)):
-        raise RuntimeError("Invalid type for llm.temperature, expected float")
-    if float(temperature) < 0.0 or float(temperature) > 2.0:
-        raise RuntimeError("Invalid value for llm.temperature, expected 0.0..2.0")
 
     llm_provider = _get_nested_value(settings, ("llm", "provider"))
     if llm_provider != "openai":

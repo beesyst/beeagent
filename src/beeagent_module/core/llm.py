@@ -46,21 +46,22 @@ def explain_recommendations(
         f"Recommendations JSON: {json.dumps(recommendations, ensure_ascii=False)}"
     )
 
-    temperature = llm_cfg.get("temperature")
-    if not isinstance(temperature, (int, float)):
-        if logger:
-            logger.warning(
-                "llm temperature missing/invalid, fallback to rules-only summary"
-            )
-        return None
-
     payload = {
         "model": model,
         "input": [
-            {"role": "system", "content": "You summarize recommendations."},
-            {"role": "user", "content": prompt},
+            {
+                "type": "message",
+                "role": "developer",
+                "content": "You summarize recommendations into 5-10 lines. "
+                "Use plain operational language without ML terms. "
+                "Do not change any numbers.",
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": prompt,
+            },
         ],
-        "temperature": float(temperature),
     }
 
     try:
@@ -95,6 +96,11 @@ def explain_recommendations(
                 for c in content:
                     if not isinstance(c, dict):
                         continue
+                    alt_text = c.get("output_text")
+                    if isinstance(alt_text, str) and alt_text.strip():
+                        chunks.append(alt_text.strip())
+                        continue
+
                     text = c.get("text")
                     if isinstance(text, str) and text.strip():
                         chunks.append(text.strip())
@@ -103,6 +109,19 @@ def explain_recommendations(
 
         if logger:
             logger.warning("llm response has no output_text, fallback to rules-only")
+        return None
+    except request.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8")
+        except Exception:
+            body = "<unable to read error body>"
+        if logger:
+            logger.error(
+                "llm http error status=%s body=%s, fallback to rules-only",
+                exc.code,
+                body,
+            )
         return None
     except Exception:
         if logger:

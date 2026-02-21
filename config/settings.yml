@@ -29,8 +29,8 @@ data:
     dataset_id: null # идентификатор набора данных для генерации (строка или null)
 
 scheduler:
-  enabled: true # true/false
-  interval: 30 # интервал в секундах между запусками scheduled-run (сек)
+  enabled: false # true/false
+  interval: 100 # интервал в секундах между запусками scheduled-run (сек)
   start_run: true # true/false - запускать scheduled-run при старте приложения
 
 approval:
@@ -45,12 +45,11 @@ recommendations:
   items_max: 10 # максимальное число рекомендаций в отчете
 
 llm:
-  enabled: false # true/false - включить/выключить LLM summary
+  enabled: true # true/false - включить/выключить LLM summary
   provider: "openai" # провайдер LLM (пока один)
   model: "gpt-5-nano" # модель LLM (пример)
   api_key_env: "OPENAI_API_KEY" # имя переменной окружения с ключом
   api_url: "https://api.openai.com/v1/responses" # URL endpoint для LLM API
-  temperature: 0.2 # параметр temperature для генерации ответов LLM (число от 0 до 1)
 
 quiz:
   enabled: false # true/false - включить/выключить режим квиза
