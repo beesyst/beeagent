@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.11.0...beeagent-v0.12.0) (2026-02-21)
+
+
+### Features
+
+* **llm:** move responses api_url to settings and fix client ([e79efc0](https://github.com/beesyst/beeagent/commit/e79efc0836373932ed3a9a83135409d0549677f4))
+
+
+### Bug Fixes
+
+* **llm:** add throttling retry on timeout for responses api ([e5ef348](https://github.com/beesyst/beeagent/commit/e5ef348fa7227ff87335bc046fa81ed8a82f829b))
+* **llm:** remove temperature and use responses api ([d4eacf2](https://github.com/beesyst/beeagent/commit/d4eacf2a6ab1be3bcbaba1b7e282818e6c4f5ffb))
+
 ## [0.11.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.10.0...beeagent-v0.11.0) (2026-02-21)
 
 
