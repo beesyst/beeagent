@@ -59,6 +59,15 @@ class Task:
 
 
 @dataclass(frozen=True)
+class Recommendation:
+    action: str
+    reason: str
+    metrics: dict[str, float]
+    effect: str
+    confidence: str
+
+
+@dataclass(frozen=True)
 class RunMeta:
     run_id: str
     created_at: str

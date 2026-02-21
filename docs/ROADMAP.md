@@ -301,8 +301,7 @@ DoD:
 - `pytest -q` проходит
 
 ### Итерация 10 — Explainable Recommendations v0 (OOS → Action) + LLM summary + WOW demo
-
-**Статус: TODO**
+**Статус: ГОТОВО**
 
 Цель: показать клиенту “реального AI-агента” под ТЗ на минимальном объёме:
 Telegram → запуск OOS → объяснимые рекомендации “что делать” → approve/reject → артефакты + trace.
@@ -345,7 +344,7 @@ Telegram → запуск OOS → объяснимые рекомендации 
 * `llm.model: "gpt-4o-mini"` (пример)
 * `llm.api_key_env: "OPENAI_API_KEY"`
 * `recommendations.enabled: bool`
-* `recommendations.max_items: int` (например 10)
+* `recommendations.items_max: int` (например 10)
 
 DoD:
 * `bash start.sh` работает

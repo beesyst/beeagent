@@ -105,6 +105,16 @@ def make_context(
                     "stock_min": 10,
                     "units_max": 2,
                 },
+                "recommendations": {
+                    "enabled": True,
+                    "items_max": 10,
+                },
+                "llm": {
+                    "enabled": False,
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
             },
             "storage_dir": tmp_path,
         }

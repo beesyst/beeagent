@@ -37,6 +37,16 @@ def _settings(dataset_id: str | None = None) -> dict:
             "stock_min": 10,
             "units_max": 2,
         },
+        "recommendations": {
+            "enabled": True,
+            "items_max": 10,
+        },
+        "llm": {
+            "enabled": False,
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key_env": "OPENAI_API_KEY",
+        },
     }
 
 
@@ -51,6 +61,7 @@ def test_run_oos_case_creates_artifacts_and_report(tmp_path: Path) -> None:
 
     assert result["run_id"].startswith("run-")
     assert "📊 OOS Detection Report" in result["report_text"]
+    assert "Recommendations:" in result["report_text"]
 
     run_json = tmp_path / "runs" / result["run_id"] / "run.json"
     run_data = json.loads(run_json.read_text(encoding="utf-8"))
@@ -58,6 +69,11 @@ def test_run_oos_case_creates_artifacts_and_report(tmp_path: Path) -> None:
     assert run_data["agent"] == "oos"
     assert run_data["adapter"] == "mock"
     assert run_data["trigger"] == "manual"
+
+    recommendations_json = tmp_path / "runs" / result["run_id"] / "recommendations.json"
+    assert recommendations_json.exists()
+    recommendations = json.loads(recommendations_json.read_text(encoding="utf-8"))
+    assert isinstance(recommendations, list)
 
 
 # Тест: получение последнего отчета OOS с добавлением статуса задач и причины отклонения
@@ -129,13 +145,14 @@ def test_run_oos_case_creates_steps_artifact(tmp_path: Path) -> None:
 
     steps = json.loads(steps_json.read_text(encoding="utf-8"))
     assert isinstance(steps, list)
-    assert len(steps) == 6
+    assert len(steps) == 7
 
     expected_steps = [
         "collect_input",
         "load_data",
         "detect_oos",
         "draft_tasks",
+        "build_recommendations",
         "render_report",
         "persist_run",
     ]

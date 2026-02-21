@@ -2,16 +2,19 @@
 
 **BeeAgent** — каркас (framework) для написания AI-агентов под корпоративные кейсы с end-to-end демо-потоком.
 
-Текущие демо-кейсы: **OOS Detector**, **Promo Scan** и **Quiz Agent** (аптечный квиз v0).
+Текущие демо-кейсы: **OOS Detector** (WOW demo по ТЗ) и **Promo Scan** (v0).
+Опционально: **Quiz Agent** (demo v0, выключен по умолчанию в settings).
 
 Пайплайн демо (v0):
-Telegram → cases (OOS/Promo/Quiz) → (mock adapters / quiz-spec JSON) → workflows (LangGraph for OOS, Quiz init v0) → report → storage artifacts
+Telegram → cases (OOS/Promo/Quiz) → adapters/spec → workflows:
+- OOS: LangGraph end-to-end (steps + artifacts + recommendations + optional LLM summary)
+- Promo: rules workflow v0
+- Quiz: demo v0 (session + answers/result artifacts; LangGraph используется только для init/render)
+→ report → storage artifacts
 
-Approval (approve/reject) сейчас реализован для кейса OOS (last-run marker + tasks status в /last). Promo Scan в v0 генерирует report + артефакты, но approval для него пока не включён. Quiz Agent v0 сохраняет:
-- маркер run → chat_id: storage/runs/<run_id>/session_ref.json
-- состояние сессии по chat_id: storage/sessions/<chat_id>.json
-- ответы и результат: storage/runs/<run_id>/quiz_answers.json, storage/runs/<run_id>/quiz_result.json
-- отчёт: storage/artifacts/<run_id>/report.md
+Approval (approve/reject) реализован для **OOS**: статус задач сохраняется и виден в `/last`.
+Promo Scan v0: report + artifacts (без approval).
+Quiz Agent v0: demo-артефакты сессии/ответов/результата (см. раздел “Артефакты”).
 
 Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
 
@@ -20,7 +23,8 @@ Approval (approve/reject) сейчас реализован для кейса OO
 Сейчас реализован один режим запуска (UI transport):
 
 * **telegram** — Telegram бот:
-  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`, `/quiz_pharmacy`, `/last_quiz`
+  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
+  * (опционально, если `quiz.enabled=true`): `/quiz_pharmacy`, `/last_quiz`
   * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**, + **Answer buttons** для Quiz
   * **allowlist**: доступ только одному admin chat_id (через env)
 
@@ -41,7 +45,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
 * **Telegram bot v0 (UX skeleton)**
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
-  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
+  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow, сохраняет артефакты и добавляет рекомендации в отчёт
   * `/last` показывает последний OOS отчёт через case (`get_last_report_case`) + summary по статусу задач и reject reason
   * `/run_promo` возвращает promo-отчёт сразу в ответ (v0), а “last report” для promo пока не ведётся
   * `/quiz_pharmacy` запускает квиз с inline-кнопками ответов; сессия по chat_id; результаты в storage/runs/<run_id>/
@@ -64,6 +68,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи (v0: только для OOS после approve/reject)
+  * `storage/runs/<run_id>/recommendations.json` — explainable рекомендации (OOS v1, Iteration 10)
   * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms шагов workflow (OOS, Quiz init v0)
   * `storage/sessions/<chat_id>.json` — Quiz session state (v0)
   * `storage/runs/<run_id>/session_ref.json` — run → chat_id (Quiz v0)
@@ -88,7 +93,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
 * **src-layout** (пакет `beeagent_module` в `src/`)
 * **PyYAML** — конфиг `config/settings.yml`
 * **python-telegram-bot** — Telegram polling bot
-* **langgraph** — workflow-оркестрация OOS (v0) + Quiz init/render (v0, Iteration 10: full quiz flow)
+* **langgraph** — workflow-оркестрация **OOS end-to-end** (steps/trace/artifacts) + demo-использование в Quiz (init/render v0)
 * **единый лог** — `logs/app.log`
 
 ## Как это работает (framework pipeline v0)
@@ -113,6 +118,7 @@ cp .env.example .env
 
 * `TELEGRAM_BOT_TOKEN` — токен Telegram бота
 * `CHAT_ID` — admin chat_id (allowlist)
+* (опционально, если `llm.enabled=true`) `OPENAI_API_KEY` — ключ для LLM summary
 
 > Важно: секреты не коммитим. `.env` должен быть в `.gitignore`.
 
@@ -160,6 +166,16 @@ bash start.sh
 **Promo (v0)**
 * `promo.stock_min`: int — минимальный остаток для promo-кандидатов
 * `promo.units_max`: int — максимальные продажи за период
+
+**Recommendations (OOS v1)**
+* `recommendations.enabled`: `true|false` — включить детерминированные рекомендации
+* `recommendations.items_max`: `int > 0` — максимум рекомендаций в отчете
+
+**LLM summary (optional)**
+* `llm.enabled`: `true|false` — включить текстовый summary (только текст, без расчётов)
+* `llm.provider`: сейчас только `"openai"`
+* `llm.model`: модель (например `"gpt-4o-mini"`)
+* `llm.api_key_env`: имя переменной окружения с ключом (например `OPENAI_API_KEY`)
 
 **Scheduler (v0)**
 * `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
@@ -210,6 +226,7 @@ Tasks status: draft=2, approved=0, rejected=0
 * `run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
 * `alerts.json` — алерты Rule A
 * `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
+* `recommendations.json` — explainable рекомендации (action/reason/metrics/effect/confidence)
 * `steps.json` — observability v0: duration_ms каждого шага workflow
 
 ### Approval + Export (v0)
@@ -303,6 +320,7 @@ beeagent/
 │       │   
 │       ├── core/
 │       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
+│       │   ├── llm.py                       # optional LLM summary (text-only, numbers unchanged)
 │       │   ├── log.py                       # настройка логгера (stdout + app.log, UTC/local, очистка при старте)
 │       │   ├── paths.py                     # вычисление корня проекта и путей (logs/, storage/)
 │       │   ├── secrets.py                   # загрузка секретов из env по ключам из settings.yml 

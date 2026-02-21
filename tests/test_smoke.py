@@ -50,6 +50,16 @@ promo:
   stock_min: 1
   units_max: 0
 
+recommendations:
+  enabled: true
+  items_max: 10
+
+llm:
+  enabled: false
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key_env: "OPENAI_API_KEY"
+
 quiz:
   enabled: true
   path: "config/quiz/pharmacy_quiz.json"

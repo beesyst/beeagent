@@ -25,6 +25,12 @@ REQUIRED_KEYS = (
     ("approval", "reject_reason"),
     ("promo", "stock_min"),
     ("promo", "units_max"),
+    ("recommendations", "enabled"),
+    ("recommendations", "items_max"),
+    ("llm", "enabled"),
+    ("llm", "provider"),
+    ("llm", "model"),
+    ("llm", "api_key_env"),
     ("quiz", "enabled"),
     ("quiz", "path"),
 )
@@ -148,6 +154,33 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for promo.units_max, expected int")
     if promo_units_max < 0:
         raise RuntimeError("Invalid value for promo.units_max, expected >= 0")
+
+    if not isinstance(_get_nested_value(settings, ("recommendations", "enabled")), bool):
+        raise RuntimeError("Invalid type for recommendations.enabled, expected bool")
+
+    recommendations_items_max = _get_nested_value(
+        settings, ("recommendations", "items_max")
+    )
+    if not isinstance(recommendations_items_max, int):
+        raise RuntimeError("Invalid type for recommendations.items_max, expected int")
+    if recommendations_items_max <= 0:
+        raise RuntimeError("Invalid value for recommendations.items_max, expected > 0")
+
+    if not isinstance(_get_nested_value(settings, ("llm", "enabled")), bool):
+        raise RuntimeError("Invalid type for llm.enabled, expected bool")
+
+    if not isinstance(_get_nested_value(settings, ("llm", "provider")), str):
+        raise RuntimeError("Invalid type for llm.provider, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("llm", "model")), str):
+        raise RuntimeError("Invalid type for llm.model, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("llm", "api_key_env")), str):
+        raise RuntimeError("Invalid type for llm.api_key_env, expected string")
+
+    llm_provider = _get_nested_value(settings, ("llm", "provider"))
+    if llm_provider != "openai":
+        raise RuntimeError("Unsupported llm.provider, expected 'openai'")
 
     if not isinstance(_get_nested_value(settings, ("quiz", "enabled")), bool):
         raise RuntimeError("Invalid type for quiz.enabled, expected bool")

@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict, cast
 from uuid import uuid4
@@ -11,7 +11,8 @@ from langgraph.graph import END, StateGraph
 
 from beeagent_module.adapters.base import DataAdapter
 from beeagent_module.agents.oos.rules import detect_rule_a
-from beeagent_module.domain.models import Alert, RunMeta, Task
+from beeagent_module.core.llm import explain_recommendations
+from beeagent_module.domain.models import Alert, Recommendation, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
 
 
@@ -22,6 +23,8 @@ class OOSState(TypedDict, total=False):
     adapter: DataAdapter
     adapter_name: str
     trigger: str
+    llm_cfg: dict[str, Any]
+    recommendations_cfg: dict[str, Any]
 
     stores: list[Any]
     skus: list[Any]
@@ -32,6 +35,8 @@ class OOSState(TypedDict, total=False):
     run_meta: RunMeta
     alerts: list[Alert]
     tasks: list[Task]
+    recommendations: list[Recommendation]
+    recommendations_summary: str | None
 
     report_text: str
     run_id: str
@@ -160,7 +165,122 @@ def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     return state
 
 
-# Node 5: форматирование алертов и задач в текст отчета для пользователя
+# Вспомогательные функции для формирования отчета и сохранения артефактов
+def _get_latest_stock(stock_rows: list[Any], store_id: str, sku_id: str) -> int:
+    latest_date = None
+    latest_stock = 0
+
+    for row in stock_rows:
+        if row.store_id != store_id or row.sku_id != sku_id:
+            continue
+        if latest_date is None or row.date > latest_date:
+            latest_date = row.date
+            latest_stock = row.stock_on_hand
+
+    return int(latest_stock)
+
+
+# Вспомогательная функция для суммирования units за последние 7 дней с учетом возможных проблем с датами
+def _sum_units_last_7d(sales_rows: list[Any], store_id: str, sku_id: str) -> int:
+    matched: list[tuple[datetime, int]] = []
+
+    for row in sales_rows:
+        if row.store_id != store_id or row.sku_id != sku_id:
+            continue
+        try:
+            dt = datetime.fromisoformat(row.date)
+        except ValueError:
+            return int(
+                sum(
+                    r.units
+                    for r in sales_rows
+                    if r.store_id == store_id and r.sku_id == sku_id
+                )
+            )
+        matched.append((dt, row.units))
+
+    if not matched:
+        return 0
+
+    latest = max(dt for dt, _ in matched)
+    cutoff = latest - timedelta(days=6)
+    return int(sum(units for dt, units in matched if dt >= cutoff))
+
+
+# Node 5: построение рекомендаций на основе алертов и метрик, с поддержкой конфигурации и ограничений
+def build_recommendations(
+    state: OOSState, config: RunnableConfig | None = None
+) -> OOSState:
+    _ = config
+    start_time = time.perf_counter()
+
+    rec_cfg = state.get("recommendations_cfg", {})
+    if not rec_cfg.get("enabled"):
+        state["recommendations"] = []
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        _record_step(state, "build_recommendations", duration_ms)
+        return state
+
+    max_items = int(rec_cfg["items_max"])
+    alerts = state.get("alerts", [])
+    stock_rows = state.get("stock", [])
+    sales_rows = state.get("sales", [])
+
+    recommendations: list[Recommendation] = []
+    for alert in alerts:
+        stock_on_hand = _get_latest_stock(stock_rows, alert.store_id, alert.sku_id)
+        units_7d = _sum_units_last_7d(sales_rows, alert.store_id, alert.sku_id)
+        avg_daily = max(units_7d / 7, 1)
+        days_of_cover = round(stock_on_hand / avg_daily, 2)
+        confidence = "high" if alert.severity == "high" else "medium"
+
+        recommendations.append(
+            Recommendation(
+                action="restock_shelf",
+                reason=alert.details,
+                metrics={
+                    "stock_on_hand": float(stock_on_hand),
+                    "units_7d": float(units_7d),
+                    "days_of_cover": float(days_of_cover),
+                },
+                effect="Restore on-shelf availability and reduce lost sales",
+                confidence=confidence,
+            )
+        )
+
+        if len(recommendations) >= max_items:
+            break
+
+    state["recommendations"] = recommendations
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "build_recommendations", duration_ms)
+
+    return state
+
+
+# Node 6: генерация текстового объяснения рекомендаций с помощью LLM, если включено в конфигурации
+def llm_explain(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
+    _ = config
+
+    llm_cfg = state.get("llm_cfg", {})
+    if not llm_cfg.get("enabled"):
+        state["recommendations_summary"] = None
+        return state
+
+    start_time = time.perf_counter()
+    logger = state.get("logger")
+    recommendations = model_to_dict(state.get("recommendations", []))
+    summary = explain_recommendations(llm_cfg, recommendations, logger=logger)
+    state["recommendations_summary"] = summary
+
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+    _record_step(state, "llm_explain", duration_ms)
+
+    return state
+
+
+# Node 7: форматирование алертов и задач в текст отчета для пользователя
 def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -188,6 +308,31 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
         f"✅ Tasks: {len(tasks)}",
     ]
 
+    recommendations = state.get("recommendations", [])
+    report_lines.append("")
+    report_lines.append("Recommendations:")
+    if recommendations:
+        for idx, rec in enumerate(recommendations, start=1):
+            metrics = rec.metrics
+            metrics_text = (
+                f"stock_on_hand={metrics.get('stock_on_hand', 0)}, "
+                f"units_7d={metrics.get('units_7d', 0)}, "
+                f"days_of_cover={metrics.get('days_of_cover', 0)}"
+            )
+            report_lines.append(
+                f"{idx}. Action: {rec.action} | Reason: {rec.reason} | "
+                f"Metrics: {metrics_text} | Effect: {rec.effect} | "
+                f"Confidence: {rec.confidence}"
+            )
+    else:
+        report_lines.append("No recommendations generated.")
+
+    summary = state.get("recommendations_summary")
+    if summary:
+        report_lines.append("")
+        report_lines.append("Summary:")
+        report_lines.append(summary)
+
     state["report_text"] = "\n".join(report_lines)
 
     duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -196,7 +341,7 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     return state
 
 
-# Чек статуса задач по run_id
+# Node 8: чек статуса задач по run_id
 def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
     counts = {
         "draft": 0,
@@ -245,7 +390,7 @@ def _build_report_html(report_md: str) -> str:
     )
 
 
-# Чек записи последнего run_id
+# Node 9: запись последнего run_id
 def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
     reports_dir = storage_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +403,7 @@ def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
     return last_run_path
 
 
-# Node 6: сохранение результатов выполнения в storage для последующего доступа и аудита
+# Node 10: сохранение результатов выполнения в storage для последующего доступа и аудита
 def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -299,6 +444,12 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
         encoding="utf-8",
     )
 
+    recommendations = state.get("recommendations", [])
+    (run_dir / "recommendations.json").write_text(
+        json.dumps(model_to_dict(recommendations), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     report_text = state.get("report_text", "")
     summary_line, reject_reason = _build_task_status_summary(tasks)
     report_md = _build_report_md(report_text, summary_line, reject_reason)
@@ -336,12 +487,16 @@ def build_oos_graph():
     workflow.add_node("load_data", load_data)
     workflow.add_node("detect_oos", detect_oos)
     workflow.add_node("draft_tasks", draft_tasks)
+    workflow.add_node("build_recommendations", build_recommendations)
+    workflow.add_node("llm_explain", llm_explain)
     workflow.add_node("render_report", render_report)
     workflow.add_node("persist_run", persist_run)
     workflow.add_edge("collect_input", "load_data")
     workflow.add_edge("load_data", "detect_oos")
     workflow.add_edge("detect_oos", "draft_tasks")
-    workflow.add_edge("draft_tasks", "render_report")
+    workflow.add_edge("draft_tasks", "build_recommendations")
+    workflow.add_edge("build_recommendations", "llm_explain")
+    workflow.add_edge("llm_explain", "render_report")
     workflow.add_edge("render_report", "persist_run")
     workflow.add_edge("persist_run", END)
     workflow.set_entry_point("collect_input")
@@ -354,6 +509,8 @@ def run_oos_workflow(
     adapter: DataAdapter,
     adapter_name: str,
     trigger: str,
+    llm_cfg: dict[str, Any],
+    recommendations_cfg: dict[str, Any],
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     graph = build_oos_graph()
@@ -363,6 +520,8 @@ def run_oos_workflow(
         "adapter": adapter,
         "adapter_name": adapter_name,
         "trigger": trigger,
+        "llm_cfg": llm_cfg,
+        "recommendations_cfg": recommendations_cfg,
     }
     if logger is not None:
         initial_state["logger"] = logger

@@ -42,6 +42,8 @@ def run_oos_case(
         adapter=adapter,
         adapter_name=settings["data"]["adapter"],
         trigger=trigger,
+        llm_cfg=settings["llm"],
+        recommendations_cfg=settings["recommendations"],
         logger=logger,
     )
 
