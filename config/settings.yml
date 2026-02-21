@@ -40,6 +40,16 @@ promo:
   stock_min: 10 # минимальный остаток для promo-кандидатов
   units_max: 2 # максимальные продажи за период
 
+recommendations:
+  enabled: true # true/false - включить/выключить рекомендации для OOS
+  items_max: 10 # максимальное число рекомендаций в отчете
+
+llm:
+  enabled: false # true/false - включить/выключить LLM summary
+  provider: "openai" # провайдер LLM (пока один)
+  model: "gpt-4o-mini" # модель LLM (пример)
+  api_key_env: "OPENAI_API_KEY" # имя переменной окружения с ключом
+
 quiz:
-  enabled: true # true/false - включить/выключить режим квиза
+  enabled: false # true/false - включить/выключить режим квиза
   path: "config/quiz/pharmacy_quiz.json" # путь к JSON с контентом квиза (относительно корня проекта)

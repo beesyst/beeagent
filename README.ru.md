@@ -41,7 +41,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
 * **Telegram bot v0 (UX skeleton)**
   * отвечает на `/start` и показывает меню с кнопками
   * `/help` показывает справку
-  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow и сохраняет артефакты
+  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow, сохраняет артефакты и добавляет рекомендации в отчёт
   * `/last` показывает последний OOS отчёт через case (`get_last_report_case`) + summary по статусу задач и reject reason
   * `/run_promo` возвращает promo-отчёт сразу в ответ (v0), а “last report” для promo пока не ведётся
   * `/quiz_pharmacy` запускает квиз с inline-кнопками ответов; сессия по chat_id; результаты в storage/runs/<run_id>/
@@ -64,6 +64,7 @@ Approval (approve/reject) сейчас реализован для кейса OO
   * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
   * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
   * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи (v0: только для OOS после approve/reject)
+  * `storage/runs/<run_id>/recommendations.json` — explainable рекомендации (OOS v1)
   * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms шагов workflow (OOS, Quiz init v0)
   * `storage/sessions/<chat_id>.json` — Quiz session state (v0)
   * `storage/runs/<run_id>/session_ref.json` — run → chat_id (Quiz v0)
@@ -161,6 +162,16 @@ bash start.sh
 * `promo.stock_min`: int — минимальный остаток для promo-кандидатов
 * `promo.units_max`: int — максимальные продажи за период
 
+**Recommendations (OOS v1)**
+* `recommendations.enabled`: `true|false` — включить детерминированные рекомендации
+* `recommendations.items_max`: `int > 0` — максимум рекомендаций в отчете
+
+**LLM summary (optional)**
+* `llm.enabled`: `true|false` — включить текстовый summary (только текст, без расчётов)
+* `llm.provider`: сейчас только `"openai"`
+* `llm.model`: модель (например `"gpt-4o-mini"`)
+* `llm.api_key_env`: имя переменной окружения с ключом (например `OPENAI_API_KEY`)
+
 **Scheduler (v0)**
 * `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
 * `scheduler.interval`: `int > 0` — интервал в секундах между scheduled-run
@@ -210,6 +221,7 @@ Tasks status: draft=2, approved=0, rejected=0
 * `run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
 * `alerts.json` — алерты Rule A
 * `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
+* `recommendations.json` — explainable рекомендации (action/reason/metrics/effect/confidence)
 * `steps.json` — observability v0: duration_ms каждого шага workflow
 
 ### Approval + Export (v0)

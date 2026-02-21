@@ -18,7 +18,17 @@ def _mock_settings(dataset_id: str | None) -> dict:
             "mock": {
                 "dataset_id": dataset_id,
             },
-        }
+        },
+        "recommendations": {
+            "enabled": True,
+            "items_max": 10,
+        },
+        "llm": {
+            "enabled": False,
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key_env": "OPENAI_API_KEY",
+        },
     }
 
 
@@ -31,6 +41,8 @@ def _run_workflow(storage_dir: Path, dataset_id: str) -> dict:
         adapter=adapter,
         adapter_name=settings["data"]["adapter"],
         trigger="manual",
+        llm_cfg=settings["llm"],
+        recommendations_cfg=settings["recommendations"],
     )
 
 
@@ -335,6 +347,8 @@ class TestOOSGraph:
                 ),
                 adapter_name="mock",
                 trigger="manual",
+                llm_cfg=_mock_settings(dataset_id1)["llm"],
+                recommendations_cfg=_mock_settings(dataset_id1)["recommendations"],
             )
 
             # второй run с тем же seed
@@ -360,6 +374,8 @@ class TestOOSGraph:
                 ),
                 adapter_name="mock",
                 trigger="manual",
+                llm_cfg=_mock_settings(dataset_id2)["llm"],
+                recommendations_cfg=_mock_settings(dataset_id2)["recommendations"],
             )
 
             # чек: одинаковое количество алертов и задач (одинаковый dataset)
