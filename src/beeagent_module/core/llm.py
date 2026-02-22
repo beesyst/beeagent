@@ -52,14 +52,14 @@ def _load_prompts(path: str) -> dict[str, Any]:
 
 
 # Подготовка system/user промптов по ключу и шаблону.
-def _build_prompt_messages(
-    llm_cfg: dict[str, Any], recommendations: list[dict[str, Any]]
+def _build_prompt_messages_by_key(
+    llm_cfg: dict[str, Any],
+    prompt_key: str,
+    template_vars: dict[str, Any],
 ) -> tuple[str, str]:
     prompts_path = llm_cfg.get("prompts_path")
     if not isinstance(prompts_path, str) or not prompts_path:
         raise RuntimeError("Invalid llm.prompts_path, expected non-empty string")
-
-    prompt_key = OOS_SUMMARY_PROMPT_KEY
 
     prompts = _load_prompts(prompts_path)
     prompt_payload = _get_nested_value(prompts, tuple(prompt_key.split(".")))
@@ -73,33 +73,39 @@ def _build_prompt_messages(
     if not isinstance(user_template, str) or not user_template:
         raise RuntimeError(f"Prompt '{prompt_key}.user' must be a non-empty string")
 
-    recommendations_json = json.dumps(recommendations, ensure_ascii=False)
-
     # Render template safely. Unknown placeholders are preserved.
-    user_prompt = user_template.format_map(
-        _SafeDict(recommendations_json=recommendations_json)
-    )
+    user_prompt = user_template.format_map(_SafeDict(**template_vars))
 
     # If template still contains placeholders, fallback to a minimal prompt.
     if "{" in user_prompt and "}" in user_prompt:
+        # Fallback: не пытаемся угадывать тип промпта по ключу (ключи задаются в конфиге).
+        template_dump = json.dumps(template_vars, ensure_ascii=False)
         user_prompt = (
-            "Summarize the recommendations below into 5-10 lines. "
-            "Use plain operational language without ML terms. Do not change any numbers.\n\n"
-            f"Recommendations JSON: {recommendations_json}"
+            "Use the template variables below to answer the user request. "
+            "Do not invent facts. If data is insufficient, say what is missing.\n\n"
+            f"Template variables JSON: {template_dump}"
         )
 
     return system_template, user_prompt
 
 
-# Функция для получения объяснения рекомендаций с помощью LLM (например, OpenAI)
-def explain_recommendations(
+def _build_prompt_messages(
+    llm_cfg: dict[str, Any], recommendations: list[dict[str, Any]]
+) -> tuple[str, str]:
+    recommendations_json = json.dumps(recommendations, ensure_ascii=False)
+    return _build_prompt_messages_by_key(
+        llm_cfg=llm_cfg,
+        prompt_key=OOS_SUMMARY_PROMPT_KEY,
+        template_vars={"recommendations_json": recommendations_json},
+    )
+
+
+def _request_openai_response(
     llm_cfg: dict[str, Any],
-    recommendations: list[dict[str, Any]],
+    system_prompt: str,
+    user_prompt: str,
     logger: logging.Logger | None = None,
 ) -> str | None:
-    if not llm_cfg.get("enabled"):
-        return None
-
     api_key_env = llm_cfg.get("api_key_env")
     if not isinstance(api_key_env, str) or not api_key_env:
         if logger:
@@ -143,8 +149,6 @@ def explain_recommendations(
             )
         return None
 
-    system_prompt, user_prompt = _build_prompt_messages(llm_cfg, recommendations)
-
     payload = {
         "model": model,
         "input": [
@@ -161,7 +165,6 @@ def explain_recommendations(
         ],
     }
 
-    # Выполнение запроса с retry только для timeout ошибок.
     for attempt in range(retries + 1):
         try:
             req = request.Request(
@@ -177,12 +180,10 @@ def explain_recommendations(
                 raw = response.read().decode("utf-8")
             data = json.loads(raw)
 
-            # Responses API: приоритет - output_text
             output_text = data.get("output_text")
             if isinstance(output_text, str) and output_text.strip():
                 return output_text.strip()
 
-            # фоллбек: пробуем собрать текст из output[*].content[*].text
             output = data.get("output", [])
             if isinstance(output, list):
                 chunks: list[str] = []
@@ -238,3 +239,86 @@ def explain_recommendations(
             return None
 
     return None
+
+
+# Функция для получения объяснения рекомендаций с помощью LLM (например, OpenAI)
+def explain_recommendations(
+    llm_cfg: dict[str, Any],
+    recommendations: list[dict[str, Any]],
+    logger: logging.Logger | None = None,
+) -> str | None:
+    if not llm_cfg.get("enabled"):
+        return None
+
+    api_key_env = llm_cfg.get("api_key_env")
+    if not isinstance(api_key_env, str) or not api_key_env:
+        if logger:
+            logger.warning("llm api_key_env missing, fallback to rules-only summary")
+        return None
+
+    api_key = os.getenv(api_key_env, "")
+    if not api_key:
+        if logger:
+            logger.warning("llm api key missing, fallback to rules-only summary")
+        return None
+
+    provider = llm_cfg.get("provider")
+    if provider != "openai":
+        if logger:
+            logger.warning(
+                "unsupported llm provider=%s, fallback to rules-only", provider
+            )
+        return None
+
+    api_url = llm_cfg.get("api_url")
+    throttling = llm_cfg.get("throttling")
+    if not isinstance(api_url, str) or not api_url:
+        if logger:
+            logger.warning("llm api_url missing, fallback to rules-only summary")
+        return None
+    if not isinstance(throttling, dict):
+        if logger:
+            logger.warning("llm throttling missing, fallback to rules-only summary")
+        return None
+
+    timeout = throttling.get("timeout")
+    retries = throttling.get("retries")
+    if not isinstance(timeout, int) or timeout <= 0:
+        if logger:
+            logger.warning("llm throttling.timeout invalid, fallback to rules-only")
+        return None
+    if not isinstance(retries, int) or retries < 0:
+        if logger:
+            logger.warning("llm throttling.retries invalid, fallback to rules-only")
+        return None
+
+    system_prompt, user_prompt = _build_prompt_messages(llm_cfg, recommendations)
+    return _request_openai_response(llm_cfg, system_prompt, user_prompt, logger)
+
+
+def answer_oos_report_question(
+    llm_cfg: dict[str, Any],
+    question: str,
+    context_payload: dict[str, Any],
+    prompts_key: str,
+    logger: logging.Logger | None = None,
+) -> str | None:
+    if not llm_cfg.get("enabled"):
+        return None
+
+    context_json = json.dumps(context_payload, ensure_ascii=False)
+    try:
+        system_prompt, user_prompt = _build_prompt_messages_by_key(
+            llm_cfg=llm_cfg,
+            prompt_key=prompts_key,
+            template_vars={
+                "question": question,
+                "context_json": context_json,
+            },
+        )
+    except RuntimeError:
+        if logger:
+            logger.exception("assistant prompt build failed, fallback to no answer")
+        return None
+
+    return _request_openai_response(llm_cfg, system_prompt, user_prompt, logger)

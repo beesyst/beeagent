@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from beeagent_module.cases.oos import (
@@ -18,6 +19,7 @@ from beeagent_module.cases.quiz import (
     start_quiz_case,
 )
 from beeagent_module.core.i18n import load_translations, t
+from beeagent_module.core.llm import answer_oos_report_question
 from beeagent_module.core.paths import get_storage_dir
 from beeagent_module.core.secrets import load_secrets
 
@@ -26,7 +28,7 @@ BUTTON_RUN_PROMO = "run_promo"
 BUTTON_SHOW_REPORT = "show_report"
 BUTTON_APPROVE_TASKS = "approve_tasks"
 BUTTON_REJECT_TASKS = "reject_tasks"
-BUTTON_QUIZ_ANSWER_PREFIX = "qa_"
+BUTTON_QUIZ_ANSWER_PREFIX = "quiz_answer_"
 
 
 # Запуск Telegram-режим и стартует polling
@@ -110,6 +112,9 @@ def _build_application(
     application.add_handler(CommandHandler("quiz_pharmacy", handle_quiz_pharmacy))
     application.add_handler(CommandHandler("last_quiz", handle_last_quiz))
     application.add_handler(CallbackQueryHandler(handle_menu_button))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_assistant_question)
+    )
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
 
     return application
@@ -449,6 +454,60 @@ async def handle_unknown_command(
     await message.reply_text(_t(context, "telegram.unknown"))
 
 
+# Обработка обычного текста как AI-вопроса по последнему OOS run
+async def handle_assistant_question(update: Any, context: Any) -> None:
+    await _track_update_event(update, context, event_type="assistant_question")
+
+    if not await _ensure_allowlist(update, context):
+        return
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    question = (message.text or "").strip()
+    if not question:
+        await message.reply_text(_t(context, "telegram.assistant.ask_prompt"))
+        return
+
+    settings = context.bot_data["settings"]
+    llm_cfg = settings["llm"]
+    assistant_cfg = llm_cfg["assistant"]
+    logger: logging.Logger = context.bot_data["logger"]
+    storage_dir = context.bot_data["storage_dir"]
+
+    if not llm_cfg["enabled"]:
+        await message.reply_text(_t(context, "telegram.assistant.ai_disabled"))
+        return
+
+    context_payload, error_key = _build_oos_assistant_context(
+        storage_dir=storage_dir,
+        max_context_items=int(assistant_cfg["items_max"]),
+        logger=logger,
+    )
+    if error_key is not None:
+        await message.reply_text(_t(context, error_key))
+        return
+
+    if context_payload is None:
+        await message.reply_text(_t(context, "telegram.assistant.data_unavailable"))
+        return
+
+    answer = answer_oos_report_question(
+        llm_cfg=llm_cfg,
+        question=question,
+        context_payload=context_payload,
+        prompts_key=str(assistant_cfg["prompts_key"]),
+        logger=logger,
+    )
+
+    if not isinstance(answer, str) or not answer.strip():
+        await message.reply_text(_t(context, "telegram.assistant.no_answer"))
+        return
+
+    await message.reply_text(answer)
+
+
 # Сбор главного inline-меню
 def _build_main_menu(translations: dict[str, Any] | None = None):
     try:
@@ -579,6 +638,131 @@ def _t(context: Any, key: str, **vars: Any) -> str:
     return t(translations, key, **vars)
 
 
+# Чтение JSON-файла артефакта с базовой валидацией структуры
+def _read_json_artifact(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+# Сбор компактного контекста последнего run для Q&A
+def _build_oos_assistant_context(
+    storage_dir: Path,
+    max_context_items: int,
+    logger: logging.Logger,
+) -> tuple[dict[str, Any] | None, str | None]:
+    last_run_path = storage_dir / "reports" / "last_run.json"
+    if not last_run_path.exists():
+        return None, "telegram.assistant.no_last_run"
+
+    try:
+        last_run_payload = _read_json_artifact(last_run_path)
+    except Exception:
+        logger.exception("failed to read last_run.json")
+        return None, "telegram.assistant.data_unavailable"
+
+    if not isinstance(last_run_payload, dict):
+        return None, "telegram.assistant.data_unavailable"
+
+    run_id = last_run_payload.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None, "telegram.assistant.data_unavailable"
+
+    run_dir = storage_dir / "runs" / run_id
+    run_json_path = run_dir / "run.json"
+    recommendations_path = run_dir / "recommendations.json"
+    alerts_path = run_dir / "alerts.json"
+    tasks_path = run_dir / "tasks_draft.json"
+
+    if not run_json_path.exists() or not recommendations_path.exists():
+        return None, "telegram.assistant.data_unavailable"
+
+    try:
+        run_payload = _read_json_artifact(run_json_path)
+        recommendations_payload = _read_json_artifact(recommendations_path)
+    except Exception:
+        logger.exception("failed to read run artifacts run_id=%s", run_id)
+        return None, "telegram.assistant.data_unavailable"
+
+    if not isinstance(run_payload, dict) or not isinstance(
+        recommendations_payload, list
+    ):
+        return None, "telegram.assistant.data_unavailable"
+
+    if not recommendations_payload:
+        return None, "telegram.assistant.insufficient_data"
+
+    compact_recommendations: list[dict[str, Any]] = []
+    required_metric_keys = ("stock_on_hand", "units_7d", "days_of_cover")
+
+    for rec in recommendations_payload[:max_context_items]:
+        if not isinstance(rec, dict):
+            continue
+
+        metrics = rec.get("metrics")
+        if not isinstance(metrics, dict):
+            continue
+
+        if not all(metric_key in metrics for metric_key in required_metric_keys):
+            continue
+
+        action = rec.get("action")
+        reason = rec.get("reason")
+        effect = rec.get("effect")
+        confidence = rec.get("confidence")
+        if not all(
+            isinstance(value, str) and value
+            for value in (action, reason, effect, confidence)
+        ):
+            continue
+
+        compact_metrics = {
+            metric_key: metrics[metric_key] for metric_key in required_metric_keys
+        }
+        compact_recommendations.append(
+            {
+                "action": action,
+                "reason": reason,
+                "metrics": compact_metrics,
+                "effect": effect,
+                "confidence": confidence,
+            }
+        )
+
+    if not compact_recommendations:
+        return None, "telegram.assistant.insufficient_data"
+
+    try:
+        alerts_count = int(run_payload.get("alerts_count", 0))
+    except (TypeError, ValueError):
+        alerts_count = 0
+
+    try:
+        tasks_count = int(run_payload.get("tasks_count", 0))
+    except (TypeError, ValueError):
+        tasks_count = 0
+
+    try:
+        if alerts_path.exists():
+            alerts_payload = _read_json_artifact(alerts_path)
+            if isinstance(alerts_payload, list):
+                alerts_count = len(alerts_payload)
+        if tasks_path.exists():
+            tasks_payload = _read_json_artifact(tasks_path)
+            if isinstance(tasks_payload, list):
+                tasks_count = len(tasks_payload)
+    except Exception:
+        logger.warning("failed to read optional artifacts for run_id=%s", run_id)
+
+    context_payload = {
+        "run_id": run_id,
+        "dataset_id": run_payload.get("dataset_id"),
+        "alerts_count": alerts_count,
+        "tasks_count": tasks_count,
+        "recommendations": compact_recommendations,
+    }
+    return context_payload, None
+
+
 # Чек включена ли телеметрия и запись события
 async def _track_update_event(
     update: Any,
@@ -608,16 +792,6 @@ async def _track_update_event(
 
     with telemetry_path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(event, ensure_ascii=False) + "\n")
-
-
-# Билд клавиатуры с вариантами ответов для вопроса квиза
-def _build_quiz_question_keyboard(run_id: str):
-    try:
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    except ModuleNotFoundError:
-        return None
-
-    return InlineKeyboardMarkup([])
 
 
 # Билд клавиатуры с вариантами ответов для вопроса квиза

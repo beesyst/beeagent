@@ -12,9 +12,11 @@ from beeagent_module.ui.telegram_bot import (
     BUTTON_REJECT_TASKS,
     BUTTON_RUN_OOS,
     BUTTON_SHOW_REPORT,
+    _build_oos_assistant_context,
     _run_scheduled_oos_tick,
     _scheduler_loop,
     _start_scheduler_if_enabled,
+    handle_assistant_question,
     handle_last,
     handle_menu_button,
     handle_run_oos,
@@ -119,6 +121,10 @@ def make_context(
                     "api_key_env": "OPENAI_API_KEY",
                     "api_url": "https://api.openai.com/v1/responses",
                     "prompts_path": "config/prompts.yml",
+                    "assistant": {
+                        "prompts_key": "oos.llm_assistant_qa",
+                        "items_max": 5,
+                    },
                     "throttling": {"timeout": 60, "retries": 2},
                 },
                 "i18n": {
@@ -408,3 +414,130 @@ def test_run_promo_returns_report(tmp_path: Path) -> None:
     run_async_handler(handle_run_promo, promo_update, context)
 
     assert "Promo Scan Report" in promo_update.effective_message.replies[-1]
+
+
+def test_build_oos_assistant_context_from_artifacts(tmp_path: Path) -> None:
+    run_id = "run-qa-test"
+    reports_dir = tmp_path / "reports"
+    run_dir = tmp_path / "runs" / run_id
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    (reports_dir / "last_run.json").write_text(
+        json.dumps({"run_id": run_id}),
+        encoding="utf-8",
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": run_id, "dataset_id": "seed-1", "alerts_count": 2, "tasks_count": 2}),
+        encoding="utf-8",
+    )
+    (run_dir / "recommendations.json").write_text(
+        json.dumps(
+            [
+                {
+                    "action": "restock_shelf",
+                    "reason": "reason_stock_positive_not_visible",
+                    "metrics": {
+                        "stock_on_hand": 5,
+                        "units_7d": 7,
+                        "days_of_cover": 5.0,
+                    },
+                    "effect": "restock_shelf",
+                    "confidence": "high",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload, error_key = _build_oos_assistant_context(
+        storage_dir=tmp_path,
+        max_context_items=5,
+        logger=logging.getLogger("test.telegram"),
+    )
+
+    assert error_key is None
+    assert payload is not None
+    assert payload["run_id"] == run_id
+    assert payload["alerts_count"] == 2
+    assert payload["tasks_count"] == 2
+    assert len(payload["recommendations"]) == 1
+
+
+def test_assistant_question_returns_llm_answer(tmp_path: Path, monkeypatch) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    context.bot_data["settings"]["llm"]["enabled"] = True
+
+    run_id = "run-qa-ok"
+    reports_dir = tmp_path / "reports"
+    run_dir = tmp_path / "runs" / run_id
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    (reports_dir / "last_run.json").write_text(
+        json.dumps({"run_id": run_id}),
+        encoding="utf-8",
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": run_id, "dataset_id": "seed-1", "alerts_count": 1, "tasks_count": 1}),
+        encoding="utf-8",
+    )
+    (run_dir / "recommendations.json").write_text(
+        json.dumps(
+            [
+                {
+                    "action": "restock_shelf",
+                    "reason": "reason_stock_positive_not_visible",
+                    "metrics": {
+                        "stock_on_hand": 3,
+                        "units_7d": 9,
+                        "days_of_cover": 2.33,
+                    },
+                    "effect": "restock_shelf",
+                    "confidence": "high",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, Any] = {}
+
+    def fake_answer_oos_report_question(
+        llm_cfg: dict[str, Any],
+        question: str,
+        context_payload: dict[str, Any],
+        prompts_key: str,
+        logger: logging.Logger | None = None,
+    ) -> str:
+        _ = llm_cfg, logger
+        called["question"] = question
+        called["context"] = context_payload
+        called["prompts_key"] = prompts_key
+        return "Ответ по данным последнего run"
+
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.answer_oos_report_question",
+        fake_answer_oos_report_question,
+    )
+
+    update = make_message_update(chat_id=1, text="Какой приоритет действий?", update_id=70)
+    run_async_handler(handle_assistant_question, update, context)
+
+    assert called["question"] == "Какой приоритет действий?"
+    assert called["context"]["run_id"] == run_id
+    assert called["prompts_key"] == "oos.llm_assistant_qa"
+    assert update.effective_message.replies[-1] == "Ответ по данным последнего run"
+
+
+def test_assistant_question_without_last_run_returns_hint(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    context.bot_data["settings"]["llm"]["enabled"] = True
+
+    update = make_message_update(chat_id=1, text="Что делать дальше?", update_id=71)
+    run_async_handler(handle_assistant_question, update, context)
+
+    assert (
+        update.effective_message.replies[-1]
+        == "Нет последнего отчёта OOS. Сначала выполните /run_oos."
+    )

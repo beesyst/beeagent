@@ -33,6 +33,8 @@ REQUIRED_KEYS = (
     ("llm", "api_key_env"),
     ("llm", "api_url"),
     ("llm", "prompts_path"),
+    ("llm", "assistant", "prompts_key"),
+    ("llm", "assistant", "items_max"),
     ("llm", "throttling", "timeout"),
     ("llm", "throttling", "retries"),
     ("i18n", "lang"),
@@ -187,6 +189,19 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("llm", "prompts_path")), str):
         raise RuntimeError("Invalid type for llm.prompts_path, expected string")
+
+    if not isinstance(
+        _get_nested_value(settings, ("llm", "assistant", "prompts_key")), str
+    ):
+        raise RuntimeError(
+            "Invalid type for llm.assistant.prompts_key, expected string"
+        )
+
+    assistant_items_max = _get_nested_value(settings, ("llm", "assistant", "items_max"))
+    if not isinstance(assistant_items_max, int):
+        raise RuntimeError("Invalid type for llm.assistant.items_max, expected int")
+    if assistant_items_max <= 0:
+        raise RuntimeError("Invalid value for llm.assistant.items_max, expected > 0")
 
     throttling_timeout = _get_nested_value(settings, ("llm", "throttling", "timeout"))
     if not isinstance(throttling_timeout, int):
