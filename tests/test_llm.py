@@ -24,6 +24,7 @@ def test_llm_no_api_key() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "MISSING_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -60,6 +61,7 @@ def test_llm_successful_request() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [
@@ -117,6 +119,7 @@ def test_llm_empty_choices() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -145,6 +148,7 @@ def test_llm_request_exception() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -168,6 +172,7 @@ def test_llm_custom_api_url() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://custom.openai.proxy.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -217,6 +222,7 @@ def test_llm_timeout_retries_then_success() -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -246,6 +252,7 @@ def test_llm_timeout_after_retries_returns_none(caplog) -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 1},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -273,6 +280,7 @@ def test_llm_http_error_returns_none(caplog) -> None:
         "model": "gpt-4o-mini",
         "api_key_env": "OPENAI_API_KEY",
         "api_url": "https://api.openai.com/v1/responses",
+        "prompts_path": "config/prompts.yml",
         "throttling": {"timeout": 60, "retries": 2},
     }
     recommendations = [{"sku": "SKU1", "action": "order"}]

@@ -50,9 +50,14 @@ llm:
   model: "gpt-5-nano" # модель LLM (пример)
   api_key_env: "OPENAI_API_KEY" # имя переменной окружения с ключом
   api_url: "https://api.openai.com/v1/responses" # URL endpoint для LLM API
+  prompts_path: "config/prompts.yml" # путь к YAML с промптами
   throttling:
     timeout: 60 # timeout LLM request in seconds
     retries: 2 # retries on TimeoutError
+
+i18n:
+  lang: "ru" # язык локализации
+  path: "config/i18n/ru.yml" # путь к YAML с переводами
 
 quiz:
   enabled: false # true/false - включить/выключить режим квиза

@@ -22,6 +22,7 @@ from beeagent_module.ui.telegram_bot import (
     handle_start,
     handle_unknown_command,
 )
+from beeagent_module.core.i18n import load_translations
 
 
 # Фейк: объекты для имитации Telegram Update, Message, CallbackQuery и Bot в тестах
@@ -72,6 +73,8 @@ def make_context(
     chat_id: int = 1,
     telemetry_enabled: bool = False,
 ) -> SimpleNamespace:
+    translations = load_translations("config/i18n/ru.yml")
+
     return SimpleNamespace(
         bot_data={
             "chat_id": chat_id,
@@ -114,9 +117,17 @@ def make_context(
                     "provider": "openai",
                     "model": "gpt-4o-mini",
                     "api_key_env": "OPENAI_API_KEY",
+                    "api_url": "https://api.openai.com/v1/responses",
+                    "prompts_path": "config/prompts.yml",
+                    "throttling": {"timeout": 60, "retries": 2},
+                },
+                "i18n": {
+                    "lang": "ru",
+                    "path": "config/i18n/ru.yml",
                 },
             },
             "storage_dir": tmp_path,
+            "translations": translations,
         }
     )
 
@@ -167,7 +178,7 @@ def test_start_denies_non_admin(tmp_path: Path) -> None:
 
     run_async_handler(handle_start, update, context)
 
-    assert update.effective_message.replies[-1] == "Access denied: admin chat only."
+    assert update.effective_message.replies[-1] == "Доступ запрещен: только admin chat."
 
 
 # Тест: выполнение сценария OOS через команду и получение отчета, а также отображение статуса задач и причины отклонения в последнем отчете
@@ -180,8 +191,8 @@ def test_run_oos_then_last_report(tmp_path: Path) -> None:
     last_update = make_message_update(chat_id=1, text="/last", update_id=11)
     run_async_handler(handle_last, last_update, context)
 
-    assert "📊 OOS Detection Report" in run_update.effective_message.replies[-1]
-    assert "🚨 Alerts:" in last_update.effective_message.replies[-1]
+    assert "📊 Отчёт OOS" in run_update.effective_message.replies[-1]
+    assert "🚨 Алерты:" in last_update.effective_message.replies[-1]
     assert "Tasks status:" in last_update.effective_message.replies[-1]
 
 
@@ -199,8 +210,8 @@ def test_buttons_call_same_handlers(tmp_path: Path) -> None:
 
     assert run_button_update.callback_query.answered is True
     assert show_button_update.callback_query.answered is True
-    assert "📊 OOS Detection Report" in run_button_update.effective_message.replies[-1]
-    assert "📊 OOS Detection Report" in show_button_update.effective_message.replies[-1]
+    assert "📊 Отчёт OOS" in run_button_update.effective_message.replies[-1]
+    assert "📊 Отчёт OOS" in show_button_update.effective_message.replies[-1]
 
 
 # Тест: нажатия кнопок "Approve Tasks" и "Reject Tasks" возвращают соответствующие ответы и сохраняют статус задач
@@ -267,7 +278,7 @@ def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
 
     run_async_handler(handle_unknown_command, update, context)
 
-    assert update.effective_message.replies[-1] == "Unknown command. Use /help."
+    assert update.effective_message.replies[-1] == "Неизвестная команда. Используйте /help."
 
 
 # Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями
@@ -327,7 +338,7 @@ def test_scheduler_tick_uses_scheduled_trigger(tmp_path: Path, monkeypatch) -> N
 
     assert called["trigger"] == "scheduled"
     assert app.bot.sent_messages[0]["chat_id"] == 1
-    assert "New run ready → Approve/Reject" in app.bot.sent_messages[0]["text"]
+    assert "Готов новый запуск run-test" in app.bot.sent_messages[0]["text"]
 
 
 # Тест: если сценарий OOS в scheduled-run выбрасывает ошибку, она логируется, и цикл продолжает работать

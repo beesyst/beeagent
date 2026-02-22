@@ -28,6 +28,13 @@ def _mock_settings(dataset_id: str | None) -> dict:
             "provider": "openai",
             "model": "gpt-4o-mini",
             "api_key_env": "OPENAI_API_KEY",
+            "api_url": "https://api.openai.com/v1/responses",
+            "prompts_path": "config/prompts.yml",
+            "throttling": {"timeout": 60, "retries": 2},
+        },
+        "i18n": {
+            "lang": "ru",
+            "path": "config/i18n/ru.yml",
         },
     }
 
@@ -43,6 +50,7 @@ def _run_workflow(storage_dir: Path, dataset_id: str) -> dict:
         trigger="manual",
         llm_cfg=settings["llm"],
         recommendations_cfg=settings["recommendations"],
+        i18n_cfg=settings["i18n"],
     )
 
 
@@ -177,7 +185,7 @@ class TestOOSGraph:
             assert result["run_id"].startswith("run-")
 
             # чек содержания отчета
-            assert "📊 OOS Detection Report" in result["report_text"]
+            assert "📊 Отчёт OOS" in result["report_text"]
             assert result["run_id"] in result["report_text"]
             assert dataset_id in result["report_text"]
 
@@ -349,6 +357,7 @@ class TestOOSGraph:
                 trigger="manual",
                 llm_cfg=_mock_settings(dataset_id1)["llm"],
                 recommendations_cfg=_mock_settings(dataset_id1)["recommendations"],
+                i18n_cfg=_mock_settings(dataset_id1)["i18n"],
             )
 
             # второй run с тем же seed
@@ -376,6 +385,7 @@ class TestOOSGraph:
                 trigger="manual",
                 llm_cfg=_mock_settings(dataset_id2)["llm"],
                 recommendations_cfg=_mock_settings(dataset_id2)["recommendations"],
+                i18n_cfg=_mock_settings(dataset_id2)["i18n"],
             )
 
             # чек: одинаковое количество алертов и задач (одинаковый dataset)
