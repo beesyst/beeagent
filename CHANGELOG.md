@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.12.0...beeagent-v0.13.0) (2026-02-22)
+
+
+### Features
+
+* **i18n:** add ru translations and prompts config for telegram and o… ([993693c](https://github.com/beesyst/beeagent/commit/993693caf7624ff80d094e92104554aabbf0e92b))
+* **i18n:** add ru translations and prompts config for telegram and oos report ([261b9f6](https://github.com/beesyst/beeagent/commit/261b9f6c62e41c1851177f3f0b0fc21147ef4491))
+
 ## [0.12.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.11.0...beeagent-v0.12.0) (2026-02-21)
 
 
