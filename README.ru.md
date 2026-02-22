@@ -24,6 +24,7 @@ Quiz Agent v0: demo-артефакты сессии/ответов/резуль�
 
 * **telegram** — Telegram бот:
   * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
+  * **AI Q&A (v0):** любое обычное текстовое сообщение (не команда) трактуется как вопрос по **последнему OOS run** и получает ответ на основе run-артефактов (без выдумывания фактов).
   * (опционально, если `quiz.enabled=true`): `/quiz_pharmacy`, `/last_quiz`
   * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**, + **Answer buttons** для Quiz
   * **allowlist**: доступ только одному admin chat_id (через env)
@@ -172,7 +173,7 @@ bash start.sh
 * `recommendations.items_max`: `int > 0` — максимум рекомендаций в отчете
 
 **LLM summary (optional)**
-* `llm.enabled`: `true|false` — включить текстовый summary (только текст, без расчётов)
+* `llm.enabled`: `true|false` — включает LLM-функции (summary и Q&A)
 * `llm.provider`: сейчас только `"openai"`
 * `llm.model`: модель (например `"gpt-4o-mini"`)
 * `llm.api_key_env`: имя переменной окружения с ключом (например `OPENAI_API_KEY`)
@@ -180,6 +181,10 @@ bash start.sh
 * `llm.prompts_path`: путь к YAML c шаблонами промптов
 * `llm.throttling.timeout`: timeout запроса LLM в секундах
 * `llm.throttling.retries`: число retry только для timeout
+
+**LLM assistant Q&A (Telegram, v0)**
+* `llm.assistant.prompts_key`: ключ промпта Q&A в `config/prompts.yml` (например `oos.llm_assistant_qa`)
+* `llm.assistant.items_max`: максимум рекомендаций из последнего run, которые передаются в контекст ответа (int > 0)
 
 **i18n**
 * `i18n.lang`: язык интерфейса (в v0 используется `"ru"`)
@@ -285,6 +290,9 @@ UI-каналы — тонкий transport-слой.
 2. `cases/*` запускают `agents/*` и готовят входные параметры.
 3. `agents/*` используют `adapters/*` и пишут артефакты в `storage/`.
 4. UI не читает `storage/*` напрямую.
+
+Исключения v0:
+- Telegram AI Q&A читает **только** публичные run-артефакты последнего OOS (`storage/reports/last_run.json`, `storage/runs/<run_id>/*.json`), чтобы сформировать контекст ответа.
 
 Примечание (v0 Quiz): UI читает quiz-spec JSON по пути из `settings.yml` для сборки inline-кнопок. В Iteration 10 это будет вынесено в `cases/quiz.py` (UI останется тонким).
 
@@ -402,6 +410,7 @@ bash start.sh
 * `/start` — меню с кнопками
 * `Run OOS Scan` — приходит отчёт (manual run)
 * `/last` — приходит последний отчёт
+* отправь обычный текст (например: `Какие данные нужно проверить в 1С/на месте?`) — бот отвечает по последнему OOS run
 
 3. Если включен scheduler (`scheduler.enabled: true`):
 * дождись сообщения: `New run ready → Approve/Reject`

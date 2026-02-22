@@ -21,6 +21,13 @@ telegram:
     reject: "Отклонить задачи"
   scheduler:
     new_run: "Готов новый запуск {run_id}. Алерты: {alerts}, задачи: {tasks}. Выберите: Подтвердить / Отклонить."
+  assistant:
+    ask_prompt: "Задайте вопрос по последнему отчёту OOS."
+    no_last_run: "Нет последнего отчёта OOS. Сначала выполните /run_oos."
+    ai_disabled: "AI-режим сейчас выключен в настройках."
+    data_unavailable: "Не удалось прочитать данные последнего запуска. Проверьте артефакты run."
+    insufficient_data: "Данных недостаточно для ответа. Проверьте рекомендации и ключевые метрики в последнем run."
+    no_answer: "Не удалось получить ответ AI. Попробуйте переформулировать вопрос."
   quiz:
     chat_not_found: "Чат не найден."
     start_error: "Ошибка: {error}"
@@ -53,9 +60,9 @@ oos:
     affected_stores: "Затронуто магазинов"
     affected_skus: "Затронуто SKU"
     tasks: "✅ Задачи"
-    recommendations: "Рекомендации"
+    recommendations: "🧾 Рекомендации"
     no_recommendations: "Рекомендации не сгенерированы."
-    summary: "AI-помощник"
+    summary: "🤖 AI-помощник"
     assistant_intro: "Я могу помочь по этому отчёту. Примеры вопросов:"
     assistant_examples: |
       • Почему эти позиции попали в OOS?

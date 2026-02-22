@@ -61,6 +61,9 @@ llm:
   api_key_env: "OPENAI_API_KEY"
   api_url: "https://api.openai.com/v1/responses"
   prompts_path: "config/prompts.yml"
+  assistant:
+    prompts_key: "oos.llm_assistant_qa"
+    items_max: 5
   throttling:
     timeout: 60
     retries: 2
