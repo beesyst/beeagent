@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.13.0...beeagent-v0.14.0) (2026-02-22)
+
+
+### Features
+
+* **telegram:** add AI Q&A over last OOS run artifacts ([6334883](https://github.com/beesyst/beeagent/commit/63348831267aec150fa0a043f1e602d628089aae))
+
 ## [0.13.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.12.0...beeagent-v0.13.0) (2026-02-22)
 
 
