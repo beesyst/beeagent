@@ -44,6 +44,7 @@ def run_oos_case(
         trigger=trigger,
         llm_cfg=settings["llm"],
         recommendations_cfg=settings["recommendations"],
+        i18n_cfg=settings["i18n"],
         logger=logger,
     )
 

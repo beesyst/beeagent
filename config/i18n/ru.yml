@@ -1,0 +1,77 @@
+telegram:
+  start: "Бот BeeAgent готов. Используйте команды или кнопки ниже."
+  help: |
+    Доступные команды:
+    /start - показать меню
+    /help - показать справку
+    /run_oos - запустить OOS-скан
+    /run_promo - запустить promo-скан
+    /last - показать последний отчет
+    /quiz_pharmacy - запустить аптечный квиз
+    /last_quiz - показать результат последнего квиза
+  unknown: "Неизвестная команда. Используйте /help."
+  access_denied: "Доступ запрещен: только admin chat."
+  no_reports: "Отчётов пока нет. Сначала выполните /run_oos."
+  unknown_action: "Неизвестное действие."
+  menu:
+    run_oos: "Запустить OOS-скан"
+    run_promo: "Запустить promo-скан"
+    show_report: "Показать отчёт"
+    approve: "Подтвердить задачи"
+    reject: "Отклонить задачи"
+  scheduler:
+    new_run: "Готов новый запуск {run_id}. Алерты: {alerts}, задачи: {tasks}. Выберите: Подтвердить / Отклонить."
+  quiz:
+    chat_not_found: "Чат не найден."
+    start_error: "Ошибка: {error}"
+    no_results: "Результатов квиза пока нет. Сначала выполните /quiz_pharmacy."
+    invalid_data: "Некорректные данные квиза."
+    invalid_answer_index: "Некорректный индекс ответа."
+    answer_error: "Ошибка: {error}"
+
+oos:
+  actions:
+    restock_shelf: "Пополнить полку"
+    increase_order: "Увеличить заказ"
+    reduce_order: "Сократить закуп"
+    rotate_sku: "Ротация SKU"
+  confidence:
+    high: "высокая"
+    medium: "средняя"
+    low: "низкая"
+  effects:
+    restock_shelf: "Вернуть товар на полку и снизить потери продаж"
+    increase_order: "Снизить риск дефицита и упущенных продаж"
+    reduce_order: "Уменьшить заморозку денег в запасах"
+    rotate_sku: "Освободить место и повысить оборачиваемость категории"
+  report:
+    title: "📊 Отчёт OOS"
+    run_id: "Run ID"
+    dataset: "Dataset"
+    alerts: "🚨 Алерты"
+    high_severity: "Критичные"
+    affected_stores: "Затронуто магазинов"
+    affected_skus: "Затронуто SKU"
+    tasks: "✅ Задачи"
+    recommendations: "Рекомендации"
+    no_recommendations: "Рекомендации не сгенерированы."
+    summary: "AI-помощник"
+    assistant_intro: "Я могу помочь по этому отчёту. Примеры вопросов:"
+    assistant_examples: |
+      • Почему эти позиции попали в OOS?
+      • Какой приоритет действий и почему?
+      • Сформулируй сообщение для заведующего магазином.
+      • Какие данные нужно проверить в 1С/на месте?
+    recommendation_line: |
+      {index}. {action_title}
+      • Причина: {reason}
+      • Метрики:
+      {metrics}
+      • Эффект: {effect}
+      • Уверенность: {confidence}
+  metrics:
+    stock_on_hand: "Остаток, шт"
+    units_7d: "Продажи за 7 дней, шт"
+    days_of_cover: "Покрытие, дней"
+  reasons:
+    reason_stock_positive_not_visible: "Товар не виден на полке при положительном остатке ({stock_on_hand} шт.) на дату {event_date}."

@@ -46,22 +46,43 @@ def _settings(dataset_id: str | None = None) -> dict:
             "provider": "openai",
             "model": "gpt-4o-mini",
             "api_key_env": "OPENAI_API_KEY",
+            "api_url": "https://api.openai.com/v1/responses",
+            "prompts_path": "config/prompts.yml",
+            "throttling": {"timeout": 60, "retries": 2},
+        },
+        "i18n": {
+            "lang": "ru",
+            "path": "config/i18n/ru.yml",
         },
     }
 
 
 # Тест: кейс OOS создает артефакты и отчет
-def test_run_oos_case_creates_artifacts_and_report(tmp_path: Path) -> None:
+def test_run_oos_case_creates_artifacts_and_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _settings()
+    settings["llm"]["enabled"] = True
+
+    monkeypatch.setattr(
+        "beeagent_module.agents.oos.graph.explain_recommendations",
+        lambda llm_cfg, recommendations, logger=None: (
+            "• Переложить фокус на пополнение\n• Проверить полку в начале смены"
+        ),
+    )
+
     result = run_oos_case(
-        settings=_settings(),
+        settings=settings,
         storage_dir=tmp_path,
         logger=logging.getLogger("test.cases"),
         trigger="manual",
     )
 
     assert result["run_id"].startswith("run-")
-    assert "📊 OOS Detection Report" in result["report_text"]
-    assert "Recommendations:" in result["report_text"]
+    assert "📊 Отчёт OOS" in result["report_text"]
+    assert "Рекомендации" in result["report_text"]
+    assert "AI-помощник" in result["report_text"]
 
     run_json = tmp_path / "runs" / result["run_id"] / "run.json"
     run_data = json.loads(run_json.read_text(encoding="utf-8"))

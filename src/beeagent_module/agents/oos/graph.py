@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 
 from beeagent_module.adapters.base import DataAdapter
 from beeagent_module.agents.oos.rules import detect_rule_a
+from beeagent_module.core.i18n import load_translations, t
 from beeagent_module.core.llm import explain_recommendations
 from beeagent_module.domain.models import Alert, Recommendation, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
@@ -25,6 +26,7 @@ class OOSState(TypedDict, total=False):
     trigger: str
     llm_cfg: dict[str, Any]
     recommendations_cfg: dict[str, Any]
+    i18n_cfg: dict[str, Any]
 
     stores: list[Any]
     skus: list[Any]
@@ -180,6 +182,19 @@ def _get_latest_stock(stock_rows: list[Any], store_id: str, sku_id: str) -> int:
     return int(latest_stock)
 
 
+# Вспомогательная функция для получения stock_on_hand на конкретную дату, с поддержкой возможных проблем с датами
+def _get_stock_on_date(
+    stock_rows: list[Any],
+    store_id: str,
+    sku_id: str,
+    date: str,
+) -> int | None:
+    for row in stock_rows:
+        if row.store_id == store_id and row.sku_id == sku_id and row.date == date:
+            return int(row.stock_on_hand)
+    return None
+
+
 # Вспомогательная функция для суммирования units за последние 7 дней с учетом возможных проблем с датами
 def _sum_units_last_7d(sales_rows: list[Any], store_id: str, sku_id: str) -> int:
     matched: list[tuple[datetime, int]] = []
@@ -207,6 +222,19 @@ def _sum_units_last_7d(sales_rows: list[Any], store_id: str, sku_id: str) -> int
     return int(sum(units for dt, units in matched if dt >= cutoff))
 
 
+# Вспомогательная функция для извлечения даты из текста алерта, с поддержкой возможных проблем с форматом
+def _extract_alert_date(details: str) -> str:
+    marker = "date:"
+    if marker not in details:
+        return "unknown"
+    return details.split(marker, maxsplit=1)[-1].strip(" )")
+
+
+# Вспомогательная функция для получения текста объяснения от LLM с поддержкой разных форматов ответа и фоллбеков
+def _as_yyyymmdd_float(dt: datetime) -> float:
+    return float(dt.strftime("%Y%m%d"))
+
+
 # Node 5: построение рекомендаций на основе алертов и метрик, с поддержкой конфигурации и ограничений
 def build_recommendations(
     state: OOSState, config: RunnableConfig | None = None
@@ -228,7 +256,23 @@ def build_recommendations(
 
     recommendations: list[Recommendation] = []
     for alert in alerts:
-        stock_on_hand = _get_latest_stock(stock_rows, alert.store_id, alert.sku_id)
+        alert_date = _extract_alert_date(alert.details)
+        stock_on_hand_on_date = _get_stock_on_date(
+            stock_rows,
+            alert.store_id,
+            alert.sku_id,
+            alert_date,
+        )
+        stock_on_hand_latest = _get_latest_stock(
+            stock_rows, alert.store_id, alert.sku_id
+        )
+
+        stock_on_hand = (
+            stock_on_hand_on_date
+            if stock_on_hand_on_date is not None
+            else stock_on_hand_latest
+        )
+
         units_7d = _sum_units_last_7d(sales_rows, alert.store_id, alert.sku_id)
         avg_daily = max(units_7d / 7, 1)
         days_of_cover = round(stock_on_hand / avg_daily, 2)
@@ -237,13 +281,14 @@ def build_recommendations(
         recommendations.append(
             Recommendation(
                 action="restock_shelf",
-                reason=alert.details,
+                reason="reason_stock_positive_not_visible",
                 metrics={
                     "stock_on_hand": float(stock_on_hand),
                     "units_7d": float(units_7d),
                     "days_of_cover": float(days_of_cover),
+                    "event_date": float(_as_yyyymmdd_float(datetime.now(UTC))),
                 },
-                effect="Restore on-shelf availability and reduce lost sales",
+                effect="restock_shelf",
                 confidence=confidence,
             )
         )
@@ -270,7 +315,42 @@ def llm_explain(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
 
     start_time = time.perf_counter()
     logger = state.get("logger")
+
+    i18n_cfg = state.get("i18n_cfg", {})
+    i18n_path = i18n_cfg.get("path")
+    if not isinstance(i18n_path, str) or not i18n_path:
+        raise RuntimeError("Invalid i18n.path for llm_explain")
+
+    translations = load_translations(i18n_path)
+
     recommendations = model_to_dict(state.get("recommendations", []))
+    for rec in recommendations:
+        action_key = str(rec.get("action", ""))
+        confidence_key = str(rec.get("confidence", ""))
+        effect_key = str(rec.get("effect", ""))
+
+        rec["action_title"] = t(translations, f"oos.actions.{action_key}")
+        rec["confidence_title"] = t(translations, f"oos.confidence.{confidence_key}")
+        rec["effect_title"] = t(translations, f"oos.effects.{effect_key}")
+
+        metrics = rec.get("metrics", {})
+        if isinstance(metrics, dict):
+            rec["stock_on_hand"] = metrics.get("stock_on_hand", 0)
+            rec["units_7d"] = metrics.get("units_7d", 0)
+            rec["days_of_cover"] = metrics.get("days_of_cover", 0)
+
+            event_date = datetime.now(UTC).date().isoformat()
+            reason_key = str(rec.get("reason", ""))
+            try:
+                rec["reason"] = t(
+                    translations,
+                    f"oos.reasons.{reason_key}",
+                    stock_on_hand=rec["stock_on_hand"],
+                    event_date=event_date,
+                )
+            except RuntimeError:
+                rec["reason"] = reason_key
+
     summary = explain_recommendations(llm_cfg, recommendations, logger=logger)
     state["recommendations_summary"] = summary
 
@@ -289,6 +369,12 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     run_meta = state.get("run_meta")
     alerts = state.get("alerts", [])
     tasks = state.get("tasks", [])
+    i18n_cfg = state.get("i18n_cfg", {})
+    i18n_path = i18n_cfg.get("path")
+    if not isinstance(i18n_path, str) or not i18n_path:
+        raise RuntimeError("Invalid i18n.path for OOS report rendering")
+
+    translations = load_translations(i18n_path)
 
     dataset_id = run_meta.dataset_id if run_meta else "unknown"
     high_alerts = [a for a in alerts if a.severity == "high"]
@@ -296,42 +382,75 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     affected_skus = {a.sku_id for a in alerts}
 
     report_lines = [
-        "📊 OOS Detection Report",
-        f"Run ID: {run_id}",
-        f"Dataset: {dataset_id}",
+        t(translations, "oos.report.title"),
+        f"{t(translations, 'oos.report.run_id')}: {run_id}",
+        f"{t(translations, 'oos.report.dataset')}: {dataset_id}",
         "",
-        f"🚨 Alerts: {len(alerts)}",
-        f"  - High severity: {len(high_alerts)}",
-        f"  - Affected stores: {len(affected_stores)}",
-        f"  - Affected SKUs: {len(affected_skus)}",
+        f"{t(translations, 'oos.report.alerts')}: {len(alerts)}",
+        f"  - {t(translations, 'oos.report.high_severity')}: {len(high_alerts)}",
+        f"  - {t(translations, 'oos.report.affected_stores')}: {len(affected_stores)}",
+        f"  - {t(translations, 'oos.report.affected_skus')}: {len(affected_skus)}",
         "",
-        f"✅ Tasks: {len(tasks)}",
+        f"{t(translations, 'oos.report.tasks')}: {len(tasks)}",
     ]
 
     recommendations = state.get("recommendations", [])
     report_lines.append("")
-    report_lines.append("Recommendations:")
+    report_lines.append(t(translations, "oos.report.recommendations"))
     if recommendations:
         for idx, rec in enumerate(recommendations, start=1):
             metrics = rec.metrics
             metrics_text = (
-                f"stock_on_hand={metrics.get('stock_on_hand', 0)}, "
-                f"units_7d={metrics.get('units_7d', 0)}, "
-                f"days_of_cover={metrics.get('days_of_cover', 0)}"
+                f"  • {t(translations, 'oos.metrics.stock_on_hand')}: {metrics.get('stock_on_hand', 0)}\n"
+                f"  • {t(translations, 'oos.metrics.units_7d')}: {metrics.get('units_7d', 0)}\n"
+                f"  • {t(translations, 'oos.metrics.days_of_cover')}: {metrics.get('days_of_cover', 0)}"
             )
+            action_title = t(translations, f"oos.actions.{rec.action}")
+            confidence_title = t(translations, f"oos.confidence.{rec.confidence}")
+            effect_text = t(translations, f"oos.effects.{rec.effect}")
+
+            metrics = rec.metrics
+
+            event_date_raw = metrics.get("event_date")
+            event_date = "unknown"
+            if isinstance(event_date_raw, (int, float)):
+                s = str(int(event_date_raw))
+                if len(s) == 8:
+                    event_date = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+            stock_on_hand_val = metrics.get("stock_on_hand", 0)
+
+            reason_text = rec.reason
+            reason_key = f"oos.reasons.{rec.reason}"
+            try:
+                reason_text = t(
+                    translations,
+                    reason_key,
+                    stock_on_hand=stock_on_hand_val,
+                    event_date=event_date,
+                )
+            except RuntimeError:
+                reason_text = rec.reason
+
             report_lines.append(
-                f"{idx}. Action: {rec.action} | Reason: {rec.reason} | "
-                f"Metrics: {metrics_text} | Effect: {rec.effect} | "
-                f"Confidence: {rec.confidence}"
+                t(
+                    translations,
+                    "oos.report.recommendation_line",
+                    index=idx,
+                    action_title=action_title,
+                    reason=reason_text,
+                    metrics=metrics_text,
+                    effect=effect_text,
+                    confidence=confidence_title,
+                )
             )
     else:
-        report_lines.append("No recommendations generated.")
+        report_lines.append(t(translations, "oos.report.no_recommendations"))
 
-    summary = state.get("recommendations_summary")
-    if summary:
-        report_lines.append("")
-        report_lines.append("Summary:")
-        report_lines.append(summary)
+    report_lines.append("")
+    report_lines.append(t(translations, "oos.report.summary"))
+    report_lines.append(t(translations, "oos.report.assistant_intro"))
+    report_lines.append(t(translations, "oos.report.assistant_examples"))
 
     state["report_text"] = "\n".join(report_lines)
 
@@ -511,6 +630,7 @@ def run_oos_workflow(
     trigger: str,
     llm_cfg: dict[str, Any],
     recommendations_cfg: dict[str, Any],
+    i18n_cfg: dict[str, Any],
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     graph = build_oos_graph()
@@ -522,6 +642,7 @@ def run_oos_workflow(
         "trigger": trigger,
         "llm_cfg": llm_cfg,
         "recommendations_cfg": recommendations_cfg,
+        "i18n_cfg": i18n_cfg,
     }
     if logger is not None:
         initial_state["logger"] = logger

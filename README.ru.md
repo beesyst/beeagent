@@ -176,6 +176,14 @@ bash start.sh
 * `llm.provider`: сейчас только `"openai"`
 * `llm.model`: модель (например `"gpt-4o-mini"`)
 * `llm.api_key_env`: имя переменной окружения с ключом (например `OPENAI_API_KEY`)
+* `llm.api_url`: endpoint API (например `"https://api.openai.com/v1/responses"`)
+* `llm.prompts_path`: путь к YAML c шаблонами промптов
+* `llm.throttling.timeout`: timeout запроса LLM в секундах
+* `llm.throttling.retries`: число retry только для timeout
+
+**i18n**
+* `i18n.lang`: язык интерфейса (в v0 используется `"ru"`)
+* `i18n.path`: путь к YAML-файлу переводов
 
 **Scheduler (v0)**
 * `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS

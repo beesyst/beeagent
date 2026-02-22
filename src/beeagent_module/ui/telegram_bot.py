@@ -17,6 +17,7 @@ from beeagent_module.cases.quiz import (
     process_quiz_answer_case,
     start_quiz_case,
 )
+from beeagent_module.core.i18n import load_translations, t
 from beeagent_module.core.paths import get_storage_dir
 from beeagent_module.core.secrets import load_secrets
 
@@ -39,6 +40,9 @@ def start_telegram_mode(settings: dict, logger: logging.Logger) -> None:
         logger.info("telegram mode skipped because it is disabled")
         return
 
+    i18n_cfg = settings["i18n"]
+    translations = load_translations(i18n_cfg["path"])
+
     secrets = load_secrets(settings)
 
     token = str(secrets["telegram_bot_token"])
@@ -53,6 +57,7 @@ def start_telegram_mode(settings: dict, logger: logging.Logger) -> None:
         telemetry_enabled=telegram_cfg["telemetry_enabled"],
         logger=logger,
         settings=settings,
+        translations=translations,
     )
     logger.info("telegram bot polling started")
     application.run_polling(drop_pending_updates=True)
@@ -65,6 +70,7 @@ def _build_application(
     telemetry_enabled: bool,
     logger: logging.Logger,
     settings: dict,
+    translations: dict[str, Any],
 ):
     from telegram.ext import (
         ApplicationBuilder,
@@ -94,6 +100,7 @@ def _build_application(
         storage_dir / "reports" / "last_oos_report.md"
     )
     application.bot_data["logger"] = logger
+    application.bot_data["translations"] = translations
 
     application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(CommandHandler("help", handle_help))
@@ -199,10 +206,12 @@ async def _run_scheduled_oos_tick(application: Any) -> None:
         logger.exception("scheduled run failed")
         return
 
-    text = (
-        "New run ready → Approve/Reject\n"
-        f"Run ID: {result['run_id']}\n"
-        f"Alerts: {result['alerts_count']}, Tasks: {result['tasks_count']}"
+    text = t(
+        application.bot_data["translations"],
+        "telegram.scheduler.new_run",
+        run_id=result["run_id"],
+        alerts=result["alerts_count"],
+        tasks=result["tasks_count"],
     )
 
     try:
@@ -223,8 +232,8 @@ async def handle_start(update: Any, context: Any) -> None:
         return
 
     await message.reply_text(
-        "BeeAgent bot is ready. Use commands or buttons below.",
-        reply_markup=_build_main_menu(),
+        _t(context, "telegram.start"),
+        reply_markup=_build_main_menu(context.bot_data.get("translations")),
     )
 
 
@@ -239,16 +248,7 @@ async def handle_help(update: Any, context: Any) -> None:
     if message is None:
         return
 
-    await message.reply_text(
-        "Available commands:\n"
-        "/start - show menu\n"
-        "/help - show help\n"
-        "/run_oos - run mock OOS scan\n"
-        "/run_promo - run promo scan\n"
-        "/last - show last report\n"
-        "/quiz_pharmacy - start pharmacy quiz\n"
-        "/last_quiz - show last quiz result"
-    )
+    await message.reply_text(_t(context, "telegram.help"))
 
 
 # Обработка команды /run_oos и формирование mock-отчета
@@ -293,7 +293,7 @@ async def handle_last(update: Any, context: Any) -> None:
     storage_dir = context.bot_data["storage_dir"]
     report_text = get_last_report_case(storage_dir)
     if report_text is None:
-        await message.reply_text("No reports yet. Run /run_oos first.")
+        await message.reply_text(_t(context, "telegram.no_reports"))
         return
 
     await message.reply_text(report_text)
@@ -315,7 +315,7 @@ async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
     storage_dir = context.bot_data["storage_dir"]
     chat = update.effective_chat
     if chat is None:
-        await message.reply_text("Chat not found.")
+        await message.reply_text(_t(context, "telegram.quiz.chat_not_found"))
         return
 
     result = start_quiz_case(
@@ -326,7 +326,9 @@ async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
     )
 
     if "error" in result:
-        await message.reply_text(f"Error: {result['error']}")
+        await message.reply_text(
+            _t(context, "telegram.quiz.start_error", error=result["error"])
+        )
         return
 
     run_id = result["run_id"]
@@ -367,7 +369,7 @@ async def handle_last_quiz(update: Any, context: Any) -> None:
 
     result = get_last_quiz_case(storage_dir, chat_id)
     if result is None:
-        await message.reply_text("No quiz results yet. Run /quiz_pharmacy first.")
+        await message.reply_text(_t(context, "telegram.quiz.no_results"))
         return
 
     await message.reply_text(result["report_text"])
@@ -409,7 +411,7 @@ async def handle_menu_button(
         storage_dir = context.bot_data["storage_dir"]
         report_text = get_last_report_case(storage_dir)
         if report_text is None:
-            await reply("No reports yet. Run /run_oos first.")
+            await reply(_t(context, "telegram.no_reports"))
             return
 
         await reply(report_text)
@@ -427,7 +429,7 @@ async def handle_menu_button(
         await _handle_quiz_answer(message, context, query.data)
         return
 
-    await reply("Unknown action.")
+    await reply(_t(context, "telegram.unknown_action"))
 
 
 # Обработка неизвестных команд без падения
@@ -444,22 +446,50 @@ async def handle_unknown_command(
     if message is None:
         return
 
-    await message.reply_text("Unknown command. Use /help.")
+    await message.reply_text(_t(context, "telegram.unknown"))
 
 
 # Сбор главного inline-меню
-def _build_main_menu():
+def _build_main_menu(translations: dict[str, Any] | None = None):
     try:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     except ModuleNotFoundError:
         return None
 
+    if not isinstance(translations, dict):
+        raise RuntimeError("translations not loaded for telegram menu")
+
     keyboard = [
-        [InlineKeyboardButton("Run OOS Scan", callback_data=BUTTON_RUN_OOS)],
-        [InlineKeyboardButton("Run Promo Scan", callback_data=BUTTON_RUN_PROMO)],
-        [InlineKeyboardButton("Show Report", callback_data=BUTTON_SHOW_REPORT)],
-        [InlineKeyboardButton("Approve Tasks", callback_data=BUTTON_APPROVE_TASKS)],
-        [InlineKeyboardButton("Reject Tasks", callback_data=BUTTON_REJECT_TASKS)],
+        [
+            InlineKeyboardButton(
+                t(translations, "telegram.menu.run_oos"),
+                callback_data=BUTTON_RUN_OOS,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                t(translations, "telegram.menu.run_promo"),
+                callback_data=BUTTON_RUN_PROMO,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                t(translations, "telegram.menu.show_report"),
+                callback_data=BUTTON_SHOW_REPORT,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                t(translations, "telegram.menu.approve"),
+                callback_data=BUTTON_APPROVE_TASKS,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                t(translations, "telegram.menu.reject"),
+                callback_data=BUTTON_REJECT_TASKS,
+            )
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -529,9 +559,24 @@ async def _ensure_allowlist(
 
     message = update.effective_message
     if message is not None:
-        await message.reply_text("Access denied: admin chat only.")
+        await message.reply_text(_t(context, "telegram.access_denied"))
 
     return False
+
+
+# Получение перевода для Telegram контекста.
+def _t(context: Any, key: str, **vars: Any) -> str:
+    translations = context.bot_data.get("translations")
+    if not isinstance(translations, dict):
+        settings = context.bot_data.get("settings", {})
+        i18n_cfg = settings.get("i18n", {})
+        i18n_path = i18n_cfg.get("path")
+        if not isinstance(i18n_path, str) or not i18n_path:
+            raise RuntimeError("Invalid i18n.path for telegram translations")
+        translations = load_translations(i18n_path)
+        context.bot_data["translations"] = translations
+
+    return t(translations, key, **vars)
 
 
 # Чек включена ли телеметрия и запись события
@@ -597,14 +642,14 @@ async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) ->
     storage_dir = context.bot_data["storage_dir"]
     parts = callback_data.split("_")
     if len(parts) < 3:
-        await message.reply_text("Invalid quiz data.")
+        await message.reply_text(_t(context, "telegram.quiz.invalid_data"))
         return
 
     run_id = "_".join(parts[1:-1])
     try:
         answer_idx = int(parts[-1])
     except ValueError:
-        await message.reply_text("Invalid answer index.")
+        await message.reply_text(_t(context, "telegram.quiz.invalid_answer_index"))
         return
 
     result = process_quiz_answer_case(
@@ -616,7 +661,9 @@ async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) ->
     )
 
     if "error" in result:
-        await message.reply_text(f"Error: {result['error']}")
+        await message.reply_text(
+            _t(context, "telegram.quiz.answer_error", error=result["error"])
+        )
         return
 
     # ответ на вопрос и показ следующего или результата

@@ -60,9 +60,14 @@ llm:
   model: "gpt-4o-mini"
   api_key_env: "OPENAI_API_KEY"
   api_url: "https://api.openai.com/v1/responses"
+  prompts_path: "config/prompts.yml"
   throttling:
     timeout: 60
     retries: 2
+
+i18n:
+  lang: "ru"
+  path: "config/i18n/ru.yml"
 
 quiz:
   enabled: true

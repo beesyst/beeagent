@@ -32,8 +32,11 @@ REQUIRED_KEYS = (
     ("llm", "model"),
     ("llm", "api_key_env"),
     ("llm", "api_url"),
+    ("llm", "prompts_path"),
     ("llm", "throttling", "timeout"),
     ("llm", "throttling", "retries"),
+    ("i18n", "lang"),
+    ("i18n", "path"),
     ("quiz", "enabled"),
     ("quiz", "path"),
 )
@@ -182,6 +185,9 @@ def validate_settings(settings: dict) -> None:
     if not isinstance(_get_nested_value(settings, ("llm", "api_url")), str):
         raise RuntimeError("Invalid type for llm.api_url, expected string")
 
+    if not isinstance(_get_nested_value(settings, ("llm", "prompts_path")), str):
+        raise RuntimeError("Invalid type for llm.prompts_path, expected string")
+
     throttling_timeout = _get_nested_value(settings, ("llm", "throttling", "timeout"))
     if not isinstance(throttling_timeout, int):
         raise RuntimeError("Invalid type for llm.throttling.timeout, expected int")
@@ -197,6 +203,12 @@ def validate_settings(settings: dict) -> None:
     llm_provider = _get_nested_value(settings, ("llm", "provider"))
     if llm_provider != "openai":
         raise RuntimeError("Unsupported llm.provider, expected 'openai'")
+
+    if not isinstance(_get_nested_value(settings, ("i18n", "lang")), str):
+        raise RuntimeError("Invalid type for i18n.lang, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("i18n", "path")), str):
+        raise RuntimeError("Invalid type for i18n.path, expected string")
 
     if not isinstance(_get_nested_value(settings, ("quiz", "enabled")), bool):
         raise RuntimeError("Invalid type for quiz.enabled, expected bool")
