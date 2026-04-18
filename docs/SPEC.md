@@ -1,174 +1,255 @@
-# SPEC — BeeAgent Iteration 1 (Telegram bot v0)
+# SPEC — BeeAgent
 
-## Обзор
-BeeAgent v0.2.1 — каркас для pre-MVP демонстрации: Telegram UI → mock OOS-агент → отчёт → утверждение.
+## 0. Термины
 
-## Архитектура
+- Репозиторий: `beeagent`
+- Python-пакет (import): `beeagent_module`
+- Core: общее ядро оркестрации BeeAgent
+- Module: отдельный доменный модуль, подключаемый к BeeAgent (`beeagent-rop`, будущие `beescan`, `merch`)
+- Case: прикладной сценарий, который вызывается transport/UI слоем
+- Agent: workflow/graph под конкретный сценарий
+- Adapter: слой доступа к данным
+- Capability: внешний исполняемый или интеграционный вызов (MCP, n8n, API, system)
+- Transport/UI: тонкий слой взаимодействия (`telegram`, позже web и др.)
+- Run: один воспроизводимый запуск сценария с `run_id`
+- Artifact: файл в `storage/`, который фиксирует результат, шаги или состояние запуска
+- Authority: граница прав (`read-only`, `draft-only`, `execution-capable`)
 
-### Структура проекта
-```
-beeagent/
-├── config/
-│   ├── start.py           # Entry point
-│   └── settings.yml       # Source of truth для конфига
-├── src/beeagent_module/
-│   ├── core/
-│   │   ├── app.py         # Выбор режима (telegram)
-│   │   ├── log.py         # Логирование (stdout + file)
-│   │   ├── paths.py       # Пути к logs/, storage/
-│   │   └── settings.py    # Загрузка и валидация YAML
-│   └── ui/
-│       └── telegram_bot.py # Telegram handlers v0
-├── storage/               # Артефакты (reports, telemetry)
-├── logs/                  # Базовое логирование (app.log)
-└── tests/
-    ├── test_smoke.py      # Базовая инициализация
-    └── test_telegram_bot.py  # Unit-тесты handlers
-```
+## 1. Цель
 
-### Зависимости
+Сделать `BeeAgent` как explainable, stateful, modular AI orchestration system, а не как “чат-бот с тулзами”.
+
+Система должна уметь:
+
+- запускать и сопровождать сценарии через единое core;
+- работать с transport/UI слоями без вшивания бизнес-логики в UI;
+- подключать отдельные доменные модули как python-пакеты;
+- хранить state, artifacts, approvals, summaries и trace внутри BeeAgent;
+- использовать AI как bounded assistive layer, а не как black-box замену deterministic logic;
+- использовать MCP / n8n / внешние systems как capability layer, а не как место жизни доменной логики.
+
+## 2. Принципы разработки
+
+- KISS: минимум лишних абстракций, максимум ясных contracts
+- Core должен оставаться универсальным, доменная логика живёт в модулях
+- `config/settings.yml` — runtime source of truth
+- Новые обязательные ключи валидируются fail-fast
+- Логи должны быть понятными
+- Артефакты должны быть воспроизводимыми
+- Secrets не должны попадать в logs/storage
+- Long-running state должен жить в BeeAgent, а не внутри одного tool/MCP вызова
+- UI должен быть thin layer
+- Capability boundary должен быть явным
+- Execution-capable paths должны быть bounded и operator-visible
+
+## 3. Архитектурная схема
+
+Базовая схема системы:
+
+`UI/Transport → BeeAgent core → module/case → capability layer (MCP / n8n / API / systems)`
+
+Где:
+
+- `UI/Transport` отвечает только за вход/выход;
+- `BeeAgent core` отвечает за orchestration, state, approvals, artifacts, policy;
+- `module` отвечает за доменную логику;
+- `capability layer` отвечает за внешние действия и интеграции.
+
+## 4. Что живёт в core, а что не живёт
+
+### 4.1 Что должно жить в `beeagent`
+
+- module contract
+- module registry
+- runtime context
+- artifact API
+- case dispatch
+- agent/workflow orchestration
+- logging
+- settings validation
+- transport handling
+- approval/state/session logic
+- capability abstraction
+- bounded authority logic
+
+### 4.2 Что не должно жить в `beeagent`
+
+- клиентская бизнес-логика РОПа
+- welding-specific lead rules
+- client-specific duplicate heuristics
+- client-specific email semantics
+- merchandising-specific business rules
+- beescan-specific business rules
+
+Это должно жить в отдельных модулях.
+
+## 5. Модульная модель
+
+### 5.1 Модуль
+
+Модуль — это отдельный python-пакет, который подключается к BeeAgent как локальная зависимость.
+
+Примеры:
+
+- `beeagent-rop`
+- `beescan`
+- `beeagent-merch` / `beeagent-merchandising`
+
+### 5.2 Что должен уметь модуль
+
+Модуль должен:
+
+- иметь `module_id`
+- объявлять поддерживаемые `case_type`
+- принимать `ModuleContext`
+- возвращать bounded result
+- использовать BeeAgent artifact/runtime contracts
+- не ломать authority boundary
+
+### 5.3 Что не должен делать модуль
+
+Модуль не должен:
+
+- напрямую управлять transport/UI;
+- хранить свой отдельный runtime вне BeeAgent;
+- напрямую подменять core orchestration;
+- тихо выполнять внешние действия в обход capability layer;
+- создавать hidden execution path.
+
+## 6. Capability layer
+
+BeeAgent работает через capability layer для внешних действий.
+
+Примеры capabilities:
+
+- MCP tool call
+- n8n workflow trigger
+- API call
+- file/system operation
+
+### Правило
+
+- доменная логика не живёт в capability layer;
+- capability layer не хранит основной state long-running задачи;
+- ошибки, timeout, refusal должны быть явными и воспроизводимыми.
+
+## 7. Транспорт / UI
+
+### v0 / текущий baseline
+
+- Telegram
+
+### позже
+
+- web/operator shell
+- другие transport/UI surfaces
+
+### Правило
+
+Transport/UI:
+
+- вызывает cases/module flows;
+- не читает storage напрямую;
+- не хранит бизнес-логику;
+- не подменяет orchestration.
+
+## 8. Конфигурация
+
+### Источник правды
+
+`config/settings.yml`
+
+### Правила
+
+- required keys должны быть явно заданы;
+- новые обязательные ключи валидируются в `src/beeagent_module/core/settings.py`;
+- без hidden defaults для важных runtime paths.
+
+## 9. Артефакты
+
+Все значимые результаты должны быть воспроизводимы через artifacts в `storage/`.
+
+Типовые артефакты:
+
+- `storage/runs/<run_id>/run.json`
+- `storage/runs/<run_id>/steps.json`
+- `storage/runs/<run_id>/...` case/module-specific artifacts
+- `storage/artifacts/<run_id>/report.*`
+- `storage/sessions/...`
+- `storage/telemetry/...`
+
+### Требования
+
+Артефакты должны быть:
+
+- понятными;
+- согласованными с логами;
+- пригодными для ручной проверки;
+- безопасными по содержимому.
+
+## 10. Authority model
+
+### Базовые режимы
+
+- `read-only`
+- `draft-only`
+- `execution-capable`
+
+### Правило
+
+По умолчанию всё должно быть `read-only` или `draft-only`.
+
+Если появляется execution-capable path, он должен быть:
+
+- явным;
+- ограниченным;
+- проверяемым;
+- видимым оператору;
+- не скрытым в prompt или случайном code path.
+
+## 11. Стек
+
+Текущий стек:
+
 - Python 3.12+
-- pyyaml >= 6.0.1
-- python-dotenv >= 1.0.1
-- python-telegram-bot >= 21.7
-- pytest >= 8.3.0
+- `uv`
+- `PyYAML`
+- `python-dotenv`
+- `python-telegram-bot`
+- `langgraph`
+- `pytest`
 
-## Конфигурация
+Дополнительные зависимости добавляются только по реальной необходимости.
 
-### settings.yml (источник правды)
-```yaml
-app:
-  name: "BeeAgent"
-  env: "dev"
+## 12. Запуск
 
-run:
-  mode: "telegram"  # единственный поддерживаемый режим (Iteration 1)
+### Основной запуск
 
-telegram:
-  enabled: true
-  bot_token: "REPLACE_WITH_TELEGRAM_BOT_TOKEN"  # прямое значение
-  chat_id: 123456789                            # allowlist: один admin чат
-  telemetry_enabled: true                       # запись событий в jsonl
+`start.sh` запускает `uv sync` и затем `uv run python3 config/start.py`
 
-logging:
-  clear_logs: true   # перезаписывать logs/app.log при каждом старте
-  utc: true          # каноническое время (UTC)
-  level: "INFO"      # уровень логирования
-```
+### Правило
 
-### Переменные окружения
-- `.env` → `dotenv_path` (опционально, для future-проофинга)
+- основной runtime запускается из репозитория `beeagent`
+- модули подключаются как локальные зависимости через `uv`
+- модуль не поднимает свой отдельный runtime по умолчанию
 
-### Fail-fast валидация
-Обязательные ключи в `settings.py`:
-- `app.name` (str), `app.env` (str)
-- `run.mode` (str)
-- `telegram.enabled` (bool), `telegram.bot_token` (str), `telegram.chat_id` (int), `telegram.telemetry_enabled` (bool)
-- `logging.clear_logs` (bool), `logging.utc` (bool), `logging.level` (str)
+## 13. Критерии зрелости core
 
-Если ключ отсутствует или имеет не тот тип → ошибка при старте, без дефолтов.
+BeeAgent считается развиваемым в правильную сторону, если:
 
-## Telegram UI (v0)
+- transport слой тонкий;
+- core не захламляется клиентской логикой;
+- модули подключаются по стабильному контракту;
+- capability boundary явный;
+- artifacts и logs объясняют поведение;
+- AI не размывает deterministic path;
+- delivery нового модуля не требует переписывать core.
 
-### Команды
-| Команда | Логика | Результат |
-|---------|--------|-----------|
-| `/start` | Проверяет allowlist → показывает главное меню | Inline-кнопки: Run OOS Scan, Show Report |
-| `/help` | Список всех команд | Текст с описанием |
-| `/run_oos` | Генерирует mock-отчет → сохраняет в storage | Текст отчёта |
-| `/last` | Читает последний отчет из storage | Текстовый отчёт или "No reports yet" |
+## 14. Ближайшее направление
 
-### Inline-кнопки
-- **Run OOS Scan** → вызывает логику `/run_oos` (запись и отправка отчёта)
-- **Show Report** → вызывает логику `/last` (чтение последнего отчёта)
+Ближайшая цель:
 
-### Allowlist (KISS security)
-- Один `chat_id` из `settings.yml` считается администратором.
-- Сообщение от другого чата → ответ "Access denied: admin chat only." и лог `warning`.
-- Неизвестная команда на admin-чате → лог и ответ "Unknown command. Use /help."
-- Неизвестная команда на non-admin-чате → лог и allowlist-ответ.
-
-### Mock-отчет
-```
-Last OOS report
-created_at: 2026-02-18T06:51:37.123456+00:00
-alerts_total: 2
-- STORE-001 | SKU-1001 | shelf_signal=false
-- STORE-002 | SKU-1012 | shelf_signal=false
-```
-Сохраняется в `storage/reports/last_oos_report.md`.
-
-### Телеметрия (опционально)
-При `telemetry_enabled: true` событие пишется в `storage/telemetry/telegram_updates.jsonl` как JSON-строка:
-```json
-{"ts":"2026-02-18T06:51:37.123456+00:00","event":"start","update_id":77,"chat_id":123456789,"user_id":123456789,"command":"/start","callback_data":null}
-```
-
-Поля:
-- `ts` — ISO 8601 UTC
-- `event` — "start", "help", "run_oos", "last", "button", "unknown_command"
-- `update_id` — Telegram update ID
-- `chat_id`, `user_id` — ID чата и пользователя
-- `command` — текст сообщения (если есть)
-- `callback_data` — данные кнопки (если есть)
-
-## Запуск
-
-### bash start.sh
-1. Проверяет/устанавливает `uv`
-2. Синхронизирует зависимости: `uv sync`
-3. Запускает `python3 config/start.py`
-
-### Ожидаемый вывод (с `TELEGRAM_BOT_TOKEN` установленным)
-```
-[run] syncing dependencies...
-[run] starting BeeAgent...
-2026-02-18 06:51:37 [INFO] - [app] BeeAgent started
-2026-02-18 06:51:37 [INFO] - [app] mode=telegram
-2026-02-18 06:51:37 [INFO] - [app] telegram mode started
-2026-02-18 06:51:37 [INFO] - [app] telegram.enabled=True
-2026-02-18 06:51:37 [INFO] - [app] telegram bot polling started
-# ждёт входящих сообщений и кнопок...
-```
-
-### Без токена
-```
-RuntimeError: Telegram bot_token is empty in settings
-```
-
-## Тестирование
-
-### pytest -q
-```
-tests/test_smoke.py::test_smoke_startup_initialization
-tests/test_telegram_bot.py::test_start_denies_non_admin
-tests/test_telegram_bot.py::test_run_oos_then_last_report
-tests/test_telegram_bot.py::test_buttons_call_same_handlers
-tests/test_telegram_bot.py::test_unknown_command_does_not_crash
-tests/test_telegram_bot.py::test_telemetry_writes_jsonl
-```
-
-Все тесты — unit-level без Telegram API; используются fake objects для Message, CallbackQuery, Update, Context.
-
-### Smoke тест
-Проверяет инициализацию settings, логов и storage создаются корректно.
-
-## DoD (Definition of Done)
-
-- [x] `bash start.sh` стартует без ошибок (при наличии bot_token в settings).
-- [x] Бот отвечает на `/start`, `/help`, `/run_oos`, `/last`.
-- [x] Inline-кнопки вызывают те же обработчики, что и команды.
-- [x] Allowlist: non-admin получает отказ, admin видит меню.
-- [x] Неизвестная команда → понятный ответ, без падения.
-- [x] Mock-отчет сохраняется в `storage/reports/last_oos_report.md`.
-- [x] Телеметрия пишется в `storage/telemetry/telegram_updates.jsonl` при `telemetry_enabled: true`.
-- [x] `pytest -q` проходит без ошибок.
-
-## TODO (Iteration 2+)
-
-- Модели доменов (Store, SKU, SalesRow, StockRow, ShelfSignal, Alert, Task, RunMeta).
-- Генератор моков для воспроизводимых данных.
-- LangGraph workflow для OOS-детектора.
-- Buttons для approve/reject задач.
-- Export: HTML/XLSX отчёты.
-- Data adapter interface для подключения 1С.
+- завершить module platform v0;
+- подключить `beeagent-rop` как первый реальный доменный модуль;
+- провести клиента через Discovery → MVP → Pilot;
+- не сломать универсальность core.

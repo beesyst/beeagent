@@ -1,438 +1,297 @@
-# BeeAgent — AI Agent Framework for Corp (pre-MVP)
+# BeeAgent — модульная агентная платформа с explainable orchestration
 
-**BeeAgent** — каркас (framework) для написания AI-агентов под корпоративные кейсы с end-to-end демо-потоком.
+**BeeAgent** — модульная AI-платформа для корпоративных сценариев, в которой core отвечает за orchestration, state, approvals, artifacts, module loading и bounded execution/integration paths.
 
-Текущие демо-кейсы: **OOS Detector** (WOW demo по ТЗ) и **Promo Scan** (v0).
-Опционально: **Quiz Agent** (demo v0, выключен по умолчанию в settings).
+Проект развивается не как “чат-бот с тулзами”, а как **stateful orchestrator** с явными границами между:
 
-Пайплайн демо (v0):
-Telegram → cases (OOS/Promo/Quiz) → adapters/spec → workflows:
-- OOS: LangGraph end-to-end (steps + artifacts + recommendations + optional LLM summary)
-- Promo: rules workflow v0
-- Quiz: demo v0 (session + answers/result artifacts; LangGraph используется только для init/render)
-→ report → storage artifacts
+- **core** — runtime, state, logs, artifacts, config, module loading;
+- **modules** — доменная бизнес-логика (`beeagent-rop`, в будущем `beescan`, `merch`);
+- **capabilities** — bounded integration/execution layer (MCP / n8n / внешние systems);
+- **UI / transport** — Telegram сейчас, позже web / Bitrix / другие интерфейсы.
 
-Approval (approve/reject) реализован для **OOS**: статус задач сохраняется и виден в `/last`.
-Promo Scan v0: report + artifacts (без approval).
-Quiz Agent v0: demo-артефакты сессии/ответов/результата (см. раздел “Артефакты”).
+Текущий demo baseline уже существует, но теперь основной вектор развития — **module platform + first real client delivery**.
 
-Проект развивается **маленькими итерациями** (см. `docs/ROADMAP.md`), соблюдая **KISS**: минимум абстракций, максимум ясности.
+## Ключевая идея
 
-## Режимы работы (v0)
+Правильная схема работы BeeAgent:
 
-Сейчас реализован один режим запуска (UI transport):
+`UI / transport → BeeAgent core → module → capability / MCP / n8n → systems`
 
-* **telegram** — Telegram бот:
-  * команды: `/start`, `/help`, `/run_oos`, `/run_promo`, `/last`
-  * **AI Q&A (v0):** любое обычное текстовое сообщение (не команда) трактуется как вопрос по **последнему OOS run** и получает ответ на основе run-артефактов (без выдумывания фактов).
-  * (опционально, если `quiz.enabled=true`): `/quiz_pharmacy`, `/last_quiz`
-  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report (OOS last)**, **Approve Tasks (OOS)**, **Reject Tasks (OOS)**, + **Answer buttons** для Quiz
-  * **allowlist**: доступ только одному admin chat_id (через env)
+Где:
+
+- **BeeAgent core** держит runtime state, session/run context, approvals, artifacts и policy;
+- **module** решает конкретный бизнес-кейс;
+- **capability layer** даёт модулю bounded доступ к внешним данным и действиям;
+- **systems** — CRM, email, 1С, workflows и другие внешние системы.
+
+## Что уже есть сейчас
+
+На текущем этапе BeeAgent уже умеет:
+
+- запускаться через единый entrypoint `start.sh`;
+- работать через Telegram transport;
+- запускать demo-cases через `cases/*`;
+- использовать mock/adapters как data boundary;
+- исполнять workflow через LangGraph;
+- сохранять run artifacts в `storage/`;
+- вести logs в `logs/app.log`;
+- поддерживать approval / reject в demo-потоке;
+- хранить step timings / basic observability;
+- держать несколько demo-agents (`oos`, `promo`, `quiz`);
+- выдавать explainable recommendations поверх deterministic path.
+
+## Текущий фокус проекта
+
+Сейчас основной фокус:
+
+1. превратить BeeAgent в **реально модульную платформу**;
+2. ввести:
+   - module contract
+   - module registry
+   - runtime context
+   - artifact API
+   - capability boundary
+3. подключить первый реальный доменный модуль:
+   - `beeagent-rop`
+
+## Режимы работы
+
+Сейчас реализован один runtime transport:
+
+- **telegram** — Telegram бот / transport слой
+
+Он используется как тонкий UI-слой и не должен содержать клиентскую бизнес-логику.
 
 Режим задаётся в `config/settings.yml`:
 
-* `run.mode: telegram`
+```
+run:
+  mode: "telegram"
+```
 
-Важно: **scheduled-run — это не отдельный режим**, а **trigger** выполнения кейса внутри Telegram-процесса:
-* `trigger=manual` — когда запускаем `/run_oos` или кнопку
-* `trigger=scheduled` — когда запускает scheduler (по интервалу)
+## Что такое модуль у нас
 
-В v0 scheduler запускает только OOS case (для демо-потока approval).
+Модуль — это отдельный Python package, который подключается к BeeAgent как локальная зависимость.
 
-Принцип: UI-канал — тонкий слой, который вызывает только `cases/*`.
+Примеры:
 
-## Основные возможности (на текущий момент)
+- `beeagent-rop`
+- `beescan` (planned)
+- `beeagent-merch` (planned)
 
-* **Telegram bot v0 (UX skeleton)**
-  * отвечает на `/start` и показывает меню с кнопками
-  * `/help` показывает справку
-  * `/run_oos` вызывает OOS case (`cases/oos.py`), который запускает LangGraph workflow, сохраняет артефакты и добавляет рекомендации в отчёт
-  * `/last` показывает последний OOS отчёт через case (`get_last_report_case`) + summary по статусу задач и reject reason
-  * `/run_promo` возвращает promo-отчёт сразу в ответ (v0), а “last report” для promo пока не ведётся
-  * `/quiz_pharmacy` запускает квиз с inline-кнопками ответов; сессия по chat_id; результаты в storage/runs/<run_id>/
-  * `/last_quiz` показывает последний результат квиза по chat_id
-  * неизвестные команды не валят процесс (`Unknown command. Use /help.`)
-  * inline-кнопки: **Run OOS Scan**, **Run Promo Scan**, **Show Report**, **Approve Tasks**, **Reject Tasks**, + **Answer buttons** для Quiz
-  * scheduler v0 (опционально): периодический автозапуск OOS в том же процессе бота
-    * после scheduled-run бот отправляет admin chat сообщение:
-      * `New run ready → Approve/Reject`
-      * `Run ID: <run_id>`
-      * `Alerts: <N>, Tasks: <N>`
-* **KISS security**
-  * доступ только из одного admin chat_id (allowlist)
-* **Артефакты**
-  * `storage/reports/last_oos_report.md` — последний OOS отчёт (markdown) для `/last`
-  * `storage/reports/last_run.json` — указатель на последний run_id (v0 используется OOS flow)
-  * `storage/telemetry/telegram_updates.jsonl` — телеметрия событий (опционально)
-  * `storage/mock/<dataset_id>/dataset.json` — сохранённый mock dataset для прогона
-  * `storage/runs/<run_id>/run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
-  * `storage/runs/<run_id>/alerts.json` — найденные алерты (Rule A)
-  * `storage/runs/<run_id>/tasks_draft.json` — draft задачи (1 task на 1 alert)
-  * `storage/runs/<run_id>/tasks_approved.json` — approved/rejected задачи (v0: только для OOS после approve/reject)
-  * `storage/runs/<run_id>/recommendations.json` — explainable рекомендации (OOS v1, Iteration 10)
-  * `storage/runs/<run_id>/steps.json` — observability v0: duration_ms шагов workflow (OOS, Quiz init v0)
-  * `storage/sessions/<chat_id>.json` — Quiz session state (v0)
-  * `storage/runs/<run_id>/session_ref.json` — run → chat_id (Quiz v0)
-  * `storage/runs/<run_id>/quiz_answers.json` — Quiz answers (v0)
-  * `storage/runs/<run_id>/quiz_result.json` — Quiz result (v0)
-  * `storage/artifacts/<run_id>/report.md` — markdown отчёт
-  * `storage/artifacts/<run_id>/report.html` — HTML отчёт
+BeeAgent core не должен вшивать в себя клиентскую бизнес-логику.
+Она должна жить в модуле.
 
-> Сейчас уже есть: LangGraph workflow + run_id + approval (approve/reject) + экспорт отчётов (report.md/report.html) и полный набор run-артефактов в `storage/`.
+## Что такое capability у нас
 
-## Где использовать
+Capability — это bounded integration / execution layer.
 
-* Быстро собрать MVP агента под новый корпоративный кейс (без переписывания “с нуля”).
-* Показать end-to-end UX через Telegram (или другой UI-канал в будущем).
-* Текущий пример: быстрые эксперименты с правилами OOS и форматом отчёта.
-* Подготовка к интеграциям с реальными данными (1C/BI позже).
+Сюда относятся:
+
+- MCP tools
+- n8n workflows
+- внешние APIs / systems
+- другие подключаемые execution/data surfaces
+
+Важно:
+
+- доменная логика **не живёт** в MCP/n8n;
+- MCP/n8n — это integration layer;
+- long-running state не должен уезжать в один внешний tool call.
+
+## Архитектурные принципы
+
+### 1. Config is source of truth
+
+Runtime behavior определяется через `config/settings.yml`.
+
+### 2. Explainability first
+
+Значимое решение должно быть объяснимо через:
+
+- config
+- logs
+- artifacts
+
+### 3. KISS
+
+Минимум абстракций, максимум ясности.
+
+### 4. Thin UI
+
+UI не должен обходить cases/modules/core.
+
+### 5. Module boundary
+
+Клиентская бизнес-логика живёт в модуле, а не в core.
+
+### 6. Bounded AI
+
+AI используется как assistive layer, а не как неограниченный black box.
 
 ## Технологический стек
 
-* **Python 3.12+**
-* **uv** — менеджер окружений/зависимостей
-* **src-layout** (пакет `beeagent_module` в `src/`)
-* **PyYAML** — конфиг `config/settings.yml`
-* **python-telegram-bot** — Telegram polling bot
-* **langgraph** — workflow-оркестрация **OOS end-to-end** (steps/trace/artifacts) + demo-использование в Quiz (init/render v0)
-* **единый лог** — `logs/app.log`
-
-## Как это работает (framework pipeline v0)
-
-1. `start.sh` → `config/start.py` (bootstrap: env → settings → logging → run mode)
-2. `core/app.py` читает `run.mode` и запускает UI-канал (сейчас: Telegram)
-3. UI-канал вызывает нужный `cases/*` (сейчас реализованы demo-cases: `cases/oos.py`, `cases/promo.py`)
-4. Case выбирает adapter, запускает workflow и получает результат (report + artifacts)
-
-## Управление и запуск
-
-Запуск — через `start.sh` (внутри вызывает `config/start.py`).
-
-### 1) Подготовка секретов (env)
-
-Создай `.env` из шаблона:
-```
-cp .env.example .env
-```
-
-Заполни переменные:
-
-* `TELEGRAM_BOT_TOKEN` — токен Telegram бота
-* `CHAT_ID` — admin chat_id (allowlist)
-* (опционально, если `llm.enabled=true`) `OPENAI_API_KEY` — ключ для LLM summary
-
-> Важно: секреты не коммитим. `.env` должен быть в `.gitignore`.
-
-### 2) Запуск
-
-```
-bash start.sh
-```
-
-`start.sh` делает:
-* (если нужно) ставит `uv`
-* `uv sync`
-* `uv run python3 config/start.py`
-
----
-
-## Конфигурация
-
-Главный конфиг: `config/settings.yml`
-
-### Ключевые параметры
-
-**Run mode**
-* `run.mode`: сейчас только `"telegram"`
-
-**Telegram**
-* `telegram.enabled`: `true|false`
-* `telegram.bot_token_env`: имя переменной окружения для токена (например `TELEGRAM_BOT_TOKEN`)
-* `telegram.chat_id_env`: имя переменной окружения для allowlist chat_id (например `CHAT_ID`)
-* `telegram.telemetry_enabled`: `true|false` — писать телеметрию апдейтов в `storage/telemetry/*.jsonl`
-
-**Mock dataset**
-* `mock.seed`: int — seed для детерминированного датасета
-* `mock.weeks`: int — длина истории (недель)
-* `mock.stores`: int — число магазинов
-* `mock.skus`: int — число SKU
-* `mock.category`: str — категория (например `"Vitamins"`)
-
-**Data adapter (v0)**
-* `data.adapter`: сейчас только `"mock"`
-* `data.mock.dataset_id`: `str | null`
-  * если `null` — при `/run_oos` dataset генерируется из `mock.*` и сохраняется в `storage/mock/<dataset_id>/dataset.json`
-  * если `str` — используется уже существующий dataset в `storage/mock/<dataset_id>/dataset.json`
-
-**Promo (v0)**
-* `promo.stock_min`: int — минимальный остаток для promo-кандидатов
-* `promo.units_max`: int — максимальные продажи за период
-
-**Recommendations (OOS v1)**
-* `recommendations.enabled`: `true|false` — включить детерминированные рекомендации
-* `recommendations.items_max`: `int > 0` — максимум рекомендаций в отчете
-
-**LLM summary (optional)**
-* `llm.enabled`: `true|false` — включает LLM-функции (summary и Q&A)
-* `llm.provider`: сейчас только `"openai"`
-* `llm.model`: модель (например `"gpt-4o-mini"`)
-* `llm.api_key_env`: имя переменной окружения с ключом (например `OPENAI_API_KEY`)
-* `llm.api_url`: endpoint API (например `"https://api.openai.com/v1/responses"`)
-* `llm.prompts_path`: путь к YAML c шаблонами промптов
-* `llm.throttling.timeout`: timeout запроса LLM в секундах
-* `llm.throttling.retries`: число retry только для timeout
-
-**LLM assistant Q&A (Telegram, v0)**
-* `llm.assistant.prompts_key`: ключ промпта Q&A в `config/prompts.yml` (например `oos.llm_assistant_qa`)
-* `llm.assistant.items_max`: максимум рекомендаций из последнего run, которые передаются в контекст ответа (int > 0)
-
-**i18n**
-* `i18n.lang`: язык интерфейса (в v0 используется `"ru"`)
-* `i18n.path`: путь к YAML-файлу переводов
-
-**Scheduler (v0)**
-* `scheduler.enabled`: `true|false` — включить периодический автозапуск OOS
-* `scheduler.interval`: `int > 0` — интервал в секундах между scheduled-run
-* `scheduler.start_run`: `true|false`
-  * если `true` — один scheduled-run сразу после старта, затем по интервалу
-  * если `false` — только по интервалу
-
-Поведение: после scheduled-run бот отправляет **admin-only** уведомление: `New run ready → Approve/Reject`.
-
-**Approval**
-* `approval.reject_reason`: str — причина для reject
-
-> Примечание: при `/run_oos` BeeAgent генерирует и сохраняет датасет в `storage/mock/<dataset_id>/dataset.json`.
-
-**Логирование**
-* `logging.level`: `DEBUG/INFO/WARNING/ERROR/CRITICAL`
-* `logging.utc`: время в UTC
-* `logging.clear_logs`: чистить `logs/app.log` при старте
-
-## Артефакты и storage (v0)
-
-### Последний отчёт
-
-`storage/reports/last_oos_report.md`
-
-Пример:
-```
-📊 OOS Detection Report
-Run ID: run-1234567890ab
-Dataset: seed-42-w4-s3-k12-vitamins
-
-🚨 Alerts: 2
-  - High severity: 2
-  - Affected stores: 2
-  - Affected SKUs: 2
-
-✅ Tasks: 2
-
-Tasks status: draft=2, approved=0, rejected=0
-```
-
-### Run-артефакты LangGraph (v0)
-
-Папка: `storage/runs/<run_id>/`
-
-Файлы:
-* `run.json` — meta выполнения (dataset_id/seed/counts + `agent` + `adapter` + `trigger`)
-* `alerts.json` — алерты Rule A
-* `tasks_draft.json` — draft задачи (1 задача на 1 алерт)
-* `recommendations.json` — explainable рекомендации (action/reason/metrics/effect/confidence)
-* `steps.json` — observability v0: duration_ms каждого шага workflow
-
-### Approval + Export (v0)
-
-Папки:
-* `storage/runs/<run_id>/tasks_approved.json`
-* `storage/artifacts/<run_id>/report.md`
-* `storage/artifacts/<run_id>/report.html`
-* `storage/reports/last_run.json`
-
-### Телеметрия Telegram (опционально)
-
-`storage/telemetry/telegram_updates.jsonl` — **1 строка = 1 событие**.
-
-Пример строки:
-
-```
-{"ts":"2026-02-18T11:02:30.309645+00:00","event":"start","update_id":77,"chat_id":1,"user_id":1,"command":"/start","callback_data":null}
-```
-
-## Архитектура (v0)
-
-Док: `docs/ARCHITECTURE.md`
-
-### Компоненты
-
-1. **Bootstrap**
-
-* `config/start.py` — загрузка `.env`, чтение `config/settings.yml`, настройка логов, запуск app
-
-2. **Core**
-
-* `src/beeagent_module/core/settings.py` — загрузка и fail-fast валидация YAML
-* `src/beeagent_module/core/paths.py` — пути проекта (`logs/`, `storage/`)
-* `src/beeagent_module/core/log.py` — stdout + `logs/app.log`
-* `src/beeagent_module/core/app.py` — запуск режима `telegram`
-
-3. **UI**
-
-* `src/beeagent_module/ui/telegram_bot.py` — команды, меню, allowlist, телеметрия; вызывает `cases/*` (не читает storage напрямую)
-
-### Контракт UI (v0)
-
-UI-каналы — тонкий transport-слой.
-
-Контракт:
-1. UI вызывает только `cases/*`.
-2. `cases/*` запускают `agents/*` и готовят входные параметры.
-3. `agents/*` используют `adapters/*` и пишут артефакты в `storage/`.
-4. UI не читает `storage/*` напрямую.
-
-Исключения v0:
-- Telegram AI Q&A читает **только** публичные run-артефакты последнего OOS (`storage/reports/last_run.json`, `storage/runs/<run_id>/*.json`), чтобы сформировать контекст ответа.
-
-Примечание (v0 Quiz): UI читает quiz-spec JSON по пути из `settings.yml` для сборки inline-кнопок. В Iteration 10 это будет вынесено в `cases/quiz.py` (UI останется тонким).
-
-Будущие каналы (planned):
-- slack
-- discord
-- whatsapp
+- **Python 3.12+**
+- **uv** — управление окружением и зависимостями
+- **src-layout**
+- **PyYAML** — конфиг
+- **python-telegram-bot** — Telegram transport
+- **LangGraph** — orchestration/workflow baseline
+- **file-based artifacts** — `storage/`
+- **единый лог** — `logs/app.log`
 
 ## Структура проекта
 
 ```
 beeagent/
 ├── config/
-│   ├── settings.yml                         # главный конфиг (run.mode, telegram, logging, mock)
-│   └── start.py                             # bootstrap: env -> settings -> dirs -> logging -> run_app()
-│
+│   ├── start.py
+│   ├── settings.yml
+│   ├── prompts.yml
+│   └── i18n/
 ├── docs/
-│   ├── ARCHITECTURE.md                      # схема модулей (core/ui/cases/adapters/domain/mock/agents/storage)
-│   ├── CONTRIBUTING.md                      # правила веток/PR/Conventional Commits/release-please
-│   ├── DEV_GUIDE.md                         # как запускать, дебажить, проверять
-│   ├── ROADMAP.md                           # план итераций (0–N) и цели pre-MVP
-│   └── SPEC.md                              # что считаем “готово” (DoD / MVP-границы)
-│
+│   ├── ARCHITECTURE.md
+│   ├── DEV_GUIDE.md
+│   ├── ROADMAP.md
+│   ├── SDLC.md
+│   ├── SECURITY.md
+│   └── SPEC.md
 ├── logs/
-│   └── app.log                              # единый файл логов (level/UTC/clear_logs — из settings.yml)
-│
+│   └── app.log
 ├── src/
-│   └── beeagent_module/                     # основной пакет (src-layout)
-│       ├── adapters/
-│       │   ├── base.py                      # DataAdapter protocol
-│       │   ├── factory.py                   # get_adapter(...) по settings.yml 
-│       │   └── mock_adapter.py              # MockAdapter (читает storage/mock/<dataset_id>/dataset.json) 
-│       │   
-│       ├── agents/
-│       │   └── oos/                         # demo-agent: OOS Detector (пример workflow)
-│       │   │   ├── graph.py                 # nodes + persist_run (storage artifacts)
-│       │   │   └── rules.py                 # правила детекции OOS (Rule A и т.п.)
-│       │   │
-│       ├── cases/
-│       │   └── oos.py                       # demo-case: OOS (UI вызывает только cases)
-│       │   
+│   └── beeagent_module/
 │       ├── core/
-│       │   ├── app.py                       # запуск режима: читает run.mode и вызывает нужный UI/agent
-│       │   ├── llm.py                       # optional LLM summary (text-only, numbers unchanged)
-│       │   ├── log.py                       # настройка логгера (stdout + app.log, UTC/local, очистка при старте)
-│       │   ├── paths.py                     # вычисление корня проекта и путей (logs/, storage/)
-│       │   ├── secrets.py                   # загрузка секретов из env по ключам из settings.yml 
-│       │   └── settings.py                  # загрузка и fail-fast валидация settings.yml
-│       │
+│       ├── cases/
+│       ├── agents/
+│       ├── adapters/
 │       ├── domain/
-│       │   ├── models.py                    # доменные dataclass-модели (Store/SKU/SalesRow/...)
-│       │   └── serialization.py             # сериализация доменных моделей в JSON (для dataset.json)
-│       │
 │       ├── mock/
-│       │   └── dataset.py                   # генератор/сейв/лоад мок-датасета
-│       │
 │       └── ui/
-│           ├── slack_stub.py                #
-│           └── telegram_bot.py              # transport: команды/кнопки/allowlist/telemetry; вызывает cases/*
-│ 
 ├── storage/
-│   ├── artifacts/
-│   │   └── <run_id>/                        # report.md/report.html
-│   ├── mock/
-│   │   └── <dataset_id>/dataset.json        # появляется при /run_oos, dataset_id детерминирован из mock params
-│   ├── reports/
-│   │   ├── last_oos_report.md               # последний Telegram-отчёт (для /last)
-│   │   └── last_run.json                    # маркер последнего run_id
-│   ├── runs/
-│   │   └── <run_id>/                        # run.json/alerts.json/tasks_draft.json/tasks_approved.json
-│   └── telemetry/
-│       └── telegram_updates.jsonl           # телеметрия событий Telegram (опционально)
-│
 ├── tests/
-│   ├── test_mock_dataset.py                 # детерминизм dataset + forced anomalies + save/load
-│   ├── test_smoke.py                        # базовый smoke: settings/logs/storage init
-│   └── test_telegram_bot.py                 # unit-тесты команд/кнопок/allowlist/telemetry
-│
-├── pyproject.toml                           # зависимости, метаданные пакета, настройки tooling
-├── uv.lock                                  # lock-файл зависимостей (uv)
-├── start.sh                                 # единая точка запуска (KISS): uv sync -> uv run python3 config/start.py
-├── README.ru.md                             # документация на русском
+├── pyproject.toml
+├── start.sh
+└── uv.lock
 ```
 
-## Диагностика и тесты
+## Как это работает сейчас
 
-### Тесты (pytest)
+1. `start.sh`
+2. `config/start.py`
+3. `core/app.py`
+4. запускается transport (`telegram`)
+5. transport вызывает `cases/*`
+6. case запускает workflow / agent path
+7. результат сохраняется в `storage/`
+8. UI показывает summary / report / approve-reject flow
 
-Запуск всех тестов:
+## Запуск
+
+### 1. Подготовить `.env`
 
 ```
-pytest -q
+cp .env.example .env
 ```
 
-Что покрыто:
+Заполнить нужные переменные:
 
-* `tests/test_smoke.py` — базовая инициализация settings/logs/storage
-* `tests/test_telegram_bot.py` — allowlist, команды/кнопки, `/last` (OOS), телеметрия, scheduler tick (OOS), `/run_promo`
-* `tests/test_mock_dataset.py` — детерминизм мок-датасета, forced anomalies, save/load
-* `tests/test_adapters_mock.py` — MockAdapter + factory get_adapter
-* `tests/test_oos_graph.py` — rule A, сборка графа, workflow, артефакты, детерминизм
-* `tests/test_cases_oos.py` — OOS case: run/last/approve + run-артефакты + steps.json
-* `tests/test_cases_promo.py` — Promo case: run + run-артефакты + report.md/report.html
+- `TELEGRAM_BOT_TOKEN`
+- `CHAT_ID`
+- `OPENAI_API_KEY` (если включён LLM)
 
-### Runtime smoke (ручная проверка)
-
-1. Запусти:
+### 2. Запуск
 
 ```
 bash start.sh
 ```
 
-2. В Telegram (admin chat):
+`start.sh` делает:
 
-* `/start` — меню с кнопками
-* `Run OOS Scan` — приходит отчёт (manual run)
-* `/last` — приходит последний отчёт
-* отправь обычный текст (например: `Какие данные нужно проверить в 1С/на месте?`) — бот отвечает по последнему OOS run
+- проверку наличия `uv`
+- `uv sync`
+- `uv run python3 config/start.py`
 
-3. Если включен scheduler (`scheduler.enabled: true`):
-* дождись сообщения: `New run ready → Approve/Reject`
-* проверь, что в `storage/runs/<run_id>/run.json` стоит `"trigger": "scheduled"`
+## Основные команды
 
-4. Проверь артефакты:
+Обычный запуск:
 
-* `storage/reports/last_oos_report.md` создан/обновляется
-* если включено `telegram.telemetry_enabled: true`:
+```
+bash start.sh
+```
 
-  * `storage/telemetry/telegram_updates.jsonl` пополняется
+Тесты:
+
+```
+uv run pytest -q
+```
+
+## Конфигурация
+
+Главный конфиг:
+
+- `config/settings.yml`
+
+Ключевые блоки на текущем этапе:
+
+- `app`
+- `run`
+- `telegram`
+- `logging`
+- `mock`
+- `data`
+- `scheduler`
+- `approval`
+- `promo`
+- `recommendations`
+- `llm`
+- `i18n`
+- `quiz`
+
+В ближайших итерациях туда добавятся module-related sections.
+
+## Артефакты
+
+На текущем этапе BeeAgent пишет runtime artifacts в `storage/`, в частности:
+
+- `storage/runs/<run_id>/...`
+- `storage/artifacts/<run_id>/...`
+- `storage/reports/...`
+- `storage/mock/...`
+- `storage/sessions/...`
+- `storage/telemetry/...`
+
+Точный текущий контракт смотри в:
+
+- `docs/ARCHITECTURE.md`
+- `docs/ROADMAP.md`
 
 ## Документация
 
-* `docs/SPEC.md` — спецификация pre-MVP
-* `docs/ROADMAP.md` — итерации разработки
-* `docs/ARCHITECTURE.md` — архитектура
-* `docs/DEV_GUIDE.md` — dev-рутина (запуск/логи/артефакты)
-* `docs/CONTRIBUTING.md` — ветки/PR/Conventional Commits/release-please
+Основные документы проекта:
+
+- `docs/ROADMAP.md` — этапы и итерации
+- `docs/ARCHITECTURE.md` — архитектурные границы core/module/capability/UI
+- `docs/SDLC.md` — процесс разработки и уровни изменений
+- `docs/SECURITY.md` — secure development rules
+- `docs/DEV_GUIDE.md` — запуск, проверки, dev flow
+- `docs/SPEC.md` — текущая прикладная спецификация
 
 ## Важно про безопасность
 
-* Храни секреты (токены/ключи) **в env**, не в репозитории.
-* Не публикуй `logs/app.log`, если там могут быть чувствительные данные.
-* Если токен попал в лог/чат — **сразу ревокни** и выпусти новый (BotFather).
+- секреты хранятся в env, а не в репозитории;
+- новые обязательные ключи должны валидироваться fail-fast;
+- transport / module / capability boundaries нельзя размывать ad hoc;
+- file parsing, external connectors и execution paths требуют более внимательной проверки;
+- логи и artifacts не должны утекать в sensitive data.
+
+## Статус проекта
+
+BeeAgent уже вышел из состояния “только демо” и сейчас находится в переходе к:
+
+- **module platform v0**
+- **первому реальному клиентскому модулю**
+- **Discovery → MVP → Pilot delivery path**
+
+Первый реальный модуль в работе:
+
+- `beeagent-rop`

@@ -6,10 +6,15 @@ readme = "README.ru.md"
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0.3",
-    "python-dotenv>=1.2.1",
-    "python-telegram-bot>=22.6",
-    "pytest>=9.0.2",
-    "langgraph==1.0.8",
+    "python-dotenv>=1.2.2",
+    "python-telegram-bot>=22.7",
+    "langgraph==1.1.8",
+    "beeagent-rop",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
 ]
 
 [build-system]
@@ -25,3 +30,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+beeagent-rop = { path = "../beeagent-rop", editable = true }
