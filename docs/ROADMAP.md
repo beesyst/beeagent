@@ -756,49 +756,59 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 
 ### Итерация 11 — Module contract v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Ввести явный внутренний контракт модуля для доменных пакетов вроде `beeagent-rop`.
+Зафиксировать минимальный внутренний контракт модуля, через который BeeAgent core сможет безопасно и предсказуемо работать с внешними доменными пакетами вроде `beeagent-rop`.
 
 #### Scope
 
 Включено:
 
-- `ModuleContract` / protocol;
-- `module_id`;
+- `ModuleContract` / protocol как internal reusable contract;
+- обязательный `module_id`;
 - `supported_case_types()`;
-- `handle(context)` / result contract;
-- bounded result shapes;
-- явное разделение `read-only / draft-only / execution-capable` semantics на уровне contract metadata.
+- `handle(context)` с минимальным contract-level context shape;
+- bounded result shapes для ответа модуля;
+- явные contract metadata для `read-only / draft-only / execution-capable` semantics;
+- import / dispatch smoke на contract уровне;
+- docs update по module boundary и contract expectations.
 
 Не включено:
 
+- module registry / discovery;
 - remote loading;
 - marketplace;
-- hot reload.
+- hot reload;
+- полноценный runtime context API;
+- artifact API;
+- capability execution layer;
+- реальная интеграция `beeagent-rop`.
 
 #### Deliverable
 
-BeeAgent получает явный внутренний модульный контракт.
+В `beeagent` появляется явный и тестируемый внутренний контракт модуля, независимый от одного клиента и достаточный для следующих итераций registry/context/integration.
 
 #### Artifacts
 
 - docs
 - tests
-- optional module diagnostics artifact if needed
+- optional contract diagnostics artifact only if действительно нужен
 
 #### Checks
 
 - `pytest -q`
-- contract smoke
-- import and dispatch smoke
+- contract import smoke
+- contract dispatch smoke
+- manual log check if runtime path touched
 
 #### DoD
 
-- core знает, как выглядит модуль;
-- модульный контракт не завязан на одного клиента;
+- core явно знает, как выглядит модульный contract;
+- contract не завязан на `beeagent-rop` или другого одного клиента;
+- authority semantics (`read-only / draft-only / execution-capable`) выражены явно;
+- bounded result shape проверяется тестами;
 - transport/case/core paths не ломаются.
 
 ### Итерация 12 — Module registry v0

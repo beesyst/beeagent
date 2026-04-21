@@ -6,7 +6,7 @@ run:
   mode: "telegram" # режим запуска UI/transport
 
 telegram:
-  enabled: true # true/false - включить/выключить интеграцию с Telegram
+  enabled: false # true/false - включить/выключить интеграцию с Telegram
   bot_token_env: "TELEGRAM_BOT_TOKEN" # название переменной окружения, в которой хранится токен бота
   chat_id_env: "CHAT_ID" # название переменной окружения, в которой хранится ID чата для отправки сообщений
   telemetry_enabled: true # true/false - включить/выключить запись телеметрии апдейтов в storage/telemetry (jsonl)

@@ -38,15 +38,16 @@
 - поддерживать approval / reject в demo-потоке;
 - хранить step timings / basic observability;
 - держать несколько demo-agents (`oos`, `promo`, `quiz`);
-- выдавать explainable recommendations поверх deterministic path.
+- выдавать explainable recommendations поверх deterministic path;
+- иметь internal module contract v0 для внешних доменных модулей.
 
 ## Текущий фокус проекта
 
 Сейчас основной фокус:
 
 1. превратить BeeAgent в **реально модульную платформу**;
-2. ввести:
-   - module contract
+2. зафиксировать и развить platform-level contracts:
+   - module contract (**v0 уже введён**)
    - module registry
    - runtime context
    - artifact API
@@ -81,6 +82,20 @@ run:
 
 BeeAgent core не должен вшивать в себя клиентскую бизнес-логику.
 Она должна жить в модуле.
+
+На текущем этапе в core уже введён минимальный internal module contract v0.
+
+Он фиксирует базовые platform-level expectations для доменного модуля:
+
+- `module_id`
+- `supported_case_types()`
+- `handle(context)`
+- bounded authority semantics:
+  - `read_only`
+  - `draft_only`
+  - `execution_capable`
+
+Registry, runtime context/artifact API и capability boundary развиваются следующими итерациями.
 
 ## Что такое capability у нас
 
@@ -247,7 +262,7 @@ uv run pytest -q
 - `i18n`
 - `quiz`
 
-В ближайших итерациях туда добавятся module-related sections.
+В следующих итерациях туда могут добавиться module-related sections, когда для registry/runtime context/capability layer появится реальная config-необходимость.
 
 ## Артефакты
 
