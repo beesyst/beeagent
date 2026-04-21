@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.15.0...beeagent-v0.16.0) (2026-04-21)
+
+
+### Features
+
+* **core:** add local module registry v0 ([#48](https://github.com/beesyst/beeagent/issues/48)) ([0874ac6](https://github.com/beesyst/beeagent/commit/0874ac6bc1bfb5522c0133b3275f8da95e8ee216))
+
 ## [0.15.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.14.0...beeagent-v0.15.0) (2026-04-21)
 
 
