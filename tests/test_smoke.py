@@ -75,6 +75,9 @@ i18n:
 quiz:
   enabled: true
   path: "config/quiz/pharmacy_quiz.json"
+
+modules:
+  registry: []
 """.strip()
         + "\n",
         encoding="utf-8",

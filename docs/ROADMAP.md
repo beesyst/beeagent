@@ -813,48 +813,74 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 
 ### Итерация 12 — Module registry v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Научить BeeAgent регистрировать и загружать локальные модули как package-based plugins.
+Добавить минимальный локальный registry, через который BeeAgent сможет явно и предсказуемо находить, валидировать и подключать установленные package-based модули вроде `beeagent-rop`.
 
 #### Scope
 
 Включено:
 
-- local registry;
+- local registry для installed python packages;
+- config-driven module declaration;
 - config-driven enable/disable modules;
-- module discovery;
-- явный отказ при missing/disabled module;
-- diagnostics по активным модулям.
+- deterministic active module resolution;
+- import + contract validation against `ModuleContract`;
+- explicit refusal for missing / disabled / invalid modules;
+- diagnostics по loaded / disabled / missing / invalid modules;
+- conflict handling for ambiguous module ownership if applicable;
+- optional registry diagnostics artifact.
 
 Не включено:
 
 - remote registry;
 - dynamic marketplace;
-- container orchestration.
+- hot reload;
+- arbitrary filesystem scanning;
+- container orchestration;
+- runtime context API;
+- artifact API;
+- capability boundary;
+- реальный client flow dispatch beyond registry-level smoke.
+
+#### Реализовано
+
+- `src/beeagent_module/core/module_registry.py` — `ModuleRegistry`, `ModuleEntry`, `ModuleState`, `build_registry`
+- `config/settings.yml` — блок `modules.registry` (config-driven declaration)
+- `src/beeagent_module/core/settings.py` — fail-fast валидация `modules.*` и каждого элемента registry
+- `src/beeagent_module/core/app.py` — вызов `build_registry` при старте
+- `tests/test_module_registry.py` — сценарии: loaded, missing, disabled, invalid, diagnostics artifact, mixed
+- `beeagent-rop` объявлен в registry; текущий `RopModule` не удовлетворяет `ModuleContract` (нет `authority`) → state=invalid (ожидаемо до итерации 15)
 
 #### Deliverable
 
-BeeAgent умеет найти и загрузить модуль вроде `beeagent-rop`.
+BeeAgent умеет по конфигу явно определить локально установленные модули, загрузить валидный модуль, отказать explainably в случае missing/disabled/invalid module и показать registry diagnostics.
 
 #### Artifacts
 
-- optional diagnostics:
-  - `storage/interfaces/modules.json`
+- `storage/interfaces/modules.json` (always-on registry diagnostics artifact)
 
 #### Checks
 
-- registered module scenario
-- missing module scenario
-- disabled module scenario
-- `pytest -q`
+- registered module scenario — `test_registry_registered_module`
+- missing module scenario — `test_registry_missing_module`
+- disabled module scenario — `test_registry_disabled_module`
+- invalid contract scenario — `test_registry_invalid_contract`
+- diagnostics artifact — `test_registry_diagnostics_artifact`
+- `uv run pytest -q`
+- smoke run
+- log verification
+- diagnostics artifact verification
 
 #### DoD
 
-- активный модуль определяется явно и грузится предсказуемо;
-- ошибка загрузки модуля explainable по logs/diagnostics.
+- активный модуль определяется явно и предсказуемо;
+- module loading не опирается на hidden defaults или ad hoc imports;
+- missing / disabled / invalid module дают explainable error/diagnostics;
+- registry semantics не завязаны на одного клиента;
+- BeeAgent подготовлен к следующей итерации runtime context и к интеграции `beeagent-rop`.
 
 ### Итерация 13 — Runtime context + artifact API v0
 
