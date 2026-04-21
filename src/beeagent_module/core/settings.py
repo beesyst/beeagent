@@ -41,6 +41,7 @@ REQUIRED_KEYS = (
     ("i18n", "path"),
     ("quiz", "enabled"),
     ("quiz", "path"),
+    ("modules", "registry"),
 )
 
 
@@ -230,6 +231,25 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("quiz", "path")), str):
         raise RuntimeError("Invalid type for quiz.path, expected string")
+
+    registry = _get_nested_value(settings, ("modules", "registry"))
+    if not isinstance(registry, list):
+        raise RuntimeError("Invalid type for modules.registry, expected list")
+
+    for idx, item in enumerate(registry):
+        if not isinstance(item, dict):
+            raise RuntimeError(
+                f"Invalid type for modules.registry[{idx}], expected mapping"
+            )
+        for key in ("id", "package", "entry"):
+            if not isinstance(item.get(key), str):
+                raise RuntimeError(
+                    f"Invalid or missing modules.registry[{idx}].{key}, expected string"
+                )
+        if not isinstance(item.get("enabled"), bool):
+            raise RuntimeError(
+                f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
+            )
 
 
 # Возврат вложенного значения по пути ключей или None.
