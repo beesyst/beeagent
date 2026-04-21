@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.14.0...beeagent-v0.15.0) (2026-04-21)
+
+
+### Features
+
+* **core:** add internal module contract v0 ([#45](https://github.com/beesyst/beeagent/issues/45)) ([938fca0](https://github.com/beesyst/beeagent/commit/938fca0ab2beb698da1f1d65e29f5e85641a3648))
+
 ## [0.14.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.13.0...beeagent-v0.14.0) (2026-02-22)
 
 
