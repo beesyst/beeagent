@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 
 # Модульный контракт для внешних доменных модулей, интегрирующихся с ядром BeeAgent
@@ -12,6 +12,10 @@ class AuthorityLevel(str, Enum):
     EXECUTION_CAPABLE = "execution_capable"
 
 
+if TYPE_CHECKING:
+    from beeagent_module.core.artifact_api import ArtifactAPI
+
+
 # Контекст, передаваемый в метод handle() модуля, и результат, который он должен возвращать
 @dataclass(frozen=True)
 class ModuleContext:
@@ -19,6 +23,9 @@ class ModuleContext:
     case_type: str
     module_id: str
     payload: dict[str, Any] = field(default_factory=dict)
+    session_id: str = ""
+    authority: AuthorityLevel | None = None
+    artifact_api: "ArtifactAPI | None" = None
 
 
 # Результат, возвращаемый методом handle() модуля, с ограниченными статусами и данными

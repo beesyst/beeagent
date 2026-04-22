@@ -888,44 +888,55 @@ BeeAgent умеет по конфигу явно определить локал
 
 #### Goal
 
-Дать модулю безопасный runtime context и стандартный способ писать artifacts через core.
+Дать модулю минимальный безопасный runtime context и стандартный core-managed способ писать module-linked artifacts без прямой зависимости от private internals BeeAgent.
 
 #### Scope
 
 Включено:
 
-- `run_id`, `session_id`, `case_type`, `module_id`;
-- artifact write/read API;
-- context propagation;
-- safe storage path contract;
-- standard linkage `run -> module outputs`.
+- minimal runtime context envelope для module execution;
+- `run_id`, `session_id`, `case_type`, `module_id`, `authority`, input payload;
+- explicit context propagation from core to module;
+- minimal artifact write/read API under core control;
+- safe storage path contract for module-linked artifacts;
+- standard linkage `run -> module outputs`;
+- predictable module artifact location and naming rules;
+- tests for context propagation and artifact API behavior.
 
 Не включено:
 
 - distributed state store;
 - queue framework;
-- external DB as source of truth.
+- external DB as source of truth;
+- broad storage abstraction platform;
+- capability layer;
+- full client flow dispatch;
+- real production integration with external systems.
 
 #### Deliverable
 
-Модуль работает внутри BeeAgent runtime без прямой зависимости от private core internals.
+Модуль может выполняться внутри BeeAgent runtime с platform-owned context и писать module-linked artifacts через explicit core API, не зная private storage internals.
 
 #### Artifacts
 
 - standard run artifacts
 - module-linked artifacts
-- optional diagnostics
+- optional diagnostics if needed for context/artifact verification
 
 #### Checks
 
 - `pytest -q`
-- artifact API smoke
 - context propagation smoke
+- artifact API smoke
+- manual log verification
+- manual artifact verification
 
 #### DoD
 
-- модуль пишет артефакты через explicit API, а не хаотично в storage;
-- linkage `run_id -> module artifacts` воспроизводимо.
+- модуль получает explicit runtime context от core;
+- модуль пишет artifacts через core-managed API, а не напрямую в произвольные пути;
+- linkage `run_id -> module artifacts` воспроизводимо и понятно по logs/artifacts;
+- решение не завязано на одного клиента и не тащит capability logic раньше времени.
 
 ### Итерация 14 — Capability boundary v0
 

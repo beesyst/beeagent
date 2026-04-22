@@ -145,7 +145,7 @@ def test_module_context_with_payload() -> None:
 def test_module_context_is_frozen() -> None:
     ctx = ModuleContext(run_id="run-003", case_type="oos_summary", module_id="stub")
     try:
-        ctx.run_id = "mutated"  # type: ignore[misc]
+        setattr(ctx, "run_id", "mutated")
         assert False, "should have raised FrozenInstanceError"
     except Exception:
         pass
@@ -201,7 +201,7 @@ def test_module_result_is_frozen() -> None:
         summary="s",
     )
     try:
-        result.status = "mutated"  # type: ignore[misc]
+        setattr(result, "status", "mutated")
         assert False, "should have raised FrozenInstanceError"
     except Exception:
         pass
