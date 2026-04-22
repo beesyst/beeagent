@@ -48,9 +48,9 @@
 1. превратить BeeAgent в **реально модульную платформу**;
 2. зафиксировать и развить platform-level contracts:
    - module contract (**v0 уже введён**)
-   - module registry
-   - runtime context
-   - artifact API
+   - module registry (**v0 уже введён**)
+   - runtime context (**v0 уже введён**)
+   - artifact API (**v0 уже введён**)
    - capability boundary
 3. подключить первый реальный доменный модуль:
    - `beeagent-rop`
@@ -95,7 +95,8 @@ BeeAgent core не должен вшивать в себя клиентскую 
   - `draft_only`
   - `execution_capable`
 
-Registry, runtime context/artifact API и capability boundary развиваются следующими итерациями.
+Registry v0, runtime context v0 и artifact API v0 уже введены в core.
+Следующим шагом развивается capability boundary.
 
 ## Что такое capability у нас
 
@@ -262,7 +263,11 @@ uv run pytest -q
 - `i18n`
 - `quiz`
 
-В следующих итерациях туда могут добавиться module-related sections, когда для registry/runtime context/capability layer появится реальная config-необходимость.
+На текущем этапе module-related config уже включает:
+
+- `modules`
+
+Дальше config может расширяться только при реальной необходимости для capability layer и последующих module execution paths.
 
 ## Артефакты
 
