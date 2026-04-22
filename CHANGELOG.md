@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.16.0...beeagent-v0.17.0) (2026-04-22)
+
+
+### Features
+
+* **core:** add runtime context and artifact api v0 ([#51](https://github.com/beesyst/beeagent/issues/51)) ([0536059](https://github.com/beesyst/beeagent/commit/0536059bcc3b606c384caad214c74f9708948bfd))
+
 ## [0.16.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.15.0...beeagent-v0.16.0) (2026-04-21)
 
 
