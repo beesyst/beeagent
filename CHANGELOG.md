@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.17.0...beeagent-v0.18.0) (2026-04-29)
+
+
+### Features
+
+* **core:** add capability boundary v0 ([#54](https://github.com/beesyst/beeagent/issues/54)) ([97ce305](https://github.com/beesyst/beeagent/commit/97ce30523b862961ec1f48ce41357673da93534d))
+
 ## [0.17.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.16.0...beeagent-v0.17.0) (2026-04-22)
 
 
