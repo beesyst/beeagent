@@ -95,8 +95,7 @@ BeeAgent core не должен вшивать в себя клиентскую 
   - `draft_only`
   - `execution_capable`
 
-Registry v0, runtime context v0 и artifact API v0 уже введены в core.
-Следующим шагом развивается capability boundary.
+Registry v0, runtime context v0, artifact API v0 и capability boundary v0 уже введены в core.
 
 ## Что такое capability у нас
 
