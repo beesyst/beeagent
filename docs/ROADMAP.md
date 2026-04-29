@@ -128,7 +128,7 @@ ROADMAP не дублирует полные правила процесса и 
 | ----------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Phase A — Demo skeleton**               | DONE        | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.        |
 | **Phase B — Reusable orchestration core** | DONE        | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.          |
-| **Phase C — Module platform**             | IN PROGRESS | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.   |
+| **Phase C — Module platform**             | DONE        | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.   |
 | **Phase D — First real client delivery**  | PLANNED     | Подключается первый реальный доменный модуль (`beeagent-rop`), делается Discovery → MVP → Pilot flow под клиента.                  |
 | **Phase E — Operator / product shell**    | PLANNED     | Появляются operator-facing и client-facing controlled interfaces: summaries, status, bounded actions, stable backend contracts.    |
 | **Phase F — Multi-module platform**       | FUTURE      | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts. |
@@ -884,7 +884,7 @@ BeeAgent умеет по конфигу явно определить локал
 
 ### Итерация 13 — Runtime context + artifact API v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -940,47 +940,84 @@ BeeAgent умеет по конфигу явно определить локал
 
 ### Итерация 14 — Capability boundary v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Разделить module logic и внешние tool/MCP/n8n calls через единый capability layer.
+Разделить module logic и внешние data/action calls через единый capability layer, чтобы доменные модули вроде `beeagent-rop` могли запрашивать email / Bitrix / parser / attachment capabilities без прямой зависимости от transport details, MCP/n8n/system clients и без размывания authority boundaries.
 
 #### Scope
 
 Включено:
 
-- capability call abstraction;
+- capability call abstraction в core;
+- minimal capability request / response contract v0;
 - clear boundary `module → capability → MCP/n8n/system`;
-- explicit errors / timeout / refusal surface;
+- mock/local capability provider for tests;
+- explicit result states:
+  - `ok`
+  - `refused`
+  - `timeout`
+  - `error`
+- explicit refusal / timeout / degraded surface;
+- authority-aware capability semantics:
+  - `read_only`
+  - `draft_only`
+  - `execution_capable`
+- capability examples aligned with ROP Discovery:
+  - `email.search`
+  - `email.read`
+  - `bitrix.find_lead`
+  - `bitrix.read_timeline`
+  - `parser.lookup_email`
+  - `attachment.extract_text`
 - запрет на hidden fallback execution path;
-- принцип: long-running state остаётся в BeeAgent.
+- принцип: long-running state, retry, batching, checkpoints и policy остаются в BeeAgent;
+- logs / optional diagnostics для explainability.
 
 Не включено:
 
+- production Email connector;
+- production Bitrix connector;
+- production parser connector;
+- production attachment reader/OCR;
+- full MCP/n8n transport implementation;
 - full workflow engine rewrite;
-- перенос long-running state в n8n;
-- ad hoc tool calls прямо из client module logic без abstraction.
+- перенос long-running state в n8n/MCP/tool layer;
+- ad hoc tool/API calls прямо из client module logic;
+- client-specific ROP business rules в BeeAgent core.
 
 #### Deliverable
 
-Модуль может вызывать внешние capabilities без знания transport details и без размывания core authority boundaries.
+BeeAgent получает минимальный capability boundary v0: модуль может вызвать capability через core-owned abstraction и получить explainable `ok/refused/timeout/error` result без знания transport details и без прямого доступа к внешним systems.
 
 #### Artifacts
 
 - logs
-- optional capability diagnostics
+- optional `storage/interfaces/capabilities.json`
+- tests
 
 #### Checks
 
 - `pytest -q`
 - mock capability call scenario
-- refusal / timeout scenario
+- refusal scenario
+- timeout scenario
+- unknown capability scenario
+- authority boundary scenario
+- no hidden fallback scenario
+- smoke run
+- log verification
+- optional diagnostics verification
 
 #### DoD
 
 - module code не завязан напрямую на случайный tool transport;
-- long-running state не уезжает в n8n/MCP layer.
+- capability calls проходят только через explicit core abstraction;
+- refusal / timeout / error paths explainable по logs/tests;
+- hidden fallback execution path отсутствует;
+- long-running state не уезжает в n8n/MCP/tool layer;
+- решение не завязано на `beeagent-rop`, но покрывает будущие ROP capability needs.
 
 ---
 
