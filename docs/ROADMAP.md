@@ -124,14 +124,14 @@ ROADMAP не дублирует полные правила процесса и 
 
 ## Product phases
 
-| Phase                                     | Status      | What it means                                                                                                                      |
-| ----------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase A — Demo skeleton**               | DONE        | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.        |
-| **Phase B — Reusable orchestration core** | DONE        | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.          |
-| **Phase C — Module platform**             | DONE        | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.   |
-| **Phase D — First real client delivery**  | PLANNED     | Подключается первый реальный доменный модуль (`beeagent-rop`), делается Discovery → MVP → Pilot flow под клиента.                  |
-| **Phase E — Operator / product shell**    | PLANNED     | Появляются operator-facing и client-facing controlled interfaces: summaries, status, bounded actions, stable backend contracts.    |
-| **Phase F — Multi-module platform**       | FUTURE      | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts. |
+| Phase                                     | Status  | What it means                                                                                                                      |
+| ----------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase A — Demo skeleton**               | DONE    | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.        |
+| **Phase B — Reusable orchestration core** | DONE    | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.          |
+| **Phase C — Module platform**             | DONE    | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.   |
+| **Phase D — First real client delivery**  | PLANNED | Подключается первый реальный доменный модуль (`beeagent-rop`), делается Discovery → MVP → Pilot flow под клиента.                  |
+| **Phase E — Operator / product shell**    | PLANNED | Появляются operator-facing и client-facing controlled interfaces: summaries, status, bounded actions, stable backend contracts.    |
+| **Phase F — Multi-module platform**       | FUTURE  | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts. |
 
 ## Stages
 
@@ -1039,47 +1039,66 @@ BeeAgent получает минимальный capability boundary v0: мод�
 - в основном `runtime-risk`;
 - capability/file/integration boundaries — `security-sensitive`.
 
-### Итерация 15 — `beeagent-rop` integration v0
+### Итерация 15 — `beeagent-rop` integration smoke v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Подключить `beeagent-rop` к core через module contract и registry.
+Подключить установленный `beeagent-rop` к BeeAgent core как первый реальный внешний доменный модуль и подтвердить end-to-end dispatch через registry, runtime context и artifact API.
 
 #### Scope
 
 Включено:
 
-- module loading;
-- ROP module dispatch;
-- context passing;
-- artifact linkage;
-- first installed local module path.
+- загрузка `beeagent-rop` через `modules.registry`;
+- проверка, что registry больше не помечает `beeagent-rop` как `invalid`;
+- ROP module dispatch через existing core runtime path;
+- context passing: `run_id`, `session_id`, `case_type`, `module_id`, `authority`, `payload`;
+- artifact linkage через `ArtifactAPI`;
+- integration smoke с установленным local package;
+- registry/runtime diagnostics в logs/artifacts;
+- минимальный sample payload для `lead_classification` или `duplicate_resolution`.
 
 Не включено:
 
 - production Bitrix connector;
-- pilot hardening.
+- production email connector;
+- n8n/MCP transport implementation;
+- attachment deep parsing;
+- ROP summary/operator UX;
+- pilot hardening;
+- изменение бизнес-логики `beeagent-rop`;
+- client-specific rules в BeeAgent core.
 
 #### Deliverable
 
-BeeAgent умеет вызывать модуль РОП как первый реальный внешний доменный модуль.
+BeeAgent умеет загрузить и вызвать `beeagent-rop` как first real module через стандартный registry/runtime path, а результат вызова воспроизводимо связан с `run_id` в module-linked artifacts.
 
 #### Artifacts
 
-- standard run artifacts
-- module-linked artifacts
+- `storage/interfaces/modules.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- optional module output artifact from `beeagent-rop`
+- `logs/app.log`
 
 #### Checks
 
-- `pytest -q`
-- integration smoke with installed module
+- `uv run pytest -q`
+- registry integration smoke with installed `beeagent-rop`
+- module dispatch smoke via `execute_module_case`
+- artifact linkage verification
+- log verification
+- no secret leakage check
 
 #### DoD
 
-- BeeAgent вызывает модуль РОП end-to-end без ручных костылей;
-- linkage `run -> rop module outputs` видна в artifacts.
+- `beeagent-rop` загружается как valid module через registry;
+- BeeAgent вызывает `beeagent-rop` end-to-end без ручных костылей;
+- `ModuleResult` проходит consistency checks в `execute_module_case`;
+- linkage `run_id -> module-beeagent-rop -> module_result.json` видна в artifacts;
+- BeeAgent core не содержит ROP-specific business logic;
+- production connectors не подключены и не вызываются.
 
 ### Итерация 16 — Client operator flow v0
 

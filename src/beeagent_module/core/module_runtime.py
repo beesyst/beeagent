@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.module_contract import ModuleContext, ModuleResult
+from beeagent_module.core.module_contract import (
+    AuthorityLevel,
+    ModuleContext,
+    ModuleResult,
+)
 from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.runtime_context import (
     RuntimeContext,
@@ -29,6 +33,12 @@ def execute_module_case(
     if module is None:
         raise RuntimeError(f"Module is not loaded or unknown: {module_id}")
 
+    module_authority = _normalize_authority(
+        value=module.authority,
+        field_name="module.authority",
+        module_id=module_id,
+    )
+
     if case_type not in module.supported_case_types():
         raise RuntimeError(
             f"Unsupported case_type '{case_type}' for module '{module_id}'"
@@ -42,7 +52,7 @@ def execute_module_case(
         session_id=effective_session_id,
         case_type=case_type,
         module_id=module_id,
-        authority=module.authority,
+        authority=module_authority,
         payload=payload,
     )
 
@@ -68,11 +78,16 @@ def execute_module_case(
         module_id=runtime_context.module_id,
         payload=runtime_context.payload,
         session_id=runtime_context.session_id,
-        authority=runtime_context.authority,
+        authority=module_authority,
         artifact_api=artifact_api,
     )
 
     result = module.handle(module_context)
+    result_authority = _normalize_authority(
+        value=result.authority,
+        field_name="result.authority",
+        module_id=module_id,
+    )
 
     if result.module_id != module_id:
         raise RuntimeError(
@@ -86,32 +101,71 @@ def execute_module_case(
             f"expected '{case_type}', got '{result.case_type}'"
         )
 
-    if result.authority != module.authority:
+    if result_authority != module_authority:
         raise RuntimeError(
             "Module returned inconsistent authority: "
-            f"expected '{module.authority.value}', got '{result.authority.value}'"
+            f"expected '{module_authority.value}', got '{result_authority.value}'"
         )
+
+    normalized_result = ModuleResult(
+        module_id=result.module_id,
+        case_type=result.case_type,
+        authority=result_authority,
+        status=result.status,
+        summary=result.summary,
+        data=result.data,
+    )
 
     artifact_api.write_json(
         "module_result.json",
         {
             "run_id": runtime_context.run_id,
             "session_id": runtime_context.session_id,
-            "module_id": result.module_id,
-            "case_type": result.case_type,
-            "authority": result.authority.value,
-            "status": result.status,
-            "summary": result.summary,
-            "data": result.data,
+            "module_id": normalized_result.module_id,
+            "case_type": normalized_result.case_type,
+            "authority": normalized_result.authority.value,
+            "status": normalized_result.status,
+            "summary": normalized_result.summary,
+            "data": normalized_result.data,
         },
     )
 
     logger.info(
         "module execution finished: module_id=%s case_type=%s run_id=%s status=%s",
-        result.module_id,
-        result.case_type,
+        normalized_result.module_id,
+        normalized_result.case_type,
         runtime_context.run_id,
-        result.status,
+        normalized_result.status,
     )
 
-    return result
+    return normalized_result
+
+
+# Вспомогательная функция для нормализации и валидации уровня доступа (authority) из разных форматов в AuthorityLevel
+def _normalize_authority(
+    value: Any,
+    field_name: str,
+    module_id: str,
+) -> AuthorityLevel:
+    if isinstance(value, AuthorityLevel):
+        return value
+
+    raw_value: str | None = None
+    if isinstance(value, str):
+        raw_value = value
+    elif hasattr(value, "value") and isinstance(value.value, str):
+        raw_value = value.value
+
+    if raw_value is None:
+        raise RuntimeError(
+            f"Invalid {field_name} for module '{module_id}': "
+            "expected AuthorityLevel-compatible value"
+        )
+
+    try:
+        return AuthorityLevel(raw_value)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in AuthorityLevel)
+        raise RuntimeError(
+            f"Invalid {field_name} for module '{module_id}': '{raw_value}'. Allowed: {allowed}"
+        ) from exc

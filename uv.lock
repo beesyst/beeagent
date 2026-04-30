@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.17.0"
+version = "0.18.0"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -59,7 +59,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "beeagent-rop"
-version = "0.5.0"
+version = "0.7.0"
 source = { editable = "../beeagent-rop" }
 
 [package.metadata]
