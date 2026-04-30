@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.18.0...beeagent-v0.19.0) (2026-04-30)
+
+
+### Features
+
+* **module:** integrate beeagent-rop runtime dispatch ([#57](https://github.com/beesyst/beeagent/issues/57)) ([a1f80b5](https://github.com/beesyst/beeagent/commit/a1f80b5fef4b6708334940c69a993080b4b7db82))
+
 ## [0.18.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.17.0...beeagent-v0.18.0) (2026-04-29)
 
 
