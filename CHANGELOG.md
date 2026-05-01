@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.19.0...beeagent-v0.20.0) (2026-05-01)
+
+
+### Features
+
+* **rop:** add operator run flow ([#60](https://github.com/beesyst/beeagent/issues/60)) ([4f75f96](https://github.com/beesyst/beeagent/commit/4f75f96c8078bb25fa98cada818732f82247c9dc))
+
 ## [0.19.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.18.0...beeagent-v0.19.0) (2026-04-30)
 
 
