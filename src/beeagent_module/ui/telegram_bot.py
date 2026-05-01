@@ -18,6 +18,7 @@ from beeagent_module.cases.quiz import (
     process_quiz_answer_case,
     start_quiz_case,
 )
+from beeagent_module.cases.rop_operator import run_rop_operator_case
 from beeagent_module.core.i18n import load_translations, t
 from beeagent_module.core.llm import answer_oos_report_question
 from beeagent_module.core.paths import get_storage_dir
@@ -108,6 +109,7 @@ def _build_application(
     application.add_handler(CommandHandler("help", handle_help))
     application.add_handler(CommandHandler("run_oos", handle_run_oos))
     application.add_handler(CommandHandler("run_promo", handle_run_promo))
+    application.add_handler(CommandHandler("run_rop", handle_run_rop))
     application.add_handler(CommandHandler("last", handle_last))
     application.add_handler(CommandHandler("quiz_pharmacy", handle_quiz_pharmacy))
     application.add_handler(CommandHandler("last_quiz", handle_last_quiz))
@@ -282,6 +284,37 @@ async def handle_run_promo(update: Any, context: Any) -> None:
         return
 
     await _run_promo_and_reply(message, context)
+
+
+# Обработка команды /run_rop и запуск ROP оператора с demo payload
+async def handle_run_rop(update: Any, context: Any) -> None:
+    await _track_update_event(update, context, event_type="run_rop")
+
+    if not await _ensure_allowlist(update, context):
+        return
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    settings = context.bot_data["settings"]
+    logger: logging.Logger = context.bot_data["logger"]
+    storage_dir = context.bot_data["storage_dir"]
+
+    demo_payload = {
+        "source": "email",
+        "sender": "lead@example.com",
+        "subject": "Need product details",
+        "body": "Please share pricing and delivery terms.",
+    }
+
+    result = run_rop_operator_case(
+        settings=settings,
+        storage_dir=storage_dir,
+        logger=logger,
+        payload=demo_payload,
+    )
+    await message.reply_text(str(result["operator_text"]))
 
 
 # Обработка команды /last и возвращает последний отчет
@@ -845,7 +878,6 @@ async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) ->
     await message.reply_text(feedback)
 
     if result.get("is_finished"):
-        result_data = result.get("result", {})
         report_text = result.get("report_text", "")
         await message.reply_text(report_text)
         logger.info("quiz_finished run_id=%s", run_id)

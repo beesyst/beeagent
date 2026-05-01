@@ -1100,48 +1100,67 @@ BeeAgent умеет загрузить и вызвать `beeagent-rop` как f
 - BeeAgent core не содержит ROP-specific business logic;
 - production connectors не подключены и не вызываются.
 
-### Итерация 16 — Client operator flow v0
+### Итерация 16 — ROP operator run flow v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Собрать первый понятный operator/client flow для работы с ROP module.
+Собрать первый понятный operator-facing flow для запуска `beeagent-rop` через BeeAgent core: оператор должен видеть не только raw module artifacts, но и краткий explainable результат запуска без чтения исходников или внутренних JSON.
 
 #### Scope
 
 Включено:
 
-- запуск клиентского case;
-- summary output;
-- artifact linkage;
-- basic operator-facing output;
-- first bounded chat/operator interaction path.
+- core/case-level запуск ROP module через существующий registry/runtime path;
+- operator-facing wrapper над `execute_module_case(...)`;
+- bounded input payload для первого ROP case smoke, без production connectors;
+- readable summary output на основе `ModuleResult`;
+- artifact linkage:
+  - `run_id`;
+  - `module_result.json`;
+  - operator summary artifact;
+- basic degraded output, если модуль не загружен, case unsupported или module result не `ok`;
+- минимальная интеграция с текущим UI/transport path там, где это уже естественно для проекта;
+- tests на successful run и degraded/refusal scenario.
 
 Не включено:
 
 - final UI;
-- auto actions в клиентской CRM.
+- production Email/Bitrix/parser/attachment connectors;
+- auto actions в CRM;
+- полноценная ROP business summary;
+- recommendation builder;
+- manager scoring;
+- перенос ROP business logic в BeeAgent core.
 
 #### Deliverable
 
-Есть первый run flow, который можно показывать как клиентский MVP path.
+BeeAgent получает первый operator-ready ROP run flow: установленный `beeagent-rop` можно запустить через core-level path, получить readable summary и воспроизводимые artifacts, достаточные для демонстрации клиентского MVP path.
 
 #### Artifacts
 
-- `storage/runs/<run_id>/...`
-- module summary artifacts
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/<case_type>_result.json`, если модуль пишет case artifact
+- `storage/runs/<run_id>/operator_summary.json` или аналогичный operator-facing artifact
+- logs
 
 #### Checks
 
 - `pytest -q`
-- run smoke with installed ROP module
+- targeted ROP operator flow tests
+- run smoke with installed `beeagent-rop`
+- degraded scenario: module missing / unsupported case / non-ok result
 - manual artifact inspection
+- log verification
 
 #### DoD
 
-- ROP flow запускается и выдаёт explainable result;
-- operator может понять, что произошло, без чтения кода.
+- ROP flow запускается через BeeAgent-owned path, а не ad hoc script;
+- operator-facing summary объясняет, что произошло, какой модуль/case был вызван, какой статус получен и где лежат artifacts;
+- linkage `run_id -> module result -> operator summary` воспроизводимо;
+- BeeAgent core не содержит ROP business rules;
+- production connectors и CRM actions не добавлены.
 
 ### Итерация 17 — Discovery/MVP handoff hardening v0
 

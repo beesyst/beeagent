@@ -3,15 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from beeagent_module.core.i18n import load_translations
 from beeagent_module.ui.telegram_bot import (
     BUTTON_APPROVE_TASKS,
     BUTTON_REJECT_TASKS,
     BUTTON_RUN_OOS,
     BUTTON_SHOW_REPORT,
+    _build_application,
     _build_oos_assistant_context,
     _run_scheduled_oos_tick,
     _scheduler_loop,
@@ -21,10 +25,10 @@ from beeagent_module.ui.telegram_bot import (
     handle_menu_button,
     handle_run_oos,
     handle_run_promo,
+    handle_run_rop,
     handle_start,
     handle_unknown_command,
 )
-from beeagent_module.core.i18n import load_translations
 
 
 # Фейк: объекты для имитации Telegram Update, Message, CallbackQuery и Bot в тестах
@@ -284,7 +288,10 @@ def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
 
     run_async_handler(handle_unknown_command, update, context)
 
-    assert update.effective_message.replies[-1] == "Неизвестная команда. Используйте /help."
+    assert (
+        update.effective_message.replies[-1]
+        == "Неизвестная команда. Используйте /help."
+    )
 
 
 # Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями
@@ -428,7 +435,14 @@ def test_build_oos_assistant_context_from_artifacts(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (run_dir / "run.json").write_text(
-        json.dumps({"run_id": run_id, "dataset_id": "seed-1", "alerts_count": 2, "tasks_count": 2}),
+        json.dumps(
+            {
+                "run_id": run_id,
+                "dataset_id": "seed-1",
+                "alerts_count": 2,
+                "tasks_count": 2,
+            }
+        ),
         encoding="utf-8",
     )
     (run_dir / "recommendations.json").write_text(
@@ -479,7 +493,14 @@ def test_assistant_question_returns_llm_answer(tmp_path: Path, monkeypatch) -> N
         encoding="utf-8",
     )
     (run_dir / "run.json").write_text(
-        json.dumps({"run_id": run_id, "dataset_id": "seed-1", "alerts_count": 1, "tasks_count": 1}),
+        json.dumps(
+            {
+                "run_id": run_id,
+                "dataset_id": "seed-1",
+                "alerts_count": 1,
+                "tasks_count": 1,
+            }
+        ),
         encoding="utf-8",
     )
     (run_dir / "recommendations.json").write_text(
@@ -521,7 +542,9 @@ def test_assistant_question_returns_llm_answer(tmp_path: Path, monkeypatch) -> N
         fake_answer_oos_report_question,
     )
 
-    update = make_message_update(chat_id=1, text="Какой приоритет действий?", update_id=70)
+    update = make_message_update(
+        chat_id=1, text="Какой приоритет действий?", update_id=70
+    )
     run_async_handler(handle_assistant_question, update, context)
 
     assert called["question"] == "Какой приоритет действий?"
@@ -541,3 +564,126 @@ def test_assistant_question_without_last_run_returns_hint(tmp_path: Path) -> Non
         update.effective_message.replies[-1]
         == "Нет последнего отчёта OOS. Сначала выполните /run_oos."
     )
+
+
+# Тест: нажатия кнопки "Run ROP" вызывает сценарий ROP оператора и возвращает текст оператора
+def test_run_rop_returns_operator_text(tmp_path: Path, monkeypatch) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
+    update = make_message_update(chat_id=1, text="/run_rop", update_id=80)
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_rop_operator_case(
+        settings: dict,
+        storage_dir: Path,
+        logger: logging.Logger,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        captured["settings"] = settings
+        captured["storage_dir"] = storage_dir
+        captured["logger"] = logger
+        captured["payload"] = payload
+        return {"operator_text": "ROP operator run v0"}
+
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.run_rop_operator_case",
+        fake_run_rop_operator_case,
+    )
+
+    run_async_handler(handle_run_rop, update, context)
+
+    assert captured["settings"] == context.bot_data["settings"]
+    assert captured["storage_dir"] == tmp_path
+    assert captured["logger"] == context.bot_data["logger"]
+    assert captured["payload"] == {
+        "source": "email",
+        "sender": "lead@example.com",
+        "subject": "Need product details",
+        "body": "Please share pricing and delivery terms.",
+    }
+    assert update.effective_message.replies[-1] == "ROP operator run v0"
+
+
+# Вспомогательная функция для получения конфигурации ROP оператора из settings.yml
+def test_build_application_registers_run_rop_command(monkeypatch) -> None:
+    class _Filter:
+        def __and__(self, other: Any) -> "_Filter":
+            _ = other
+            return self
+
+        def __invert__(self) -> "_Filter":
+            return self
+
+    class FakeCommandHandler:
+        def __init__(self, command: str, callback: Any) -> None:
+            self.command = command
+            self.callback = callback
+
+    class FakeCallbackQueryHandler:
+        def __init__(self, callback: Any) -> None:
+            self.callback = callback
+
+    class FakeMessageHandler:
+        def __init__(self, filt: Any, callback: Any) -> None:
+            self.filters = filt
+            self.callback = callback
+
+    class FakeApplication:
+        def __init__(self) -> None:
+            self.bot_data: dict[str, Any] = {}
+            self.handlers: list[Any] = []
+
+        def add_handler(self, handler: Any) -> None:
+            self.handlers.append(handler)
+
+    class FakeApplicationBuilder:
+        def __init__(self) -> None:
+            self._app = FakeApplication()
+
+        def token(self, token: str) -> "FakeApplicationBuilder":
+            _ = token
+            return self
+
+        def post_init(self, callback: Any) -> "FakeApplicationBuilder":
+            _ = callback
+            return self
+
+        def post_shutdown(self, callback: Any) -> "FakeApplicationBuilder":
+            _ = callback
+            return self
+
+        def build(self) -> FakeApplication:
+            return self._app
+
+    fake_filters = types.SimpleNamespace(TEXT=_Filter(), COMMAND=_Filter())
+    fake_telegram_ext = types.ModuleType("telegram.ext")
+    setattr(fake_telegram_ext, "ApplicationBuilder", FakeApplicationBuilder)
+    setattr(fake_telegram_ext, "CallbackQueryHandler", FakeCallbackQueryHandler)
+    setattr(fake_telegram_ext, "CommandHandler", FakeCommandHandler)
+    setattr(fake_telegram_ext, "MessageHandler", FakeMessageHandler)
+    setattr(fake_telegram_ext, "filters", fake_filters)
+
+    fake_telegram_pkg = types.ModuleType("telegram")
+    setattr(fake_telegram_pkg, "ext", fake_telegram_ext)
+
+    monkeypatch.setitem(sys.modules, "telegram", fake_telegram_pkg)
+    monkeypatch.setitem(sys.modules, "telegram.ext", fake_telegram_ext)
+    monkeypatch.setattr(
+        "beeagent_module.ui.telegram_bot.get_storage_dir", lambda: Path("/tmp")
+    )
+
+    app = _build_application(
+        token="token",
+        chat_id=1,
+        telemetry_enabled=False,
+        logger=logging.getLogger("test.telegram"),
+        settings={},
+        translations={},
+    )
+
+    commands = [
+        getattr(handler, "command")
+        for handler in app.handlers
+        if getattr(handler, "command", None) is not None
+    ]
+    assert "run_rop" in commands

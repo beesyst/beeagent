@@ -81,6 +81,15 @@ bash start.sh
 uv run python3 config/start.py
 ```
 
+### ROP operator flow v0
+
+Для первого operator-facing ROP прогона используй BeeAgent-owned run mode:
+
+1. в `config/settings.yml` установи `run.mode: "rop_operator_v0"`;
+2. запусти `uv run python3 config/start.py`.
+
+Результат пишется как readable operator output в лог и как артефакт `storage/runs/<run_id>/operator_summary.json`.
+
 ## Архитектурное правило проекта
 
 `beeagent` — это **ядро оркестрации**, а не доменный модуль.
@@ -210,6 +219,12 @@ Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.wri
 - `storage/sessions/` — session state
 - `storage/telemetry/` — transport telemetry
 - `storage/mock/` — mock datasets
+
+Для ROP operator flow v0 ожидаемый минимальный linkage:
+
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/lead_classification_result.json` (если case пишет свой artifact)
+- `storage/runs/<run_id>/operator_summary.json`
 
 ### Правила по артефактам
 
