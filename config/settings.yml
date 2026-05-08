@@ -83,3 +83,15 @@ rop:
       batch:
         path: "storage/mock/rop_batch_sample.json" # путь к batch-файлу (относительно корня проекта)
         period: "2026-05" # период, который передаётся в rop_summary payload
+    - source_id: "hotline_mailbox" # read-only mailbox source для live smoke
+      source_type: "mailbox_readonly" # тип источника для чтения последних писем из mailbox
+      enabled: false # по умолчанию выключен, чтобы не заменять batch source
+      authority: "read_only" # mailbox smoke не должен выполнять destructive actions
+      items_max: 10 # максимальное число писем для одного smoke-run
+      mailbox:
+        host: "imap.example.com" # IMAP host без секретов
+        port: 993 # IMAP port
+        use_ssl: true # использовать IMAP over SSL
+        folder: "INBOX" # mailbox folder для чтения
+        username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
+        password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем

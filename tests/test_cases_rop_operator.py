@@ -248,6 +248,47 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
     return settings
 
 
+# Тест: успешный запуск ROP batch case с json_batch источником и проверка результатов
+def _make_mailbox_settings(enabled: bool = True) -> dict:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "sources": [
+            {
+                "source_id": "hotline",
+                "source_type": "mailbox_readonly",
+                "enabled": enabled,
+                "authority": "read_only",
+                "items_max": 10,
+                "mailbox": {
+                    "host": "imap.example.com",
+                    "port": 993,
+                    "use_ssl": True,
+                    "folder": "INBOX",
+                    "username_env": "ROP_MAILBOX_USERNAME",
+                    "password_env": "ROP_MAILBOX_PASSWORD",
+                },
+            }
+        ]
+    }
+    return settings
+
+
+# Тест: degraded run при отсутствии переменных окружения для доступа к почтовому ящику
+class _FakeMailboxClient:
+    def __init__(
+        self, messages: list[bytes] | None = None, error: Exception | None = None
+    ):
+        self._messages = messages or []
+        self._error = error
+
+    def fetch_latest(self, folder: str, items_max: int) -> list[bytes]:
+        assert folder == "INBOX"
+        assert items_max > 0
+        if self._error is not None:
+            raise self._error
+        return self._messages[:items_max]
+
+
 # Сбор референсов на артефакты, созданные модульными кейсами, для включения их в summary оператора
 def _write_sample_batch(directory: Path) -> Path:
     batch = {
@@ -316,6 +357,7 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     )
     assert operator["status"] == "ok"
     refs = operator["artifact_refs"]
+    assert any("source_diagnostics.json" in r for r in refs)
     assert any("intake_metadata.json" in r for r in refs)
     assert any("normalized_events.json" in r for r in refs)
     assert any("operator_summary.json" in r for r in refs)
@@ -366,6 +408,12 @@ def test_rop_batch_case_degraded_missing_batch_file(tmp_path: Path) -> None:
 
     assert result["status"] == "degraded"
     assert "not found" in result["summary"].lower()
+    diagnostics = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-batch-missing-file" / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["status"] == "degraded"
 
 
 # Тест: degraded run при отсутствии модуля в registry
@@ -388,3 +436,177 @@ def test_rop_batch_case_degraded_missing_module(tmp_path: Path) -> None:
     assert (
         tmp_path / "runs" / "run-rop-batch-no-module" / "operator_summary.json"
     ).exists()
+
+
+# Тесты для ROP оператора с источником mailbox_readonly: проверка обработки ошибок аутентификации, недоступности сервера, пустого ящика и некорректных сообщений
+def test_rop_batch_case_mailbox_missing_credentials_degraded(tmp_path: Path) -> None:
+    settings = _make_mailbox_settings()
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        run_id="run-rop-mailbox-missing-creds",
+        session_id="session-rop-mailbox-missing-creds",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([]),
+    )
+
+    assert result["status"] == "degraded"
+    diagnostics = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-rop-mailbox-missing-creds"
+            / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["reason"] == "missing_credentials"
+
+
+# Тест: degraded run при ошибке аутентификации к почтовому ящику
+def test_rop_batch_case_mailbox_auth_failure_degraded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from beeagent_module.adapters.mailbox import MailboxAuthError
+
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=ModuleRegistry(config=[], logger=_null_logger()),
+        run_id="run-rop-mailbox-auth-failed",
+        session_id="session-rop-mailbox-auth-failed",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            error=MailboxAuthError("mailbox authentication failed")
+        ),
+    )
+
+    assert result["status"] == "degraded"
+    diagnostics = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-rop-mailbox-auth-failed"
+            / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["reason"] == "auth_failure"
+
+
+# Тест: degraded run при недоступности сервера или папки почтового ящика
+def test_rop_batch_case_mailbox_unavailable_degraded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from beeagent_module.adapters.mailbox import MailboxUnavailableError
+
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=ModuleRegistry(config=[], logger=_null_logger()),
+        run_id="run-rop-mailbox-unavailable",
+        session_id="session-rop-mailbox-unavailable",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            error=MailboxUnavailableError("mailbox connection failed")
+        ),
+    )
+
+    assert result["status"] == "degraded"
+    diagnostics = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-rop-mailbox-unavailable"
+            / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["reason"] == "mailbox_unavailable"
+
+
+# Тест: успешный запуск ROP batch case с источником mailbox_readonly и пустым ящиком
+def test_rop_batch_case_mailbox_empty_inbox_ok(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-rop-mailbox-empty",
+        session_id="session-rop-mailbox-empty",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([]),
+    )
+
+    assert result["status"] == "ok"
+    operator = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-mailbox-empty" / "operator_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert operator["source"]["loaded_item_count"] == 0
+    diagnostics = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-mailbox-empty" / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["reason"] == "empty_inbox"
+
+
+# Тест: degraded run при отсутствии переменных окружения для доступа к почтовому ящику
+def test_rop_batch_case_mailbox_malformed_message_skipped(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    malformed = b"broken"
+    valid = b"From: lead@example.com\nTo: hotline@example.com\nSubject: Hello\nMessage-ID: <mail-4@example.com>\nContent-Type: text/plain; charset=utf-8\n\nHello"
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-rop-mailbox-malformed",
+        session_id="session-rop-mailbox-malformed",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([malformed, valid]),
+    )
+
+    assert result["status"] == "ok"
+    diagnostics = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-mailbox-malformed" / "source_diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostics["malformed_count"] == 1
+    normalized = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-mailbox-malformed" / "normalized_events.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert len(normalized) == 1
