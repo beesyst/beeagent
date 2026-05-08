@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.20.0...beeagent-v0.21.0) (2026-05-08)
+
+
+### Features
+
+* **rop:** add input source contract and batch handoff ([#63](https://github.com/beesyst/beeagent/issues/63)) ([fe5c281](https://github.com/beesyst/beeagent/commit/fe5c2814f095f895a4fff6810509e1269e5481ac))
+
 ## [0.20.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.19.0...beeagent-v0.20.0) (2026-05-01)
 
 
