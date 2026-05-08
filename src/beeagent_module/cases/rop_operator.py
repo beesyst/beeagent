@@ -5,7 +5,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from beeagent_module.core.input_source import find_active_rop_source, load_json_batch
+from beeagent_module.core.input_source import (
+    InputSourceError,
+    find_active_rop_source,
+    load_rop_source,
+)
 from beeagent_module.core.module_registry import ModuleRegistry, build_registry
 from beeagent_module.core.module_runtime import execute_module_case
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
@@ -183,7 +187,7 @@ def _build_batch_operator_text(
     )
 
 
-# Запуск ROP batch handoff: загрузка configured json_batch source, нормализует события
+# Запуск ROP source handoff: загрузка configured source, нормализация событий и dispatch в модуль
 def run_rop_batch_case(
     settings: dict,
     storage_dir: Path,
@@ -194,6 +198,7 @@ def run_rop_batch_case(
     run_id: str | None = None,
     session_id: str | None = None,
     registry: ModuleRegistry | None = None,
+    mailbox_client_factory: Any | None = None,
 ) -> dict[str, Any]:
     effective_run_id = run_id or generate_run_id()
     effective_session_id = session_id or generate_session_id()
@@ -206,26 +211,41 @@ def run_rop_batch_case(
     operator_status = "degraded"
     artifact_refs: list[str] = []
     source_meta: dict | None = None
+    source_diagnostics: dict[str, Any] = {
+        "source_id": "unknown",
+        "source_type": "unknown",
+        "status": "degraded",
+        "reason": "source_not_loaded",
+    }
 
     try:
         input_sources: list[dict] = settings.get("rop", {}).get("sources", [])
         source = find_active_rop_source(input_sources)
 
-        events, intake_metadata = load_json_batch(
+        events, intake_metadata, source_diagnostics = load_rop_source(
             source=source,
             project_root=project_root,
             logger=logger,
+            mailbox_client_factory=mailbox_client_factory,
         )
         source_meta = {
             "source_id": intake_metadata["source_id"],
             "source_type": intake_metadata["source_type"],
             "authority": intake_metadata["authority"],
-            "period": intake_metadata["period"],
+            "period": intake_metadata.get("period"),
             "raw_item_count": intake_metadata["raw_item_count"],
             "loaded_item_count": intake_metadata["loaded_item_count"],
             "items_max": intake_metadata["items_max"],
         }
-        period: str = intake_metadata["period"]
+
+        diagnostics_path = run_dir / "source_diagnostics.json"
+        diagnostics_path.write_text(
+            json.dumps(source_diagnostics, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(diagnostics_path.relative_to(storage_dir).as_posix())
+
+        period = str(intake_metadata.get("period", ""))
 
         intake_path = run_dir / "intake_metadata.json"
         intake_path.write_text(
@@ -280,6 +300,18 @@ def run_rop_batch_case(
             )
         )
 
+    except InputSourceError as exc:
+        module_summary = str(exc)
+        source_diagnostics = {
+            **source_diagnostics,
+            **exc.diagnostics,
+            "status": "degraded",
+        }
+        logger.warning(
+            "rop batch flow degraded: run_id=%s reason=%s",
+            effective_run_id,
+            exc,
+        )
     except RuntimeError as exc:
         module_summary = str(exc)
         logger.warning(
@@ -287,6 +319,15 @@ def run_rop_batch_case(
             effective_run_id,
             exc,
         )
+
+    diagnostics_path = run_dir / "source_diagnostics.json"
+    diagnostics_path.write_text(
+        json.dumps(source_diagnostics, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    diagnostics_ref = diagnostics_path.relative_to(storage_dir).as_posix()
+    if diagnostics_ref not in artifact_refs:
+        artifact_refs.append(diagnostics_ref)
 
     operator_summary = {
         "run_id": effective_run_id,

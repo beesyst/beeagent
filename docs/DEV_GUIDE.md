@@ -83,19 +83,21 @@ uv run python3 config/start.py
 
 ### ROP operator flow v0
 
-Для первого operator-facing ROP прогона используй BeeAgent-owned run mode:
+Для первого operator-facing ROP прогона используй existing transport path:
 
-1. в `config/settings.yml` установи `run.mode: "rop_operator_v0"`;
-2. запусти `uv run python3 config/start.py`.
+1. в `config/settings.yml` оставь `run.mode: "telegram"`;
+2. запусти `uv run python3 config/start.py`;
+3. отправь команду `/run_rop` в Telegram.
 
 Результат пишется как readable operator output в лог и как артефакт `storage/runs/<run_id>/operator_summary.json`.
 
-### ROP batch handoff v0 (итерация 17)
+### ROP source handoff v0 (итерации 17-18)
 
-Для запуска ROP flow через configured `json_batch` source:
+Для запуска ROP flow через configured source в `rop.sources`:
 
-1. убедись, что в `config/settings.yml` есть блок `rop.sources` с включённым `json_batch` источником;
-2. убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
+1. убедись, что в `config/settings.yml` есть блок `rop.sources` с ровно одним `enabled: true` источником;
+2. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
+3. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
 3. запусти flow напрямую через case invocation:
 
 ```python
@@ -116,6 +118,7 @@ print(result["operator_text"])
 
 Ожидаемые артефакты:
 
+- `storage/runs/<run_id>/source_diagnostics.json` — статус источника, counts и degraded reason без секретов;
 - `storage/runs/<run_id>/intake_metadata.json` — метаданные загрузки источника;
 - `storage/runs/<run_id>/normalized_events.json` — нормализованные события;
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json` — результат модуля;
@@ -140,7 +143,9 @@ print(result["operator_text"])
 }
 ```
 
-`run.mode` остаётся transport/runtime selector. ROP batch flow запускается через case/test/dev invocation, не через run.mode.
+Для `mailbox_readonly` normalizer сохраняет только safe fields: `event_id`, `source`, `source_id`, `message_id`, `sender`, `to`, `cc`, `subject`, `date`, `body_preview`, `attachments`. Attachment content не читается, raw `.eml` не сохраняется.
+
+`run.mode` остаётся transport/runtime selector. ROP source flow запускается через case/test/dev invocation, не через run.mode.
 
 ## Архитектурное правило проекта
 

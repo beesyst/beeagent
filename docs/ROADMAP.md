@@ -1259,44 +1259,63 @@ BeeAgent умеет запускать ROP flow через configurable batch in
 - logs/artifacts не содержат secrets;
 - production connectors не добавлены.
 
-### Итерация 18 — ROP hotline read-only ingestion smoke v0
+### Итерация 18 — ROP mailbox_readonly source and hotline smoke v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Подключить `hotline@welding.kz` как первый read-only mailbox source для ROP MVP smoke: BeeAgent должен получить последние N писем, нормализовать их и прогнать через `beeagent-rop` без destructive actions и CRM write-back.
+Добавить в BeeAgent source type `mailbox_readonly` и использовать `hotline@welding.kz` как первый configurable read-only mailbox source для ROP MVP smoke: BeeAgent должен получить последние N писем, безопасно нормализовать их в events, вызвать `beeagent-rop` через existing module runtime path и записать operator-facing artifacts без destructive mailbox actions и без CRM write-back.
 
 #### Scope
 
-Включено:
+**Включено:**
 
-- source type `mailbox_readonly`;
-- config-driven source declaration для `hotline`;
-- secrets только через env;
+- новый source type:
+  - `mailbox_readonly`;
+- config-driven source declaration в `rop.sources`;
+- `hotline` только как `source_id` / config entry, без хардкода в runtime logic;
+- mailbox config без secrets:
+  - `host`;
+  - `port`;
+  - `use_ssl`;
+  - `folder`;
+  - `username_env`;
+  - `password_env`;
+  - `items_max`;
+- credentials только через env;
 - read-only fetch последних N сообщений;
-- no delete/archive/reply;
-- sanitized intake artifact;
-- normalized events artifact;
-- dispatch в `beeagent-rop`;
-- operator summary;
-- source diagnostics:
-  - fetched count;
-  - processed count;
-  - skipped count;
-  - failed count;
-  - source unavailable reason;
-  - attachment metadata count;
+- no delete/archive/reply/mark-as-read;
+- minimal mailbox adapter с fake mailbox tests;
+- normalizer:
+  - sender;
+  - recipients / cc, если безопасно;
+  - subject;
+  - date/message_id;
+  - text/plain или safe text body preview;
+  - attachment metadata только без чтения content;
+- sanitized artifacts:
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `normalized_events.json`;
+  - module artifacts;
+  - `operator_summary.json`;
+- dispatch в `beeagent-rop` через `execute_module_case(...)`;
 - degraded behavior:
   - missing credentials;
+  - invalid source config;
   - auth failure;
   - mailbox unavailable;
   - empty inbox;
-  - malformed message.
+  - malformed message;
+  - unsupported module/case;
+  - module non-ok result;
+- docs update.
 
 #### Не включено:
 
-- continuous stream/listener;
+- continuous stream/listener/polling;
+- checkpoint/seen-message persistence, если это не минимально и безопасно;
 - multi-mailbox routing;
 - full source-of-truth mapping;
 - employee mailbox ingestion;
@@ -1304,11 +1323,14 @@ BeeAgent умеет запускать ROP flow через configurable batch in
 - CRM write-back;
 - OCR;
 - attachment deep parsing;
-- automatic actions.
+- saving raw `.eml`;
+- automatic mailbox actions;
+- n8n/MCP implementation;
+- ROP business rules в BeeAgent.
 
 #### Deliverable
 
-BeeAgent имеет первый live/read-only ROP smoke на `hotline`, достаточный для MVP-1 demo.
+BeeAgent умеет выполнить controlled read-only smoke на mailbox source: получить последние N писем из configured mailbox, нормализовать их в ROP-compatible events, вызвать `beeagent-rop` и показать operator summary с воспроизводимыми artifacts.
 
 #### Artifacts
 
@@ -1316,6 +1338,7 @@ BeeAgent имеет первый live/read-only ROP smoke на `hotline`, дос
 - `storage/runs/<run_id>/intake_metadata.json`
 - `storage/runs/<run_id>/normalized_events.json`
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- optional `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
 - `storage/runs/<run_id>/operator_summary.json`
 - `logs/app.log`
 
@@ -1323,10 +1346,12 @@ BeeAgent имеет первый live/read-only ROP smoke на `hotline`, дос
 
 - `uv run pytest -q`
 - mailbox adapter tests with fake mailbox
+- missing credentials scenario
 - auth failure scenario
+- mailbox unavailable scenario
 - empty inbox scenario
 - malformed message scenario
-- live smoke with `max_messages`
+- live smoke with `items_max`, если реальные credentials доступны
 - manual artifact inspection
 - log verification
 - secret leakage check
@@ -1335,13 +1360,16 @@ BeeAgent имеет первый live/read-only ROP smoke на `hotline`, дос
 
 #### DoD
 
+- mailbox source configurable, not hardcoded;
 - mailbox access is read-only;
-- source configurable, not hardcoded;
-- credentials never appear in logs/artifacts;
+- credentials are read only from env and never appear in logs/artifacts;
 - latest N messages become normalized events;
-- `beeagent-rop` receives normalized payload;
+- attachment content is not parsed, only metadata is captured;
+- `beeagent-rop` receives normalized payload through existing module runtime path;
 - operator sees result without reading code;
-- no destructive mailbox/CRM actions exist.
+- degraded paths are explainable;
+- no destructive mailbox/CRM actions exist;
+- BeeAgent core contains no ROP classification/summary/recommendation rules.
 
 ---
 

@@ -256,7 +256,7 @@ def validate_settings(settings: dict) -> None:
     if not isinstance(input_sources, list):
         raise RuntimeError("Invalid type for rop.sources, expected list")
 
-    _VALID_SOURCE_TYPES = {"json_batch"}
+    _VALID_SOURCE_TYPES = {"json_batch", "mailbox_readonly"}
     _VALID_AUTHORITY_VALUES = {"read_only", "draft_only", "execution_capable"}
 
     for idx, source in enumerate(input_sources):
@@ -302,6 +302,31 @@ def validate_settings(settings: dict) -> None:
             if not isinstance(batch.get("period"), str):
                 raise RuntimeError(
                     f"Missing rop.sources[{idx}].batch.period, expected string"
+                )
+        if source_type == "mailbox_readonly":
+            if source.get("authority") != "read_only":
+                raise RuntimeError(
+                    f"Invalid rop.sources[{idx}].authority for mailbox_readonly, expected 'read_only'"
+                )
+            mailbox = source.get("mailbox")
+            if not isinstance(mailbox, dict):
+                raise RuntimeError(
+                    f"Missing or invalid rop.sources[{idx}].mailbox, expected mapping"
+                )
+            for key in ("host", "folder", "username_env", "password_env"):
+                value = mailbox.get(key)
+                if not isinstance(value, str) or not value:
+                    raise RuntimeError(
+                        f"Missing rop.sources[{idx}].mailbox.{key}, expected non-empty string"
+                    )
+            port = mailbox.get("port")
+            if not isinstance(port, int) or port <= 0:
+                raise RuntimeError(
+                    f"Missing or invalid rop.sources[{idx}].mailbox.port, expected int > 0"
+                )
+            if not isinstance(mailbox.get("use_ssl"), bool):
+                raise RuntimeError(
+                    f"Missing or invalid rop.sources[{idx}].mailbox.use_ssl, expected bool"
                 )
 
 
