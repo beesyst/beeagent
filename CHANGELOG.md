@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.21.0...beeagent-v0.22.0) (2026-05-08)
+
+
+### Features
+
+* **rop:** add mailbox read-only source ([#66](https://github.com/beesyst/beeagent/issues/66)) ([f388796](https://github.com/beesyst/beeagent/commit/f388796cff15f1f471d491cd1a6e1036822444db))
+
 ## [0.21.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.20.0...beeagent-v0.21.0) (2026-05-08)
 
 
