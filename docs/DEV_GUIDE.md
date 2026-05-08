@@ -90,6 +90,58 @@ uv run python3 config/start.py
 
 Результат пишется как readable operator output в лог и как артефакт `storage/runs/<run_id>/operator_summary.json`.
 
+### ROP batch handoff v0 (итерация 17)
+
+Для запуска ROP flow через configured `json_batch` source:
+
+1. убедись, что в `config/settings.yml` есть блок `rop.sources` с включённым `json_batch` источником;
+2. убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
+3. запусти flow напрямую через case invocation:
+
+```python
+from pathlib import Path
+from beeagent_module.core.settings import load_settings
+from beeagent_module.cases.rop_operator import run_rop_batch_case
+import logging
+
+settings = load_settings(Path("config/settings.yml"))
+result = run_rop_batch_case(
+    settings=settings,
+    storage_dir=Path("storage"),
+    project_root=Path(".").resolve(),
+    logger=logging.getLogger("rop_batch"),
+)
+print(result["operator_text"])
+```
+
+Ожидаемые артефакты:
+
+- `storage/runs/<run_id>/intake_metadata.json` — метаданные загрузки источника;
+- `storage/runs/<run_id>/normalized_events.json` — нормализованные события;
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json` — результат модуля;
+- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` — case artifact от beeagent-rop;
+- `storage/runs/<run_id>/operator_summary.json` — operator-facing summary.
+
+Пример batch файла (`storage/mock/rop_batch_sample.json`):
+
+```json
+{
+  "period": "2026-05",
+  "items": [
+    {
+      "event_id": "evt-001",
+      "case_type": "new_lead",
+      "priority": "high",
+      "confidence": 0.95,
+      "is_fallback": false,
+      "reason_code": "new_contact_no_existing_lead"
+    }
+  ]
+}
+```
+
+`run.mode` остаётся transport/runtime selector. ROP batch flow запускается через case/test/dev invocation, не через run.mode.
+
 ## Архитектурное правило проекта
 
 `beeagent` — это **ядро оркестрации**, а не доменный модуль.
@@ -225,6 +277,30 @@ Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.wri
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
 - `storage/runs/<run_id>/module-beeagent-rop/lead_classification_result.json` (если case пишет свой artifact)
 - `storage/runs/<run_id>/operator_summary.json`
+
+Для ROP batch handoff v0 (итерация 17) ожидаемый linkage:
+
+- `storage/runs/<run_id>/intake_metadata.json` — метаданные загруженного источника
+- `storage/runs/<run_id>/normalized_events.json` — нормализованные события batch
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` (если case пишет свой artifact)
+- `storage/runs/<run_id>/operator_summary.json`
+
+Пример `intake_metadata.json`:
+
+```json
+{
+  "source_id": "rop_batch_sample",
+  "source_type": "json_batch",
+  "authority": "read_only",
+  "batch_path": "storage/mock/rop_batch_sample.json",
+  "period": "2026-05",
+  "raw_item_count": 4,
+  "loaded_item_count": 4,
+  "items_max": 100,
+  "loaded_at": "2026-05-08T10:00:00+00:00"
+}
+```
 
 ### Правила по артефактам
 

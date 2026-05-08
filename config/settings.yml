@@ -72,3 +72,14 @@ modules:
       package: "beeagent_rop" # Python import name пакета
       entry: "RopModule" # имя атрибута в __init__ пакета (класс или фабрика)
       enabled: true # true/false - включить/выключить загрузку модуля
+
+rop:
+  sources: # список объявленных источников входных данных для ROP flow
+    - source_id: "rop_batch_sample" # уникальный идентификатор источника
+      source_type: "json_batch" # тип источника (поддерживается: json_batch)
+      enabled: true # true/false - использовать этот источник
+      authority: "read_only" # уровень доступа (read_only/draft_only/execution_capable)
+      items_max: 100 # максимальное число событий из источника
+      batch:
+        path: "storage/mock/rop_batch_sample.json" # путь к batch-файлу (относительно корня проекта)
+        period: "2026-05" # период, который передаётся в rop_summary payload
