@@ -46,7 +46,8 @@
 - иметь capability boundary v0 для bounded external calls;
 - вызывать первый реальный внешний модуль `beeagent-rop` через registry/runtime path;
 - запускать первый ROP operator flow через Telegram command `/run_rop`;
-- писать operator-facing artifact `operator_summary.json`.
+- писать operator-facing artifact `operator_summary.json`;
+- запускать ROP flow через configurable `json_batch` input source и писать intake/normalized/operator artifacts.
 
 ## Текущий фокус проекта
 
@@ -59,12 +60,19 @@ BeeAgent уже прошёл этап **module platform v0**:
 - capability boundary v0 введён;
 - `beeagent-rop` подключён как первый реальный package-based модуль через registry/runtime path.
 
+Итерация 17 добавила:
+
+- config-driven `rop.sources` contract в `config/settings.yml`;
+- `json_batch` source type с load/validate/normalize flow;
+- `run_rop_batch_case(...)` — BeeAgent-owned batch handoff case без отдельного `run.mode`;
+- артефакты `intake_metadata.json` и `normalized_events.json` per run;
+- sample batch file `storage/mock/rop_batch_sample.json`.
+
 Текущий фокус:
 
-1. стабилизировать `beeagent-rop` operator flow после первого Telegram path `/run_rop`;
-2. улучшить operator-facing summary и artifacts для Discovery → MVP → Pilot;
-3. подготовить controlled client input path вместо demo payload;
-4. не переносить клиентскую бизнес-логику в BeeAgent core.
+1. использовать `json_batch` как controlled offline/batch MVP path;
+2. подготовить следующий шаг — read-only ingestion source для `hotline`;
+3. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts, `beeagent-rop` — за ROP business logic.
 
 ## Режимы работы
 
@@ -263,8 +271,15 @@ beeagent/
 7. operator wrapper пишет `operator_summary.json`;
 8. Telegram возвращает оператору readable `operator_text`.
 
-На текущем этапе `/run_rop` использует explicit demo payload.
+На текущем этапе есть два ROP input path:
+
+1. `/run_rop` — operator command с explicit demo payload;
+2. `run_rop_batch_case(...)` — controlled batch path через `rop.sources` и `json_batch`.
+
+`run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
+
 Production email / Bitrix / CRM input path пока не входит в scope.
+Live mailbox ingestion для `hotline` относится к следующей итерации.
 
 ## Запуск
 
@@ -345,6 +360,7 @@ uv run pytest -q
 - `i18n`
 - `quiz`
 - `modules`
+- `rop`
 
 `run.mode` сейчас выбирает runtime/transport, а не доменный модуль:
 
@@ -366,6 +382,23 @@ modules:
       enabled: true
 ```
 
+ROP input sources задаются отдельно через `rop.sources`.
+
+Пример controlled batch source:
+
+```
+rop:
+  sources:
+    - source_id: "rop_batch_sample"
+      source_type: "json_batch"
+      enabled: true
+      authority: "read_only"
+      items_max: 100
+      batch:
+        path: "storage/mock/rop_batch_sample.json"
+        period: "2026-05"
+```
+
 ## Артефакты
 
 На текущем этапе BeeAgent пишет runtime artifacts в `storage/`, в частности:
@@ -385,9 +418,16 @@ modules:
 
 - `storage/runs/<run_id>/operator_summary.json`
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/lead_classification_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/<case_type>_result.json`
+
+Для ROP batch flow дополнительно пишутся:
+
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 
 `operator_summary.json` — BeeAgent-level operator artifact.
+`intake_metadata.json` и `normalized_events.json` — BeeAgent-owned input/source artifacts.
 `module_result.json` и `<case_type>_result.json` — module-linked artifacts.
 
 Точный текущий контракт смотри в:
@@ -424,7 +464,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - **reusable orchestration core** — DONE;
 - **module platform v0** — DONE;
 - **first real client module integration** — DONE;
-- **first client/operator flow** — IN PROGRESS.
+- **first client/operator flow** — DONE;
+- **controlled batch MVP path** — DONE;
+- **live read-only ingestion** — PLANNED.
 
 Первый реальный модуль:
 
@@ -435,6 +477,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - `beeagent-rop` загружается через registry;
 - BeeAgent может вызвать `beeagent-rop` через `execute_module_case(...)`;
 - Telegram command `/run_rop` запускает первый ROP operator flow;
-- linkage `run → operator_summary → module outputs` виден в artifacts;
+- `run_rop_batch_case(...)` запускает ROP batch flow через configurable `rop.sources`;
+- linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
 - production Bitrix/email/attachment connectors пока не входят в scope;
+- live mailbox ingestion пока не входит в scope;
 - CRM write-back пока не входит в scope.

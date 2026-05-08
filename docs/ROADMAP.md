@@ -1162,91 +1162,186 @@ BeeAgent получает первый operator-ready ROP run flow: устано
 - BeeAgent core не содержит ROP business rules;
 - production connectors и CRM actions не добавлены.
 
-### Итерация 17 — Discovery/MVP handoff hardening v0
+### Итерация 17 — ROP input source contract and batch handoff v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
-Подготовить BeeAgent core к первому клиентскому циклу: Discovery → MVP → Pilot.
+Добавить в BeeAgent первый platform-level контракт ROP input source и batch/operator handoff flow, чтобы `beeagent-rop` запускался через core на controlled batch input, а не на одиночном demo payload.
 
 #### Scope
 
 Включено:
 
-- stable run/session/artifact contracts;
-- fix critical integration edges;
-- docs update for delivery flow;
-- better degraded/refusal behavior.
+- config-driven ROP input source contract:
+  - `rop.sources`;
+  - `source_id`;
+  - `source_type`;
+  - `enabled`;
+  - `authority`;
+  - `items_max`;
+  - source-specific settings без secrets;
+- первый безопасный source type:
+  - `json_batch` (source_type value);
+- controlled sample batch file для dev/smoke;
+- загрузка batch payload из configured source;
+- валидация batch shape;
+- нормализация batch items в payload, совместимый с `beeagent-rop`;
+- запуск `beeagent-rop` через существующий `ModuleRegistry` / `execute_module_case`;
+- основной MVP case:
+  - `rop_summary`, если модуль поддерживает;
+- fallback/degraded behavior:
+  - missing source;
+  - no enabled source;
+  - multiple enabled sources, если v0 разрешает только один;
+  - disabled source;
+  - invalid source config;
+  - missing batch file;
+  - invalid batch shape;
+  - missing module;
+  - unsupported case type;
+  - module non-ok result;
+- artifacts:
+  - `intake_metadata.json`;
+  - `normalized_events.json`;
+  - module artifacts;
+  - `operator_summary.json`;
+- Telegram command или dev/operator path, если это минимально и не раздувает scope;
+- README / DEV_GUIDE / ROADMAP update.
 
-Не включено:
+#### Не включено:
 
-- broad multi-client abstractions;
-- full product shell.
+- IMAP/live mailbox connector;
+- `hotline@welding.kz` live access;
+- stream/listener;
+- production Bitrix/email/1C connectors;
+- CRM write-back;
+- OCR;
+- attachment deep parsing;
+- ROP classification/summary/recommendation rules в BeeAgent;
+- hardcoded client mailbox;
+- broad multi-client abstractions.
 
 #### Deliverable
 
-BeeAgent core готов поддерживать первый клиентский delivery cycle без хаоса в runtime.
+BeeAgent умеет запускать ROP flow через configurable batch input source и выдавать operator-facing summary с reproducible artifacts без live mailbox dependency.
 
 #### Artifacts
 
-- stable run artifacts
-- updated docs
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- optional `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
+- `storage/runs/<run_id>/operator_summary.json`
+- `storage/interfaces/modules.json`
 
 #### Checks
 
-- `pytest -q`
+- `uv run pytest -q`
+- targeted ROP source/batch tests
+- batch handoff smoke with installed `beeagent-rop`
 - degraded/failure scenarios
-- client-flow smoke
+- manual artifact inspection
+- log verification
+- no secret leakage check
+- SAST mindset review
 
 #### DoD
 
-- core стабилен для первой поставки клиентского модуля;
-- критические точки отказа explainable.
+- source не захардкожен;
+- BeeAgent не содержит ROP classification/summary/recommendation rules;
+- source contract читается из config и валидируется fail-fast;
+- module вызывается через existing module runtime path;
+- `rop_summary` batch smoke проходит;
+- artifacts воспроизводимы и понятны;
+- degraded paths explainable;
+- logs/artifacts не содержат secrets;
+- production connectors не добавлены.
 
-### Итерация 18 — Pilot support baseline
+### Итерация 18 — ROP hotline read-only ingestion smoke v0
 
 **Статус:** PLANNED
 
 #### Goal
 
-Сделать минимальный support-ready baseline для пилота клиентского модуля.
+Подключить `hotline@welding.kz` как первый read-only mailbox source для ROP MVP smoke: BeeAgent должен получить последние N писем, нормализовать их и прогнать через `beeagent-rop` без destructive actions и CRM write-back.
 
 #### Scope
 
 Включено:
 
-- diagnostics для module integration;
-- clearer logs / reason codes;
-- operator-visible failure points;
-- basic weekly reporting support via artifacts/logs.
+- source type `mailbox_readonly`;
+- config-driven source declaration для `hotline`;
+- secrets только через env;
+- read-only fetch последних N сообщений;
+- no delete/archive/reply;
+- sanitized intake artifact;
+- normalized events artifact;
+- dispatch в `beeagent-rop`;
+- operator summary;
+- source diagnostics:
+  - fetched count;
+  - processed count;
+  - skipped count;
+  - failed count;
+  - source unavailable reason;
+  - attachment metadata count;
+- degraded behavior:
+  - missing credentials;
+  - auth failure;
+  - mailbox unavailable;
+  - empty inbox;
+  - malformed message.
 
-Не включено:
+#### Не включено:
 
-- full product shell;
-- advanced dashboards;
-- broad tenant support.
+- continuous stream/listener;
+- multi-mailbox routing;
+- full source-of-truth mapping;
+- employee mailbox ingestion;
+- Bitrix/1C connectors;
+- CRM write-back;
+- OCR;
+- attachment deep parsing;
+- automatic actions.
 
 #### Deliverable
 
-Пилот можно сопровождать без ручного чтения исходников и ad hoc дебага.
+BeeAgent имеет первый live/read-only ROP smoke на `hotline`, достаточный для MVP-1 demo.
 
 #### Artifacts
 
-- logs
-- diagnostics artifacts if needed
-- module-linked run artifacts
+- `storage/runs/<run_id>/source_diagnostics.json`
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/operator_summary.json`
+- `logs/app.log`
 
 #### Checks
 
-- `pytest -q`
-- degraded/failure scenarios
-- manual inspection of logs and artifacts
+- `uv run pytest -q`
+- mailbox adapter tests with fake mailbox
+- auth failure scenario
+- empty inbox scenario
+- malformed message scenario
+- live smoke with `max_messages`
+- manual artifact inspection
+- log verification
+- secret leakage check
+- SAST
+- SCA only if dependencies changed
 
 #### DoD
 
-- critical точки отказа explainable для команды разработки и сопровождения;
-- weekly pilot work можно вести по артефактам и понятным статусам.
+- mailbox access is read-only;
+- source configurable, not hardcoded;
+- credentials never appear in logs/artifacts;
+- latest N messages become normalized events;
+- `beeagent-rop` receives normalized payload;
+- operator sees result without reading code;
+- no destructive mailbox/CRM actions exist.
 
 ---
 

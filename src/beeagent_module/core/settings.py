@@ -42,6 +42,7 @@ REQUIRED_KEYS = (
     ("quiz", "enabled"),
     ("quiz", "path"),
     ("modules", "registry"),
+    ("rop", "sources"),
 )
 
 
@@ -250,6 +251,58 @@ def validate_settings(settings: dict) -> None:
             raise RuntimeError(
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
+
+    input_sources = _get_nested_value(settings, ("rop", "sources"))
+    if not isinstance(input_sources, list):
+        raise RuntimeError("Invalid type for rop.sources, expected list")
+
+    _VALID_SOURCE_TYPES = {"json_batch"}
+    _VALID_AUTHORITY_VALUES = {"read_only", "draft_only", "execution_capable"}
+
+    for idx, source in enumerate(input_sources):
+        if not isinstance(source, dict):
+            raise RuntimeError(
+                f"Invalid type for rop.sources[{idx}], expected mapping"
+            )
+        for key in ("source_id", "source_type", "authority"):
+            if not isinstance(source.get(key), str):
+                raise RuntimeError(
+                    f"Invalid or missing rop.sources[{idx}].{key}, expected string"
+                )
+        if not isinstance(source.get("enabled"), bool):
+            raise RuntimeError(
+                f"Invalid or missing rop.sources[{idx}].enabled, expected bool"
+            )
+        items_max = source.get("items_max")
+        if not isinstance(items_max, int) or items_max <= 0:
+            raise RuntimeError(
+                f"Invalid or missing rop.sources[{idx}].items_max, expected int > 0"
+            )
+        source_type = source.get("source_type", "")
+        if source_type not in _VALID_SOURCE_TYPES:
+            raise RuntimeError(
+                f"Unsupported rop.sources[{idx}].source_type '{source_type}', "
+                f"expected one of: {sorted(_VALID_SOURCE_TYPES)}"
+            )
+        if source.get("authority") not in _VALID_AUTHORITY_VALUES:
+            raise RuntimeError(
+                f"Invalid rop.sources[{idx}].authority, "
+                f"expected one of: {sorted(_VALID_AUTHORITY_VALUES)}"
+            )
+        if source_type == "json_batch":
+            batch = source.get("batch")
+            if not isinstance(batch, dict):
+                raise RuntimeError(
+                    f"Missing or invalid rop.sources[{idx}].batch, expected mapping"
+                )
+            if not isinstance(batch.get("path"), str):
+                raise RuntimeError(
+                    f"Missing rop.sources[{idx}].batch.path, expected string"
+                )
+            if not isinstance(batch.get("period"), str):
+                raise RuntimeError(
+                    f"Missing rop.sources[{idx}].batch.period, expected string"
+                )
 
 
 # Возврат вложенного значения по пути ключей или None.

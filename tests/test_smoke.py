@@ -78,6 +78,9 @@ quiz:
 
 modules:
   registry: []
+
+rop:
+  sources: []
 """.strip()
         + "\n",
         encoding="utf-8",
