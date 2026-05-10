@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.22.0...beeagent-v0.23.0) (2026-05-10)
+
+
+### Features
+
+* **rop:** add live batch classification handoff ([#69](https://github.com/beesyst/beeagent/issues/69)) ([34e642c](https://github.com/beesyst/beeagent/commit/34e642c52ff98f881282f5d52c13f727675ff669))
+
 ## [0.22.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.21.0...beeagent-v0.22.0) (2026-05-08)
 
 
