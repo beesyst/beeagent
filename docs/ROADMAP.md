@@ -1371,6 +1371,98 @@ BeeAgent умеет выполнить controlled read-only smoke на mailbox s
 - no destructive mailbox/CRM actions exist;
 - BeeAgent core contains no ROP classification/summary/recommendation rules.
 
+### Итерация 19 — ROP live batch classification handoff v0
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать live ROP batch flow семантически полезным: после загрузки `json_batch` или `mailbox_readonly` BeeAgent должен сначала вызвать `beeagent-rop` case `lead_classification` для каждого normalized event, сохранить `classified_events.json`, а затем вызвать `beeagent-rop` case `rop_summary` уже по classified events.
+
+#### Scope
+
+**Включено:**
+
+- batch classification handoff внутри existing ROP source flow;
+- вызов `beeagent-rop` `lead_classification` для каждого normalized event через existing module runtime path;
+- сбор classified events без добавления ROP business rules в BeeAgent;
+- artifact:
+  - `classified_events.json`;
+- передача в `rop_summary` не raw normalized events, а classified events;
+- operator summary с classification diagnostics:
+  - normalized count;
+  - classified count;
+  - classification failed count;
+  - summary status;
+  - artifact refs;
+- degraded behavior:
+  - per-event classification failure не валит весь batch;
+  - failed event получает controlled fallback item:
+    - `case_type: "unknown"`;
+    - `priority: "medium"`;
+    - `reason_code: "classification_error"`;
+    - `confidence: 0.0`;
+    - `is_fallback: true`;
+- tests на successful handoff и degraded per-event classification;
+- repeated live smoke на `folder=welding`, если credentials доступны;
+- docs update.
+
+#### Не включено:
+
+- ROP business rules в BeeAgent;
+- изменение логики классификации в `beeagent-rop`;
+- AI classification;
+- Bitrix/1C connectors;
+- CRM write-back;
+- OCR;
+- attachment deep parsing;
+- continuous listener/polling;
+- multi-mailbox routing;
+- automatic actions;
+- n8n/MCP implementation.
+
+#### Deliverable
+
+BeeAgent live source flow вызывает `beeagent-rop` в правильной последовательности: normalized events → lead classification → classified events → ROP summary. `rop_summary` получает classified events, а не raw mailbox events.
+
+#### Artifacts
+
+- `storage/runs/<run_id>/source_diagnostics.json`
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/classified_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- optional `storage/runs/<run_id>/module-beeagent-rop/lead_classification_result.json`
+- optional `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
+- `storage/runs/<run_id>/operator_summary.json`
+- `logs/app.log`
+
+#### Checks
+
+- `uv run pytest -q`
+- targeted ROP batch classification handoff tests
+- successful source → classify → summary test
+- per-event classification failure scenario
+- module missing / unsupported case degraded scenario
+- repeated live smoke with `folder=welding`, `items_max=10`, if credentials are available
+- manual artifact inspection
+- log verification
+- secret leakage check
+- no ROP business rules in BeeAgent core
+- SAST mindset review
+- SCA only if dependencies changed
+
+#### DoD
+
+- `rop_summary` receives classified events;
+- `classified_events.json` is created and referenced in `operator_summary.json`;
+- per-event classification failures are visible and do not crash whole batch;
+- BeeAgent core contains no ROP classification rules;
+- all domain classification remains inside `beeagent-rop`;
+- artifacts are reproducible and explainable;
+- no destructive mailbox/CRM actions exist;
+- secrets do not appear in logs/artifacts.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
