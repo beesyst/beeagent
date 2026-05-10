@@ -49,6 +49,9 @@
 - писать operator-facing artifact `operator_summary.json`;
 - запускать ROP flow через configurable `json_batch` input source и писать intake/normalized/operator artifacts;
 - запускать ROP flow через configurable `mailbox_readonly` source для controlled read-only mailbox smoke;
+- после source normalization классифицировать каждое ROP event через `beeagent-rop` case `lead_classification`;
+- сохранять batch-level classification artifact `classified_events.json`;
+- передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
 - писать source-level diagnostics artifact `source_diagnostics.json`.
 
 ## Текущий фокус проекта
@@ -77,12 +80,22 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `source_diagnostics.json` для explainable degraded/ok source behavior;
 - safe mailbox normalization в operator-facing artifacts без raw `.eml` и без attachment content.
 
+Итерация 19 добавила:
+
+- per-event classification handoff внутри ROP source flow;
+- вызов `beeagent-rop` case `lead_classification` для каждого normalized event;
+- artifact `classified_events.json`;
+- вызов `beeagent-rop` case `rop_summary` уже по classified events;
+- classification diagnostics в `operator_summary.json`;
+- controlled fallback для per-event classification failure без падения всего batch.
+
 Текущий фокус:
 
 1. использовать `json_batch` как controlled offline/batch MVP path;
 2. использовать `mailbox_readonly` как controlled read-only mailbox smoke path для `hotline`;
-3. не превращать mailbox smoke в production listener/stream без отдельной итерации;
-4. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts, `beeagent-rop` — за ROP business logic.
+3. строить ROP summary только после per-event `lead_classification`;
+4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
+5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts, `beeagent-rop` — за ROP business logic.
 
 ## Режимы работы
 
@@ -286,6 +299,19 @@ beeagent/
 1. `/run_rop` — operator command с explicit demo payload;
 2. `run_rop_batch_case(...)` — controlled source path через `rop.sources`, `json_batch` и `mailbox_readonly`.
 
+`run_rop_batch_case(...)` выполняет batch pipeline:
+
+```text
+configured source
+→ source_diagnostics.json
+→ intake_metadata.json
+→ normalized_events.json
+→ beeagent-rop lead_classification per event
+→ classified_events.json
+→ beeagent-rop rop_summary
+→ operator_summary.json
+```
+
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
 Production Bitrix / 1C / CRM input path пока не входит в scope.
@@ -467,7 +493,12 @@ rop:
 - `storage/runs/<run_id>/source_diagnostics.json`
 - `storage/runs/<run_id>/intake_metadata.json`
 - `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/classified_events.json`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
+
+`classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
+
+Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
 
 `operator_summary.json` — BeeAgent-level operator artifact.
 `source_diagnostics.json` — BeeAgent-owned source status / degraded diagnostics artifact.
@@ -510,7 +541,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - **first real client module integration** — DONE;
 - **first client/operator flow** — DONE;
 - **controlled batch MVP path** — DONE;
-- **live read-only mailbox smoke** — DONE.
+- **live read-only mailbox smoke** — DONE;
+- **ROP live batch classification handoff** — DONE.
 
 Первый реальный модуль:
 
@@ -523,7 +555,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - Telegram command `/run_rop` запускает первый ROP operator flow;
 - `run_rop_batch_case(...)` запускает ROP source flow через configurable `rop.sources`;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
-- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json` и `operator_summary.json`;
+- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json` и `operator_summary.json`;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
 - production Bitrix/email/attachment connectors пока не входят в scope;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;

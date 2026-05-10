@@ -187,6 +187,225 @@ def _build_batch_operator_text(
     )
 
 
+# Классифицировать нормализованные события через lead_classification модульного кейса
+def _classify_normalized_events(
+    events: list[dict[str, Any]],
+    registry: ModuleRegistry,
+    module_id: str,
+    storage_dir: Path,
+    logger: logging.Logger,
+    run_id: str,
+    session_id: str,
+    source_id: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    classified_events: list[dict[str, Any]] = []
+    classified_count = 0
+    already_classified_count = 0
+    failed_count = 0
+
+    for index, event in enumerate(events):
+        if "case_type" in event and "confidence" in event:
+            classified_events.append(
+                _attach_existing_classification_trace(
+                    classified_event=event,
+                    source_id=source_id,
+                )
+            )
+            already_classified_count += 1
+            logger.debug(
+                "event already classified: run_id=%s event_index=%d event_id=%s",
+                run_id,
+                index,
+                event.get("event_id", "?"),
+            )
+            continue
+
+        try:
+            logger.debug(
+                "classifying event: run_id=%s event_index=%d event_id=%s",
+                run_id,
+                index,
+                event.get("event_id", "?"),
+            )
+
+            # Filter event to include only fields expected by lead_classification
+            filtered_event = _filter_event_for_module(event)
+
+            result = execute_module_case(
+                registry=registry,
+                module_id=module_id,
+                case_type="lead_classification",
+                payload=filtered_event,
+                storage_dir=storage_dir,
+                logger=logger,
+                run_id=run_id,
+                session_id=session_id,
+            )
+
+            if result.status == "ok" and result.data:
+                classified_event = _attach_classification_trace(
+                    classified_event=result.data,
+                    source_event=event,
+                    source_id=source_id,
+                )
+                classified_events.append(classified_event)
+                classified_count += 1
+                logger.debug(
+                    "event classified successfully: run_id=%s event_id=%s case_type=%s",
+                    run_id,
+                    event.get("event_id"),
+                    classified_event.get("case_type"),
+                )
+            else:
+                fallback = _make_fallback_event(event, source_id)
+                classified_events.append(fallback)
+                failed_count += 1
+                logger.warning(
+                    "event classification returned non-ok status: run_id=%s event_id=%s result_status=%s",
+                    run_id,
+                    event.get("event_id"),
+                    result.status,
+                )
+
+        except Exception as exc:
+            fallback = _make_fallback_event(event, source_id)
+            classified_events.append(fallback)
+            failed_count += 1
+            logger.warning(
+                "event classification failed with exception: run_id=%s event_id=%s exception_type=%s",
+                run_id,
+                event.get("event_id"),
+                type(exc).__name__,
+            )
+
+    classification_diagnostics = {
+        "normalized_count": len(events),
+        "classified_count": classified_count + already_classified_count,
+        "classification_failed_count": failed_count,
+    }
+
+    logger.info(
+        "batch classification finished: run_id=%s normalized=%d classified=%d already_classified=%d failed=%d",
+        run_id,
+        len(events),
+        classified_count,
+        already_classified_count,
+        failed_count,
+    )
+
+    return classified_events, classification_diagnostics
+
+
+# Существующая классификация к событию, если оно уже было классифицировано на этапе нормализации, чтобы сохранить контекст и избежать повторной классификации
+def _attach_existing_classification_trace(
+    classified_event: dict[str, Any],
+    source_id: str | None,
+) -> dict[str, Any]:
+    enriched = dict(classified_event)
+
+    if not enriched.get("original_event_id"):
+        enriched["original_event_id"] = enriched.get("event_id")
+
+    if not enriched.get("source_id"):
+        enriched["source_id"] = source_id
+
+    if "is_fallback" not in enriched:
+        enriched["is_fallback"] = False
+
+    if not enriched.get("reason_code"):
+        enriched["reason_code"] = "preclassified_input"
+
+    return enriched
+
+
+# Создать fallback item для события, которое не удалось классифицировать
+def _make_fallback_event(
+    event: dict[str, Any],
+    source_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "event_id": event.get("event_id"),
+        "source_id": event.get("source_id") or source_id,
+        "case_type": "unknown",
+        "priority": "medium",
+        "reason_code": "classification_error",
+        "confidence": 0.0,
+        "is_fallback": True,
+        "original_event_id": event.get("event_id"),
+        "reasoning": "Per-event classification failed; event was converted to controlled fallback item.",
+    }
+
+
+# Фильтровать событие до полей, поддерживаемых модулем
+def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {
+        "attachments",
+        "body",
+        "event_id",
+        "language_hint",
+        "message_id",
+        "raw_metadata",
+        "received_at",
+        "sender",
+        "source",
+        "subject",
+        "thread_id",
+    }
+    allowed_attachment_keys = {
+        "attachment_id",
+        "content_id",
+        "content_type",
+        "filename",
+        "is_inline",
+        "raw_metadata",
+        "size_bytes",
+    }
+
+    filtered = {k: v for k, v in event.items() if k in allowed_keys}
+
+    if "attachments" in filtered and isinstance(filtered["attachments"], list):
+        normalized_attachments = []
+        for att in filtered["attachments"]:
+            if not isinstance(att, dict):
+                continue
+            normalized_att = {
+                k: v for k, v in att.items() if k in allowed_attachment_keys
+            }
+            # Rename 'size' to 'size_bytes' if present but 'size_bytes' is not
+            if "size" in att and "size_bytes" not in normalized_att:
+                size_value = att.get("size")
+                if isinstance(size_value, (int, float)):
+                    normalized_att["size_bytes"] = size_value
+            normalized_attachments.append(normalized_att)
+        filtered["attachments"] = normalized_attachments
+
+    if not filtered.get("body"):
+        for preview_key in ("body_preview", "text_preview", "attachment_text"):
+            preview_value = event.get(preview_key)
+            if isinstance(preview_value, str) and preview_value.strip():
+                filtered["body"] = preview_value
+                break
+
+    return filtered
+
+
+# Трассировка классификации к исходному событию для сохранения контекста и связи между этапами обработки
+def _attach_classification_trace(
+    classified_event: dict[str, Any],
+    source_event: dict[str, Any],
+    source_id: str | None,
+) -> dict[str, Any]:
+    enriched = dict(classified_event)
+
+    if not enriched.get("event_id"):
+        enriched["event_id"] = source_event.get("event_id")
+
+    enriched["original_event_id"] = source_event.get("event_id")
+    enriched["source_id"] = source_event.get("source_id") or source_id
+
+    return enriched
+
+
 # Запуск ROP source handoff: загрузка configured source, нормализация событий и dispatch в модуль
 def run_rop_batch_case(
     settings: dict,
@@ -211,6 +430,7 @@ def run_rop_batch_case(
     operator_status = "degraded"
     artifact_refs: list[str] = []
     source_meta: dict | None = None
+    classification_diagnostics: dict[str, Any] | None = None
     source_diagnostics: dict[str, Any] = {
         "source_id": "unknown",
         "source_type": "unknown",
@@ -272,10 +492,36 @@ def run_rop_batch_case(
             len(events),
         )
 
-        payload: dict[str, Any] = {"period": period, "events": events}
-
+        # Classify each normalized event through lead_classification case
         if registry is None:
             registry = build_registry(settings=settings, logger=logger)
+
+        classified_events, classification_diagnostics = _classify_normalized_events(
+            events=events,
+            registry=registry,
+            module_id=module_id,
+            storage_dir=storage_dir,
+            logger=logger,
+            run_id=effective_run_id,
+            session_id=effective_session_id,
+            source_id=str(intake_metadata.get("source_id") or ""),
+        )
+
+        classified_path = run_dir / "classified_events.json"
+        classified_path.write_text(
+            json.dumps(classified_events, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(classified_path.relative_to(storage_dir).as_posix())
+        logger.info(
+            "classified_events written: run_id=%s events=%d classified=%d failed=%d",
+            effective_run_id,
+            len(events),
+            classification_diagnostics["classified_count"],
+            classification_diagnostics["classification_failed_count"],
+        )
+
+        payload: dict[str, Any] = {"period": period, "events": classified_events}
 
         result = execute_module_case(
             registry=registry,
@@ -338,6 +584,7 @@ def run_rop_batch_case(
         "module_status": module_status,
         "summary": module_summary,
         "source": source_meta,
+        "classification": classification_diagnostics,
         "artifact_refs": artifact_refs,
     }
 

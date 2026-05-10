@@ -610,3 +610,702 @@ def test_rop_batch_case_mailbox_malformed_message_skipped(
         ).read_text(encoding="utf-8")
     )
     assert len(normalized) == 1
+
+
+# Тест: успешный batch classification handoff - classified_events.json создается, rop_summary получает classified события
+def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-001",
+                "source": "email",
+                "sender": "lead1@example.com",
+                "subject": "Inquiry 1",
+            },
+            {
+                "event_id": "e-002",
+                "source": "email",
+                "sender": "lead2@example.com",
+                "subject": "Inquiry 2",
+            },
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-classification-success",
+        session_id="session-batch-classification-success",
+    )
+
+    assert result["status"] == "ok"
+    assert result["module_status"] == "ok"
+
+    run_dir = tmp_path / "runs" / "run-batch-classification-success"
+
+    classified_path = run_dir / "classified_events.json"
+    assert classified_path.exists()
+
+    classified_events = json.loads(classified_path.read_text(encoding="utf-8"))
+    assert len(classified_events) == 2
+    assert all("case_type" in e for e in classified_events)
+
+    operator_summary_path = run_dir / "operator_summary.json"
+    operator_summary = json.loads(operator_summary_path.read_text(encoding="utf-8"))
+    assert "classification" in operator_summary
+    assert operator_summary["classification"]["normalized_count"] == 2
+    assert operator_summary["classification"]["classified_count"] == 2
+    assert operator_summary["classification"]["classification_failed_count"] == 0
+    assert (
+        "runs/run-batch-classification-success/classified_events.json"
+        in operator_summary["artifact_refs"]
+    )
+
+
+# Тест: pre-classified batch events сохраняют trace fields и default reason_code при отсутствии явных полей
+def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "preclassified_batch.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-pre-001",
+                "case_type": "new_lead",
+                "priority": "high",
+                "confidence": 0.91,
+            },
+            {
+                "event_id": "e-pre-002",
+                "case_type": "existing_lead",
+                "priority": "medium",
+                "confidence": 0.84,
+            },
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch-preclassified",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-preclassified",
+        session_id="session-batch-preclassified",
+    )
+
+    assert result["status"] == "ok"
+
+    classified_path = (
+        tmp_path / "runs" / "run-batch-preclassified" / "classified_events.json"
+    )
+    classified_events = json.loads(classified_path.read_text(encoding="utf-8"))
+
+    assert len(classified_events) == 2
+    for event in classified_events:
+        assert event["source_id"] == "test-batch-preclassified"
+        assert event["original_event_id"] == event["event_id"]
+        assert event["is_fallback"] is False
+        assert event["reason_code"] == "preclassified_input"
+
+    operator_summary = json.loads(
+        (
+            tmp_path / "runs" / "run-batch-preclassified" / "operator_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert operator_summary["classification"]["normalized_count"] == 2
+    assert operator_summary["classification"]["classified_count"] == 2
+    assert operator_summary["classification"]["classification_failed_count"] == 0
+
+
+# Тест: preview text из normalized event маппится в body для lead_classification
+def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "preview_batch.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-preview-001",
+                "source": "email",
+                "sender": "preview@example.com",
+                "subject": "Preview only",
+                "body_preview": "Safe preview text for classification",
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch-preview",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _PreviewBodyStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "lead_classification":
+                assert context.payload["body"] == "Safe preview text for classification"
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="lead_classification",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Classified from preview text",
+                    data={
+                        "event_id": context.payload.get("event_id"),
+                        "case_type": "new_lead",
+                        "priority": "high",
+                        "reason_code": "preview_text_classified",
+                        "confidence": 0.95,
+                        "is_fallback": False,
+                    },
+                )
+
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="rop_summary",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Summary received preview-classified events",
+                data={"counts": {"new_lead": 1}},
+            )
+
+    _pkg = _make_fake_package("test_stub_preview", "RopModule", _PreviewBodyStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_preview",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-batch-preview-body",
+            session_id="session-batch-preview-body",
+        )
+
+        assert result["status"] == "ok"
+        classified_events = json.loads(
+            (
+                tmp_path / "runs" / "run-batch-preview-body" / "classified_events.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert len(classified_events) == 1
+        assert classified_events[0]["reason_code"] == "preview_text_classified"
+    finally:
+        _remove_fake_package("test_stub_preview")
+
+
+# Тест: per-event classification failure — один event не классифицируется, но batch продолжается, создается fallback item
+def test_rop_batch_per_event_classification_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_fail.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-good",
+                "source": "email",
+                "sender": "good@example.com",
+                "subject": "Good",
+            },
+            {
+                "event_id": "e-bad",
+                "source": "email",
+                "sender": "bad@example.com",
+                "subject": "Bad",
+            },
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch-fail",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _ClassificationFailureStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                events = context.payload.get("events", [])
+                assert len(events) == 2
+                assert all("case_type" in event for event in events)
+                assert any(event.get("is_fallback") is True for event in events)
+
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary received classified events",
+                    data={
+                        "counts": {
+                            "new_lead": 1,
+                            "unknown": 1,
+                        }
+                    },
+                )
+
+            event = context.payload
+            if event.get("event_id") == "e-bad":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="lead_classification",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="error",
+                    summary="Classification failed for this event",
+                    data={},
+                )
+
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": event.get("event_id"),
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "reason_code": "test_new_lead",
+                    "confidence": 0.9,
+                    "is_fallback": False,
+                },
+            )
+
+    _pkg = _make_fake_package("test_stub_rop", "RopModule", _ClassificationFailureStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_rop",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-batch-partial-fail",
+            session_id="session-batch-partial-fail",
+        )
+
+        assert result["status"] == "ok" or result["status"] == "degraded"
+
+        run_dir = tmp_path / "runs" / "run-batch-partial-fail"
+
+        classified_path = run_dir / "classified_events.json"
+        assert classified_path.exists()
+
+        classified_events = json.loads(classified_path.read_text(encoding="utf-8"))
+        assert len(classified_events) == 2
+
+        fallback_items = [e for e in classified_events if e.get("is_fallback") is True]
+        assert len(fallback_items) == 1
+
+        fallback = fallback_items[0]
+        assert fallback["case_type"] == "unknown"
+        assert fallback["priority"] == "medium"
+        assert fallback["reason_code"] == "classification_error"
+        assert fallback["confidence"] == 0.0
+        assert fallback["is_fallback"] is True
+        assert fallback["source_id"] == "test-batch-fail"
+        assert fallback["reasoning"] == (
+            "Per-event classification failed; event was converted to controlled fallback item."
+        )
+
+        operator_summary_path = run_dir / "operator_summary.json"
+        operator_summary = json.loads(operator_summary_path.read_text(encoding="utf-8"))
+        assert operator_summary["classification"]["normalized_count"] == 2
+        assert operator_summary["classification"]["classified_count"] == 1
+        assert operator_summary["classification"]["classification_failed_count"] == 1
+
+    finally:
+        _remove_fake_package("test_stub_rop")
+
+
+# Тест: attachment metadata sanitation — size переименовывается в size_bytes, unsupported keys удаляются
+def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_att.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-attachment-size",
+                "source": "email",
+                "sender": "lead@example.com",
+                "subject": "Spec attached",
+                "body_preview": "Please see attached specification",
+                "attachments": [
+                    {
+                        "filename": "spec.pdf",
+                        "content_type": "application/pdf",
+                        "size": 12345,
+                        "unsupported_key": "must_be_removed",
+                    }
+                ],
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch-att",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _AttachmentSanitationStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "lead_classification":
+                assert "attachments" in context.payload
+                assert len(context.payload["attachments"]) == 1
+                att = context.payload["attachments"][0]
+                assert "size" not in att, (
+                    f"Attachment should not contain 'size', got {att}"
+                )
+                assert "unsupported_key" not in att
+                assert att.get("size_bytes") == 12345
+                assert att.get("filename") == "spec.pdf"
+                assert att.get("content_type") == "application/pdf"
+
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="lead_classification",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Attachment metadata sanitized correctly",
+                    data={
+                        "event_id": context.payload.get("event_id"),
+                        "case_type": "new_lead",
+                        "priority": "high",
+                        "confidence": 0.95,
+                        "is_fallback": False,
+                    },
+                )
+
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="rop_summary",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Summary received attachment-sanitized events",
+                data={"counts": {"new_lead": 1}},
+            )
+
+    _pkg = _make_fake_package("test_stub_att", "RopModule", _AttachmentSanitationStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_att",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-batch-att-sanitation",
+            session_id="session-batch-att-sanitation",
+        )
+
+        assert result["status"] == "ok"
+    finally:
+        _remove_fake_package("test_stub_att")
+
+
+# Тест: ValueError не валит batch — per-event exception обрабатывается в fallback
+def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_valueerr.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-good-2",
+                "source": "email",
+                "sender": "good@example.com",
+                "subject": "Good",
+            },
+            {
+                "event_id": "e-bad-valueerr",
+                "source": "email",
+                "sender": "bad@example.com",
+                "subject": "Bad",
+                "attachments": [
+                    {
+                        "filename": "broken.pdf",
+                        "size": "not_a_number",
+                    }
+                ],
+            },
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch-valueerr",
+            "source_type": "json_batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _ValueErrorStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                events = context.payload.get("events", [])
+                assert len(events) == 2
+                assert all("case_type" in event for event in events)
+                assert any(event.get("is_fallback") is True for event in events)
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary received with fallback",
+                    data={"counts": {"new_lead": 1, "unknown": 1}},
+                )
+
+            event_id = context.payload.get("event_id", "?")
+            if event_id == "e-bad-valueerr":
+                raise ValueError("Attachment metadata contains unsupported keys: size")
+
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": event_id,
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "confidence": 0.9,
+                    "is_fallback": False,
+                },
+            )
+
+    _pkg = _make_fake_package("test_stub_valueerr", "RopModule", _ValueErrorStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_valueerr",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-batch-valueerr",
+            session_id="session-batch-valueerr",
+        )
+
+        assert result["status"] == "ok" or result["status"] == "degraded"
+
+        run_dir = tmp_path / "runs" / "run-batch-valueerr"
+        classified_path = run_dir / "classified_events.json"
+        assert classified_path.exists()
+
+        classified_events = json.loads(classified_path.read_text(encoding="utf-8"))
+        assert len(classified_events) == 2
+
+        fallback_items = [e for e in classified_events if e.get("is_fallback") is True]
+        assert len(fallback_items) == 1
+
+        fallback = fallback_items[0]
+        assert fallback["case_type"] == "unknown"
+        assert fallback["reason_code"] == "classification_error"
+        assert fallback["is_fallback"] is True
+        assert fallback["event_id"] == "e-bad-valueerr"
+
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["normalized_count"] == 2
+        assert operator_summary["classification"]["classification_failed_count"] == 1
+    finally:
+        _remove_fake_package("test_stub_valueerr")
+
+
+# Тест: verify no direct beeagent_rop imports in BeeAgent core
+def test_no_direct_beeagent_rop_imports() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "grep",
+            "-r",
+            "-n",
+            "from beeagent_rop\\|import beeagent_rop",
+            str(_project_root() / "src" / "beeagent_module"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1, (
+        f"Found direct beeagent_rop imports:\n{result.stdout}"
+    )
