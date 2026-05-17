@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.23.0...beeagent-v0.24.0) (2026-05-17)
+
+
+### Features
+
+* **rop-cli:** add ROP run and review export ([#72](https://github.com/beesyst/beeagent/issues/72)) ([e8949fb](https://github.com/beesyst/beeagent/commit/e8949fb2cf0b85a8b37c9d7114aae582bb96cb5d))
+
 ## [0.23.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.22.0...beeagent-v0.23.0) (2026-05-10)
 
 
