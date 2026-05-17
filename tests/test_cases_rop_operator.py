@@ -612,6 +612,37 @@ def test_rop_batch_case_mailbox_malformed_message_skipped(
     assert len(normalized) == 1
 
 
+# Тест: запуск ROP batch case с period_override и проверка, что период из override используется в метаданных intake и source в operator_summary, а также включается в артефакты
+def test_rop_batch_case_period_override_updates_artifacts(tmp_path: Path) -> None:
+    batch_path = _write_sample_batch(tmp_path)
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    settings = _make_batch_settings(str(batch_path.relative_to(tmp_path)))
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-rop-batch-period-override",
+        session_id="session-rop-batch-period-override",
+        period_override="2026-06",
+    )
+
+    assert result["status"] == "ok"
+
+    run_dir = tmp_path / "runs" / "run-rop-batch-period-override"
+
+    intake = json.loads((run_dir / "intake_metadata.json").read_text(encoding="utf-8"))
+    operator = json.loads(
+        (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+    )
+
+    assert intake["period"] == "2026-06"
+    assert operator["source"]["period"] == "2026-06"
+
+
 # Тест: успешный batch classification handoff - classified_events.json создается, rop_summary получает classified события
 def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")

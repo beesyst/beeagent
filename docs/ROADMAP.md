@@ -1463,6 +1463,381 @@ BeeAgent live source flow вызывает `beeagent-rop` в правильно�
 - no destructive mailbox/CRM actions exist;
 - secrets do not appear in logs/artifacts.
 
+### Итерация 20 — ROP CLI and review export v1
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать нормальный operator/dev CLI для ROP MVP flow, чтобы оператор мог запускать BeeAgent ROP pipeline через `./start.sh rop ...` без Telegram, без `test.py` и без ручного Python-скрипта.
+
+BeeAgent должен уметь одной командой:
+
+- запустить configured ROP source flow;
+- получить последние N событий из `json_batch` или `mailbox_readonly`;
+- прогнать события через `beeagent-rop` `lead_classification`;
+- собрать `classified_events.json`;
+- вызвать `rop_summary`;
+- записать standard artifacts;
+- вывести понятный terminal summary;
+- экспортировать review TSV для сверки с человеком / заказчиком.
+
+#### Scope
+
+**Включено:**
+
+- CLI entrypoint через existing `start.sh`:
+  - `./start.sh rop run`;
+  - `./start.sh rop summary`;
+  - `./start.sh rop export-review`;
+- проброс аргументов из `start.sh` в `config/start.py`;
+- CLI dispatch в BeeAgent app/start layer без отдельного сервиса;
+- сохранение backward compatibility:
+  - `./start.sh` работает как раньше через `run.mode`;
+  - `./start.sh telegram` явно запускает Telegram mode;
+- запуск existing `run_rop_batch_case(...)`;
+- чтение `rop.sources` из `config/settings.yml`;
+- выбор source через `--source-id`;
+- override `items_max` через `--items-max` без изменения `settings.yml`;
+- override `period` через `--period` без изменения `settings.yml`;
+- explicit `--run-id`;
+- terminal output:
+  - `run_id`;
+  - source id/type;
+  - loaded/classified/failed counts;
+  - module status;
+  - summary;
+  - artifact paths;
+- команда `summary`:
+  - читает `storage/runs/<run_id>/operator_summary.json`;
+  - выводит краткий readable summary;
+- команда `export-review`:
+  - читает `normalized_events.json`;
+  - читает `classified_events.json`;
+  - создаёт `rop_review_table.tsv`;
+- TSV columns для human review:
+  - `event_id`;
+  - `source_id`;
+  - `sender`;
+  - `subject`;
+  - `bot_case_type`;
+  - `bot_reason_code`;
+  - `bot_confidence`;
+  - `bot_is_fallback`;
+  - `human_case_type`;
+  - `should_rop_see`;
+  - `bitrix_status`;
+  - `notes`;
+  - `correct_action`;
+- degraded behavior:
+  - source not found;
+  - source disabled;
+  - no active source;
+  - missing mailbox credentials;
+  - mailbox unavailable;
+  - module missing;
+  - partial classification failure;
+  - missing run artifacts for `summary` / `export-review`;
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`.
+
+**Не включено:**
+
+- Telegram requirement for ROP CLI;
+- Telegram UI changes, кроме сохранения существующего поведения;
+- web UI;
+- scheduler / listener / polling daemon;
+- Bitrix API;
+- 1C;
+- CRM write-back;
+- automatic task creation;
+- OCR;
+- attachment deep parsing;
+- AI classification;
+- ROP business rules в BeeAgent;
+- изменения classification logic в `beeagent-rop`;
+- multi-mailbox routing beyond existing `source_id`.
+
+#### Реализовано
+
+- `src/beeagent_module/core/cli.py` — CLI handler module с тремя командами:
+  - `handle_rop_run()` — запуск ROP batch с in-memory overrides;
+  - `handle_rop_summary()` — показ operator summary;
+  - `handle_rop_export_review()` — генерация TSV;
+- `config/start.py` — обновлен для парсинга CLI args и dispatch:
+  - `./start.sh` → use `run.mode` from settings;
+  - `./start.sh telegram` → explicit Telegram;
+  - `./start.sh rop run/summary/export-review` → dispatch to CLI handler;
+- `_apply_source_overrides()` — in-memory source override logic для CLI args;
+- `_build_review_tsv_rows()` — TSV generation from normalized + classified events;
+- `tests/test_cli_rop_commands.py` — targeted tests:
+  - backward compat (no args, telegram);
+  - rop run with batch source;
+  - rop summary with valid artifact;
+  - rop export-review with TSV creation;
+  - error scenarios (missing source, disabled source, missing artifacts);
+- docs update в DEV_GUIDE, README, ROADMAP.
+
+#### Deliverable
+
+Оператор может выполнить ROP MVP flow без Telegram и без `test.py`:
+
+```bash
+./start.sh rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --run-id live-review-2026-05-15-welding-20 \
+  --period 2026-05
+
+./start.sh rop summary \
+  --run-id live-review-2026-05-15-welding-20
+
+./start.sh rop export-review \
+  --run-id live-review-2026-05-15-welding-20 \
+  --format tsv
+```
+
+Artifacts:
+
+- `storage/runs/<run_id>/source_diagnostics.json`
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/classified_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
+- `storage/runs/<run_id>/operator_summary.json`
+- `storage/runs/<run_id>/rop_review_table.tsv`
+- `logs/app.log`
+
+#### Checks
+
+- `uv run pytest -q`
+- targeted CLI tests (argument parsing, overrides, backward compat);
+- smoke: `./start.sh rop run --source-id rop_batch_sample --items-max 2 --run-id smoke-rop-cli-json`;
+- smoke: `./start.sh rop summary --run-id smoke-rop-cli-json`;
+- smoke: `./start.sh rop export-review --run-id smoke-rop-cli-json --format tsv`;
+- backward compat: `./start.sh` without args;
+- backward compat: `./start.sh telegram`;
+- artifact inspection;
+- log verification;
+- secret leakage check;
+- no direct `beeagent_rop` imports in core;
+- TSV structure verification.
+
+#### DoD
+
+- `./start.sh` работает как раньше (no args → `run.mode` from settings);
+- `./start.sh telegram` явно запускает Telegram mode;
+- `./start.sh rop run [args]` запускает ROP batch без Telegram;
+- CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) применяются in-memory только;
+- disabled source не включается silent CLI, вернёт fail-fast error;
+- source not found вернёт fail-fast error;
+- `rop summary` читает `operator_summary.json` и выводит readable summary;
+- `rop run` автоматически создаёт `rop_review_table.tsv` для текущего run;
+- `rop export-review` остаётся ручным повторным экспортом `rop_review_table.tsv` для уже существующего run;
+- последние 5 TSV колонок пусты для оператора заполнять вручную;
+- CLI использует existing `run_rop_batch_case()`, не дублирует orchestration;
+- `rop.sources` остаётся source of truth для источников;
+- BeeAgent core не содержит ROP business rules;
+- artifacts создаются воспроизводимо и консистентны с логами;
+- secrets не попадают в logs/artifacts;
+- docs обновлены.
+- override `items_max` через `--items-max` без изменения `settings.yml`;
+- override `period` через `--period` без изменения `settings.yml`;
+- explicit `--run-id`;
+- terminal output:
+  - `run_id`;
+  - source id/type;
+  - loaded/classified/failed counts;
+  - module status;
+  - summary;
+  - artifact paths;
+- команда `summary`:
+  - читает `storage/runs/<run_id>/operator_summary.json`;
+  - выводит краткий readable summary;
+- команда `export-review`:
+  - читает `normalized_events.json`;
+  - читает `classified_events.json`;
+  - создаёт `rop_review_table.tsv`;
+- TSV columns для human review:
+  - `event_id`;
+  - `source_id`;
+  - `sender`;
+  - `subject`;
+  - `bot_case_type`;
+  - `bot_reason_code`;
+  - `bot_confidence`;
+  - `bot_is_fallback`;
+  - `human_case_type`;
+  - `should_rop_see`;
+  - `bitrix_status`;
+  - `notes`;
+  - `correct_action`;
+- degraded behavior:
+  - source not found;
+  - source disabled;
+  - no active source;
+  - missing mailbox credentials;
+  - mailbox unavailable;
+  - module missing;
+  - partial classification failure;
+  - missing run artifacts for `summary` / `export-review`;
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`.
+
+**Не включено:**
+
+- Telegram requirement for ROP CLI;
+- Telegram UI changes, кроме сохранения существующего поведения;
+- web UI;
+- scheduler / listener / polling daemon;
+- Bitrix API;
+- 1C;
+- CRM write-back;
+- automatic task creation;
+- OCR;
+- attachment deep parsing;
+- AI classification;
+- ROP business rules в BeeAgent;
+- изменения classification logic в `beeagent-rop`;
+- multi-mailbox routing beyond existing `source_id`.
+
+#### Deliverable
+
+Оператор может выполнить ROP MVP flow без Telegram и без `test.py`:
+
+```bash
+./start.sh rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --run-id live-review-2026-05-15-welding-20 \
+  --period 2026-05
+```
+
+После запуска появляются стандартные artifacts:
+
+```text
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/module-beeagent-rop/module_result.json
+storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
+storage/runs/<run_id>/operator_summary.json
+```
+
+И отдельной командой можно получить TSV для human review:
+
+```bash
+./start.sh rop export-review \
+  --run-id live-review-2026-05-15-welding-20 \
+  --format tsv
+```
+
+Artifact:
+
+```text
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+#### Expected commands
+
+```bash
+./start.sh
+```
+
+Сохраняет текущее поведение: использует `run.mode` из `config/settings.yml`.
+
+```bash
+./start.sh telegram
+```
+
+Явно запускает Telegram transport.
+
+```bash
+./start.sh rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --run-id live-review-2026-05-15-welding-20 \
+  --period 2026-05
+```
+
+Запускает ROP source flow.
+
+```bash
+./start.sh rop summary \
+  --run-id live-review-2026-05-15-welding-20
+```
+
+Показывает summary по готовому run.
+
+```bash
+./start.sh rop export-review \
+  --run-id live-review-2026-05-15-welding-20 \
+  --format tsv
+```
+
+Создаёт review TSV.
+
+#### Artifacts
+
+- `storage/runs/<run_id>/source_diagnostics.json`
+- `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/classified_events.json`
+- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
+- `storage/runs/<run_id>/operator_summary.json`
+- `storage/runs/<run_id>/rop_review_table.tsv`
+- `logs/app.log`
+
+#### Checks
+
+- `uv run pytest -q`
+- targeted CLI tests:
+  - `./start.sh` backward compatibility;
+  - `./start.sh telegram`;
+  - `./start.sh rop run` with `json_batch`;
+  - `./start.sh rop summary`;
+  - `./start.sh rop export-review`;
+  - missing run id;
+  - missing artifacts;
+  - source not found;
+  - disabled source;
+  - missing mailbox credentials;
+
+- live smoke with `mailbox_readonly`, if credentials are available:
+  - `folder=welding`;
+  - `items_max=20`;
+
+- artifact inspection;
+- log verification;
+- secret leakage check;
+- no raw `.eml` artifacts;
+- no CRM/destructive mailbox actions;
+- SAST mindset review;
+- SCA only if dependencies changed.
+
+#### DoD
+
+- `test.py` больше не нужен для обычного ROP run;
+- ROP можно запустить через `./start.sh rop run`;
+- Telegram credentials не нужны для ROP CLI;
+- `run.mode: telegram` не мешает CLI override;
+- existing `./start.sh` behavior не сломан;
+- CLI использует existing `run_rop_batch_case(...)`, а не дублирует orchestration;
+- `rop.sources` остаётся source of truth для источников;
+- CLI overrides не создают второй source of truth;
+- BeeAgent core не содержит ROP business rules;
+- artifacts создаются воспроизводимо;
+- `rop_review_table.tsv` пригоден для human review / customer validation;
+- secrets не попадают в logs/artifacts;
+- docs обновлены.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
