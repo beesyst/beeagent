@@ -89,6 +89,15 @@ BeeAgent уже прошёл этап **module platform v0**:
 - classification diagnostics в `operator_summary.json`;
 - controlled fallback для per-event classification failure без падения всего batch.
 
+Добавлено:
+
+- ROP CLI entrypoint: `./start.sh rop run/summary/export-review`;
+- in-memory source overrides через CLI args: `--source-id`, `--items-max`, `--period`, `--run-id`;
+- `rop run` запускает ROP batch pipeline без Telegram и автоматически экспортирует TSV для human review;
+- `rop summary` показывает readable summary для готового run;
+- `rop export-review` остаётся ручным повторным экспортом TSV для уже существующего run без raw тел писем;
+- backward compatibility: `./start.sh` и `./start.sh telegram` работают как раньше.
+
 Текущий фокус:
 
 1. использовать `json_batch` как controlled offline/batch MVP path;
@@ -97,7 +106,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
 5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts, `beeagent-rop` — за ROP business logic.
 
-## Режимы работы
+## Режимы работы и CLI
 
 Сейчас основной runtime mode:
 
@@ -113,6 +122,95 @@ run:
   mode: "telegram"
 ```
 
+### Entrypoint
+
+```bash
+# Использует run.mode из settings.yml
+./start.sh
+
+# Явный Telegram mode
+./start.sh telegram
+
+# ROP CLI для batch pipeline
+./start.sh rop run [--source-id SOURCE] [--items-max N] [--period YYYY-MM] [--run-id ID]
+./start.sh rop summary --run-id ID
+./start.sh rop export-review --run-id ID [--format tsv]
+```
+
+### ROP CLI (v1, Iteration 20)
+
+Для запуска ROP flow без Telegram можно использовать CLI:
+
+```
+# Запустить ROP batch через default enabled source из config/settings.yml.
+# Сейчас это может быть hotline_mailbox, если он включён в rop.sources.
+./start.sh rop run --items-max 20 --period 2026-05
+
+# Запустить ROP batch через конкретный source_id.
+./start.sh rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --period 2026-05 \
+  --run-id live-review-2026-05-15
+
+# Показать summary по готовому run.
+./start.sh rop summary --run-id live-review-2026-05-15
+
+# Повторно экспортировать TSV для human review по готовому run.
+# Обычно не требуется, потому что rop run уже создаёт rop_review_table.tsv автоматически.
+./start.sh rop export-review --run-id live-review-2026-05-15 --format tsv
+```
+
+После `rop run` создаётся:
+
+```
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+Этот TSV можно открыть или скопировать в Google Sheets для human review.
+
+Для dev-запуска через `rop_batch_sample` нужно вручную включить этот source в `config/settings.yml`:
+
+```
+rop:
+  sources:
+    - source_id: "rop_batch_sample"
+      enabled: true
+```
+
+По умолчанию `rop_batch_sample` может быть выключен, чтобы случайно не заменить live/source smoke path.
+
+Параметры:
+
+- `--source-id` — выбрать источник данных из `rop.sources`
+- `--items-max` — override max items для источника
+- `--period` — override period для batch источника
+- `--run-id` — explicit run_id (если не указан, генерируется)
+- `--format` — формат export (пока только `tsv`)
+
+CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
+
+### ROP в Telegram
+
+Если оставить `run.mode: "telegram"`, ROP также доступен как Telegram command:
+
+```
+/run_rop
+```
+
+Результат выводится как readable summary в Telegram.
+
+### Разница: Telegram vs CLI
+
+| Aspect        | Telegram                          | CLI                                                           |
+| ------------- | --------------------------------- | ------------------------------------------------------------- |
+| Transport     | Telegram bot                      | Console                                                       |
+| Approval      | Interactive buttons               | No approval (CLI для MVP)                                     |
+| Ideal for     | Interactive operator              | Batch processing, scripts                                     |
+| Config        | `run.mode: "telegram"`            | CLI args override                                             |
+| Artifacts     | Standard: `operator_summary.json` | Standard: same                                                |
+| Review export | Не основной путь                  | Auto TSV on `rop run`; manual rerun через `rop export-review` |
+
 ROP запускается не отдельным `run.mode`, а как operator action внутри transport:
 
 ```
@@ -123,6 +221,7 @@ ROP запускается не отдельным `run.mode`, а как operato
 
 - `telegram` — слой взаимодействия с оператором;
 - `/run_rop` — команда внутри Telegram;
+- `./start.sh rop run` — команда в CLI;
 - `beeagent-rop` — доменный модуль;
 - `run_rop_operator_case(...)` — BeeAgent-owned case wrapper, который вызывает модуль и собирает operator-facing output.
 
@@ -301,7 +400,7 @@ beeagent/
 
 `run_rop_batch_case(...)` выполняет batch pipeline:
 
-```text
+```
 configured source
 → source_diagnostics.json
 → intake_metadata.json
@@ -310,6 +409,7 @@ configured source
 → classified_events.json
 → beeagent-rop rop_summary
 → operator_summary.json
+→ rop_review_table.tsv, если flow запущен через ROP CLI
 ```
 
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
@@ -360,10 +460,20 @@ run:
 
 BeeAgent стартует Telegram transport. Если `telegram.enabled: false`, приложение корректно инициализирует registry, пишет diagnostics artifact и не запускает polling.
 
-ROP operator flow запускается через Telegram command:
+ROP operator flow доступен двумя путями:
 
-```
+```bash
+# Telegram operator command
 /run_rop
+
+# CLI batch flow без Telegram
+./start.sh rop run --items-max 20 --period 2026-05
+```
+
+Для CLI batch flow после успешного запуска создаётся `rop_review_table.tsv`:
+
+```text
+storage/runs/<run_id>/rop_review_table.tsv
 ```
 
 Тесты:
@@ -372,7 +482,15 @@ ROP operator flow запускается через Telegram command:
 uv run pytest -q
 ```
 
-Локальный smoke operator flow можно выполнять через тесты или прямой вызов `run_rop_operator_case(...)` в dev-сценариях. Отдельный `run.mode: "rop_operator_v0"` больше не используется.
+Локальный smoke operator flow можно выполнять через:
+
+- `./start.sh rop run`;
+- `./start.sh rop summary --run-id <run_id>`;
+- `./start.sh rop export-review --run-id <run_id> --format tsv`;
+- тесты;
+- прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
+
+Отдельный `run.mode: "rop_operator_v0"` больше не используется.
 
 ## Конфигурация
 
@@ -495,8 +613,10 @@ rop:
 - `storage/runs/<run_id>/normalized_events.json`
 - `storage/runs/<run_id>/classified_events.json`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
+- `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
 
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
+`rop_review_table.tsv` — BeeAgent-owned review artifact для ручной сверки с человеком / заказчиком. Он строится из `normalized_events.json` и `classified_events.json`, не содержит raw `.eml` и предназначен для загрузки в Google Sheets или аналогичную таблицу.
 
 Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
 
@@ -542,7 +662,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - **first client/operator flow** — DONE;
 - **controlled batch MVP path** — DONE;
 - **live read-only mailbox smoke** — DONE;
-- **ROP live batch classification handoff** — DONE.
+- **ROP live batch classification handoff** — DONE;
+- **ROP CLI and review export** — DONE.
 
 Первый реальный модуль:
 
@@ -555,7 +676,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - Telegram command `/run_rop` запускает первый ROP operator flow;
 - `run_rop_batch_case(...)` запускает ROP source flow через configurable `rop.sources`;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
-- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json` и `operator_summary.json`;
+- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
 - production Bitrix/email/attachment connectors пока не входят в scope;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;

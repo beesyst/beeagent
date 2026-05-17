@@ -40,6 +40,8 @@ uv sync
 
 ## Управление зависимостями (`uv`)
 
+
+> ⚠️ Пример выше требует, чтобы source `rop_batch_sample` был включён (`enabled: true`) в `config/settings.yml`. По умолчанию он выключен (enabled: false) для безопасности. Включите его вручную для теста/dev запуска.
 Источник правды по зависимостям:
 
 - `pyproject.toml` — список зависимостей и constraints
@@ -98,7 +100,7 @@ uv run python3 config/start.py
 1. убедись, что в `config/settings.yml` есть блок `rop.sources` с ровно одним `enabled: true` источником;
 2. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
 3. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
-3. запусти flow напрямую через case invocation:
+4. запусти flow напрямую через case invocation:
 
 ```python
 from pathlib import Path
@@ -146,6 +148,83 @@ print(result["operator_text"])
 Для `mailbox_readonly` normalizer сохраняет только safe fields: `event_id`, `source`, `source_id`, `message_id`, `sender`, `to`, `cc`, `subject`, `date`, `body_preview`, `attachments`. Attachment content не читается, raw `.eml` не сохраняется.
 
 `run.mode` остаётся transport/runtime selector. ROP source flow запускается через case/test/dev invocation, не через run.mode.
+
+### ROP CLI v1
+
+Для запуска ROP flow без Telegram и без `test.py` используй BeeAgent CLI:
+
+```bash
+./start.sh rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --period 2026-05 \
+  --run-id live-review-2026-05-15-welding-20
+```
+
+Команда запустит configured ROP source, загрузит события, классифицирует их через `beeagent-rop`, сохранит все артефакты и создаст `rop_review_table.tsv`.
+
+#### ROP CLI команды
+
+**`./start.sh rop run`** — запустить ROP batch с опциональными overrides и автоматически создать TSV для human review:
+
+```bash
+./start.sh rop run [--source-id SOURCE_ID] [--items-max N] [--period YYYY-MM] [--run-id RUN_ID]
+```
+
+- `--source-id` — override configured source (если не указан, используется первый enabled источник)
+- `--items-max` — override `items_max` для выбранного источника
+- `--period` — override period для batch источника
+- `--run-id` — explicit run_id (если не указан, генерируется автоматически)
+
+Пример:
+
+```bash
+./start.sh rop run --source-id rop_batch_sample --items-max 2
+```
+
+**`./start.sh rop summary`** — показать summary для готового run:
+
+```bash
+./start.sh rop summary --run-id live-review-2026-05-15-welding-20
+```
+
+Читает `operator_summary.json` и выводит readable summary в terminal.
+
+**`./start.sh rop export-review`** — вручную повторно экспортировать TSV для human review:
+
+```bash
+./start.sh rop export-review --run-id live-review-2026-05-15-welding-20 [--format tsv]
+```
+
+Создаёт `rop_review_table.tsv` в `storage/runs/<run_id>/` с колонками:
+
+- `event_id`, `source_id`, `sender`, `subject`
+- `bot_case_type`, `bot_reason_code`, `bot_confidence`, `bot_is_fallback`
+- `human_case_type`, `should_rop_see`, `bitrix_status`, `notes`, `correct_action`
+
+Последние 5 колонок — пусто, оператор заполняет вручную для validation.
+
+#### CLI overrides — в памяти только
+
+CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не меняют** `config/settings.yml`:
+
+- применяются только на один run;
+- если source disabled в config, CLI его не включит (fail-fast);
+- если source не найден, CLI вернёт ошибку.
+
+#### Backward compatibility
+
+```bash
+./start.sh
+
+./start.sh telegram
+
+./start.sh rop run
+./start.sh rop summary --run-id ...
+./start.sh rop export-review --run-id ...
+```
+
+`./start.sh rop run` уже создаёт TSV автоматически.
 
 ## Архитектурное правило проекта
 
@@ -225,6 +304,7 @@ Modules must use **ArtifactAPI** to write and read artifacts safely. The API ens
 Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.write_json()`, `ArtifactAPI.write_text()`, `ArtifactAPI.read_json()`, or `ArtifactAPI.read_text()`.
 
 ## Настройка
+
 Источник правды для runtime-поведения:
 
 - `config/settings.yml`

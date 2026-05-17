@@ -418,7 +418,9 @@ def run_rop_batch_case(
     session_id: str | None = None,
     registry: ModuleRegistry | None = None,
     mailbox_client_factory: Any | None = None,
+    period_override: str | None = None,
 ) -> dict[str, Any]:
+
     effective_run_id = run_id or generate_run_id()
     effective_session_id = session_id or generate_session_id()
 
@@ -448,24 +450,24 @@ def run_rop_batch_case(
             logger=logger,
             mailbox_client_factory=mailbox_client_factory,
         )
+
+        effective_period = str(period_override or intake_metadata.get("period") or "")
+        intake_metadata["period"] = effective_period
         source_meta = {
             "source_id": intake_metadata["source_id"],
             "source_type": intake_metadata["source_type"],
             "authority": intake_metadata["authority"],
-            "period": intake_metadata.get("period"),
+            "period": effective_period,
             "raw_item_count": intake_metadata["raw_item_count"],
             "loaded_item_count": intake_metadata["loaded_item_count"],
             "items_max": intake_metadata["items_max"],
         }
-
         diagnostics_path = run_dir / "source_diagnostics.json"
         diagnostics_path.write_text(
             json.dumps(source_diagnostics, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         artifact_refs.append(diagnostics_path.relative_to(storage_dir).as_posix())
-
-        period = str(intake_metadata.get("period", ""))
 
         intake_path = run_dir / "intake_metadata.json"
         intake_path.write_text(
@@ -521,7 +523,10 @@ def run_rop_batch_case(
             classification_diagnostics["classification_failed_count"],
         )
 
-        payload: dict[str, Any] = {"period": period, "events": classified_events}
+        payload: dict[str, Any] = {
+            "period": effective_period,
+            "events": classified_events,
+        }
 
         result = execute_module_case(
             registry=registry,

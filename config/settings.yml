@@ -85,9 +85,9 @@ rop:
         period: "2026-05" # период, который передаётся в rop_summary payload
     - source_id: "hotline_mailbox" # read-only mailbox source для live smoke
       source_type: "mailbox_readonly" # тип источника для чтения последних писем из mailbox
-      enabled: true # по умолчанию выключен, чтобы не заменять batch source
+      enabled: true # true/false - использовать этот источник
       authority: "read_only" # mailbox smoke не должен выполнять destructive actions
-      items_max: 10 # максимальное число писем для одного smoke-run
+      items_max: 20 # максимальное число писем для одного smoke-run
       mailbox:
         host: "web01.srv.welding.kz" # IMAP host без секретов
         port: 993 # IMAP port
