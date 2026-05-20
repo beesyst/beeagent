@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.24.0...beeagent-v0.25.0) (2026-05-20)
+
+
+### Features
+
+* **rop:** enrich review TSV export ([#75](https://github.com/beesyst/beeagent/issues/75)) ([e6bc68e](https://github.com/beesyst/beeagent/commit/e6bc68e233f0f538a26a9d6d8d92a7051d1154b6))
+
 ## [0.24.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.23.0...beeagent-v0.24.0) (2026-05-17)
 
 
