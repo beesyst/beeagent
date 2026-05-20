@@ -618,6 +618,37 @@ rop:
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
 `rop_review_table.tsv` — BeeAgent-owned review artifact для ручной сверки с человеком / заказчиком. Он строится из `normalized_events.json` и `classified_events.json`, не содержит raw `.eml` и предназначен для загрузки в Google Sheets или аналогичную таблицу.
 
+**Структура `rop_review_table.tsv` (v1):**
+
+`rop_review_table.tsv` содержит 22 tab-separated колонки для быстрой human review:
+
+| Column | Source | Description |
+| --- | --- | --- |
+| `event_id` | normalized_events | Уникальный ID события |
+| `source_id` | intake_metadata | Источник данных (rop_batch_sample, hotline_mailbox) |
+| `sender` | normalized_events | Email отправителя письма |
+| `subject` | normalized_events | Тема письма |
+| `body_short` | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe) |
+| `attachments` | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" ) |
+| `bot_case_type` | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution) |
+| `bot_reason_code` | classified_events | Код причины решения бота |
+| `bot_priority` | classified_events | Приоритет (high, medium, low) |
+| `bot_confidence` | classified_events | Confidence score (0.0 – 1.0) |
+| `bot_is_fallback` | classified_events | Fallback решение (true/false) |
+| `bot_reasoning` | classified_events | Объяснение решения бота (если доступно) |
+| `human_case_type` | rop_review | Ручное переопределение case_type (пусто по умолчанию) |
+| `should_rop_see` | rop_review | Человек указал, что ROP должен это видеть (yes/no/maybe) |
+| `bitrix_status` | rop_review | Статус интеграции с Bitrix (зарезервировано для будущего) |
+| `notes` | rop_review | Заметки оператора |
+| `bitrix_lead_id` | rop_review | Bitrix lead ID (зарезервировано для будущего) |
+| `bitrix_deal_id` | rop_review | Bitrix deal ID (зарезервировано для будущего) |
+| `bitrix_responsible` | rop_review | Ответственный в Bitrix (зарезервировано для будущего) |
+| `is_duplicate` | rop_review | Это дубликат (true/false) |
+| `duplicate_of` | rop_review | ID оригинального события (если дубликат) |
+| `correct_action` | rop_review | Правильное действие (для корректировки обучения) |
+
+Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
+
 Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
 
 `operator_summary.json` — BeeAgent-level operator artifact.
