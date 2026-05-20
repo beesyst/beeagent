@@ -749,3 +749,22 @@ bash start.sh
 - логи и артефакты должны быть объяснимыми;
 - изменения проверяются по change level;
 - итерации закрываются через PR.
+
+### ROP review TSV (enriched)
+
+BeeAgent CLI автоматически создаёт enriched TSV для human review:
+
+- Файл: `storage/runs/<run_id>/rop_review_table.tsv`
+- Формат: tab-separated, 22 колонны (input, bot decision, human/Bitrix placeholders)
+- Основные группы колонок:
+  - event_id, source_id, sender, subject, body_short, attachments
+  - bot_case_type, bot_reason_code, bot_priority, bot_confidence, bot_is_fallback, bot_reasoning
+  - human_case_type, should_rop_see, bitrix_status, notes, bitrix_lead_id, bitrix_deal_id, bitrix_responsible, is_duplicate, duplicate_of, correct_action
+- Security constraints:
+  - `body_short` всегда bounded (≤500 chars) и sanitized (нет табов/переводов строк)
+  - `attachments` только metadata (filename, content_type, size_bytes), sanitized
+  - нет raw `.eml` файлов
+  - нет attachment content
+  - нет полных raw headers
+
+TSV пригоден для загрузки в Google Sheets, все поля безопасны для operator review.

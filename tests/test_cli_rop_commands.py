@@ -527,3 +527,597 @@ class TestRopCliExportReview:
 
         data = json.loads(operator_summary_path.read_text(encoding="utf-8"))
         assert data["source"]["period"] == "2026-05"
+
+
+# Тест: чек колонки и порядок полей в TSV, а также правильное формирование body_short и attachments для различных входных данных
+class TestRopTsvEnriched:
+    def test_tsv_columns_order_has_22_fields(self) -> None:
+        columns = _tsv_columns()
+        assert len(columns) == 22
+        expected_order = [
+            "event_id",
+            "source_id",
+            "sender",
+            "subject",
+            "body_short",
+            "attachments",
+            "bot_case_type",
+            "bot_reason_code",
+            "bot_priority",
+            "bot_confidence",
+            "bot_is_fallback",
+            "bot_reasoning",
+            "human_case_type",
+            "should_rop_see",
+            "bitrix_status",
+            "notes",
+            "bitrix_lead_id",
+            "bitrix_deal_id",
+            "bitrix_responsible",
+            "is_duplicate",
+            "duplicate_of",
+            "correct_action",
+        ]
+        assert columns == expected_order
+
+    def test_tsv_body_short_is_bounded(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-body-short-run"
+        run_dir.mkdir(parents=True)
+
+        long_body = "x" * 1000
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": long_body,
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-body-short-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        assert len(rows) == 1
+        row = rows[0]
+        body_short = row["body_short"]
+        assert len(body_short) <= 500
+
+    def test_tsv_attachment_summary_sanitizes_tabs_newlines(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-attachment-sanitize-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test",
+                "attachments": [
+                    {
+                        "filename": "bad\tname.pdf",
+                        "content_type": "application/pdf\nunsafe",
+                        "size_bytes": 1024,
+                    }
+                ],
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized_events),
+            encoding="utf-8",
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified_events),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-attachment-sanitize-run", format="tsv")
+        handle_rop_export_review(args, logger=_null_logger())
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            row = next(reader)
+
+        attachments = row["attachments"]
+
+        assert "\t" not in attachments
+        assert "\n" not in attachments
+        assert "\r" not in attachments
+        assert "bad name.pdf" in attachments
+        assert "application/pdf unsafe" in attachments
+
+    def test_tsv_duplicate_false_is_exported_as_false(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-duplicate-false-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test body",
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "is_duplicate": False,
+                "duplicate_of": "",
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized_events),
+            encoding="utf-8",
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified_events),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-duplicate-false-run", format="tsv")
+        handle_rop_export_review(args, logger=_null_logger())
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            row = next(reader)
+
+        assert row["is_duplicate"] == "false"
+        assert row["duplicate_of"] == ""
+
+    def test_tsv_body_short_sanitized_no_tabs_newlines(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-sanitize-run"
+        run_dir.mkdir(parents=True)
+
+        body_with_tabs_newlines = "Line 1\nLine 2\tTabbed\nLine 3"
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": body_with_tabs_newlines,
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-sanitize-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        row = rows[0]
+        body_short = row["body_short"]
+        assert "\t" not in body_short
+        assert "\n" not in body_short
+        assert "\r" not in body_short
+
+    def test_tsv_attachment_metadata_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-attachments-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test with attachments",
+                "body": "Test",
+                "attachments": [
+                    {
+                        "filename": "document.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 1024,
+                    },
+                    {
+                        "filename": "image.jpg",
+                        "content_type": "image/jpeg",
+                        "size_bytes": 2048,
+                    },
+                ],
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-attachments-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        row = rows[0]
+        attachments = row["attachments"]
+
+        assert "document.pdf" in attachments
+        assert "application/pdf" in attachments
+        assert "1024" in attachments
+        assert "image.jpg" in attachments
+        assert "image/jpeg" in attachments
+        assert "2048" in attachments
+
+        assert attachments.count(";") == 1
+
+    def test_tsv_bot_priority_and_reasoning_exported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-priority-reasoning-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test body",
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "priority": "high",
+                "reasoning": "Lead from trusted domain with purchase intent",
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-priority-reasoning-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        row = rows[0]
+        assert row["bot_priority"] == "high"
+        assert "purchase intent" in row["bot_reasoning"]
+
+    def test_tsv_missing_optional_fields_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-missing-fields-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-missing-fields-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        row = rows[0]
+
+        assert row["body_short"] == ""
+        assert row["attachments"] == ""
+        assert row["bot_priority"] == ""
+        assert row["bot_reasoning"] == ""
+        assert row["human_case_type"] == ""
+        assert row["should_rop_see"] == ""
+        assert row["bitrix_status"] == ""
+        assert row["bitrix_lead_id"] == ""
+        assert row["bitrix_deal_id"] == ""
+        assert row["bitrix_responsible"] == ""
+        assert row["is_duplicate"] == ""
+        assert row["duplicate_of"] == ""
+        assert row["notes"] == ""
+        assert row["correct_action"] == ""
+
+    def test_tsv_bitrix_placeholders_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-bitrix-placeholders-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test",
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-bitrix-placeholders-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            rows = list(reader)
+
+        row = rows[0]
+
+        assert row["bitrix_lead_id"] == ""
+        assert row["bitrix_deal_id"] == ""
+        assert row["bitrix_responsible"] == ""
+        assert row["is_duplicate"] == ""
+        assert row["duplicate_of"] == ""
+
+    def test_tsv_no_raw_eml_no_attachment_content(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-no-eml-content-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test",
+                "raw_eml": "From: test@example.com\nTo: recipient@example.com\n\nBody",
+                "attachments": [
+                    {
+                        "filename": "secret.txt",
+                        "content": "This should not be exported",
+                        "content_type": "text/plain",
+                        "size_bytes": 100,
+                    }
+                ],
+            }
+        ]
+
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "reason_code": "new_contact",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-001",
+            }
+        ]
+
+        normalized_path = run_dir / "normalized_events.json"
+        classified_path = run_dir / "classified_events.json"
+        normalized_path.write_text(json.dumps(normalized_events), encoding="utf-8")
+        classified_path.write_text(json.dumps(classified_events), encoding="utf-8")
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-no-eml-content-run", format="tsv")
+        logger = _null_logger()
+
+        handle_rop_export_review(args, logger=logger)
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        tsv_content = tsv_path.read_text(encoding="utf-8")
+
+        assert "raw_eml" not in tsv_content
+        assert "From: test@example.com" not in tsv_content
+        assert "This should not be exported" not in tsv_content
+        assert "secret.txt (text/plain, 100)" in tsv_content

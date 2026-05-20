@@ -9,6 +9,8 @@ from typing import Any
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.core.paths import get_project_root, get_storage_dir
 
+REVIEW_BODY_SHORT_MAX_CHARS = 500
+
 
 # CLI handler для ROP
 class RopCliError(Exception):
@@ -277,20 +279,95 @@ def _build_summary_text(summary_data: dict[str, Any]) -> str:
 
 
 # Возврат списка имен колонок для TSV, соответствующих полям из normalized_events и classified_events, а также дополнительным полям для ручного обзора оператором
+def _safe_tsv_value(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+
+    text = str(value)
+    text = text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+    text = " ".join(text.split())
+    return text
+
+
+# Билд короткого превью текста для TSV, используя body_preview, text_preview или body из normalized_events, обрезая до REVIEW_BODY_SHORT_MAX_CHARS и очищая от табов и новых строк
+def _build_body_short(normalized_evt: dict) -> str:
+    preview = normalized_evt.get("body_preview")
+    if preview and isinstance(preview, str) and preview.strip():
+        return _safe_tsv_value(preview[:REVIEW_BODY_SHORT_MAX_CHARS])
+
+    preview = normalized_evt.get("text_preview")
+    if preview and isinstance(preview, str) and preview.strip():
+        return _safe_tsv_value(preview[:REVIEW_BODY_SHORT_MAX_CHARS])
+
+    body = normalized_evt.get("body")
+    if body and isinstance(body, str) and body.strip():
+        return _safe_tsv_value(body[:REVIEW_BODY_SHORT_MAX_CHARS])
+
+    return ""
+
+
+# Билд компактного текстового описания вложений для TSV, используя filename, content_type и size_bytes из normalized_events.attachments, формируя строки вида "filename (content_type, size_bytes)" и объединяя несколько вложений через "; "
+def _build_attachment_summary(attachments: Any) -> str:
+    if not attachments or not isinstance(attachments, list):
+        return ""
+
+    summaries = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+
+        filename = _safe_tsv_value(att.get("filename", ""))
+        content_type = _safe_tsv_value(att.get("content_type", ""))
+        size_bytes = att.get("size_bytes")
+
+        if not filename:
+            continue
+
+        parts = [filename]
+        meta = []
+
+        if content_type:
+            meta.append(content_type)
+
+        if size_bytes is not None:
+            try:
+                size_int = int(size_bytes)
+                meta.append(str(size_int))
+            except (ValueError, TypeError):
+                pass
+
+        summary = " ".join(parts)
+        if meta:
+            summary += f" ({', '.join(meta)})"
+        summaries.append(_safe_tsv_value(summary))
+
+    return _safe_tsv_value("; ".join(summaries))
+
+
+# Возврат списка имен колонок для TSV, соответствующих полям из normalized_events и classified_event
 def _tsv_columns() -> list[str]:
     return [
         "event_id",
         "source_id",
         "sender",
         "subject",
+        "body_short",
+        "attachments",
         "bot_case_type",
         "bot_reason_code",
+        "bot_priority",
         "bot_confidence",
         "bot_is_fallback",
+        "bot_reasoning",
         "human_case_type",
         "should_rop_see",
         "bitrix_status",
         "notes",
+        "bitrix_lead_id",
+        "bitrix_deal_id",
+        "bitrix_responsible",
+        "is_duplicate",
+        "duplicate_of",
         "correct_action",
     ]
 
@@ -309,19 +386,43 @@ def _build_review_tsv_rows(
         original_event_id = classified_evt.get("original_event_id", event_id)
         normalized_evt = normalized_lookup.get(original_event_id, {})
 
+        body_short = _build_body_short(normalized_evt)
+        attachments_summary = _build_attachment_summary(
+            normalized_evt.get("attachments")
+        )
+        bot_priority = classified_evt.get("priority", "")
+        bot_reasoning = classified_evt.get("reasoning", "")
+        is_duplicate = classified_evt.get("is_duplicate")
+        duplicate_of = classified_evt.get("duplicate_of", "")
+
         row = {
-            "event_id": event_id,
-            "source_id": classified_evt.get("source_id", ""),
-            "sender": normalized_evt.get("sender", ""),
-            "subject": normalized_evt.get("subject", ""),
-            "bot_case_type": classified_evt.get("case_type", ""),
-            "bot_reason_code": classified_evt.get("reason_code", ""),
-            "bot_confidence": str(classified_evt.get("confidence", "")),
-            "bot_is_fallback": str(classified_evt.get("is_fallback", False)).lower(),
+            "event_id": _safe_tsv_value(event_id),
+            "source_id": _safe_tsv_value(classified_evt.get("source_id", "")),
+            "sender": _safe_tsv_value(normalized_evt.get("sender", "")),
+            "subject": _safe_tsv_value(normalized_evt.get("subject", "")),
+            "body_short": body_short,
+            "attachments": _safe_tsv_value(attachments_summary),
+            "bot_case_type": _safe_tsv_value(classified_evt.get("case_type", "")),
+            "bot_reason_code": _safe_tsv_value(classified_evt.get("reason_code", "")),
+            "bot_priority": _safe_tsv_value(bot_priority),
+            "bot_confidence": _safe_tsv_value(classified_evt.get("confidence", "")),
+            "bot_is_fallback": _safe_tsv_value(
+                str(classified_evt.get("is_fallback", False)).lower()
+            ),
+            "bot_reasoning": _safe_tsv_value(bot_reasoning),
             "human_case_type": "",
             "should_rop_see": "",
             "bitrix_status": "",
             "notes": "",
+            "bitrix_lead_id": "",
+            "bitrix_deal_id": "",
+            "bitrix_responsible": "",
+            "is_duplicate": (
+                _safe_tsv_value(str(is_duplicate).lower())
+                if is_duplicate is not None
+                else ""
+            ),
+            "duplicate_of": _safe_tsv_value(duplicate_of),
             "correct_action": "",
         }
         rows.append(row)

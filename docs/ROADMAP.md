@@ -1838,6 +1838,150 @@ storage/runs/<run_id>/rop_review_table.tsv
 - secrets не попадают в logs/artifacts;
 - docs обновлены.
 
+### Итерация 21 — Enriched ROP review TSV v1
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать `rop_review_table.tsv` пригодным для быстрой human review / customer validation без ручного открытия `normalized_events.json` и `classified_events.json`.
+
+После `./start.sh rop run` оператор должен получить TSV, который можно сразу вставить в Google Sheets и разметить: видно письмо, краткий контекст, вложения, решение бота, объяснение и пустые поля для human/Bitrix сверки.
+
+#### Scope
+
+**Включено:**
+
+- расширить `rop_review_table.tsv`;
+- сохранить автоматический экспорт TSV после `./start.sh rop run`;
+- сохранить ручной повторный экспорт через `./start.sh rop export-review`;
+- добавить review-useful columns:
+  - `body_short`;
+  - `attachments`;
+  - `bot_priority`;
+  - `bot_reasoning`;
+  - `bitrix_lead_id`;
+  - `bitrix_deal_id`;
+  - `bitrix_responsible`;
+  - `is_duplicate`;
+  - `duplicate_of`;
+- сохранить текущие колонки:
+  - `event_id`;
+  - `source_id`;
+  - `sender`;
+  - `subject`;
+  - `bot_case_type`;
+  - `bot_reason_code`;
+  - `bot_confidence`;
+  - `bot_is_fallback`;
+  - `human_case_type`;
+  - `should_rop_see`;
+  - `bitrix_status`;
+  - `notes`;
+  - `correct_action`;
+- `body_short` должен быть bounded/sanitized preview, а не полный raw body;
+- `attachments` должны быть metadata-only:
+  - filename;
+  - content_type;
+  - size_bytes, если есть;
+- пустые/отсутствующие поля должны экспортироваться как пустые ячейки;
+- TSV должен оставаться tab-separated и pasteable в Google Sheets;
+- обновить tests на header/order/row values;
+- обновить README.ru.md / DEV_GUIDE / ROADMAP по новому TSV contract.
+
+**Не включено:**
+
+- изменения классификации в `beeagent-rop`;
+- новые reason codes;
+- Bitrix API;
+- CRM write-back;
+- OCR;
+- attachment content parsing;
+- экспорт raw `.eml`;
+- экспорт full raw headers;
+- web UI;
+- mailbox cursor/pagination;
+- config toggle для отключения TSV.
+
+#### Deliverable
+
+`./start.sh rop run` создаёт расширенный:
+
+```text
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+TSV содержит достаточно контекста для ручной разметки 20–50 писем без открытия JSON artifacts.
+
+#### Expected TSV columns
+
+```text
+event_id
+source_id
+sender
+subject
+body_short
+attachments
+bot_case_type
+bot_reason_code
+bot_priority
+bot_confidence
+bot_is_fallback
+bot_reasoning
+human_case_type
+should_rop_see
+bitrix_status
+notes
+bitrix_lead_id
+bitrix_deal_id
+bitrix_responsible
+is_duplicate
+duplicate_of
+correct_action
+```
+
+#### Artifacts
+
+- `storage/runs/<run_id>/rop_review_table.tsv`
+- existing:
+  - `source_diagnostics.json`
+  - `intake_metadata.json`
+  - `normalized_events.json`
+  - `classified_events.json`
+  - `operator_summary.json`
+  - module artifacts
+
+#### Checks
+
+- `uv run pytest -q`
+- targeted CLI TSV tests;
+- TSV header order test;
+- TSV row with `body_short`;
+- TSV row with attachment metadata;
+- missing body/attachments scenario;
+- `./start.sh rop run` smoke;
+- `./start.sh rop export-review --run-id <run_id> --format tsv` smoke;
+- artifact inspection;
+- log inspection;
+- secret leakage check;
+- no raw `.eml` check;
+- no direct `beeagent_rop` imports in BeeAgent core;
+- SAST/security review for artifact export.
+
+#### DoD
+
+- `rop_review_table.tsv` содержит расширенные review columns;
+- TSV остаётся валидным tab-separated файлом;
+- `body_short` bounded и не экспортирует полный сырой body бесконтрольно;
+- `attachments` metadata-only, без content;
+- пустые optional fields экспортируются как пустые ячейки;
+- автоматический TSV export после `rop run` не сломан;
+- ручной `export-review` не сломан;
+- BeeAgent core не содержит ROP business rules;
+- `beeagent-rop` не меняется;
+- secrets/raw `.eml` не попадают в artifacts/logs;
+- docs обновлены.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
