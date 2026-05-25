@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.25.0...beeagent-v0.26.0) (2026-05-25)
+
+
+### Features
+
+* **web:** add operator shell with ROP dashboard ([#78](https://github.com/beesyst/beeagent/issues/78)) ([87d7e54](https://github.com/beesyst/beeagent/commit/87d7e54ea5b85db2a836b0ca492100f211328a36))
+
 ## [0.25.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.24.0...beeagent-v0.25.0) (2026-05-20)
 
 
