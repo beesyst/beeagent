@@ -15,6 +15,10 @@ app:
   env: "test"
 run:
   mode: "telegram"
+web:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: false
 telegram:
   enabled: true
   bot_token_env: "TELEGRAM_BOT_TOKEN"
@@ -116,6 +120,10 @@ app:
   env: "test"
 run:
   mode: "telegram"
+web:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: false
 telegram:
   enabled: false
   bot_token_env: "TELEGRAM_BOT_TOKEN"
@@ -216,6 +224,10 @@ app:
   env: "test"
 run:
   mode: "telegram"
+web:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: false
 telegram:
   enabled: false
   bot_token_env: "TELEGRAM_BOT_TOKEN"

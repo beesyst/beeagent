@@ -10,6 +10,7 @@ dependencies = [
     "python-telegram-bot>=22.7",
     "langgraph==1.1.8",
     "beeagent-rop",
+    "jinja2>=3.1.6",
 ]
 
 [dependency-groups]
@@ -26,6 +27,12 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"beeagent_module.web" = [
+    "templates/*.html",
+    "static/css/*.css",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

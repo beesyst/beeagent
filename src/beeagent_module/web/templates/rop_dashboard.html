@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% macro kv_card(title, data) -%}
+<div class="card">
+  <h3>{{ title }}</h3>
+  {% if data %}
+  <table>
+    {% for key, value in data|dictsort %}
+    <tr>
+      <th>{{ key }}</th>
+      <td>{{ value }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="muted">No data</div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro distribution_card(title, data) -%}
+<div class="card">
+  <h3>{{ title }}</h3>
+  {% if data %}
+  <table>
+    <thead>
+      <tr><th>key</th><th>count</th></tr>
+    </thead>
+    <tbody>
+      {% for key, value in data|dictsort %}
+      <tr><td>{{ key }}</td><td>{{ value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="muted">No data</div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% block content %}
+<h1>ROP dashboard: {{ run_id }}</h1>
+
+{% if errors %}
+<div class="card error">
+  <div>Data issues detected:</div>
+  <ul>
+    {% for item in errors %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if source %}{{ kv_card("source", source) }}{% endif %}
+{% if classification %}{{ kv_card("classification", classification) }}{% endif %}
+{{ kv_card("metrics", metrics) }}
+{{ distribution_card("case_type distribution", case_type_counts) }}
+{{ distribution_card("priority distribution", priority_counts) }}
+{{ distribution_card("reason_code distribution", reason_code_counts) }}
+
+<div class="card">
+  <h3>Filters</h3>
+  <form method="get" action="/runs/{{ run_id }}/rop">
+    <label>case_type
+      <select name="case_type">
+        <option value="">(all)</option>
+        {% for option in filter_options.case_type %}
+        <option value="{{ option }}"{% if filters.case_type == option %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>priority
+      <select name="priority">
+        <option value="">(all)</option>
+        {% for option in filter_options.priority %}
+        <option value="{{ option }}"{% if filters.priority == option %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>fallback
+      <select name="fallback">
+        <option value="">(all)</option>
+        <option value="true"{% if filters.fallback == "true" %} selected{% endif %}>true</option>
+        <option value="false"{% if filters.fallback == "false" %} selected{% endif %}>false</option>
+      </select>
+    </label>
+
+    <label>reason_code
+      <select name="reason_code">
+        <option value="">(all)</option>
+        {% for option in filter_options.reason_code %}
+        <option value="{{ option }}"{% if filters.reason_code == option %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <button type="submit">Apply</button>
+  </form>
+</div>
+
+{% if tsv_exists %}
+<div class="card"><a href="/runs/{{ run_id }}/tsv">Open rop_review_table.tsv</a></div>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>event_id</th>
+      <th>sender</th>
+      <th>subject</th>
+      <th>body_short</th>
+      <th>attachments</th>
+      <th>bot_case_type</th>
+      <th>bot_priority</th>
+      <th>bot_confidence</th>
+      <th>bot_reason_code</th>
+      <th>bot_reasoning</th>
+      <th>bot_is_fallback</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.event_id }}</td>
+      <td>{{ row.sender }}</td>
+      <td>{{ row.subject }}</td>
+      <td>{{ row.body_short }}</td>
+      <td>{{ row.attachments }}</td>
+      <td>{{ row.bot_case_type }}</td>
+      <td>{{ row.bot_priority }}</td>
+      <td>{{ row.bot_confidence }}</td>
+      <td>{{ row.bot_reason_code }}</td>
+      <td>{{ row.bot_reasoning }}</td>
+      <td>{{ row.bot_is_fallback }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

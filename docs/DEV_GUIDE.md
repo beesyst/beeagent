@@ -83,6 +83,27 @@ bash start.sh
 uv run python3 config/start.py
 ```
 
+### Operator Web Shell v0
+
+Для запуска read-only operator web shell используй:
+
+```bash
+./start.sh web
+# или
+uv run python3 config/start.py web
+```
+
+Маршруты v0:
+
+- `/`
+- `/runs`
+- `/runs/<run_id>`
+- `/runs/<run_id>/rop`
+- `/modules`
+
+Web shell читает только existing artifacts из `storage/` и не выполняет runtime actions.
+`./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
+
 ### ROP operator flow v0
 
 Для первого operator-facing ROP прогона используй existing transport path:

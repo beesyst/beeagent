@@ -5,6 +5,11 @@ app:
 run:
   mode: "telegram" # режим запуска UI/transport
 
+web:
+  host: "127.0.0.1" # bind host for read-only operator web shell
+  port: 8000 # bind port for read-only operator web shell
+  open_browser: false # true/false - auto-open browser in web mode
+
 telegram:
   enabled: false # true/false - включить/выключить интеграцию с Telegram
   bot_token_env: "TELEGRAM_BOT_TOKEN" # название переменной окружения, в которой хранится токен бота

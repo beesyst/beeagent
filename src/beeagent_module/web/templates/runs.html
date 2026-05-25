@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Runs</h1>
+{% if not runs %}
+<div class="card"><p class="muted">No runs found.</p></div>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>run_id</th>
+      <th>overview</th>
+      <th>rop</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run_id in runs %}
+    <tr>
+      <td>{{ run_id }}</td>
+      <td><a href="/runs/{{ run_id }}">overview</a></td>
+      <td><a href="/runs/{{ run_id }}/rop">rop dashboard</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}
