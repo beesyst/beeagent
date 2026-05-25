@@ -1982,6 +1982,203 @@ correct_action
 - secrets/raw `.eml` не попадают в artifacts/logs;
 - docs обновлены.
 
+### Итерация 22 — Operator Web Shell v0 with ROP dashboard
+
+**Статус:** DONE
+
+#### Goal
+
+Добавить в BeeAgent минимальную read-only операторскую web-панель поверх существующих runtime artifacts, чтобы оператор/заказчик мог смотреть runs, summary, module outputs и ROP review table без чтения JSON/TSV вручную.
+
+Итерация должна заложить reusable web shell для будущих модулей (`beeagent-rop`, `beescan`, `merch`), но первым рабочим module-specific экраном будет ROP dashboard.
+
+#### Почему это нужно
+
+После итераций 18–21 ROP backend path уже работает:
+
+```text
+mailbox/json_batch → normalized_events → beeagent-rop classification → classified_events → rop_summary → operator_summary → rop_review_table.tsv
+```
+
+Но текущий результат остаётся CLI/artifact-oriented:
+
+- оператору нужно открывать JSON/TSV вручную;
+- заказчику сложно показать MVP как продукт;
+- нет единого run overview;
+- нет web-поверхности, которая потом переиспользуется для BeeScan/Merch.
+
+Следующий MVP-инкремент — сделать видимую operator surface, не добавляя CRM write-back, Bitrix, OCR или AI.
+
+#### Scope
+
+**Включено:**
+
+- новый web entrypoint:
+  - `./start.sh web`;
+
+- минимальный web server внутри BeeAgent;
+- read-only operator web shell;
+- server-side HTML templates или простая HTML-rendering реализация без React/Vue/Next;
+- страницы:
+  - `/` — landing / operator home;
+  - `/runs` — список run директории из `storage/runs`;
+  - `/runs/<run_id>` — общий run overview;
+  - `/runs/<run_id>/rop` — ROP-specific dashboard по existing artifacts;
+  - `/modules` — список известных модулей/registry diagnostics, если artifact доступен;
+
+- чтение только existing artifacts:
+  - `operator_summary.json`;
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `rop_review_table.tsv`;
+  - `module-beeagent-rop/module_result.json`;
+  - `module-beeagent-rop/rop_summary_result.json`;
+
+- ROP dashboard показывает:
+  - `run_id`;
+  - source id/type;
+  - loaded/classified/failed counts;
+  - counts по `case_type`;
+  - counts по `priority`;
+  - fallback count;
+  - reason_code distribution;
+  - таблицу писем;
+  - `sender`;
+  - `subject`;
+  - `body_short`;
+  - `attachments`;
+  - `bot_case_type`;
+  - `bot_priority`;
+  - `bot_confidence`;
+  - `bot_reason_code`;
+  - `bot_reasoning`;
+  - `bot_is_fallback`;
+
+- query filters на `/runs/<run_id>/rop`:
+  - `case_type`;
+  - `priority`;
+  - `fallback`;
+  - `reason_code`;
+
+- ссылка скачать/открыть TSV:
+  - `storage/runs/<run_id>/rop_review_table.tsv`;
+
+- ссылки на основные artifacts;
+- graceful degraded UI:
+  - missing run;
+  - missing artifact;
+  - malformed JSON;
+  - empty runs;
+  - non-ROP run;
+
+- tests на route handlers / HTML content / artifact parsing;
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`.
+
+**Не включено:**
+
+- login/auth;
+- multi-user access control;
+- web-triggered `rop run`;
+- CRM write-back;
+- Bitrix;
+- 1C;
+- OCR;
+- attachment content parsing;
+- редактирование human labels в UI;
+- сохранение review правок из UI;
+- сложный frontend framework;
+- websocket/live updates;
+- scheduler/listener;
+- production deployment hardening;
+- nginx/basic-auth setup automation;
+- BeeScan UI;
+- ROP business rules в BeeAgent core;
+- изменения в `beeagent-rop`.
+
+#### Deliverable
+
+Оператор может запустить:
+
+```bash
+./start.sh web
+```
+
+И открыть web-панель, где видны существующие BeeAgent runs и первый ROP dashboard по artifacts:
+
+```text
+storage/runs/<run_id>/...
+```
+
+Dashboard не выполняет действий, не меняет данные и не пишет в CRM. Он только читает и отображает существующие artifacts.
+
+#### Expected routes
+
+```text
+/
+ /runs
+ /runs/<run_id>
+ /runs/<run_id>/rop
+ /modules
+```
+
+#### Expected artifacts read
+
+```text
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/module-beeagent-rop/module_result.json
+storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
+storage/interfaces/modules.json
+logs/app.log
+```
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted web route tests;
+- route `/runs` works with empty and non-empty `storage/runs`;
+- route `/runs/<run_id>` works with valid/missing/malformed artifacts;
+- route `/runs/<run_id>/rop` renders ROP metrics and email table;
+- filters work for `case_type`, `priority`, `fallback`, `reason_code`;
+- TSV link is visible if `rop_review_table.tsv` exists;
+- no raw `.eml` is served;
+- no attachment content is served;
+- no secrets appear in HTML;
+- no path traversal through `run_id`;
+- smoke:
+  - create or reuse ROP run;
+  - start web;
+  - open `/runs`;
+  - open `/runs/<run_id>/rop`;
+
+- SAST/security review for artifact reading and path handling;
+- SCA only if new dependencies are added.
+
+#### DoD
+
+- `./start.sh web` starts operator web shell;
+- existing `./start.sh`, `./start.sh telegram`, `./start.sh rop ...` behavior is not broken;
+- web shell reads only `storage/` artifacts;
+- no destructive actions exist in web UI;
+- no CRM/mailbox actions are exposed;
+- run listing is bounded and does not full-scan huge artifacts unnecessarily;
+- ROP dashboard gives enough information to review live batch without opening JSON/TSV manually;
+- filters are server-side and test-covered;
+- path traversal is prevented;
+- secrets/raw `.eml`/attachment content are not exposed;
+- BeeAgent core does not contain ROP classification rules;
+- `beeagent-rop` is not changed;
+- docs are updated.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

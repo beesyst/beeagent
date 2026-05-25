@@ -53,13 +53,19 @@ def main() -> None:
         run_app(settings=telegram_settings, logger=logger)
         return
 
+    if args and args[0] == "web":
+        logger.info("Explicit web mode requested")
+        web_settings = _with_run_mode(settings=settings, mode="web")
+        run_app(settings=web_settings, logger=logger)
+        return
+
     if args and args[0] == "rop":
         _handle_rop_cli(args[1:], settings=settings, logger=logger)
         return
 
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, rop",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, rop",
         file=sys.stderr,
     )
     sys.exit(2)

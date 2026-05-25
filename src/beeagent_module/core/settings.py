@@ -6,6 +6,9 @@ REQUIRED_KEYS = (
     ("app", "name"),
     ("app", "env"),
     ("run", "mode"),
+    ("web", "host"),
+    ("web", "port"),
+    ("web", "open_browser"),
     ("telegram", "enabled"),
     ("telegram", "bot_token_env"),
     ("telegram", "chat_id_env"),
@@ -82,6 +85,18 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("run", "mode")), str):
         raise RuntimeError("Invalid type for run.mode, expected string")
+
+    if not isinstance(_get_nested_value(settings, ("web", "host")), str):
+        raise RuntimeError("Invalid type for web.host, expected string")
+
+    web_port = _get_nested_value(settings, ("web", "port"))
+    if not isinstance(web_port, int):
+        raise RuntimeError("Invalid type for web.port, expected int")
+    if web_port <= 0 or web_port > 65535:
+        raise RuntimeError("Invalid value for web.port, expected 1..65535")
+
+    if not isinstance(_get_nested_value(settings, ("web", "open_browser")), bool):
+        raise RuntimeError("Invalid type for web.open_browser, expected bool")
 
     if not isinstance(_get_nested_value(settings, ("telegram", "enabled")), bool):
         raise RuntimeError("Invalid type for telegram.enabled, expected bool")

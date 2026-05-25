@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% macro kv_card(title, data) -%}
+<div class="card">
+  <h3>{{ title }}</h3>
+  {% if data %}
+  <table>
+    {% for key, value in data|dictsort %}
+    <tr>
+      <th>{{ key }}</th>
+      <td>{{ value }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="muted">No data</div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% block content %}
+<h1>Run overview: {{ run_id }}</h1>
+
+{% if errors %}
+<div class="card error">
+  <div>Data issues detected:</div>
+  <ul>
+    {% for item in errors %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if summary %}{{ kv_card("operator_summary", summary) }}{% endif %}
+{% if source_diagnostics %}{{ kv_card("source_diagnostics", source_diagnostics) }}{% endif %}
+{% if intake_metadata %}{{ kv_card("intake_metadata", intake_metadata) }}{% endif %}
+{{ kv_card("counts", counts) }}
+
+{% if available_artifacts or module_artifacts or tsv_exists %}
+<div class="card">
+  <h3>Artifacts</h3>
+  <ul>
+    {% for item in available_artifacts %}
+    <li><a href="/runs/{{ run_id }}/artifact/{{ item }}">{{ item }}</a></li>
+    {% endfor %}
+
+    {% for item in module_artifacts %}
+    <li><a href="/runs/{{ run_id }}/module-artifact/{{ item }}">module-beeagent-rop/{{ item }}</a></li>
+    {% endfor %}
+
+    {% if tsv_exists %}
+    <li><a href="/runs/{{ run_id }}/tsv">rop_review_table.tsv</a></li>
+    {% endif %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card"><a href="/runs/{{ run_id }}/rop">Open ROP dashboard</a></div>
+{% endblock %}

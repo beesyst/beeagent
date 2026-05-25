@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Modules</h1>
+
+{% if modules_error %}
+<div class="card muted">modules.json: {{ modules_error }}</div>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>id</th>
+      <th>package</th>
+      <th>entry</th>
+      <th>state</th>
+      <th>error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.id }}</td>
+      <td>{{ row.package }}</td>
+      <td>{{ row.entry }}</td>
+      <td>{{ row.state }}</td>
+      <td>{{ row.error }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

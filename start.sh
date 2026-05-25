@@ -17,7 +17,8 @@ if [ ! -f .env ] && [ -f .env.example ]; then
   echo "[init] Please edit .env and set real secrets"
 fi
 
-echo "[run] syncing dependencies..."
-uv sync
+echo "[run] syncing dependencies from uv.lock..."
+uv sync --frozen
+
 echo "[run] starting BeeAgent..."
-uv run python3 config/start.py "$@"
+uv run --frozen python3 config/start.py "$@"

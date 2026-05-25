@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>BeeAgent Operator Web Shell v0</h1>
+<div class="card">
+  <p>Read-only dashboard over existing runtime artifacts.</p>
+  <p>Total runs: {{ runs_count }}</p>
+  <p><a href="/runs">Open runs</a></p>
+</div>
+{% endblock %}

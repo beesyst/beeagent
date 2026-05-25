@@ -2,6 +2,7 @@ import logging
 
 from beeagent_module.core.module_registry import build_registry
 from beeagent_module.ui.telegram_bot import start_telegram_mode
+from beeagent_module.web.app import start_web_mode
 
 
 # Запуск приложения в выбранном режиме
@@ -14,6 +15,10 @@ def run_app(settings: dict, logger: logging.Logger) -> None:
 
     if mode == "telegram":
         start_telegram_mode(settings=settings, logger=logger)
+        return
+
+    if mode == "web":
+        start_web_mode(settings=settings, logger=logger)
         return
 
     raise RuntimeError(f"Unsupported run mode: {mode}")
