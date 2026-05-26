@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.26.0...beeagent-v0.27.0) (2026-05-26)
+
+
+### Features
+
+* **rop:** harden source profile contract ([#81](https://github.com/beesyst/beeagent/issues/81)) ([43ab308](https://github.com/beesyst/beeagent/commit/43ab308fa84dcfbac7ffa13b0c37c212c7421776))
+
 ## [0.26.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.25.0...beeagent-v0.26.0) (2026-05-25)
 
 
