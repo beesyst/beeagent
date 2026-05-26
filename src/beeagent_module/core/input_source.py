@@ -60,22 +60,31 @@ def load_rop_source(
     source_type = source.get("source_type")
 
     if source_type == "json_batch":
-        events, metadata = load_json_batch(
+        try:
+            events, metadata = load_json_batch(
+                source=source,
+                project_root=project_root,
+                logger=logger,
+            )
+        except RuntimeError as exc:
+            raise InputSourceError(
+                str(exc),
+                diagnostics=_make_source_diagnostics(
+                    source=source,
+                    status="degraded",
+                    reason=_classify_json_batch_error(exc),
+                ),
+            ) from exc
+        diagnostics = _make_source_diagnostics(
             source=source,
-            project_root=project_root,
-            logger=logger,
+            status="ok",
+            reason=None,
+            fetched_count=metadata["raw_item_count"],
+            processed_count=metadata["loaded_item_count"],
+            skipped_count=metadata["raw_item_count"] - metadata["loaded_item_count"],
+            malformed_count=0,
+            loaded_at=metadata["loaded_at"],
         )
-        diagnostics = {
-            "source_id": metadata["source_id"],
-            "source_type": metadata["source_type"],
-            "status": "ok",
-            "reason": None,
-            "fetched_count": metadata["raw_item_count"],
-            "processed_count": metadata["loaded_item_count"],
-            "skipped_count": metadata["raw_item_count"] - metadata["loaded_item_count"],
-            "malformed_count": 0,
-            "loaded_at": metadata["loaded_at"],
-        }
         return events, metadata, diagnostics
 
     if source_type == "mailbox_readonly":
@@ -258,11 +267,18 @@ def load_mailbox_readonly(
     metadata = {
         "source_id": source_id,
         "source_type": "mailbox_readonly",
+        "source_role": str(source["source_role"]),
+        "client_id": str(source["client_id"]),
+        "source_display_name": str(source["display_name"]),
         "authority": source.get("authority", "read_only"),
         "mailbox": mailbox_details,
+        "mailbox_folder": mailbox_details["folder"],
         "period": _derive_mailbox_period(events=events, loaded_at=loaded_at),
         "raw_item_count": len(raw_messages),
         "loaded_item_count": len(events),
+        "fetched_count": len(raw_messages),
+        "loaded_count": len(events),
+        "malformed_count": malformed_count,
         "items_max": items_max,
         "loaded_at": loaded_at,
     }
@@ -459,17 +475,49 @@ def _make_source_diagnostics(
     malformed_count: int = 0,
     loaded_at: str | None = None,
 ) -> dict[str, Any]:
+    mailbox_cfg = source.get("mailbox") if isinstance(source, dict) else None
+    mailbox_folder = None
+    if isinstance(mailbox_cfg, dict):
+        folder = mailbox_cfg.get("folder")
+        if isinstance(folder, str) and folder:
+            mailbox_folder = folder
+
     return {
         "source_id": str(source.get("source_id", "unknown")),
         "source_type": str(source.get("source_type", "unknown")),
+        "source_role": str(source.get("source_role", "")),
+        "client_id": str(source.get("client_id", "")),
+        "source_display_name": str(source.get("display_name", "")),
+        "authority": str(source.get("authority", "")),
+        "mailbox_folder": mailbox_folder,
+        "items_max": source.get("items_max"),
         "status": status,
         "reason": reason,
         "fetched_count": fetched_count,
+        "loaded_count": processed_count,
         "processed_count": processed_count,
         "skipped_count": skipped_count,
         "malformed_count": malformed_count,
         "loaded_at": loaded_at or datetime.now(timezone.utc).isoformat(),
     }
+
+
+# Классификация ошибок json_batch для degraded diagnostics
+def _classify_json_batch_error(exc: RuntimeError) -> str:
+    message = str(exc).lower()
+    if "not found" in message:
+        return "batch_file_not_found"
+    if "not valid json" in message:
+        return "invalid_batch_json"
+    if "top-level json object" in message or "'items' as a list" in message:
+        return "invalid_batch_shape"
+    if "batch.path" in message:
+        return "invalid_batch_path"
+    if "batch.period" in message:
+        return "invalid_batch_period"
+    if "items_max" in message:
+        return "invalid_items_max"
+    return "json_batch_load_error"
 
 
 # Загрузка batch-файла из источника типа json_batch, нормализация событий, возврат (events, metadata)
@@ -542,11 +590,18 @@ def load_json_batch(
     metadata: dict[str, Any] = {
         "source_id": source_id,
         "source_type": "json_batch",
+        "source_role": str(source["source_role"]),
+        "client_id": str(source["client_id"]),
+        "source_display_name": str(source["display_name"]),
         "authority": source.get("authority", "read_only"),
         "batch_path": raw_path,
         "period": effective_period,
         "raw_item_count": len(items),
         "loaded_item_count": len(events),
+        "fetched_count": len(items),
+        "loaded_count": len(events),
+        "malformed_count": 0,
+        "mailbox_folder": None,
         "items_max": items_max,
         "loaded_at": datetime.now(timezone.utc).isoformat(),
     }

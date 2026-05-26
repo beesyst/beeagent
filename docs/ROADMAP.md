@@ -2179,6 +2179,131 @@ logs/app.log
 - `beeagent-rop` is not changed;
 - docs are updated.
 
+### Итерация 23 — ROP source profile hardening v0
+
+**Статус:** DONE
+
+#### Goal
+
+Усилить config-driven source contract для ROP pipeline, чтобы каждый источник входящих данных имел явный business/profile контекст и этот контекст воспроизводимо попадал в runtime artifacts, dashboard и downstream flow без изменения `beeagent-rop`.
+
+#### Почему это нужно
+
+После It18–22 BeeAgent умеет читать `mailbox_readonly`, классифицировать события через `beeagent-rop`, создавать TSV и показывать ROP dashboard.
+
+Но текущий source contract недостаточен для перехода к multi-source:
+
+```text
+hotline + sales + online + parsales
+```
+
+Сейчас источник описывает технический доступ, но не фиксирует его роль:
+
+```text
+technical aggregator
+sales mailbox
+online sales mailbox
+employee mailbox
+regional mailbox
+```
+
+Без этого It24 приведёт к неясным artifacts, слабой дедупликации и ручным правкам кода при замене источника.
+
+#### Scope
+
+**Включено:**
+
+- расширить `rop.sources[]` contract:
+  - `source_role`;
+  - `client_id`;
+  - `display_name`;
+
+- добавить fail-fast validation в `src/beeagent_module/core/settings.py`;
+- обновить `config/settings.yml` для существующих sources;
+- протянуть source profile metadata в artifacts:
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `operator_summary.json`;
+
+- для `mailbox_readonly` явно фиксировать:
+  - `mailbox_folder`;
+  - `items_max`;
+  - `fetched_count`;
+  - `loaded_count`;
+  - `malformed_count`, если уже есть такой счётчик или его можно добавить минимально;
+
+- сохранить совместимость с текущим ROP pipeline:
+  - `./start.sh rop run`;
+  - `./start.sh rop summary`;
+  - `./start.sh rop export-review`;
+  - `./start.sh web`;
+
+- обновить web/dashboard только минимально, если новые source fields не отображаются существующим generic rendering;
+- добавить tests для config validation, source metadata propagation и degraded scenarios;
+- обновить docs:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`.
+
+**Не включено:**
+
+- web-triggered `rop run`;
+- multi-source ingestion;
+- source-aware dedup;
+- attachment extraction;
+- OCR;
+- Bitrix;
+- 1C;
+- CRM write-back;
+- mailbox listener/polling;
+- изменение `beeagent-rop`;
+- ROP business rules в BeeAgent core.
+
+#### Deliverable
+
+Один ROP source всё ещё запускается как раньше, но теперь source profile является явным runtime contract:
+
+```yaml
+source_id: "hotline_mailbox"
+source_type: "mailbox_readonly"
+source_role: "technical_aggregator"
+client_id: "welding"
+display_name: "Welding Hotline mailbox"
+enabled: true
+authority: "read_only"
+items_max: 20
+```
+
+Artifacts содержат business-readable source metadata и готовы к It24 multi-source flow.
+
+#### Expected artifact fields
+
+```text
+source_id
+source_type
+source_role
+source_display_name
+client_id
+authority
+mailbox_folder
+items_max
+fetched_count
+loaded_count
+malformed_count
+```
+
+#### Change level
+
+```text
+runtime-risk
+```
+
+Если затрагивается mailbox parsing/path/security-sensitive handling глубже обычной metadata propagation — поднять до:
+
+```text
+security-sensitive
+```
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

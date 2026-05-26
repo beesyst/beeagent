@@ -244,7 +244,14 @@ def _build_summary_text(summary_data: dict[str, Any]) -> str:
         source_block = (
             f"source_id: {source.get('source_id', '?')}\n"
             f"source_type: {source.get('source_type', '?')}\n"
+            f"source_role: {source.get('source_role', '?')}\n"
+            f"source_display_name: {source.get('source_display_name', '?')}\n"
+            f"client_id: {source.get('client_id', '?')}\n"
+            f"mailbox_folder: {source.get('mailbox_folder', '?')}\n"
             f"loaded_items: {source.get('loaded_item_count', '?')}\n"
+            f"fetched_count: {source.get('fetched_count', '?')}\n"
+            f"loaded_count: {source.get('loaded_count', '?')}\n"
+            f"malformed_count: {source.get('malformed_count', '?')}\n"
             f"period: {source.get('period', '?')}\n"
         )
 

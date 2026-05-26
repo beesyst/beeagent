@@ -592,6 +592,9 @@ rop:
   sources:
     - source_id: "rop_batch_sample"
       source_type: "json_batch"
+      source_role: "batch_sample"
+      client_id: "welding"
+      display_name: "ROP Batch Sample"
       enabled: true
       authority: "read_only"
       items_max: 100
@@ -607,6 +610,9 @@ rop:
   sources:
     - source_id: "hotline_mailbox"
       source_type: "mailbox_readonly"
+      source_role: "technical_aggregator"
+      client_id: "welding"
+      display_name: "Welding Hotline mailbox"
       enabled: false
       authority: "read_only"
       items_max: 10
@@ -621,6 +627,14 @@ rop:
 
 Для `mailbox_readonly` в config хранятся только имена env-переменных.
 Сами credentials должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
+
+Обязательный source profile contract для каждого `rop.sources[]`:
+
+- `source_role`
+- `client_id`
+- `display_name`
+
+Эти поля валидируются fail-fast в `core/settings.py` и прокидываются в BeeAgent-owned artifacts как `source_role`, `client_id`, `source_display_name`.
 
 `mailbox_readonly` используется только для read-only smoke:
 
@@ -673,6 +687,9 @@ rop:
 | -------------------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `event_id`           | normalized_events | Уникальный ID события                                                               |
 | `source_id`          | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                 |
+| `source_role`        | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)  |
+| `client_id`          | intake_metadata   | Клиент/тенант, к которому привязан источник                                          |
+| `source_display_name`| intake_metadata   | Человекочитаемое имя источника для UI/оператора                                      |
 | `sender`             | normalized_events | Email отправителя письма                                                            |
 | `subject`            | normalized_events | Тема письма                                                                         |
 | `body_short`         | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |

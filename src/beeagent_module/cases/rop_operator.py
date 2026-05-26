@@ -169,7 +169,13 @@ def _build_batch_operator_text(
         source_block = (
             f"source_id: {source.get('source_id', '?')}\n"
             f"source_type: {source.get('source_type', '?')}\n"
+            f"source_role: {source.get('source_role', '?')}\n"
+            f"source_display_name: {source.get('source_display_name', '?')}\n"
+            f"client_id: {source.get('client_id', '?')}\n"
+            f"mailbox_folder: {source.get('mailbox_folder', '?')}\n"
             f"loaded_items: {source.get('loaded_item_count', '?')}\n"
+            f"fetched_count: {source.get('fetched_count', '?')}\n"
+            f"malformed_count: {source.get('malformed_count', '?')}\n"
             f"period: {source.get('period', '?')}\n"
         )
     else:
@@ -406,6 +412,27 @@ def _attach_classification_trace(
     return enriched
 
 
+# Сбор source metadata для operator_summary из degraded diagnostics
+def _build_source_meta_from_diagnostics(
+    source_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "source_id": source_diagnostics.get("source_id"),
+        "source_type": source_diagnostics.get("source_type"),
+        "source_role": source_diagnostics.get("source_role"),
+        "source_display_name": source_diagnostics.get("source_display_name"),
+        "client_id": source_diagnostics.get("client_id"),
+        "authority": source_diagnostics.get("authority"),
+        "items_max": source_diagnostics.get("items_max"),
+        "mailbox_folder": source_diagnostics.get("mailbox_folder"),
+        "fetched_count": source_diagnostics.get("fetched_count"),
+        "loaded_count": source_diagnostics.get("loaded_count"),
+        "malformed_count": source_diagnostics.get("malformed_count"),
+        "status": source_diagnostics.get("status"),
+        "reason": source_diagnostics.get("reason"),
+    }
+
+
 # Запуск ROP source handoff: загрузка configured source, нормализация событий и dispatch в модуль
 def run_rop_batch_case(
     settings: dict,
@@ -456,10 +483,17 @@ def run_rop_batch_case(
         source_meta = {
             "source_id": intake_metadata["source_id"],
             "source_type": intake_metadata["source_type"],
+            "source_role": intake_metadata.get("source_role"),
+            "source_display_name": intake_metadata.get("source_display_name"),
+            "client_id": intake_metadata.get("client_id"),
             "authority": intake_metadata["authority"],
             "period": effective_period,
             "raw_item_count": intake_metadata["raw_item_count"],
             "loaded_item_count": intake_metadata["loaded_item_count"],
+            "fetched_count": source_diagnostics.get("fetched_count"),
+            "loaded_count": source_diagnostics.get("loaded_count"),
+            "malformed_count": source_diagnostics.get("malformed_count"),
+            "mailbox_folder": intake_metadata.get("mailbox_folder"),
             "items_max": intake_metadata["items_max"],
         }
         diagnostics_path = run_dir / "source_diagnostics.json"
@@ -558,6 +592,8 @@ def run_rop_batch_case(
             **exc.diagnostics,
             "status": "degraded",
         }
+        if source_meta is None:
+            source_meta = _build_source_meta_from_diagnostics(source_diagnostics)
         logger.warning(
             "rop batch flow degraded: run_id=%s reason=%s",
             effective_run_id,

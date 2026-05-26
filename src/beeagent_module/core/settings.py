@@ -279,10 +279,18 @@ def validate_settings(settings: dict) -> None:
             raise RuntimeError(
                 f"Invalid type for rop.sources[{idx}], expected mapping"
             )
-        for key in ("source_id", "source_type", "authority"):
-            if not isinstance(source.get(key), str):
+        for key in (
+            "source_id",
+            "source_type",
+            "source_role",
+            "client_id",
+            "display_name",
+            "authority",
+        ):
+            value = source.get(key)
+            if not isinstance(value, str) or not value.strip():
                 raise RuntimeError(
-                    f"Invalid or missing rop.sources[{idx}].{key}, expected string"
+                    f"Invalid or missing rop.sources[{idx}].{key}, expected non-empty string"
                 )
         if not isinstance(source.get("enabled"), bool):
             raise RuntimeError(
