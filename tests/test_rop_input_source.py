@@ -63,6 +63,9 @@ def _make_source(path: str, period: str = "2026-05", items_max: int = 100) -> di
     return {
         "source_id": "test-source",
         "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test Batch Source",
         "enabled": True,
         "authority": "read_only",
         "items_max": items_max,
@@ -94,6 +97,9 @@ def test_load_json_batch_success(tmp_path: Path) -> None:
     assert events[0]["event_id"] == "e1"
     assert metadata["period"] == "2026-04"
     assert metadata["source_id"] == "test-source"
+    assert metadata["source_role"] == "batch_sample"
+    assert metadata["client_id"] == "welding"
+    assert metadata["source_display_name"] == "Test Batch Source"
     assert metadata["raw_item_count"] == 2
     assert metadata["loaded_item_count"] == 2
 
@@ -186,11 +192,14 @@ def test_load_json_batch_skips_non_dict_items(tmp_path: Path) -> None:
     assert metadata["loaded_item_count"] == 2
 
 
-# Тест: load_json_batch с пустым batch.path — проверка ошибки при отсутствии пути
+# Тест: load_json_batch с пустым batch.path - проверка ошибки при отсутствии пути
 def test_load_json_batch_empty_path_raises(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
         "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test Batch Source",
         "enabled": True,
         "authority": "read_only",
         "items_max": 10,
@@ -205,6 +214,9 @@ def test_load_json_batch_raises_when_items_max_missing(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
         "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test Batch Source",
         "enabled": True,
         "authority": "read_only",
         "batch": {"path": "any.json", "period": "2026-05"},
@@ -218,6 +230,9 @@ def test_load_json_batch_raises_when_batch_missing(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
         "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test Batch Source",
         "enabled": True,
         "authority": "read_only",
         "items_max": 10,
@@ -235,6 +250,9 @@ def test_load_json_batch_raises_when_batch_period_missing(tmp_path: Path) -> Non
     source = {
         "source_id": "test",
         "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test Batch Source",
         "enabled": True,
         "authority": "read_only",
         "items_max": 10,
@@ -265,6 +283,9 @@ def _mailbox_source(items_max: int = 10) -> dict:
     return {
         "source_id": "hotline",
         "source_type": "mailbox_readonly",
+        "source_role": "technical_aggregator",
+        "client_id": "welding",
+        "display_name": "Hotline mailbox",
         "enabled": True,
         "authority": "read_only",
         "items_max": items_max,
@@ -298,10 +319,14 @@ def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert events[0]["cc"] == ["cc@example.com"]
     assert events[0]["attachments"][0]["filename"] == "brief.pdf"
     assert metadata["source_type"] == "mailbox_readonly"
+    assert metadata["source_role"] == "technical_aggregator"
+    assert metadata["client_id"] == "welding"
+    assert metadata["source_display_name"] == "Hotline mailbox"
     assert metadata["loaded_item_count"] == 1
     assert metadata["period"] == "2026-05"
     assert diagnostics["status"] == "ok"
     assert diagnostics["processed_count"] == 1
+    assert diagnostics["loaded_count"] == 1
 
 
 # Чек: загрузка настроек с источником mailbox_readonly и отсутствием полей username_env и password_env должна вызывать RuntimeError

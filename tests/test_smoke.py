@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from beeagent_module.core.log import get_logger, setup_logging
 from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_storage_dir
 from beeagent_module.core.settings import load_settings
@@ -192,6 +194,9 @@ rop:
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
+      source_role: "technical_aggregator"
+      client_id: "welding"
+      display_name: "Hotline mailbox"
       enabled: true
       authority: "read_only"
       items_max: 5
@@ -296,6 +301,9 @@ rop:
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
+      source_role: "technical_aggregator"
+      client_id: "welding"
+      display_name: "Hotline mailbox"
       enabled: true
       authority: "read_only"
       items_max: 5
@@ -316,3 +324,124 @@ rop:
         raise AssertionError("RuntimeError expected for missing mailbox env names")
     except RuntimeError as exc:
         assert "mailbox.username_env" in str(exc)
+
+
+# Тест: загрузка настроек с источником mailbox_readonly и отсутствием обязательных source profile полей должна вызывать RuntimeError
+@pytest.mark.parametrize(
+    ("missing_line", "expected_key"),
+    [
+        ('      source_role: "technical_aggregator"\n', "rop.sources[0].source_role"),
+        ('      client_id: "welding"\n', "rop.sources[0].client_id"),
+        ('      display_name: "Hotline mailbox"\n', "rop.sources[0].display_name"),
+    ],
+)
+def test_load_settings_rejects_source_profile_missing_fields(
+    tmp_path: Path,
+    missing_line: str,
+    expected_key: str,
+) -> None:
+    settings_file = tmp_path / "settings.yml"
+    template = (
+        """
+app:
+  name: "BeeAgent"
+  env: "test"
+run:
+  mode: "telegram"
+web:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: false
+telegram:
+  enabled: false
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  chat_id_env: "CHAT_ID"
+  telemetry_enabled: false
+
+logging:
+  clear_logs: true
+  utc: true
+  level: "INFO"
+
+mock:
+  seed: 1
+  weeks: 2
+  stores: 1
+  skus: 2
+  category: "Vitamins"
+
+data:
+  adapter: "mock"
+  mock:
+    dataset_id:
+
+scheduler:
+  enabled: false
+  interval: 60
+  start_run: false
+
+approval:
+  reject_reason: "Rejected by operator"
+
+promo:
+  stock_min: 1
+  units_max: 0
+
+recommendations:
+  enabled: true
+  items_max: 10
+
+llm:
+  enabled: false
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key_env: "OPENAI_API_KEY"
+  api_url: "https://api.openai.com/v1/responses"
+  prompts_path: "config/prompts.yml"
+  assistant:
+    prompts_key: "oos.llm_assistant_qa"
+    items_max: 5
+  throttling:
+    timeout: 60
+    retries: 2
+
+i18n:
+  lang: "ru"
+  path: "config/i18n/ru.yml"
+
+quiz:
+  enabled: true
+  path: "config/quiz/pharmacy_quiz.json"
+
+modules:
+  registry: []
+
+rop:
+  sources:
+    - source_id: "hotline"
+      source_type: "mailbox_readonly"
+      source_role: "technical_aggregator"
+      client_id: "welding"
+      display_name: "Hotline mailbox"
+      enabled: true
+      authority: "read_only"
+      items_max: 5
+      mailbox:
+        host: "imap.example.com"
+        port: 993
+        use_ssl: true
+        folder: "INBOX"
+        username_env: "ROP_MAILBOX_USERNAME"
+        password_env: "ROP_MAILBOX_PASSWORD"
+    """.strip()
+        + "\n"
+    )
+    settings_file.write_text(
+        template.replace(missing_line, "", 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        load_settings(settings_file)
+
+    assert expected_key in str(exc_info.value)

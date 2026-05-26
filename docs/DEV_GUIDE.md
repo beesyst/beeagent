@@ -119,9 +119,13 @@ Web shell читает только existing artifacts из `storage/` и не �
 Для запуска ROP flow через configured source в `rop.sources`:
 
 1. убедись, что в `config/settings.yml` есть блок `rop.sources` с ровно одним `enabled: true` источником;
-2. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
-3. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
-4. запусти flow напрямую через case invocation:
+2. убедись, что каждый `rop.sources[]` содержит обязательный profile contract:
+  - `source_role`;
+  - `client_id`;
+  - `display_name`;
+3. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
+4. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
+5. запусти flow напрямую через case invocation:
 
 ```python
 from pathlib import Path
@@ -147,6 +151,20 @@ print(result["operator_text"])
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json` — результат модуля;
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` — case artifact от beeagent-rop;
 - `storage/runs/<run_id>/operator_summary.json` — operator-facing summary.
+
+Минимальные metadata fields для source artifacts (`source_diagnostics.json`, `intake_metadata.json`, `operator_summary.json.source`):
+
+- `source_id`
+- `source_type`
+- `source_role`
+- `source_display_name`
+- `client_id`
+- `authority`
+- `mailbox_folder`
+- `items_max`
+- `fetched_count`
+- `loaded_count`
+- `malformed_count`
 
 Пример batch файла (`storage/mock/rop_batch_sample.json`):
 

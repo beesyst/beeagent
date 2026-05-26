@@ -235,6 +235,9 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
             {
                 "source_id": "test-batch",
                 "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Test Batch Source",
                 "enabled": enabled,
                 "authority": "read_only",
                 "items_max": 50,
@@ -256,6 +259,9 @@ def _make_mailbox_settings(enabled: bool = True) -> dict:
             {
                 "source_id": "hotline",
                 "source_type": "mailbox_readonly",
+                "source_role": "technical_aggregator",
+                "client_id": "welding",
+                "display_name": "Hotline mailbox",
                 "enabled": enabled,
                 "authority": "read_only",
                 "items_max": 10,
@@ -365,7 +371,13 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     source = operator["source"]
     assert source["source_id"] == "test-batch"
     assert source["source_type"] == "json_batch"
+    assert source["source_role"] == "batch_sample"
+    assert source["client_id"] == "welding"
+    assert source["source_display_name"] == "Test Batch Source"
     assert source["loaded_item_count"] == 2
+    assert source["fetched_count"] == 2
+    assert source["loaded_count"] == 2
+    assert source["malformed_count"] == 0
     assert source["items_max"] == 50
 
 
@@ -414,6 +426,30 @@ def test_rop_batch_case_degraded_missing_batch_file(tmp_path: Path) -> None:
         ).read_text(encoding="utf-8")
     )
     assert diagnostics["status"] == "degraded"
+    assert diagnostics["reason"] == "batch_file_not_found"
+    assert diagnostics["source_id"] == "test-batch"
+    assert diagnostics["source_type"] == "json_batch"
+    assert diagnostics["source_role"] == "batch_sample"
+    assert diagnostics["client_id"] == "welding"
+    assert diagnostics["source_display_name"] == "Test Batch Source"
+    assert diagnostics["authority"] == "read_only"
+    assert diagnostics["items_max"] == 50
+
+    operator_summary = json.loads(
+        (
+            tmp_path / "runs" / "run-rop-batch-missing-file" / "operator_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    source = operator_summary["source"]
+    assert source["source_id"] == "test-batch"
+    assert source["source_type"] == "json_batch"
+    assert source["source_role"] == "batch_sample"
+    assert source["client_id"] == "welding"
+    assert source["source_display_name"] == "Test Batch Source"
+    assert source["authority"] == "read_only"
+    assert source["items_max"] == 50
+    assert source["status"] == "degraded"
+    assert source["reason"] == "batch_file_not_found"
 
 
 # Тест: degraded run при отсутствии модуля в registry
@@ -671,6 +707,9 @@ def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
         {
             "source_id": "test-batch",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Source",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,
@@ -746,6 +785,9 @@ def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None
         {
             "source_id": "test-batch-preclassified",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Preclassified",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,
@@ -816,6 +858,9 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
         {
             "source_id": "test-batch-preview",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Preview",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,
@@ -933,6 +978,9 @@ def test_rop_batch_per_event_classification_failure(
         {
             "source_id": "test-batch-fail",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Failure",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,
@@ -1092,6 +1140,9 @@ def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
         {
             "source_id": "test-batch-att",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Attachments",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,
@@ -1214,6 +1265,9 @@ def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
         {
             "source_id": "test-batch-valueerr",
             "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch ValueError",
             "enabled": True,
             "authority": "read_only",
             "items_max": 100,

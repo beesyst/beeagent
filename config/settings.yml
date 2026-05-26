@@ -8,7 +8,7 @@ run:
 web:
   host: "127.0.0.1" # bind host for read-only operator web shell
   port: 8000 # bind port for read-only operator web shell
-  open_browser: false # true/false - auto-open browser in web mode
+  open_browser: true # true/false - auto-open browser in web mode
 
 telegram:
   enabled: false # true/false - включить/выключить интеграцию с Telegram
@@ -82,6 +82,9 @@ rop:
   sources: # список объявленных источников входных данных для ROP flow
     - source_id: "rop_batch_sample" # уникальный идентификатор источника
       source_type: "json_batch" # тип источника (поддерживается: json_batch)
+      source_role: "batch_sample" # роль источника в бизнес-контексте клиента
+      client_id: "welding" # идентификатор клиента/тенанта для источника
+      display_name: "ROP Batch Sample" # человеко-читаемое имя источника для артефактов/UI
       enabled: false # true/false - использовать этот источник
       authority: "read_only" # уровень доступа (read_only/draft_only/execution_capable)
       items_max: 100 # максимальное число событий из источника
@@ -90,6 +93,9 @@ rop:
         period: "2026-05" # период, который передаётся в rop_summary payload
     - source_id: "hotline_mailbox" # read-only mailbox source для live smoke
       source_type: "mailbox_readonly" # тип источника для чтения последних писем из mailbox
+      source_role: "technical_aggregator" # роль источника в бизнес-контексте клиента
+      client_id: "welding" # идентификатор клиента/тенанта для источника
+      display_name: "Welding Hotline mailbox" # человеко-читаемое имя источника для артефактов/UI
       enabled: true # true/false - использовать этот источник
       authority: "read_only" # mailbox smoke не должен выполнять destructive actions
       items_max: 20 # максимальное число писем для одного smoke-run

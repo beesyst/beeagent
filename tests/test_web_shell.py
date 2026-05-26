@@ -37,7 +37,14 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
         "source": {
             "source_id": "hotline_mailbox",
             "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "client_id": "welding",
+            "source_display_name": "Welding Hotline mailbox",
+            "mailbox_folder": "welding",
             "loaded_item_count": 3,
+            "fetched_count": 3,
+            "loaded_count": 3,
+            "malformed_count": 0,
             "period": "2026-05",
         },
         "classification": {
@@ -48,15 +55,32 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     }
 
     source_diagnostics = {
+        "source_id": "hotline_mailbox",
+        "source_type": "mailbox_readonly",
+        "source_role": "technical_aggregator",
+        "client_id": "welding",
+        "source_display_name": "Welding Hotline mailbox",
+        "mailbox_folder": "welding",
+        "items_max": 20,
         "status": "ok",
+        "fetched_count": 3,
+        "loaded_count": 3,
         "processed_count": 3,
+        "malformed_count": 0,
         "reason": None,
     }
 
     intake_metadata = {
         "source_id": "hotline_mailbox",
         "source_type": "mailbox_readonly",
+        "source_role": "technical_aggregator",
+        "client_id": "welding",
+        "source_display_name": "Welding Hotline mailbox",
+        "mailbox_folder": "welding",
         "loaded_item_count": 3,
+        "fetched_count": 3,
+        "loaded_count": 3,
+        "malformed_count": 0,
         "items_max": 20,
     }
 
@@ -245,6 +269,7 @@ def test_rop_dashboard_metrics_and_table(tmp_path: Path) -> None:
     assert "reason_code distribution" in html
     assert "evt-1" in html
     assert "new_lead" in html
+    assert "Welding Hotline mailbox" in html
 
 
 # Тест: при фильтрации по case_type должна отображаться только соответствующая подгруппа событий
