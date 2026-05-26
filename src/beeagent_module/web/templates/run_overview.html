@@ -1,29 +1,42 @@
-{% extends "base.html" %}
-
-{% macro kv_card(title, data) -%}
-<div class="card">
-  <h3>{{ title }}</h3>
-  {% if data %}
-  <table>
-    {% for key, value in data|dictsort %}
-    <tr>
-      <th>{{ key }}</th>
-      <td>{{ value }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-  <div class="muted">No data</div>
-  {% endif %}
+{% extends "base.html" %} {% macro kv_card(title, data) -%}
+<div class="card shell-panel h-100">
+  <div class="card-body">
+    <h3 class="card-title text-capitalize">{{ title }}</h3>
+    {% if data %}
+    <div class="table-responsive">
+      <table class="table table-sm table-vcenter mb-0">
+        {% for key, value in data|dictsort %}
+        <tr>
+          <th class="w-25">{{ key }}</th>
+          <td>{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% else %}
+    <div class="text-secondary">No data</div>
+    {% endif %}
+  </div>
 </div>
-{%- endmacro %}
-
-{% block content %}
-<h1>Run overview: {{ run_id }}</h1>
+{%- endmacro %} {% block content %}
+<div
+  class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4"
+>
+  <div>
+    <h1 class="page-title mb-1">Run overview: {{ run_id }}</h1>
+    <div class="text-secondary">
+      Summary, diagnostics and whitelisted artifacts for one BeeAgent run.
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-dark" href="/api/runs/{{ run_id }}">Open JSON</a>
+    <a class="btn btn-dark" href="/runs/{{ run_id }}/rop">Open ROP dashboard</a>
+  </div>
+</div>
 
 {% if errors %}
-<div class="card error">
-  <div>Data issues detected:</div>
+<div class="alert alert-warning" role="alert">
+  <div class="fw-semibold">Data issues detected:</div>
   <ul>
     {% for item in errors %}
     <li>{{ item }}</li>
@@ -32,29 +45,31 @@
 </div>
 {% endif %}
 
-{% if summary %}{{ kv_card("operator_summary", summary) }}{% endif %}
-{% if source_diagnostics %}{{ kv_card("source_diagnostics", source_diagnostics) }}{% endif %}
-{% if intake_metadata %}{{ kv_card("intake_metadata", intake_metadata) }}{% endif %}
-{{ kv_card("counts", counts) }}
+<div class="row g-4 mb-4">
+  <div class="col-md-6">{{ kv_card("operator_summary", summary) }}</div>
+  <div class="col-md-6">
+    {{ kv_card("source_diagnostics", source_diagnostics) }}
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-md-6">{{ kv_card("intake_metadata", intake_metadata) }}</div>
+  <div class="col-md-6">{{ kv_card("counts", counts) }}</div>
+</div>
 
 {% if available_artifacts or module_artifacts or tsv_exists %}
-<div class="card">
-  <h3>Artifacts</h3>
-  <ul>
-    {% for item in available_artifacts %}
-    <li><a href="/runs/{{ run_id }}/artifact/{{ item }}">{{ item }}</a></li>
-    {% endfor %}
-
-    {% for item in module_artifacts %}
-    <li><a href="/runs/{{ run_id }}/module-artifact/{{ item }}">module-beeagent-rop/{{ item }}</a></li>
-    {% endfor %}
-
-    {% if tsv_exists %}
-    <li><a href="/runs/{{ run_id }}/tsv">rop_review_table.tsv</a></li>
-    {% endif %}
-  </ul>
+<div class="card shell-panel mb-4">
+  <div class="card-body">
+    <h3 class="card-title">Artifacts</h3>
+    <ul class="mb-0">
+      {% for item in available_artifacts %}
+      <li><a href="{{ item.url }}">{{ item.name }}</a></li>
+      {% endfor %} {% for item in module_artifacts %}
+      <li><a href="{{ item.url }}">module-beeagent-rop/{{ item.name }}</a></li>
+      {% endfor %} {% if tsv_exists %}
+      <li><a href="/runs/{{ run_id }}/tsv">rop_review_table.tsv</a></li>
+      {% endif %}
+    </ul>
+  </div>
 </div>
-{% endif %}
-
-<div class="card"><a href="/runs/{{ run_id }}/rop">Open ROP dashboard</a></div>
-{% endblock %}
+{% endif %} {% endblock %}

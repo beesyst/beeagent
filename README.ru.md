@@ -7,7 +7,7 @@
 - **core** — runtime, state, logs, artifacts, config, module loading;
 - **modules** — доменная бизнес-логика (`beeagent-rop`, в будущем `beescan`, `merch`);
 - **capabilities** — bounded integration/execution layer (MCP / n8n / внешние systems);
-- **UI / transport** — Telegram и read-only Web Shell сейчас, позже Bitrix / другие интерфейсы.
+- **UI / transport** — Telegram и read-only Web Console сейчас, позже Bitrix / другие интерфейсы.
 
 Текущий demo baseline уже существует, но теперь основной вектор развития — **module platform + first real client delivery**.
 
@@ -35,9 +35,13 @@
 - исполнять workflow через LangGraph;
 - сохранять run artifacts в `storage/`;
 - вести logs в `logs/app.log`;
-- запускать read-only Operator Web Shell через `./start.sh web`;
+- запускать read-only Operator Web Console через `./start.sh web`;
+- использовать FastAPI backend для HTML и `/api/*`;
+- использовать Jinja2 server-side templates;
+- использовать vendored Tabler static assets без CDN/npm runtime;
 - показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
-- отдавать whitelisted artifacts / TSV через web UI без web-triggered execution;
+- отдавать read-only JSON API поверх existing artifacts;
+- сохранять whitelist-based artifact access и sanitization;
 - поддерживать approval / reject в demo-потоке;
 - хранить step timings / basic observability;
 - держать несколько demo-agents (`oos`, `promo`, `quiz`);
@@ -104,17 +108,20 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `body_short`, `attachments`, `bot_priority`, `bot_reasoning`;
 - Bitrix/duplicate placeholder columns для будущей сверки;
 - sanitized/bounded TSV export без raw `.eml` и attachment content;
-- read-only Operator Web Shell через `./start.sh web`;
-- routes `/`, `/runs`, `/runs/<run_id>`, `/runs/<run_id>/rop`, `/modules`;
+- read-only Operator Web Console через `./start.sh web`;
+- FastAPI backend для HTML routes и read-only `/api/*`;
+- Jinja2 server-side templates;
+- vendored Tabler static assets без CDN/npm runtime;
+- HTML routes `/`, `/runs`, `/runs/<run_id>`, `/runs/<run_id>/rop`, `/modules`;
+- JSON API routes `/api/runs`, `/api/runs/<run_id>`, `/api/rop/runs/<run_id>/dashboard`, `/api/modules`;
 - ROP dashboard с метриками, фильтрами и таблицей писем;
-- Jinja2 server-side templates и static CSS;
 - whitelisted artifact access с sanitization;
-- защиту от path traversal и нежелательной выдачи `.eml` / `message/rfc822`.
+- protection from path traversal and raw `.eml` / `message/rfc822` exposure.
 
 Текущий фокус:
 
 1. использовать `mailbox_readonly` как controlled read-only mailbox smoke path для `hotline`;
-2. запускать ROP MVP pipeline через CLI, а результат смотреть через Operator Web Shell;
+2. запускать ROP MVP pipeline через CLI, а результат смотреть через Operator Web Console;
 3. строить ROP summary только после per-event `lead_classification`;
 4. использовать dashboard/TSV для human review и фиксации ошибок классификации;
 5. не превращать mailbox smoke в production listener/stream без отдельной итерации;
@@ -125,7 +132,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 Сейчас основной runtime mode:
 
 - **telegram** — Telegram bot / transport layer.
-- **web** — read-only operator web shell поверх existing artifacts.
+- **web** — read-only operator web console поверх existing artifacts.
 
 `run.mode` отвечает за то, какой transport/runtime запускается при старте приложения.  
 Он не выбирает доменный модуль и не должен превращаться в список клиентских сценариев.
@@ -155,15 +162,17 @@ run:
 ./start.sh rop export-review --run-id ID [--format tsv]
 ```
 
-### Operator Web Shell v0
+### Operator Web Console v0
 
-Read-only web shell запускается отдельной командой:
+Read-only web console запускается отдельной командой:
 
 ```bash
 ./start.sh web
 ```
 
-Доступные маршруты:
+Web Console построен на FastAPI + Jinja2 + vendored Tabler.
+
+Доступные HTML маршруты:
 
 - `/`
 - `/runs`
@@ -171,15 +180,30 @@ Read-only web shell запускается отдельной командой:
 - `/runs/<run_id>/rop`
 - `/modules`
 
-Web shell только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
+JSON API маршруты:
+
+- `/api/runs`
+- `/api/runs/<run_id>`
+- `/api/rop/runs/<run_id>/dashboard`
+- `/api/modules`
+
+Supporting artifact маршруты:
+
+- `/runs/<run_id>/tsv`
+- `/runs/<run_id>/artifact/<artifact_name>`
+- `/runs/<run_id>/module-artifact/<artifact_name>`
+
+Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
+Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 
 В scope v0 не входят:
 
 - login/auth;
 - web-triggered `rop run`;
+- POST/write actions;
 - mailbox/CRM actions;
 - attachment content parsing;
-- browser auto-open по умолчанию.
+- production deployment hardening.
 
 ### ROP CLI (v1, Iteration 20)
 
@@ -360,8 +384,10 @@ AI используется как assistive layer, а не как неогра�
 - **PyYAML** — конфиг
 - **python-telegram-bot** — Telegram transport
 - **LangGraph** — orchestration/workflow baseline
-- **Jinja2** — server-side templates для Operator Web Shell
-- **stdlib `http.server`** — минимальный read-only web runtime без отдельного frontend service
+- **FastAPI** — canonical web backend для HTML и `/api/*`
+- **Uvicorn** — ASGI runtime для Web Console
+- **Jinja2** — server-side templates для Operator Web Console
+- **vendored Tabler assets** — локальный UI kit без CDN и npm runtime в `start.sh`
 - **file-based artifacts** — `storage/`
 - **единый лог** — `logs/app.log`
 
@@ -391,7 +417,7 @@ beeagent/
 │       ├── adapters/
 │       ├── domain/
 │       ├── mock/
-│       └── ui/
+│       └── web/
 ├── storage/
 ├── tests/
 ├── pyproject.toml
@@ -683,33 +709,33 @@ rop:
 
 `rop_review_table.tsv` содержит 22 tab-separated колонки для быстрой human review:
 
-| Column               | Source            | Description                                                                         |
-| -------------------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `event_id`           | normalized_events | Уникальный ID события                                                               |
-| `source_id`          | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                 |
-| `source_role`        | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)  |
-| `client_id`          | intake_metadata   | Клиент/тенант, к которому привязан источник                                          |
-| `source_display_name`| intake_metadata   | Человекочитаемое имя источника для UI/оператора                                      |
-| `sender`             | normalized_events | Email отправителя письма                                                            |
-| `subject`            | normalized_events | Тема письма                                                                         |
-| `body_short`         | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |
-| `attachments`        | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" ) |
-| `bot_case_type`      | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)   |
-| `bot_reason_code`    | classified_events | Код причины решения бота                                                            |
-| `bot_priority`       | classified_events | Приоритет (high, medium, low)                                                       |
-| `bot_confidence`     | classified_events | Confidence score (0.0 – 1.0)                                                        |
-| `bot_is_fallback`    | classified_events | Fallback решение (true/false)                                                       |
-| `bot_reasoning`      | classified_events | Объяснение решения бота (если доступно)                                             |
-| `human_case_type`    | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                               |
-| `should_rop_see`     | rop_review        | Человек указал, что ROP должен это видеть (yes/no/maybe)                            |
-| `bitrix_status`      | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                           |
-| `notes`              | rop_review        | Заметки оператора                                                                   |
-| `bitrix_lead_id`     | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                       |
-| `bitrix_deal_id`     | rop_review        | Bitrix deal ID (зарезервировано для будущего)                                       |
-| `bitrix_responsible` | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                               |
-| `is_duplicate`       | rop_review        | Это дубликат (true/false)                                                           |
-| `duplicate_of`       | rop_review        | ID оригинального события (если дубликат)                                            |
-| `correct_action`     | rop_review        | Правильное действие (для корректировки обучения)                                    |
+| Column                | Source            | Description                                                                         |
+| --------------------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `event_id`            | normalized_events | Уникальный ID события                                                               |
+| `source_id`           | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                 |
+| `source_role`         | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)  |
+| `client_id`           | intake_metadata   | Клиент/тенант, к которому привязан источник                                         |
+| `source_display_name` | intake_metadata   | Человекочитаемое имя источника для UI/оператора                                     |
+| `sender`              | normalized_events | Email отправителя письма                                                            |
+| `subject`             | normalized_events | Тема письма                                                                         |
+| `body_short`          | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |
+| `attachments`         | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" ) |
+| `bot_case_type`       | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)   |
+| `bot_reason_code`     | classified_events | Код причины решения бота                                                            |
+| `bot_priority`        | classified_events | Приоритет (high, medium, low)                                                       |
+| `bot_confidence`      | classified_events | Confidence score (0.0 – 1.0)                                                        |
+| `bot_is_fallback`     | classified_events | Fallback решение (true/false)                                                       |
+| `bot_reasoning`       | classified_events | Объяснение решения бота (если доступно)                                             |
+| `human_case_type`     | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                               |
+| `should_rop_see`      | rop_review        | Человек указал, что ROP должен это видеть (yes/no/maybe)                            |
+| `bitrix_status`       | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                           |
+| `notes`               | rop_review        | Заметки оператора                                                                   |
+| `bitrix_lead_id`      | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                       |
+| `bitrix_deal_id`      | rop_review        | Bitrix deal ID (зарезервировано для будущего)                                       |
+| `bitrix_responsible`  | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                               |
+| `is_duplicate`        | rop_review        | Это дубликат (true/false)                                                           |
+| `duplicate_of`        | rop_review        | ID оригинального события (если дубликат)                                            |
+| `correct_action`      | rop_review        | Правильное действие (для корректировки обучения)                                    |
 
 Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
 
@@ -735,6 +761,8 @@ rop:
 - `docs/SECURITY.md` — secure development rules
 - `docs/DEV_GUIDE.md` — запуск, проверки, dev flow
 - `docs/SPEC.md` — текущая прикладная спецификация
+- `docs/WEB_UI.md` — implemented Web Console contract
+- `docs/product/ui_roadmap.md` — UI roadmap / Web Console direction
 
 ## Важно про безопасность
 
@@ -766,7 +794,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP live batch classification handoff** — DONE;
 - **ROP CLI and review export** — DONE;
 - **Enriched ROP review TSV** — DONE;
-- **Operator Web Shell v0 with ROP dashboard** — DONE.
+- **Operator Web Console v0 with ROP dashboard** — DONE;
+- **FastAPI Web Console foundation** — DONE.
 
 Первый реальный модуль:
 
@@ -784,7 +813,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - production Bitrix/email/attachment connectors пока не входят в scope;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
 - CRM write-back пока не входит в scope;
-- `./start.sh web` запускает read-only Operator Web Shell;
-- web shell показывает runs, run overview, module diagnostics и ROP dashboard;
+- `./start.sh web` запускает read-only Operator Web Console;
+- web console показывает runs, run overview, module diagnostics и ROP dashboard;
 - ROP dashboard показывает source/classification metrics, distributions, filters и таблицу писем;
-- web shell читает existing artifacts и не запускает mailbox/CRM/module actions.
+- web console отдаёт read-only `/api/*` поверх existing artifacts;
+- web console использует FastAPI + Jinja2 + vendored Tabler;
+- web console читает existing artifacts и не запускает mailbox/CRM/module/capability actions.

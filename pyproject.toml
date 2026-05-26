@@ -11,6 +11,8 @@ dependencies = [
     "langgraph==1.1.8",
     "beeagent-rop",
     "jinja2>=3.1.6",
+    "fastapi>=0.136.3",
+    "uvicorn>=0.48.0",
 ]
 
 [dependency-groups]
@@ -32,6 +34,9 @@ where = ["src"]
 "beeagent_module.web" = [
     "templates/*.html",
     "static/css/*.css",
+    "static/vendor/tabler/*.css",
+    "static/vendor/tabler/*.js",
+    "static/vendor/tabler/LICENSE",
 ]
 
 [tool.pytest.ini_options]

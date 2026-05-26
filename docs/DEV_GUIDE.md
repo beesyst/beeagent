@@ -83,9 +83,9 @@ bash start.sh
 uv run python3 config/start.py
 ```
 
-### Operator Web Shell v0
+### Operator Web Console v0
 
-Для запуска read-only operator web shell используй:
+Для запуска read-only operator web console используй:
 
 ```bash
 ./start.sh web
@@ -93,7 +93,7 @@ uv run python3 config/start.py
 uv run python3 config/start.py web
 ```
 
-Маршруты v0:
+HTML маршруты v0:
 
 - `/`
 - `/runs`
@@ -101,7 +101,15 @@ uv run python3 config/start.py web
 - `/runs/<run_id>/rop`
 - `/modules`
 
-Web shell читает только existing artifacts из `storage/` и не выполняет runtime actions.
+JSON API маршруты v0:
+
+- `/api/runs`
+- `/api/runs/{run_id}`
+- `/api/rop/runs/{run_id}/dashboard`
+- `/api/modules`
+
+Web console читает только existing artifacts из `storage/` и не выполняет runtime actions.
+Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 `./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
 
 ### ROP operator flow v0
