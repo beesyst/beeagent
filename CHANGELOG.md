@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.27.0...beeagent-v0.28.0) (2026-05-26)
+
+
+### Features
+
+* **ui:** add FastAPI Tabler Web Console foundation ([#84](https://github.com/beesyst/beeagent/issues/84)) ([66678ff](https://github.com/beesyst/beeagent/commit/66678ffc87c98595daafd22a73717fdd1606179b))
+
 ## [0.27.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.26.0...beeagent-v0.27.0) (2026-05-26)
 
 
