@@ -1,10 +1,76 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>BeeAgent Operator Web Shell v0</h1>
-<div class="card">
-  <p>Read-only dashboard over existing runtime artifacts.</p>
-  <p>Total runs: {{ runs_count }}</p>
-  <p><a href="/runs">Open runs</a></p>
+<div class="row g-4 align-items-stretch mb-4">
+  <div class="col-lg-8">
+    <div class="card shell-hero h-100">
+      <div class="card-body p-4 p-lg-5">
+        <span class="badge bg-dark-lt text-dark mb-3">UI-1 foundation</span>
+        <h1 class="display-6 mb-3">BeeAgent read-only Web Console over existing artifacts</h1>
+        <p class="text-secondary mb-4">
+          FastAPI + Jinja2 operator surface. HTML and JSON API read only from storage and do not trigger runtime, mailbox, CRM or module execution.
+        </p>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-dark" href="/runs">Open runs</a>
+          <a class="btn btn-outline-dark" href="/api/runs">Open JSON API</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shell-panel h-100">
+      <div class="card-body p-4">
+        <div class="text-uppercase text-secondary small mb-2">Current inventory</div>
+        <div class="shell-stat-value">{{ runs_count }}</div>
+        <div class="text-secondary">runs available in storage</div>
+        <div class="mt-4 text-secondary small">
+          Source of truth: <strong>config/settings.yml</strong> for bind config and <strong>storage/</strong> artifacts for read-model data.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-md-4">
+    <div class="card shell-panel h-100">
+      <div class="card-body">
+        <h3 class="card-title">HTML routes</h3>
+        <ul class="list-unstyled mb-0 text-secondary">
+          <li>/</li>
+          <li>/runs</li>
+          <li>/runs/{run_id}</li>
+          <li>/runs/{run_id}/rop</li>
+          <li>/modules</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shell-panel h-100">
+      <div class="card-body">
+        <h3 class="card-title">JSON API</h3>
+        <ul class="list-unstyled mb-0 text-secondary">
+          <li>/api/runs</li>
+          <li>/api/runs/{run_id}</li>
+          <li>/api/rop/runs/{run_id}/dashboard</li>
+          <li>/api/modules</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shell-panel h-100">
+      <div class="card-body">
+        <h3 class="card-title">Guardrails</h3>
+        <ul class="list-unstyled mb-0 text-secondary">
+          <li>No GET mutation</li>
+          <li>No raw .eml rendering</li>
+          <li>No attachment content rendering</li>
+          <li>Path traversal blocked</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}

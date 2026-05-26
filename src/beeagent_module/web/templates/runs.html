@@ -1,27 +1,37 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Runs</h1>
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h1 class="page-title mb-1">Runs</h1>
+    <div class="text-secondary">Storage-backed run index sorted by latest activity.</div>
+  </div>
+  <a class="btn btn-outline-dark" href="/api/runs">Open JSON</a>
+</div>
 {% if not runs %}
-<div class="card"><p class="muted">No runs found.</p></div>
+<div class="card shell-panel"><div class="card-body"><p class="text-secondary mb-0">No runs found.</p></div></div>
 {% else %}
-<table>
-  <thead>
-    <tr>
-      <th>run_id</th>
-      <th>overview</th>
-      <th>rop</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for run_id in runs %}
-    <tr>
-      <td>{{ run_id }}</td>
-      <td><a href="/runs/{{ run_id }}">overview</a></td>
-      <td><a href="/runs/{{ run_id }}/rop">rop dashboard</a></td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card shell-panel">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>run_id</th>
+          <th>overview</th>
+          <th>rop</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run_id in runs %}
+        <tr>
+          <td><strong>{{ run_id }}</strong></td>
+          <td><a href="/runs/{{ run_id }}">overview</a></td>
+          <td><a href="/runs/{{ run_id }}/rop">rop dashboard</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endif %}
 {% endblock %}

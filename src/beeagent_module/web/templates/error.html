@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>{{ heading }}</h1>
-<div class="card muted">{{ message }}</div>
+<div class="row justify-content-center">
+	<div class="col-lg-8">
+		<div class="card shell-panel shell-panel-accent">
+			<div class="card-body p-4">
+				<span class="badge bg-azure-lt text-azure mb-3">Read-only route</span>
+				<h1 class="page-title mb-2">{{ heading }}</h1>
+				<p class="text-secondary mb-0">{{ message }}</p>
+			</div>
+		</div>
+	</div>
+</div>
 {% endblock %}
