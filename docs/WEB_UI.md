@@ -101,13 +101,29 @@ Supporting API schema route:
     "summary": "batch completed"
   },
   "source_diagnostics": {
-    "source_id": "hotline_mailbox",
-    "source_type": "mailbox_readonly",
-    "status": "ok"
+    "selection_mode": "all_enabled",
+    "status": "ok",
+    "aggregate": {
+      "source_count": 2,
+      "loaded_source_count": 1,
+      "degraded_source_count": 1
+    }
   },
   "intake_metadata": {
     "loaded_item_count": 3,
-    "items_max": 20
+    "source_count": 2,
+    "sources": [
+      {
+        "source_id": "hotline_mailbox",
+        "loaded_count": 3,
+        "status": "ok"
+      },
+      {
+        "source_id": "sales_mailbox",
+        "loaded_count": 0,
+        "status": "degraded"
+      }
+    ]
   },
   "counts": {
     "normalized_count": 3,
@@ -147,6 +163,12 @@ Allowed module artifacts:
 - `rop_summary_result.json`
 
 UI не отдаёт произвольные файлы из `storage/`.
+
+Для multi-source run допускается aggregate контракт в `source_diagnostics.json` и `intake_metadata.json`:
+
+- `source_diagnostics.json` содержит `aggregate` и `sources[]`;
+- `intake_metadata.json` содержит aggregate counts и `sources[]`;
+- для single-source compatibility поля верхнего уровня могут оставаться доступными.
 
 ## Read-only and security rules
 

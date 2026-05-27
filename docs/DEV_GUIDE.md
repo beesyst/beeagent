@@ -206,6 +206,13 @@ print(result["operator_text"])
   --items-max 20 \
   --period 2026-05 \
   --run-id live-review-2026-05-15-welding-20
+
+# Запуск всех enabled источников за один run
+./start.sh rop run \
+  --all-sources \
+  --items-max 20 \
+  --period 2026-05 \
+  --run-id live-review-2026-05-15-multi
 ```
 
 Команда запустит configured ROP source, загрузит события, классифицирует их через `beeagent-rop`, сохранит все артефакты и создаст `rop_review_table.tsv`.
@@ -215,10 +222,11 @@ print(result["operator_text"])
 **`./start.sh rop run`** — запустить ROP batch с опциональными overrides и автоматически создать TSV для human review:
 
 ```bash
-./start.sh rop run [--source-id SOURCE_ID] [--items-max N] [--period YYYY-MM] [--run-id RUN_ID]
+./start.sh rop run [--source-id SOURCE_ID | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id RUN_ID]
 ```
 
 - `--source-id` — override configured source (если не указан, используется первый enabled источник)
+- `--all-sources` — запустить все enabled источники из `rop.sources`
 - `--items-max` — override `items_max` для выбранного источника
 - `--period` — override period для batch источника
 - `--run-id` — explicit run_id (если не указан, генерируется автоматически)
@@ -258,6 +266,7 @@ CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не ме
 - применяются только на один run;
 - если source disabled в config, CLI его не включит (fail-fast);
 - если source не найден, CLI вернёт ошибку.
+- `--source-id` и `--all-sources` взаимоисключающие.
 
 #### Backward compatibility
 
@@ -417,6 +426,17 @@ Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.wri
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` (если case пишет свой artifact)
 - `storage/runs/<run_id>/operator_summary.json`
+
+Для multi-source run (итерация 24):
+
+- `storage/runs/<run_id>/source_diagnostics.json` содержит `aggregate` и `sources[]` с per-source diagnostics;
+- `storage/runs/<run_id>/intake_metadata.json` содержит aggregate counts и `sources[]` rollup;
+- `storage/runs/<run_id>/normalized_events.json` содержит source metadata в каждом событии:
+  - `source_id`
+  - `source_type`
+  - `source_role`
+  - `source_display_name`
+  - `client_id`
 
 Пример `intake_metadata.json`:
 

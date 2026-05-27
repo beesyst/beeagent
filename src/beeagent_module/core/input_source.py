@@ -50,6 +50,36 @@ def find_active_rop_source(input_sources: list[dict]) -> dict:
     return enabled[0]
 
 
+# Выбор источников для запуска
+def select_rop_sources(
+    input_sources: list[dict],
+    source_id: str | None = None,
+    all_sources: bool = False,
+) -> tuple[list[dict], str]:
+    if source_id and all_sources:
+        raise RuntimeError("--source-id and --all-sources cannot be used together")
+
+    if source_id:
+        for source in input_sources:
+            if source.get("source_id") != source_id:
+                continue
+            if not source.get("enabled", False):
+                raise RuntimeError(f"rop.sources: source '{source_id}' is disabled")
+            return [source], "single_explicit"
+        raise RuntimeError(f"rop.sources: source '{source_id}' not found")
+
+    if all_sources:
+        enabled = [source for source in input_sources if source.get("enabled", False)]
+        if not enabled:
+            raise RuntimeError(
+                "rop.sources: no enabled source found; "
+                "--all-sources requires at least one enabled source"
+            )
+        return enabled, "all_enabled"
+
+    return [find_active_rop_source(input_sources)], "single_active"
+
+
 # Загрузка ROP source: поиск активных источников, загрузка и нормализация события, вернуть (events, metadata, diagnostics)
 def load_rop_source(
     source: dict,
@@ -394,9 +424,15 @@ def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
         elif isinstance(payload, bytes):
             size = len(payload)
 
+        filename = part.get_filename() or ""
+        content_type = part.get_content_type()
+
+        if _is_blocked_email_attachment(filename=filename, content_type=content_type):
+            continue
+
         item: dict[str, Any] = {
-            "filename": part.get_filename() or "",
-            "content_type": part.get_content_type(),
+            "filename": filename,
+            "content_type": content_type,
             "size": size,
         }
         attachments.append(item)
@@ -458,13 +494,23 @@ def _clean_header_value(value: Any) -> str:
     return _sanitize_text(str(value))
 
 
-# Сжатие и очистка текста: заменить последовательности пробельных символов на один пробел, обрезать по краям, вернуть результат
+# Сжатие и очистка текста: замена последовательности пробельных символов на один пробел, обрезать по краям, вернуть результат
 def _sanitize_text(value: str) -> str:
     compact = re.sub(r"\s+", " ", value).strip()
     return compact
 
 
-# Сбор диагностической информации по источнику: на входе конфигурация источника, статус загрузки, причина деградации (если есть), счётчики обработанных событий, время загрузки; вернуть словарь с диагностикой для логов и артефактов
+# Чек вложения потенциально опасных email-файлом: если filename заканчивается на .eml или content_type равно message/rfc822, вернуть True
+def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
+    normalized_filename = filename.strip().lower()
+    normalized_content_type = content_type.strip().lower()
+    return (
+        normalized_filename.endswith(".eml")
+        or normalized_content_type == "message/rfc822"
+    )
+
+
+# Сбор диагностической информации по источнику
 def _make_source_diagnostics(
     source: dict,
     status: str,
@@ -637,7 +683,7 @@ def _normalize_batch_items(
             )
             skipped += 1
             continue
-        valid.append(item)
+        valid.append(_sanitize_batch_item(item))
 
     if skipped:
         logger.warning(
@@ -657,3 +703,42 @@ def _normalize_batch_items(
         )
 
     return truncated
+
+
+# Очистка batch-элемента от потенциально опасных полей: удалить вложенные поля с сырым содержимым, отфильтровать опасные вложения
+def _sanitize_batch_item(item: dict[str, Any]) -> dict[str, Any]:
+    blocked_top_level_keys = {
+        "raw_eml",
+        "raw_message",
+        "attachment_content",
+        "content",
+        "content_bytes",
+        "payload_bytes",
+    }
+
+    sanitized = {
+        key: value for key, value in item.items() if key not in blocked_top_level_keys
+    }
+
+    attachments = sanitized.get("attachments")
+    if isinstance(attachments, list):
+        safe_attachments = []
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            if _is_blocked_email_attachment(
+                filename=str(attachment.get("filename") or ""),
+                content_type=str(attachment.get("content_type") or ""),
+            ):
+                continue
+
+            safe_attachment = {
+                key: value
+                for key, value in attachment.items()
+                if key not in blocked_top_level_keys
+            }
+            safe_attachments.append(safe_attachment)
+
+        sanitized["attachments"] = safe_attachments
+
+    return sanitized

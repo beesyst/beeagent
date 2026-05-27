@@ -2304,6 +2304,124 @@ runtime-risk
 security-sensitive
 ```
 
+### Итерация 24 — ROP multi-source ingestion artifacts v0
+
+**Статус:** DONE
+
+#### Goal
+
+Расширить BeeAgent ROP source flow с single active source до controlled multi-source ingestion: BeeAgent должен уметь за один run загрузить несколько configured `rop.sources`, сохранить per-source diagnostics, объединить normalized events, прогнать классификацию через `beeagent-rop`, построить `rop_summary` и записать source-aware artifacts без переноса ROP business logic в BeeAgent core.
+
+#### Почему это нужно
+
+После It18–23 BeeAgent умеет работать с одним активным source (`hotline_mailbox`) и уже имеет source profile contract:
+
+```text
+source_id
+source_type
+source_role
+client_id
+display_name
+authority
+items_max
+```
+
+Но реальный ROP поток будет состоять из нескольких источников: `hotline`, `sales`, `online`, `parsales`, региональные/сотруднические mailbox sources. Без multi-source artifacts следующие UI/attachment/Bitrix итерации будут завязаны на single-source модель и потребуют переделки.
+
+#### Scope
+
+**Включено:**
+
+- расширить ROP source flow для multi-source run;
+- поддержать загрузку нескольких enabled `rop.sources`;
+- сохранить explicit `--source-id` для single-source run;
+- добавить CLI режим выбора всех enabled sources, например:
+  - `./start.sh rop run --all-sources`;
+
+- сохранить backward compatibility:
+  - если `--source-id` указан — запускать один source;
+  - если `--all-sources` указан — запускать все enabled sources;
+  - без `--source-id` и без `--all-sources` сохранить текущую single active source семантику или явно documented behavior;
+
+- для каждого source писать diagnostics;
+- добавить source-aware artifacts:
+  - `source_diagnostics.json` как aggregate summary;
+  - optional `source_diagnostics/<source_id>.json` или equivalent per-source section;
+  - `intake_metadata.json` с per-source rollup;
+  - `normalized_events.json` с `source_id`, `source_role`, `client_id`, `source_display_name`;
+  - `classified_events.json` с preserved source metadata;
+  - `operator_summary.json` с aggregate and per-source metrics;
+  - `rop_review_table.tsv` с source columns;
+
+- graceful degraded behavior:
+  - один source упал, остальные обработались;
+  - source disabled;
+  - source not found;
+  - no enabled sources;
+  - malformed source diagnostics;
+  - partial classification failure;
+
+- tests на single-source compatibility и multi-source flow;
+- docs update.
+
+**Не включено:**
+
+- новые production mailbox credentials;
+- mailbox listener / polling daemon;
+- source-aware dedup logic;
+- Bitrix / 1C;
+- CRM write-back;
+- attachment extraction;
+- OCR;
+- изменение `beeagent-rop`;
+- ROP business rules в BeeAgent core;
+- web-triggered run;
+- auth/control panel.
+
+#### Deliverable
+
+BeeAgent может создать один ROP run из нескольких configured sources, сохранить source-aware artifacts и дать operator/web layer достаточно данных для UI-2.
+
+#### Реализовано
+
+- canonical path `run_rop_batch_case(...)` расширен до multi-source ingestion без parallel orchestrator path;
+- CLI поддерживает `./start.sh rop run --all-sources`;
+- `--source-id` сохраняет explicit single-source запуск;
+- без `--source-id` и без `--all-sources` сохранена legacy single-active semantics;
+- `source_diagnostics.json` содержит aggregate блок + `sources[]`;
+- `intake_metadata.json` содержит aggregate counts + per-source rollup в `sources[]`;
+- `normalized_events.json` сохраняет source metadata (`source_id`, `source_type`, `source_role`, `source_display_name`, `client_id`) для каждого события;
+- `classified_events.json` сохраняет source traceability fields;
+- one degraded source не блокирует общий run, если есть хотя бы один успешно загруженный source;
+- `rop_review_table.tsv` расширен source-aware колонками.
+
+#### Expected artifacts
+
+```text
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/module-beeagent-rop/module_result.json
+storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
+```
+
+If per-source diagnostics are implemented as separate files:
+
+```text
+storage/runs/<run_id>/sources/<source_id>/source_diagnostics.json
+```
+
+#### Change level
+
+```text
+runtime-risk
+```
+
+Escalate to `security-sensitive` only if the PR changes mailbox parsing/security-sensitive file/path handling or adds dependencies.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
