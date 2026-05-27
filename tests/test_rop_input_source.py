@@ -11,6 +11,7 @@ from beeagent_module.core.input_source import (
     load_json_batch,
     load_mailbox_readonly,
     load_rop_source,
+    select_rop_sources,
 )
 
 
@@ -56,6 +57,44 @@ def test_find_active_source_raises_when_multiple_enabled() -> None:
     ]
     with pytest.raises(RuntimeError, match="multiple enabled sources"):
         find_active_rop_source(sources)
+
+
+# Тест: чек выбора всех enabled источников при all_sources=True
+def test_select_rop_sources_all_enabled_returns_all_sources() -> None:
+    sources = [
+        {"source_id": "s1", "enabled": True},
+        {"source_id": "s2", "enabled": False},
+        {"source_id": "s3", "enabled": True},
+    ]
+
+    selected, mode = select_rop_sources(sources, all_sources=True)
+
+    assert mode == "all_enabled"
+    assert [item["source_id"] for item in selected] == ["s1", "s3"]
+
+
+# Тест: чек выбора единственного enabled источника при all_sources=False и source_id=None
+def test_select_rop_sources_explicit_source_id() -> None:
+    sources = [
+        {"source_id": "s1", "enabled": True},
+        {"source_id": "s2", "enabled": True},
+    ]
+
+    selected, mode = select_rop_sources(sources, source_id="s2")
+
+    assert mode == "single_explicit"
+    assert len(selected) == 1
+    assert selected[0]["source_id"] == "s2"
+
+
+# Тест: чек выбора единственного enabled источника при all_sources=False и source_id=None
+def test_select_rop_sources_explicit_disabled_raises() -> None:
+    sources = [
+        {"source_id": "s1", "enabled": False},
+    ]
+
+    with pytest.raises(RuntimeError, match="is disabled"):
+        select_rop_sources(sources, source_id="s1")
 
 
 # Тест: load_json_batch: проверка успешной загрузки, приоритета period из файла над config, ошибок при отсутствии файла, невалидном JSON, невалидной форме, применении max_items, фильтрации не-dict элементов

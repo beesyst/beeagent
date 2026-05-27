@@ -405,6 +405,36 @@ def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     ).exists()
 
 
+# Тест: degraded run при отсутствии enabled источника и проверка, что diagnostics содержит информацию об ошибке выбора источника
+def test_rop_batch_case_source_selection_error_writes_diagnostics(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {"sources": []}
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        run_id="run-rop-source-selection-error",
+        session_id="session-rop-source-selection-error",
+    )
+
+    assert result["status"] == "degraded"
+
+    diagnostics_path = (
+        tmp_path / "runs" / "run-rop-source-selection-error" / "source_diagnostics.json"
+    )
+    assert diagnostics_path.exists()
+
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    assert diagnostics["status"] == "degraded"
+    assert diagnostics["reason"] == "source_selection_error"
+    assert isinstance(diagnostics.get("aggregate"), dict)
+    assert diagnostics.get("sources") == []
+
+
 # Тест: degraded run при отсутствии batch файла
 def test_rop_batch_case_degraded_missing_batch_file(tmp_path: Path) -> None:
     settings = _make_batch_settings("storage/mock/nonexistent.json")
@@ -677,6 +707,270 @@ def test_rop_batch_case_period_override_updates_artifacts(tmp_path: Path) -> Non
 
     assert intake["period"] == "2026-06"
     assert operator["source"]["period"] == "2026-06"
+
+
+# Тест: запуск ROP batch case с несколькими источниками
+def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
+    good_batch_path = _write_sample_batch(tmp_path)
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "sources": [
+            {
+                "source_id": "good-source",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Good Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 50,
+                "batch": {
+                    "path": str(good_batch_path.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            },
+            {
+                "source_id": "broken-source",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Broken Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 50,
+                "batch": {
+                    "path": "storage/mock/missing.json",
+                    "period": "2026-05",
+                },
+            },
+        ]
+    }
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-rop-batch-all-sources",
+        session_id="session-rop-batch-all-sources",
+        all_sources=True,
+    )
+
+    assert result["status"] == "ok"
+
+    run_dir = tmp_path / "runs" / "run-rop-batch-all-sources"
+    source_diagnostics = json.loads(
+        (run_dir / "source_diagnostics.json").read_text(encoding="utf-8")
+    )
+    intake = json.loads((run_dir / "intake_metadata.json").read_text(encoding="utf-8"))
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+
+    assert source_diagnostics["selection_mode"] == "all_enabled"
+    assert source_diagnostics["status"] == "ok"
+    assert source_diagnostics["reason"] == "partial_degradation"
+    assert source_diagnostics["aggregate"]["source_count"] == 2
+    assert source_diagnostics["aggregate"]["loaded_source_count"] == 1
+    assert source_diagnostics["aggregate"]["degraded_source_count"] == 1
+    assert len(source_diagnostics["sources"]) == 2
+
+    assert intake["selection_mode"] == "all_enabled"
+    assert intake["source_count"] == 2
+    assert intake["loaded_source_count"] == 1
+    assert intake["degraded_source_count"] == 1
+    assert len(intake["sources"]) == 2
+
+    assert len(normalized) == 2
+    assert all(item.get("source_id") == "good-source" for item in normalized)
+    assert all(item.get("source_type") == "json_batch" for item in normalized)
+    assert all(item.get("source_role") == "batch_sample" for item in normalized)
+    assert all(item.get("source_display_name") == "Good Source" for item in normalized)
+    assert all(item.get("client_id") == "welding" for item in normalized)
+
+
+# Тест: запуск ROP batch case с несколькими источниками и selection_mode=single_explicit
+def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) -> None:
+    primary_batch_path = _write_sample_batch(tmp_path)
+    secondary_batch_path = tmp_path / "batch_second.json"
+    secondary_batch_path.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "s2-e1",
+                        "sender": "second@example.com",
+                        "subject": "Second source",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "sources": [
+            {
+                "source_id": "first-source",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "First Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 50,
+                "batch": {
+                    "path": str(primary_batch_path.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            },
+            {
+                "source_id": "second-source",
+                "source_type": "json_batch",
+                "source_role": "sales_mailbox",
+                "client_id": "welding",
+                "display_name": "Second Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 50,
+                "batch": {
+                    "path": str(secondary_batch_path.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            },
+        ]
+    }
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-rop-batch-explicit-source",
+        session_id="session-rop-batch-explicit-source",
+        source_id="second-source",
+    )
+
+    assert result["status"] == "ok"
+
+    run_dir = tmp_path / "runs" / "run-rop-batch-explicit-source"
+    intake = json.loads((run_dir / "intake_metadata.json").read_text(encoding="utf-8"))
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+
+    assert intake["selection_mode"] == "single_explicit"
+    assert intake["source_id"] == "second-source"
+    assert len(normalized) == 1
+    assert normalized[0]["source_id"] == "second-source"
+    assert normalized[0]["source_role"] == "sales_mailbox"
+
+
+# Тест: проверка, что чувствительные поля из json_batch источника удаляются из normalized_events и source в operator_summary, а также из attachments, и что в diagnostics сохраняется информация о удаленных полях для отладки
+def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_sanitize.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "san-001",
+                "case_type": "new_lead",
+                "confidence": 0.91,
+                "raw_eml": "unsafe",
+                "raw_message": "unsafe",
+                "attachment_content": "unsafe",
+                "content_bytes": "unsafe",
+                "attachments": [
+                    {
+                        "filename": "original.eml",
+                        "content_type": "message/rfc822",
+                        "content": "unsafe",
+                    },
+                    {
+                        "filename": "by_content_type.bin",
+                        "content_type": "message/rfc822",
+                        "content": "unsafe",
+                    },
+                    {
+                        "filename": "brief.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 1234,
+                        "content": "unsafe",
+                    },
+                ],
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "sanitize-source",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Sanitize Source",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-sanitize-normalized",
+        session_id="session-batch-sanitize-normalized",
+    )
+
+    assert result["status"] == "ok"
+
+    normalized = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-batch-sanitize-normalized"
+            / "normalized_events.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert len(normalized) == 1
+    item = normalized[0]
+
+    assert "raw_eml" not in item
+    assert "raw_message" not in item
+    assert "attachment_content" not in item
+    assert "content_bytes" not in item
+
+    attachments = item.get("attachments", [])
+    assert len(attachments) == 1
+    assert attachments[0].get("filename") == "brief.pdf"
+    assert attachments[0].get("content_type") == "application/pdf"
+    assert "content" not in attachments[0]
 
 
 # Тест: успешный batch classification handoff - classified_events.json создается, rop_summary получает classified события

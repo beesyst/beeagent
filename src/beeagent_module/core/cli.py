@@ -29,6 +29,7 @@ def handle_rop_run(
     effective_settings = _apply_source_overrides(
         settings=settings,
         source_id=args.source_id,
+        all_sources=args.all_sources,
         items_max=args.items_max,
         logger=logger,
     )
@@ -49,6 +50,8 @@ def handle_rop_run(
             logger=logger,
             run_id=run_id,
             period_override=args.period,
+            source_id=args.source_id,
+            all_sources=args.all_sources,
         )
 
         operator_text = result.get("operator_text", "")
@@ -132,6 +135,7 @@ def handle_rop_export_review(
 def _apply_source_overrides(
     settings: dict,
     source_id: str | None,
+    all_sources: bool,
     items_max: int | None,
     logger: logging.Logger,
 ) -> dict:
@@ -142,6 +146,9 @@ def _apply_source_overrides(
     sources = effective.get("rop", {}).get("sources", [])
     if not sources:
         raise RopCliError("rop.sources is not configured")
+
+    if source_id and all_sources:
+        raise RopCliError("--source-id and --all-sources cannot be used together")
 
     if source_id:
         selected_source: dict[str, Any] | None = None
@@ -169,6 +176,22 @@ def _apply_source_overrides(
             "CLI override applied: source_id=%s items_max=%s",
             source_id,
             items_max,
+        )
+    elif all_sources:
+        enabled_sources = [source for source in sources if source.get("enabled", False)]
+        if not enabled_sources:
+            raise RopCliError(
+                "No enabled sources found in rop.sources for --all-sources"
+            )
+
+        for source in enabled_sources:
+            if items_max is not None:
+                source["items_max"] = items_max
+
+        logger.debug(
+            "CLI override applied: all enabled sources items_max=%s count=%d",
+            items_max,
+            len(enabled_sources),
         )
     else:
         for source in sources:
@@ -236,24 +259,37 @@ def _build_summary_text(summary_data: dict[str, Any]) -> str:
     module_status = summary_data.get("module_status", "?")
     summary = summary_data.get("summary", "")
     source = summary_data.get("source", {}) or {}
+    sources = summary_data.get("sources", []) or []
     classification = summary_data.get("classification", {}) or {}
     artifact_refs = summary_data.get("artifact_refs", [])
 
     source_block = ""
     if isinstance(source, dict) and source:
-        source_block = (
-            f"source_id: {source.get('source_id', '?')}\n"
-            f"source_type: {source.get('source_type', '?')}\n"
-            f"source_role: {source.get('source_role', '?')}\n"
-            f"source_display_name: {source.get('source_display_name', '?')}\n"
-            f"client_id: {source.get('client_id', '?')}\n"
-            f"mailbox_folder: {source.get('mailbox_folder', '?')}\n"
-            f"loaded_items: {source.get('loaded_item_count', '?')}\n"
-            f"fetched_count: {source.get('fetched_count', '?')}\n"
-            f"loaded_count: {source.get('loaded_count', '?')}\n"
-            f"malformed_count: {source.get('malformed_count', '?')}\n"
-            f"period: {source.get('period', '?')}\n"
-        )
+        if source.get("mode"):
+            source_block = (
+                f"source_mode: {source.get('mode', '?')}\n"
+                f"source_count: {source.get('source_count', '?')}\n"
+                f"loaded_sources: {source.get('loaded_source_count', '?')}\n"
+                f"degraded_sources: {source.get('degraded_source_count', '?')}\n"
+                f"fetched_count: {source.get('fetched_count', '?')}\n"
+                f"loaded_count: {source.get('loaded_count', '?')}\n"
+                f"malformed_count: {source.get('malformed_count', '?')}\n"
+                f"status_reason: {source.get('reason', '?')}\n"
+            )
+        else:
+            source_block = (
+                f"source_id: {source.get('source_id', '?')}\n"
+                f"source_type: {source.get('source_type', '?')}\n"
+                f"source_role: {source.get('source_role', '?')}\n"
+                f"source_display_name: {source.get('source_display_name', '?')}\n"
+                f"client_id: {source.get('client_id', '?')}\n"
+                f"mailbox_folder: {source.get('mailbox_folder', '?')}\n"
+                f"loaded_items: {source.get('loaded_item_count', '?')}\n"
+                f"fetched_count: {source.get('fetched_count', '?')}\n"
+                f"loaded_count: {source.get('loaded_count', '?')}\n"
+                f"malformed_count: {source.get('malformed_count', '?')}\n"
+                f"period: {source.get('period', '?')}\n"
+            )
 
     classification_block = ""
     if isinstance(classification, dict) and classification:
@@ -279,6 +315,22 @@ def _build_summary_text(summary_data: dict[str, Any]) -> str:
         text += f"{source_block}"
     if classification_block:
         text += f"{classification_block}"
+
+    if isinstance(sources, list) and sources:
+        source_lines = []
+        for item in sources:
+            if not isinstance(item, dict):
+                continue
+            source_lines.append(
+                "- "
+                f"{item.get('source_id', '?')} "
+                f"[{item.get('status', '?')}] "
+                f"loaded={item.get('loaded_count', '?')} "
+                f"fetched={item.get('fetched_count', '?')} "
+                f"reason={item.get('reason', '-')}"
+            )
+        if source_lines:
+            text += "sources:\n" + "\n".join(source_lines) + "\n"
 
     text += f"artifacts:\n{artifacts_text}"
 
@@ -313,6 +365,13 @@ def _build_body_short(normalized_evt: dict) -> str:
     return ""
 
 
+# Хелпер: чек вложения потенциально опасных email-файлом
+def _is_blocked_email_attachment(att: dict[str, Any]) -> bool:
+    filename = str(att.get("filename") or "").strip().lower()
+    content_type = str(att.get("content_type") or "").strip().lower()
+    return filename.endswith(".eml") or content_type == "message/rfc822"
+
+
 # Билд компактного текстового описания вложений для TSV, используя filename, content_type и size_bytes из normalized_events.attachments, формируя строки вида "filename (content_type, size_bytes)" и объединяя несколько вложений через "; "
 def _build_attachment_summary(attachments: Any) -> str:
     if not attachments or not isinstance(attachments, list):
@@ -321,6 +380,8 @@ def _build_attachment_summary(attachments: Any) -> str:
     summaries = []
     for att in attachments:
         if not isinstance(att, dict):
+            continue
+        if _is_blocked_email_attachment(att):
             continue
 
         filename = _safe_tsv_value(att.get("filename", ""))
@@ -356,6 +417,10 @@ def _tsv_columns() -> list[str]:
     return [
         "event_id",
         "source_id",
+        "source_type",
+        "source_role",
+        "source_display_name",
+        "client_id",
         "sender",
         "subject",
         "body_short",
@@ -405,6 +470,12 @@ def _build_review_tsv_rows(
         row = {
             "event_id": _safe_tsv_value(event_id),
             "source_id": _safe_tsv_value(classified_evt.get("source_id", "")),
+            "source_type": _safe_tsv_value(classified_evt.get("source_type", "")),
+            "source_role": _safe_tsv_value(classified_evt.get("source_role", "")),
+            "source_display_name": _safe_tsv_value(
+                classified_evt.get("source_display_name", "")
+            ),
+            "client_id": _safe_tsv_value(classified_evt.get("client_id", "")),
             "sender": _safe_tsv_value(normalized_evt.get("sender", "")),
             "subject": _safe_tsv_value(normalized_evt.get("subject", "")),
             "body_short": body_short,
@@ -452,6 +523,11 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Override source_id from rop.sources (optional)",
+    )
+    run_parser.add_argument(
+        "--all-sources",
+        action="store_true",
+        help="Run all enabled sources from rop.sources",
     )
     run_parser.add_argument(
         "--items-max",

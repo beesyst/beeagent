@@ -56,6 +56,7 @@ class TestRopCliArgumentParser:
         )
         assert args.rop_command == "run"
         assert args.source_id == "rop_batch_sample"
+        assert args.all_sources is False
         assert args.items_max == 10
         assert args.period == "2026-05"
         assert args.run_id == "test-run-123"
@@ -65,9 +66,17 @@ class TestRopCliArgumentParser:
         args = parser.parse_args(["run"])
         assert args.rop_command == "run"
         assert args.source_id is None
+        assert args.all_sources is False
         assert args.items_max is None
         assert args.period is None
         assert args.run_id is None
+
+    def test_rop_run_parser_accepts_all_sources_flag(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["run", "--all-sources"])
+        assert args.rop_command == "run"
+        assert args.source_id is None
+        assert args.all_sources is True
 
     def test_rop_summary_parser_requires_run_id(self) -> None:
         parser = create_rop_parser()
@@ -101,6 +110,7 @@ class TestSourceOverrides:
         effective = _apply_source_overrides(
             settings=settings,
             source_id="rop_batch_sample",
+            all_sources=False,
             items_max=5,
             logger=_null_logger(),
         )
@@ -125,6 +135,7 @@ class TestSourceOverrides:
             _apply_source_overrides(
                 settings=settings,
                 source_id="nonexistent_source",
+                all_sources=False,
                 items_max=None,
                 logger=_null_logger(),
             )
@@ -137,10 +148,26 @@ class TestSourceOverrides:
             _apply_source_overrides(
                 settings=settings,
                 source_id=None,
+                all_sources=False,
                 items_max=None,
                 logger=_null_logger(),
             )
         assert "rop.sources is not configured" in str(exc_info.value)
+
+    def test_apply_source_overrides_all_sources_requires_enabled(self) -> None:
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        for source in settings["rop"]["sources"]:
+            source["enabled"] = False
+
+        with pytest.raises(RopCliError) as exc_info:
+            _apply_source_overrides(
+                settings=settings,
+                source_id=None,
+                all_sources=True,
+                items_max=3,
+                logger=_null_logger(),
+            )
+        assert "No enabled sources found" in str(exc_info.value)
 
 
 # Тесты для ROP CLI команд: проверяют парсинг аргументов, применение переопределений источников, выполнение команд и обработку ошибок
@@ -172,6 +199,7 @@ class TestRopCliRun:
 
         args = argparse.Namespace(
             source_id="rop_batch_sample",
+            all_sources=False,
             items_max=2,
             period="2026-05",
             run_id="test-cli-run-batch",
@@ -226,6 +254,7 @@ class TestRopCliRun:
 
         args = argparse.Namespace(
             source_id="rop_batch_sample",
+            all_sources=False,
             items_max=1,
             period="2026-05",
             run_id="test-cli-run-review-tsv",
@@ -263,6 +292,98 @@ class TestRopCliRun:
         assert "Paste this TSV into Google Sheets for human review." in output
         assert tsv_path.as_posix() in output
 
+    def test_rop_run_all_sources_partial_degradation_keeps_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+
+        good_batch_path = tmp_path / "good_batch.json"
+        good_batch_path.write_text(
+            json.dumps(
+                {
+                    "period": "2026-05",
+                    "items": [
+                        {
+                            "event_id": "evt-good-001",
+                            "sender": "good@example.com",
+                            "subject": "Good source event",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings["rop"]["sources"] = [
+            {
+                "source_id": "good_source",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Good Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 10,
+                "batch": {
+                    "path": str(good_batch_path),
+                    "period": "2026-05",
+                },
+            },
+            {
+                "source_id": "broken_source",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Broken Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 10,
+                "batch": {
+                    "path": "storage/mock/missing.json",
+                    "period": "2026-05",
+                },
+            },
+        ]
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+
+        args = argparse.Namespace(
+            source_id=None,
+            all_sources=True,
+            items_max=5,
+            period="2026-05",
+            run_id="test-cli-run-all-sources",
+        )
+
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        run_dir = tmp_path / "runs" / "test-cli-run-all-sources"
+        source_diag = json.loads(
+            (run_dir / "source_diagnostics.json").read_text(encoding="utf-8")
+        )
+        intake_meta = json.loads(
+            (run_dir / "intake_metadata.json").read_text(encoding="utf-8")
+        )
+
+        assert source_diag["selection_mode"] == "all_enabled"
+        assert source_diag["aggregate"]["source_count"] == 2
+        assert source_diag["aggregate"]["loaded_source_count"] == 1
+        assert source_diag["aggregate"]["degraded_source_count"] == 1
+        assert source_diag["reason"] == "partial_degradation"
+        assert len(source_diag["sources"]) == 2
+
+        assert intake_meta["selection_mode"] == "all_enabled"
+        assert intake_meta["source_count"] == 2
+        assert intake_meta["loaded_source_count"] == 1
+        assert intake_meta["degraded_source_count"] == 1
+
     def test_rop_run_missing_source_id_raises_error(self, tmp_path: Path) -> None:
         import argparse
 
@@ -270,6 +391,7 @@ class TestRopCliRun:
 
         args = argparse.Namespace(
             source_id="nonexistent_source",
+            all_sources=False,
             items_max=None,
             period=None,
             run_id="test-cli-run-missing",
@@ -427,6 +549,7 @@ class TestRopCliExportReview:
             _apply_source_overrides(
                 settings=settings,
                 source_id="rop_batch_sample",
+                all_sources=False,
                 items_max=5,
                 logger=_null_logger(),
             )
@@ -513,6 +636,7 @@ class TestRopCliExportReview:
 
         args = argparse.Namespace(
             source_id="rop_batch_sample",
+            all_sources=False,
             items_max=1,
             period="2026-05",
             run_id="test-period-override",
@@ -531,12 +655,16 @@ class TestRopCliExportReview:
 
 # Тест: чек колонки и порядок полей в TSV, а также правильное формирование body_short и attachments для различных входных данных
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_22_fields(self) -> None:
+    def test_tsv_columns_order_has_26_fields(self) -> None:
         columns = _tsv_columns()
-        assert len(columns) == 22
+        assert len(columns) == 26
         expected_order = [
             "event_id",
             "source_id",
+            "source_type",
+            "source_role",
+            "source_display_name",
+            "client_id",
             "sender",
             "subject",
             "body_short",

@@ -60,6 +60,10 @@
 - сохранять batch-level classification artifact `classified_events.json`;
 - передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
 - писать source-level diagnostics artifact `source_diagnostics.json`.
+- запускать ROP source flow через explicit `--source-id` или все enabled sources через `--all-sources`;
+- писать aggregate/per-source diagnostics для multi-source run;
+- сохранять source metadata в normalized/classified/operator/TSV artifacts;
+- показывать partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
 
 ## Текущий фокус проекта
 
@@ -102,7 +106,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - in-memory source overrides через CLI args: `--source-id`, `--items-max`, `--period`, `--run-id`;
 - `rop run` запускает ROP batch pipeline без Telegram и автоматически экспортирует TSV для human review;
 - `rop summary` показывает readable summary для готового run;
-- `rop export-review` остаётся ручным повторным экспортом TSV для уже существующего run без raw тел писем;
+- `rop export-review` остаётся ручным повторным экспортом TSV для уже существующего run без raw `.eml`, raw email bodies и attachment content;
 - backward compatibility: `./start.sh` и `./start.sh telegram` работают как раньше;
 - расширенный `rop_review_table.tsv` для human review;
 - `body_short`, `attachments`, `bot_priority`, `bot_reasoning`;
@@ -118,14 +122,22 @@ BeeAgent уже прошёл этап **module platform v0**:
 - whitelisted artifact access с sanitization;
 - protection from path traversal and raw `.eml` / `message/rfc822` exposure.
 
+Итерация 24 добавила:
+
+- explicit multi-source ingestion в BeeAgent core без изменений `beeagent-rop`;
+- `./start.sh rop run --all-sources` для запуска всех enabled sources;
+- `selection_mode` для фиксации default / explicit single-source / all-sources режима;
+- `aggregate` + `sources[]` в source/intake artifacts;
+- source traceability в `normalized_events.json`, `classified_events.json` и `rop_review_table.tsv`;
+- partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
+
 Текущий фокус:
 
-1. использовать `mailbox_readonly` как controlled read-only mailbox smoke path для `hotline`;
-2. запускать ROP MVP pipeline через CLI, а результат смотреть через Operator Web Console;
-3. строить ROP summary только после per-event `lead_classification`;
-4. использовать dashboard/TSV для human review и фиксации ошибок классификации;
-5. не превращать mailbox smoke в production listener/stream без отдельной итерации;
-6. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts/UI, `beeagent-rop` — за ROP business logic.
+1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;
+2. запускать ROP MVP pipeline через CLI (`--source-id` или `--all-sources`), а результат смотреть через Operator Web Console;
+3. использовать `source_diagnostics.json`, `intake_metadata.json`, dashboard/TSV для human review и фиксации ошибок классификации/source degradation;
+4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
+5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts/UI, `beeagent-rop` — за ROP business logic.
 
 ## Режимы работы и CLI
 
@@ -157,7 +169,7 @@ run:
 ./start.sh web
 
 # ROP CLI для batch pipeline
-./start.sh rop run [--source-id SOURCE] [--items-max N] [--period YYYY-MM] [--run-id ID]
+./start.sh rop run [--source-id SOURCE | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id ID]
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
 ```
@@ -205,7 +217,7 @@ Web console только читает existing artifacts из `storage/runs/<run
 - attachment content parsing;
 - production deployment hardening.
 
-### ROP CLI (v1, Iteration 20)
+### ROP CLI
 
 Для запуска ROP flow без Telegram можно использовать CLI:
 
@@ -220,6 +232,9 @@ Web console только читает existing artifacts из `storage/runs/<run
   --items-max 20 \
   --period 2026-05 \
   --run-id live-review-2026-05-15
+
+# Запуск всех enabled источников за один run
+./start.sh rop run --all-sources --items-max 20 --period 2026-05
 
 # Показать summary по готовому run.
 ./start.sh rop summary --run-id live-review-2026-05-15
@@ -251,12 +266,14 @@ rop:
 Параметры:
 
 - `--source-id` — выбрать источник данных из `rop.sources`
+- `--all-sources` — запустить все enabled источники из `rop.sources`
 - `--items-max` — override max items для источника
 - `--period` — override period для batch источника
 - `--run-id` — explicit run_id (если не указан, генерируется)
 - `--format` — формат export (пока только `tsv`)
 
 CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
+`--source-id` и `--all-sources` взаимоисключающие.
 
 ### ROP в Telegram
 
@@ -473,7 +490,7 @@ beeagent/
 `run_rop_batch_case(...)` выполняет batch pipeline:
 
 ```
-configured source
+configured source(s)
 → source_diagnostics.json
 → intake_metadata.json
 → normalized_events.json
@@ -483,6 +500,8 @@ configured source
 → operator_summary.json
 → rop_review_table.tsv, если flow запущен через ROP CLI
 ```
+
+Для multi-source run `source_diagnostics.json` и `intake_metadata.json` содержат aggregate block и `sources[]` с per-source rollup.
 
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
@@ -702,20 +721,29 @@ rop:
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
 
+Для multi-source run:
+
+- `source_diagnostics.json` содержит `selection_mode`, `aggregate` и `sources[]`;
+- `intake_metadata.json` содержит aggregate counts и `sources[]`;
+- `normalized_events.json` и `classified_events.json` сохраняют source traceability per event;
+- `operator_summary.json` содержит aggregate source summary и per-source rollup;
+- `rop_review_table.tsv` содержит source-aware columns.
+
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
 `rop_review_table.tsv` — BeeAgent-owned review artifact для ручной сверки с человеком / заказчиком. Он строится из `normalized_events.json` и `classified_events.json`, не содержит raw `.eml` и предназначен для загрузки в Google Sheets или аналогичную таблицу.
 
 **Структура `rop_review_table.tsv` (v1):**
 
-`rop_review_table.tsv` содержит 22 tab-separated колонки для быстрой human review:
+`rop_review_table.tsv` содержит 26 tab-separated колонок для быстрой human review:
 
 | Column                | Source            | Description                                                                         |
 | --------------------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `event_id`            | normalized_events | Уникальный ID события                                                               |
 | `source_id`           | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                 |
+| `source_type`         | intake_metadata   | Тип источника (`json_batch`, `mailbox_readonly`)                                    |
 | `source_role`         | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)  |
-| `client_id`           | intake_metadata   | Клиент/тенант, к которому привязан источник                                         |
 | `source_display_name` | intake_metadata   | Человекочитаемое имя источника для UI/оператора                                     |
+| `client_id`           | intake_metadata   | Клиент/тенант, к которому привязан источник                                         |
 | `sender`              | normalized_events | Email отправителя письма                                                            |
 | `subject`             | normalized_events | Тема письма                                                                         |
 | `body_short`          | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |
@@ -794,6 +822,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP live batch classification handoff** — DONE;
 - **ROP CLI and review export** — DONE;
 - **Enriched ROP review TSV** — DONE;
+- **ROP multi-source ingestion artifacts** — DONE;
 - **Operator Web Console v0 with ROP dashboard** — DONE;
 - **FastAPI Web Console foundation** — DONE.
 
@@ -807,8 +836,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent может вызвать `beeagent-rop` через `execute_module_case(...)`;
 - Telegram command `/run_rop` запускает первый ROP operator flow;
 - `run_rop_batch_case(...)` запускает ROP source flow через configurable `rop.sources`;
+- `run_rop_batch_case(...)` поддерживает explicit single-source и all enabled sources mode;
+- `./start.sh rop run --all-sources` запускает multi-source ingestion;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
+- multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;
+- partial degraded source виден в artifacts и не скрывается aggregate метриками;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
 - production Bitrix/email/attachment connectors пока не входят в scope;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
