@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.28.0...beeagent-v0.29.0) (2026-05-27)
+
+
+### Features
+
+* **rop:** add multi-source ingestion artifacts ([#87](https://github.com/beesyst/beeagent/issues/87)) ([526c2cf](https://github.com/beesyst/beeagent/commit/526c2cf440890cc8e26a58c23e3d449debee3c02))
+
 ## [0.28.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.27.0...beeagent-v0.28.0) (2026-05-26)
 
 
