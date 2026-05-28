@@ -726,11 +726,6 @@ def _sanitize_batch_item(item: dict[str, Any]) -> dict[str, Any]:
         for attachment in attachments:
             if not isinstance(attachment, dict):
                 continue
-            if _is_blocked_email_attachment(
-                filename=str(attachment.get("filename") or ""),
-                content_type=str(attachment.get("content_type") or ""),
-            ):
-                continue
 
             safe_attachment = {
                 key: value

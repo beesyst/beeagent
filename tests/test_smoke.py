@@ -86,6 +86,12 @@ modules:
   registry: []
 
 rop:
+  attachments:
+    enabled: true
+    chars_max: 500
+    size_max: 1048576
+    types:
+      - "text/plain"
   sources: []
 """.strip()
         + "\n",
@@ -191,6 +197,12 @@ modules:
   registry: []
 
 rop:
+  attachments:
+    enabled: true
+    chars_max: 500
+    size_max: 1048576
+    types:
+      - "text/plain"
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -298,6 +310,12 @@ modules:
   registry: []
 
 rop:
+  attachments:
+    enabled: true
+    chars_max: 500
+    size_max: 1048576
+    types:
+      - "text/plain"
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -417,6 +435,12 @@ modules:
   registry: []
 
 rop:
+  attachments:
+    enabled: true
+    chars_max: 500
+    size_max: 1048576
+    types:
+      - "text/plain"
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"

@@ -2422,6 +2422,316 @@ runtime-risk
 
 Escalate to `security-sensitive` only if the PR changes mailbox parsing/security-sensitive file/path handling or adds dependencies.
 
+### Итерация 25 — ROP attachment extraction artifacts v0
+
+**Статус:** DONE
+
+#### Goal
+
+Добавить controlled attachment extraction artifact layer для ROP source flow: BeeAgent должен безопасно обработать attachment metadata из входящих событий, создать bounded extraction/refusal evidence artifacts и передать в downstream flow только safe preview/status fields, не сохраняя raw attachment content и не добавляя ROP business logic в core.
+
+#### Почему это нужно
+
+После It24 BeeAgent умеет собирать multi-source ROP run и сохранять source-aware artifacts:
+
+```text
+source_diagnostics.json
+intake_metadata.json
+normalized_events.json
+classified_events.json
+operator_summary.json
+rop_review_table.tsv
+```
+
+Но вложения пока представлены только как metadata. Для следующего шага `beeagent-rop It15 — Attachment preview classification hardening` модулю нужен стабильный BeeAgent-owned artifact contract:
+
+```text
+attachment metadata
+extraction_status
+preview_available
+safe text preview if available
+refusal_reason / reason_code
+source artifact reference
+```
+
+Если пропустить It25, attachment parsing и refusal semantics начнут расползаться в `beeagent-rop` или UI, что нарушит границу:
+
+```text
+BeeAgent core = source/orchestration/artifacts/safety boundary
+beeagent-rop = domain classification/business logic
+UI = read-only presentation over artifacts
+```
+
+#### Scope
+
+**Включено:**
+
+- добавить BeeAgent-owned attachment extraction artifact layer внутри existing ROP batch/source flow;
+- сохранить canonical path:
+  - `run_rop_batch_case(...)`;
+
+- обработать attachment metadata из `normalized_events.json`;
+- добавить bounded extraction result contract для каждого attachment:
+  - `attachment_id` или deterministic local id;
+  - `event_id`;
+  - `source_id`;
+  - `filename`;
+  - `content_type`;
+  - `size_bytes`;
+  - `extraction_status`;
+  - `preview_available`;
+  - `text_preview`;
+  - `preview_chars`;
+  - `reason_code`;
+  - `refusal_reason`;
+  - `is_supported`;
+  - `is_refused`;
+  - `is_truncated`;
+
+- добавить safe extraction policy v0:
+  - поддерживать только явно безопасные/простые текстовые attachment inputs, если content уже доступен в controlled normalized test/source payload;
+  - для unsupported/binary/pdf/docx/xlsx/image formats в v0 возвращать explicit `unsupported` или `metadata_only`, если нет безопасного extractor;
+  - oversized attachments возвращают `refused`;
+  - `.eml` и `message/rfc822` остаются blocked;
+
+- добавить config-driven limits, если текущих лимитов недостаточно:
+  - `rop.attachments.enabled`;
+  - `rop.attachments.chars_max`;
+  - `rop.attachments.size_max`;
+  - `rop.attachments.types`.
+
+- новые обязательные config keys валидировать fail-fast в `src/beeagent_module/core/settings.py`;
+- создать новый artifact:
+  - `storage/runs/<run_id>/attachment_extraction.json`;
+
+- добавить attachment summary/refs в:
+  - `operator_summary.json`;
+  - `rop_review_table.tsv`, если это не ломает текущий TSV contract;
+
+- добавить safe attachment preview fields в normalized/classified downstream payload only as bounded metadata/preview, не raw content;
+- сохранить source traceability:
+  - `source_id`;
+  - `source_type`;
+  - `source_role`;
+  - `source_display_name`;
+  - `client_id`;
+
+- degraded behavior:
+  - unsupported attachment;
+  - oversized attachment;
+  - blocked `.eml`;
+  - missing attachment metadata;
+  - malformed attachment item;
+  - extraction exception;
+  - no attachments;
+
+- tests:
+  - text attachment preview success;
+  - unsupported PDF/DOCX/XLSX/image metadata-only/refusal;
+  - blocked `.eml` / `message/rfc822`;
+  - oversized refused;
+  - malformed attachment item skipped/degraded;
+  - multi-source source traceability preserved;
+  - no raw content in artifacts/logs/HTML/API;
+
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/WEB_UI.md`, если API/dashboard/read-model начинает ссылаться на новый artifact.
+
+**Не включено:**
+
+- OCR;
+- full PDF/DOCX/XLSX parsing, если это требует новой heavy dependency или отдельной parser policy;
+- arbitrary file execution;
+- saving raw attachments;
+- serving raw attachments from web;
+- attachment download routes;
+- web UI changes beyond safe artifact link/summary if necessary;
+- ROP classification changes;
+- changes to `beeagent-rop`;
+- Bitrix / 1C;
+- CRM write-back;
+- mailbox listener/polling;
+- source-aware dedup;
+- AI document analysis;
+- operator actions / POST routes;
+- auth/RBAC.
+
+#### Deliverable
+
+После ROP run BeeAgent создаёт attachment extraction evidence artifact:
+
+```text
+storage/runs/<run_id>/attachment_extraction.json
+```
+
+Artifact показывает по каждому event/attachment:
+
+```text
+what was seen
+what was safely previewed
+what was refused
+why it was refused
+which source/event it belongs to
+```
+
+Downstream `beeagent-rop` получает только bounded attachment preview/status fields, если они доступны, и не получает raw attachment content.
+
+#### Expected artifact
+
+```text
+storage/runs/<run_id>/attachment_extraction.json
+```
+
+Example shape:
+
+```json
+{
+  "run_id": "rop-run-2026-05-25",
+  "status": "ok",
+  "aggregate": {
+    "event_count": 2,
+    "attachment_count": 3,
+    "preview_available_count": 1,
+    "metadata_only_count": 1,
+    "refused_count": 1,
+    "unsupported_count": 1,
+    "failed_count": 0
+  },
+  "items": [
+    {
+      "event_id": "evt-001",
+      "source_id": "hotline_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_role": "technical_aggregator",
+      "source_display_name": "Welding Hotline mailbox",
+      "client_id": "welding",
+      "attachment_id": "evt-001-att-0",
+      "filename": "request.txt",
+      "content_type": "text/plain",
+      "size_bytes": 512,
+      "extraction_status": "preview",
+      "preview_available": true,
+      "text_preview": "Please review attached request...",
+      "preview_chars": 33,
+      "is_supported": true,
+      "is_refused": false,
+      "is_truncated": false,
+      "reason_code": "text_preview_extracted",
+      "refusal_reason": null
+    },
+    {
+      "event_id": "evt-002",
+      "source_id": "hotline_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_role": "technical_aggregator",
+      "source_display_name": "Welding Hotline mailbox",
+      "client_id": "welding",
+      "attachment_id": "evt-002-att-0",
+      "filename": "scan.eml",
+      "content_type": "message/rfc822",
+      "size_bytes": 2048,
+      "extraction_status": "refused",
+      "preview_available": false,
+      "text_preview": "",
+      "preview_chars": 0,
+      "is_supported": false,
+      "is_refused": true,
+      "is_truncated": false,
+      "reason_code": "blocked_email_attachment",
+      "refusal_reason": "email attachments are blocked"
+    }
+  ]
+}
+```
+
+#### Expected downstream event fields
+
+If safe preview exists, normalized/classified event payload may include bounded fields such as:
+
+```text
+attachment_extraction_status
+attachment_preview_available
+attachment_text_preview
+attachment_extraction_refs
+attachment_refusal_reasons
+```
+
+These fields must stay bounded and must not contain raw attachment bytes or full raw files.
+
+#### Artifacts
+
+- `storage/runs/<run_id>/attachment_extraction.json`
+- existing:
+  - `storage/runs/<run_id>/source_diagnostics.json`
+  - `storage/runs/<run_id>/intake_metadata.json`
+  - `storage/runs/<run_id>/normalized_events.json`
+  - `storage/runs/<run_id>/classified_events.json`
+  - `storage/runs/<run_id>/operator_summary.json`
+  - `storage/runs/<run_id>/rop_review_table.tsv`
+  - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
+  - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
+  - `logs/app.log`
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- attachment input is untrusted;
+- parsing/serialization boundary changes;
+- artifact contract changes;
+- potential sensitive client data exposure risk;
+- file/content safety rules must be explicit.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted ROP attachment extraction tests;
+- source flow smoke with `json_batch` attachment fixtures;
+- optional mailbox smoke if credentials are available;
+- artifact inspection:
+  - `attachment_extraction.json`;
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `operator_summary.json`;
+  - `rop_review_table.tsv`;
+
+- log verification;
+- secret leakage check;
+- no raw `.eml` check;
+- no `message/rfc822` check in exported previews;
+- no raw attachment content / bytes fields in artifacts;
+- no web route serves raw attachment content;
+- no mailbox/CRM destructive actions;
+- no direct `beeagent_rop` imports in BeeAgent core;
+- SAST required;
+- SCA only if dependencies change;
+- DAST/IAST not required unless new network-facing behavior is added;
+- fuzzing optional only if a new parser is added.
+
+#### DoD
+
+- `attachment_extraction.json` is created for ROP runs with attachments;
+- no-attachment runs remain valid and do not fail;
+- unsupported/refused attachments are visible and explainable;
+- safe text previews are bounded by config;
+- `.eml` / `message/rfc822` attachments remain blocked;
+- raw attachment bytes/content are not stored in artifacts/logs/HTML/API;
+- source traceability is preserved per attachment;
+- downstream event payload contains only bounded safe preview/status fields;
+- `beeagent-rop` is not changed;
+- BeeAgent core does not contain ROP classification/business rules;
+- existing `./start.sh rop run`, `summary`, `export-review`, `web` behavior is not broken;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

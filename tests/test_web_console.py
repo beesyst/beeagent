@@ -171,6 +171,57 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
         },
     ]
 
+    attachment_extraction = {
+        "run_id": run_id,
+        "status": "ok",
+        "aggregate": {
+            "event_count": 3,
+            "attachment_count": 2,
+            "preview_available_count": 1,
+            "metadata_only_count": 0,
+            "refused_count": 1,
+            "unsupported_count": 0,
+            "failed_count": 0,
+        },
+        "items": [
+            {
+                "event_id": "evt-1",
+                "source_id": "hotline_mailbox",
+                "attachment_id": "evt-1-att-0",
+                "filename": "brief.txt",
+                "content_type": "text/plain",
+                "size_bytes": 200,
+                "extraction_status": "preview",
+                "preview_available": True,
+                "text_preview": "safe text preview",
+                "preview_chars": 17,
+                "is_supported": True,
+                "is_refused": False,
+                "is_truncated": False,
+                "reason_code": "text_preview_extracted",
+                "refusal_reason": None,
+                "content": "RAW-CONTENT-MUST-NOT-BE-RENDERED",
+            },
+            {
+                "event_id": "evt-1",
+                "source_id": "hotline_mailbox",
+                "attachment_id": "evt-1-att-1",
+                "filename": "mail.eml",
+                "content_type": "message/rfc822",
+                "size_bytes": 200,
+                "extraction_status": "refused",
+                "preview_available": False,
+                "text_preview": "",
+                "preview_chars": 0,
+                "is_supported": False,
+                "is_refused": True,
+                "is_truncated": False,
+                "reason_code": "blocked_email_attachment",
+                "refusal_reason": "email attachments are blocked",
+            },
+        ],
+    }
+
     (run_dir / "operator_summary.json").write_text(
         json.dumps(operator_summary),
         encoding="utf-8",
@@ -189,6 +240,10 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     )
     (run_dir / "classified_events.json").write_text(
         json.dumps(classified_events),
+        encoding="utf-8",
+    )
+    (run_dir / "attachment_extraction.json").write_text(
+        json.dumps(attachment_extraction),
         encoding="utf-8",
     )
     (run_dir / "rop_review_table.tsv").write_text(
@@ -648,6 +703,24 @@ def test_normalized_events_artifact_is_sanitized(tmp_path: Path) -> None:
     assert '"content"' not in response.text
 
 
+# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
+def test_attachment_extraction_artifact_is_whitelisted_and_sanitized(
+    tmp_path: Path,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir=storage_dir, run_id="run-009")
+    client = _client(storage_dir)
+
+    response = client.get("/runs/run-009/artifact/attachment_extraction.json")
+
+    assert response.status_code == 200
+    assert "safe text preview" in response.text
+    assert "RAW-CONTENT-MUST-NOT-BE-RENDERED" not in response.text
+    assert "mail.eml" not in response.text
+    assert "message/rfc822" not in response.text
+
+
+# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_get_routes_do_not_mutate_storage(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_run_artifacts(storage_dir=storage_dir, run_id="run-008")

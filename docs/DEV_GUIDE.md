@@ -155,6 +155,7 @@ print(result["operator_text"])
 
 - `storage/runs/<run_id>/source_diagnostics.json` — статус источника, counts и degraded reason без секретов;
 - `storage/runs/<run_id>/intake_metadata.json` — метаданные загрузки источника;
+- `storage/runs/<run_id>/attachment_extraction.json` — bounded preview/refusal evidence per attachment без raw content;
 - `storage/runs/<run_id>/normalized_events.json` — нормализованные события;
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json` — результат модуля;
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` — case artifact от beeagent-rop;
