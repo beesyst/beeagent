@@ -45,6 +45,10 @@ REQUIRED_KEYS = (
     ("quiz", "enabled"),
     ("quiz", "path"),
     ("modules", "registry"),
+    ("rop", "attachments", "enabled"),
+    ("rop", "attachments", "chars_max"),
+    ("rop", "attachments", "size_max"),
+    ("rop", "attachments", "types"),
     ("rop", "sources"),
 )
 
@@ -271,14 +275,37 @@ def validate_settings(settings: dict) -> None:
     if not isinstance(input_sources, list):
         raise RuntimeError("Invalid type for rop.sources, expected list")
 
+    attachments_cfg = _get_nested_value(settings, ("rop", "attachments"))
+    if not isinstance(attachments_cfg, dict):
+        raise RuntimeError("Invalid type for rop.attachments, expected mapping")
+
+    if not isinstance(attachments_cfg.get("enabled"), bool):
+        raise RuntimeError("Invalid type for rop.attachments.enabled, expected bool")
+
+    chars_max = attachments_cfg.get("chars_max")
+    if not isinstance(chars_max, int) or chars_max <= 0:
+        raise RuntimeError("Invalid rop.attachments.chars_max, expected int > 0")
+
+    size_max = attachments_cfg.get("size_max")
+    if not isinstance(size_max, int) or size_max <= 0:
+        raise RuntimeError("Invalid rop.attachments.size_max, expected int > 0")
+
+    allowed_types = attachments_cfg.get("types")
+    if not isinstance(allowed_types, list) or not allowed_types:
+        raise RuntimeError("Invalid rop.attachments.types, expected non-empty list")
+
+    for idx, item in enumerate(allowed_types):
+        if not isinstance(item, str) or not item.strip():
+            raise RuntimeError(
+                f"Invalid rop.attachments.types[{idx}], expected non-empty string"
+            )
+
     _VALID_SOURCE_TYPES = {"json_batch", "mailbox_readonly"}
     _VALID_AUTHORITY_VALUES = {"read_only", "draft_only", "execution_capable"}
 
     for idx, source in enumerate(input_sources):
         if not isinstance(source, dict):
-            raise RuntimeError(
-                f"Invalid type for rop.sources[{idx}], expected mapping"
-            )
+            raise RuntimeError(f"Invalid type for rop.sources[{idx}], expected mapping")
         for key in (
             "source_id",
             "source_type",

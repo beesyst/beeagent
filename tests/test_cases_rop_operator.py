@@ -24,18 +24,31 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Вспомогательные функции для тестов ROP оператора
+# Тесты ROP оператора
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Вспомогательная функция для сбора референсов на артефакты, созданные модульными кейсами, для включения их в summary оператора
+# Тест: создание демо payload для ROP оператора с полями source, sender, subject и body, которые могут использоваться в кейсах классификации лидов
 def _demo_payload() -> dict[str, str]:
     return {
         "source": "email",
         "sender": "lead@example.com",
         "subject": "Need product details",
         "body": "Please share pricing and delivery terms.",
+    }
+
+
+# Тест: загрузка настроек с источником mailbox_readonly и правильными полями username_env и password_env
+def _attachment_settings() -> dict[str, object]:
+    return {
+        "enabled": True,
+        "chars_max": 120,
+        "size_max": 4096,
+        "types": [
+            "text/plain",
+            "application/json",
+        ],
     }
 
 
@@ -231,6 +244,7 @@ def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
 def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "attachments": _attachment_settings(),
         "sources": [
             {
                 "source_id": "test-batch",
@@ -246,7 +260,7 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
                     "period": "2026-05",
                 },
             }
-        ]
+        ],
     }
     return settings
 
@@ -255,6 +269,7 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
 def _make_mailbox_settings(enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "attachments": _attachment_settings(),
         "sources": [
             {
                 "source_id": "hotline",
@@ -274,7 +289,7 @@ def _make_mailbox_settings(enabled: bool = True) -> dict:
                     "password_env": "ROP_MAILBOX_PASSWORD",
                 },
             }
-        ]
+        ],
     }
     return settings
 
@@ -384,7 +399,10 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
 # Тест: degraded run при отсутствии enabled источника
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
-    settings["rop"] = {"sources": []}
+    settings["rop"] = {
+        "attachments": _attachment_settings(),
+        "sources": [],
+    }
 
     result = run_rop_batch_case(
         settings=settings,
@@ -410,7 +428,10 @@ def test_rop_batch_case_source_selection_error_writes_diagnostics(
     tmp_path: Path,
 ) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
-    settings["rop"] = {"sources": []}
+    settings["rop"] = {
+        "attachments": _attachment_settings(),
+        "sources": [],
+    }
 
     result = run_rop_batch_case(
         settings=settings,
@@ -717,6 +738,7 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "attachments": _attachment_settings(),
         "sources": [
             {
                 "source_id": "good-source",
@@ -746,7 +768,7 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
                     "period": "2026-05",
                 },
             },
-        ]
+        ],
     }
 
     result = run_rop_batch_case(
@@ -818,6 +840,7 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "attachments": _attachment_settings(),
         "sources": [
             {
                 "source_id": "first-source",
@@ -847,7 +870,7 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
                     "period": "2026-05",
                 },
             },
-        ]
+        ],
     }
 
     result = run_rop_batch_case(
@@ -971,6 +994,200 @@ def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     assert attachments[0].get("filename") == "brief.pdf"
     assert attachments[0].get("content_type") == "application/pdf"
     assert "content" not in attachments[0]
+
+
+# Тест: чек логики извлечения текста из вложений в ROP batch case, включая ограничения по типу контента и размеру
+def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_attachment_extraction.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "evt-att-001",
+                "source": "email",
+                "sender": "lead@example.com",
+                "subject": "Attachments",
+                "attachments": [
+                    {
+                        "filename": "request.txt",
+                        "content_type": "text/plain",
+                        "size_bytes": 64,
+                        "text_preview": "safe preview text for extraction",
+                    },
+                    {
+                        "filename": "forwarded.eml",
+                        "content_type": "message/rfc822",
+                        "size_bytes": 128,
+                    },
+                    {
+                        "filename": "scan.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 8192,
+                    },
+                ],
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"] = {
+        "attachments": {
+            "enabled": True,
+            "chars_max": 12,
+            "size_max": 1024,
+            "types": ["text/plain"],
+        },
+        "sources": [
+            {
+                "source_id": "test-batch-attachment-extraction",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Test Batch Attachment Extraction",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {
+                    "path": str(batch_file.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            }
+        ],
+    }
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-attachment-extraction",
+        session_id="session-batch-attachment-extraction",
+    )
+
+    assert result["status"] == "ok"
+
+    run_dir = tmp_path / "runs" / "run-batch-attachment-extraction"
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+
+    assert extraction["aggregate"]["attachment_count"] == 3
+    assert extraction["aggregate"]["preview_available_count"] == 1
+    assert extraction["aggregate"]["refused_count"] == 2
+
+    statuses = {
+        item["filename"]: item["extraction_status"] for item in extraction["items"]
+    }
+    assert statuses["request.txt"] == "preview"
+    assert statuses["forwarded.eml"] == "refused"
+    assert statuses["scan.pdf"] == "refused"
+
+    reasons = {item["filename"]: item["reason_code"] for item in extraction["items"]}
+    assert reasons["forwarded.eml"] == "blocked_email_attachment"
+    assert reasons["scan.pdf"] == "attachment_oversized"
+
+    assert len(normalized) == 1
+    event = normalized[0]
+    assert event["attachment_extraction_status"] == "refused"
+    assert event["attachment_preview_available"] is True
+    assert event["attachment_text_preview"] == "safe preview"
+    assert len(event["attachment_extraction_refs"]) == 3
+
+
+# Тест: чек извдеения вложений в ROP batch case, сырые поля с контентом не сохраняются в артефактах и normalized_events
+def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_attachment_safety.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "evt-att-safe-001",
+                "source": "email",
+                "sender": "lead@example.com",
+                "subject": "Safe extraction",
+                "attachments": [
+                    {
+                        "filename": "request.txt",
+                        "content_type": "text/plain",
+                        "size_bytes": 32,
+                        "text": "line one\nline two",
+                        "content": "RAW-SHOULD-NOT-PERSIST",
+                        "content_bytes": "RAW-BYTES-SHOULD-NOT-PERSIST",
+                    }
+                ],
+                "raw_eml": "RAW-EML-SHOULD-NOT-PERSIST",
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"] = {
+        "attachments": {
+            "enabled": True,
+            "chars_max": 200,
+            "size_max": 1024,
+            "types": ["text/plain"],
+        },
+        "sources": [
+            {
+                "source_id": "test-batch-attachment-safety",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Test Batch Attachment Safety",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {
+                    "path": str(batch_file.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            }
+        ],
+    }
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-attachment-safety",
+        session_id="session-batch-attachment-safety",
+    )
+
+    run_dir = tmp_path / "runs" / "run-batch-attachment-safety"
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+
+    assert extraction["items"][0]["text_preview"] == "line one line two"
+    assert "content" not in extraction["items"][0]
+    assert "content_bytes" not in extraction["items"][0]
+
+    serialized = json.dumps({"extraction": extraction, "normalized": normalized})
+    assert "RAW-SHOULD-NOT-PERSIST" not in serialized
+    assert "RAW-BYTES-SHOULD-NOT-PERSIST" not in serialized
+    assert "RAW-EML-SHOULD-NOT-PERSIST" not in serialized
 
 
 # Тест: успешный batch classification handoff - classified_events.json создается, rop_summary получает classified события

@@ -493,6 +493,7 @@ beeagent/
 configured source(s)
 → source_diagnostics.json
 → intake_metadata.json
+→ attachment_extraction.json
 → normalized_events.json
 → beeagent-rop lead_classification per event
 → classified_events.json

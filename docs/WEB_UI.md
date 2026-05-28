@@ -277,6 +277,7 @@ Allowed run artifacts:
 - `operator_summary.json`
 - `source_diagnostics.json`
 - `intake_metadata.json`
+- `attachment_extraction.json`
 - `normalized_events.json`
 - `classified_events.json`
 - `rop_review_table.tsv`

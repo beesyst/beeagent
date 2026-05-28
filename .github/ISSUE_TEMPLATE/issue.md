@@ -16,7 +16,6 @@ Select one primary type:
 
 - [ ] Feature
 - [ ] Fix
-- [ ] Bug
 - [ ] Docs
 - [ ] Chore
 - [ ] Idea

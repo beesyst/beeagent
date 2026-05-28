@@ -79,13 +79,19 @@ modules:
       enabled: true # true/false - включить/выключить загрузку модуля
 
 rop:
-  sources: # список объявленных источников входных данных для ROP flow
-    - source_id: "rop_batch_sample" # уникальный идентификатор источника
+  attachments: # настройки для извлечения вложений из событий ROP
+    enabled: true # true/false - включить/выключить извлечение вложений из событий ROP
+    chars_max: 500 # макс. число символов для извлечения из одного вложения
+    size_max: 1048576 # макс. размер вложения в байтах для попытки извлечения (пример: 1 МБ = 1048576 байт)
+    types: # non-empty allowlist типов контента, разрешенных для bounded text preview extraction
+      - "text/plain"
+  sources:
+    - source_id: "rop_batch_sample"
       source_type: "json_batch" # тип источника (поддерживается: json_batch)
       source_role: "batch_sample" # роль источника в бизнес-контексте клиента
       client_id: "welding" # идентификатор клиента/тенанта для источника
       display_name: "ROP Batch Sample" # человеко-читаемое имя источника для артефактов/UI
-      enabled: false # true/false - использовать этот источник
+      enabled: true # true/false - использовать этот источник
       authority: "read_only" # уровень доступа (read_only/draft_only/execution_capable)
       items_max: 100 # максимальное число событий из источника
       batch:

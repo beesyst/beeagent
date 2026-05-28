@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.core.attachment_extraction import build_attachment_extraction
 from beeagent_module.core.input_source import (
     InputSourceError,
     load_rop_source,
@@ -357,6 +358,11 @@ def _make_fallback_event(
         "source_role": event.get("source_role"),
         "source_display_name": event.get("source_display_name"),
         "client_id": event.get("client_id"),
+        "attachment_extraction_status": event.get("attachment_extraction_status"),
+        "attachment_preview_available": event.get("attachment_preview_available"),
+        "attachment_text_preview": event.get("attachment_text_preview"),
+        "attachment_extraction_refs": event.get("attachment_extraction_refs"),
+        "attachment_refusal_reasons": event.get("attachment_refusal_reasons"),
         "case_type": "unknown",
         "priority": "medium",
         "reason_code": "classification_error",
@@ -378,6 +384,12 @@ def _is_blocked_email_attachment(att: dict[str, Any]) -> bool:
 def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "attachments",
+        "attachment_extraction_status",
+        "attachment_preview_available",
+        "attachment_text",
+        "attachment_text_preview",
+        "attachment_extraction_refs",
+        "attachment_refusal_reasons",
         "body",
         "event_id",
         "language_hint",
@@ -445,6 +457,16 @@ def _attach_classification_trace(
     enriched["source_role"] = source_event.get("source_role")
     enriched["source_display_name"] = source_event.get("source_display_name")
     enriched["client_id"] = source_event.get("client_id")
+
+    for key in (
+        "attachment_extraction_status",
+        "attachment_preview_available",
+        "attachment_text_preview",
+        "attachment_extraction_refs",
+        "attachment_refusal_reasons",
+    ):
+        if key not in enriched:
+            enriched[key] = source_event.get(key)
 
     return enriched
 
@@ -549,6 +571,7 @@ def run_rop_batch_case(
     source_rollup: list[dict[str, Any]] = []
     classification_diagnostics: dict[str, Any] | None = None
     source_diagnostics: dict[str, Any] = {}
+    attachment_extraction_summary: dict[str, Any] | None = None
 
     try:
         input_sources: list[dict] = settings.get("rop", {}).get("sources", [])
@@ -760,6 +783,32 @@ def run_rop_batch_case(
         )
 
         normalized_path = run_dir / "normalized_events.json"
+        rop_settings = settings.get("rop")
+        if not isinstance(rop_settings, dict):
+            raise RuntimeError("Invalid settings.rop, expected mapping")
+        attachment_settings = rop_settings.get("attachments")
+        if not isinstance(attachment_settings, dict):
+            raise RuntimeError("Invalid settings.rop.attachments, expected mapping")
+
+        extraction_artifact, normalized_events = build_attachment_extraction(
+            run_id=effective_run_id,
+            events=normalized_events,
+            attachment_settings=attachment_settings,
+        )
+
+        attachment_extraction_path = run_dir / "attachment_extraction.json"
+        attachment_extraction_path.write_text(
+            json.dumps(extraction_artifact, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(
+            attachment_extraction_path.relative_to(storage_dir).as_posix()
+        )
+        attachment_extraction_summary = {
+            "status": extraction_artifact.get("status"),
+            "aggregate": extraction_artifact.get("aggregate", {}),
+        }
+
         normalized_path.write_text(
             json.dumps(normalized_events, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -896,6 +945,7 @@ def run_rop_batch_case(
         "source": source_meta,
         "sources": source_rollup,
         "classification": classification_diagnostics,
+        "attachment_extraction": attachment_extraction_summary,
         "artifact_refs": artifact_refs,
     }
 
