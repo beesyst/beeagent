@@ -378,104 +378,224 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 
 ## Итерация UI-2 — ROP multi-source dashboard v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 ### Goal
 
-Расширить ROP dashboard под multi-source flow после BeeAgent It24: оператор должен видеть не только один `hotline_mailbox`, а source-aware картину по всем источникам текущего run.
+Расширить BeeAgent Web Console ROP dashboard под multi-source ROP run после BeeAgent It24: оператор должен видеть aggregate и per-source картину по всем источникам текущего run, включая source status, degraded reasons, loaded/classified counts и source-aware event table.
+
+### Почему это нужно
+
+После `BeeAgent It24 — ROP multi-source ingestion artifacts v0` BeeAgent умеет запускать один ROP run по нескольким configured `rop.sources[]` и пишет source-aware artifacts:
+
+- `source_diagnostics.json`;
+- `intake_metadata.json`;
+- `normalized_events.json`;
+- `classified_events.json`;
+- `operator_summary.json`;
+- `rop_review_table.tsv`.
+
+Но текущий Web Console/R0P dashboard ещё недостаточно показывает multi-source картину:
+
+- degraded source может потеряться за aggregate count;
+- оператор не видит, какой source дал какие события;
+- фильтры не позволяют быстро сузить review по `source_id` / `source_role`;
+- API payload недостаточно удобен для будущего stable `/api/*`;
+- single-source и multi-source runs должны отображаться одинаково предсказуемо.
 
 ### Depends on
 
-- `BeeAgent It24 — Multi-source mailbox run v0`
+- `BeeAgent It24 — ROP multi-source ingestion artifacts v0`
 
 ### Scope
 
 **Включено:**
 
-- ROP dashboard grouped by source:
-  - source_id;
-  - source_type;
-  - source_role;
-  - source_display_name;
-  - client_id;
-  - mailbox_folder;
-  - fetched_count;
-  - loaded_count;
-  - malformed_count;
-  - degraded reason;
-
-- aggregate KPI:
+- расширить ROP dashboard read-model под It24 artifact contract;
+- показать aggregate source KPIs:
+  - total source count;
+  - loaded source count;
+  - degraded source count;
   - total fetched;
   - total loaded;
+  - total malformed;
+  - total normalized;
   - total classified;
-  - total failed;
+  - classification failed count;
   - fallback count;
-  - degraded source count;
 
-- source filters:
+- добавить per-source summary table:
+  - `source_id`;
+  - `source_type`;
+  - `source_role`;
+  - `source_display_name`;
+  - `client_id`;
+  - `authority`;
+  - `mailbox_folder`, если есть;
+  - `status`;
+  - `reason`;
+  - `items_max`;
+  - `fetched_count`;
+  - `loaded_count`;
+  - `malformed_count`;
+  - `classified_count`, если можно вывести из classified events;
+  - `fallback_count`, если можно вывести из classified events;
+
+- расширить ROP event table source-aware колонками:
+  - `source_id`;
+  - `source_type`;
+  - `source_role`;
+  - `source_display_name`;
+  - `client_id`;
+
+- добавить/расширить filters:
   - `source_id`;
   - `source_role`;
+  - `source_status`;
   - `case_type`;
   - `priority`;
   - `fallback`;
   - `reason_code`;
 
-- source-level artifact links;
-- graceful handling:
-  - single-source old runs;
-  - multi-source new runs;
-  - partial source failure;
-  - malformed source diagnostics;
+- обновить `/api/rop/runs/{run_id}/dashboard` payload:
+  - сохранить backward-compatible поля, где это разумно;
+  - добавить `source_aggregate`;
+  - добавить `sources`;
+  - добавить source-aware filter options;
+  - добавить source fields в `rows`;
 
-- update API contract for ROP dashboard;
-- docs update.
+- graceful handling:
+  - old single-source runs;
+  - new multi-source runs;
+  - missing `aggregate`;
+  - missing `sources[]`;
+  - one degraded source;
+  - malformed source diagnostics;
+  - empty source;
+  - non-ROP run;
+
+- сохранить read-only behavior:
+  - no GET mutation;
+  - no mailbox/CRM/module/capability calls;
+  - no web-triggered `rop run`;
+
+- сохранить sanitization:
+  - no raw `.eml`;
+  - no `message/rfc822`;
+  - no attachment content;
+  - no secrets in HTML/API;
+
+- добавить/обновить tests:
+  - single-source compatibility;
+  - multi-source dashboard rendering;
+  - source filters;
+  - degraded source visibility;
+  - API payload shape;
+  - no mutation;
+  - sanitization;
+
+- обновить docs:
+  - `docs/WEB_UI.md`;
+  - `docs/product/ui_roadmap.md`;
+  - `README.ru.md` / `docs/DEV_GUIDE.md`, если меняется usage/contract.
 
 **Не включено:**
 
-- web-triggered multi-source run;
+- web-triggered `rop run`;
 - source-aware dedup editing;
+- human review editing;
 - CRM write-back;
 - Bitrix reconciliation UI;
 - attachment extraction UI;
 - auth;
-- operator actions.
+- RBAC;
+- POST actions;
+- operator control panel;
+- mailbox listener/polling;
+- changes to `beeagent-rop`;
+- ROP business rules in BeeAgent core.
 
 ### Deliverable
 
-ROP dashboard становится готовым к multi-source mailbox ingestion и показывает source-level status/metrics.
+`/runs/{run_id}/rop` и `/api/rop/runs/{run_id}/dashboard` показывают source-aware ROP dashboard для old single-source и new multi-source runs.
 
-### Artifacts
+Оператор видит:
 
-Expected to read artifacts from It24, for example:
+- aggregate multi-source health;
+- per-source status/degraded reasons;
+- source-aware event table;
+- source filters;
+- classification/fallback metrics без скрытия failed/degraded sources.
 
-- `storage/runs/<run_id>/source_diagnostics.json`;
-- `storage/runs/<run_id>/intake_metadata.json`;
-- `storage/runs/<run_id>/normalized_events.json`;
-- `storage/runs/<run_id>/classified_events.json`;
-- `storage/runs/<run_id>/operator_summary.json`;
-- `storage/runs/<run_id>/rop_review_table.tsv`.
+### Expected artifacts read
 
-If It24 introduces per-source diagnostics files, UI must read the implemented contract from `docs/WEB_UI.md` / `docs/ROADMAP.md`.
+```text
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/module-beeagent-rop/module_result.json
+storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
+```
+
+### Change level
+
+```text
+runtime-risk
+```
+
+Escalate to `security-sensitive` only if implementation changes file/path handling, auth, secrets, POST/actions, external exposure, dependencies, or mailbox/CRM/capability execution.
 
 ### Checks
 
 - `uv run pytest -q`;
+- targeted Web Console tests;
 - single-source compatibility scenario;
 - multi-source run scenario;
 - one source degraded scenario;
 - source filter checks;
 - aggregate metrics checks;
-- no mutation;
-- no mailbox/CRM calls;
-- no secrets in HTML/API/logs.
+- API payload shape checks;
+- no GET mutation;
+- no mailbox/CRM/module/capability calls from web routes;
+- no raw `.eml` / attachment content / secrets in HTML/API;
+- path traversal still blocked;
+- smoke:
+  - create/reuse multi-source run;
+  - `./start.sh web`;
+  - open `/runs/{run_id}/rop`;
+  - open `/api/rop/runs/{run_id}/dashboard`.
 
 ### DoD
 
 - source-aware ROP dashboard works for old and new runs;
-- source status is explicit;
+- source status and degraded reasons are explicit;
 - aggregate metrics do not hide degraded sources;
+- `source_id` / `source_role` filters work;
+- event table preserves source traceability;
+- JSON API exposes source-aware read-model;
 - dashboard remains read-only;
-- docs updated.
+- no mailbox/CRM/module/capability execution from GET routes;
+- no secrets/raw `.eml`/attachment content in HTML/API;
+- tests and docs updated;
+- `pyproject.toml.version` not changed.
+
+### Status notes
+
+- `/runs/{run_id}/rop` расширен под source-aware read-model:
+  - aggregate source KPI card;
+  - per-source summary table;
+  - source-aware event columns;
+  - source filters (`source_id`, `source_role`, `source_status`).
+- `/api/rop/runs/{run_id}/dashboard` расширен полями:
+  - `source_aggregate`;
+  - `sources`;
+  - source-aware `filter_options`;
+  - source-aware `rows` fields.
+- backward compatibility сохранена для old single-source runs.
+- read-only/security boundary сохранены: no GET mutation, no mailbox/CRM/module/capability execution from GET routes, sanitization сохранена.
 
 ## Итерация UI-3 — ROP attachment preview dashboard v1
 

@@ -207,6 +207,8 @@ def render_rop_dashboard_page(
         title=f"ROP {run_id}",
         run_id=run_id,
         errors=payload["errors"],
+        source_aggregate=payload["source_aggregate"],
+        sources=payload["sources"],
         source=payload["source"],
         classification=payload["classification"],
         metrics=payload["metrics"],
@@ -232,6 +234,9 @@ def get_rop_dashboard_payload(
 
     dashboard = build_rop_dashboard(
         run_dir=run_dir,
+        source_id_filter=_single_query_value(query, "source_id"),
+        source_role_filter=_single_query_value(query, "source_role"),
+        source_status_filter=_single_query_value(query, "source_status"),
         case_type_filter=_single_query_value(query, "case_type"),
         priority_filter=_single_query_value(query, "priority"),
         fallback_filter=_single_query_value(query, "fallback"),
@@ -241,6 +246,8 @@ def get_rop_dashboard_payload(
     payload = {
         "run_id": run_id,
         "errors": dashboard["errors"],
+        "source_aggregate": dashboard["source_aggregate"],
+        "sources": _strip_sensitive_json(dashboard["sources"]),
         "source": _strip_sensitive_json(dashboard["source"]),
         "classification": _strip_sensitive_json(dashboard["classification"]),
         "metrics": {
