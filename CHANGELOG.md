@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.30.0...beeagent-v0.31.0) (2026-05-28)
+
+
+### Features
+
+* **rop:** add attachment extraction artifacts ([#93](https://github.com/beesyst/beeagent/issues/93)) ([0a3061c](https://github.com/beesyst/beeagent/commit/0a3061c177ef31fef947835d361edf654fb97794))
+
 ## [0.30.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.29.0...beeagent-v0.30.0) (2026-05-28)
 
 
