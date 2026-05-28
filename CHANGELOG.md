@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.29.0...beeagent-v0.30.0) (2026-05-28)
+
+
+### Features
+
+* **ui:** add ROP multi-source dashboard ([#90](https://github.com/beesyst/beeagent/issues/90)) ([acab18a](https://github.com/beesyst/beeagent/commit/acab18a8929a94ff2756cb1c0d699812315ad8da))
+
 ## [0.29.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.28.0...beeagent-v0.29.0) (2026-05-27)
 
 
