@@ -80,9 +80,64 @@
 {% endif %}
 
 <div class="row g-4 mb-4">
+  <div class="col-md-4">{{ kv_card("source aggregate", source_aggregate) }}</div>
   <div class="col-md-4">{{ kv_card("source", source) }}</div>
   <div class="col-md-4">{{ kv_card("classification", classification) }}</div>
-  <div class="col-md-4">{{ kv_card("metrics", metrics) }}</div>
+  <div class="col-md-12">{{ kv_card("metrics", metrics) }}</div>
+</div>
+
+<div class="card shell-panel mb-4">
+  <div class="card-body">
+    <h3 class="card-title">Sources</h3>
+    {% if sources %}
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead>
+          <tr>
+            <th>source_id</th>
+            <th>source_type</th>
+            <th>source_role</th>
+            <th>source_display_name</th>
+            <th>client_id</th>
+            <th>authority</th>
+            <th>mailbox_folder</th>
+            <th>status</th>
+            <th>reason</th>
+            <th>items_max</th>
+            <th>fetched_count</th>
+            <th>loaded_count</th>
+            <th>malformed_count</th>
+            <th>classified_count</th>
+            <th>fallback_count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sources %}
+          <tr>
+            <td><strong>{{ row.source_id }}</strong></td>
+            <td>{{ row.source_type }}</td>
+            <td>{{ row.source_role }}</td>
+            <td>{{ row.source_display_name }}</td>
+            <td>{{ row.client_id }}</td>
+            <td>{{ row.authority }}</td>
+            <td>{{ row.mailbox_folder }}</td>
+            <td>{{ row.status }}</td>
+            <td>{{ row.reason }}</td>
+            <td>{{ row.items_max }}</td>
+            <td>{{ row.fetched_count }}</td>
+            <td>{{ row.loaded_count }}</td>
+            <td>{{ row.malformed_count }}</td>
+            <td>{{ row.classified_count }}</td>
+            <td>{{ row.fallback_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-secondary">No source rows</div>
+    {% endif %}
+  </div>
 </div>
 
 <div class="row g-4 mb-4">
@@ -105,6 +160,51 @@
       action="/runs/{{ run_id }}/rop"
       class="row g-3 align-items-end"
     >
+      <div class="col-md-3">
+        <label class="form-label">source_id</label>
+        <select class="form-select" name="source_id">
+          <option value="">(all)</option>
+          {% for option in filter_options.source_id %}
+          <option
+            value="{{ option }}"
+            {% if filters.source_id == option %}selected{% endif %}
+          >
+            {{ option }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">source_role</label>
+        <select class="form-select" name="source_role">
+          <option value="">(all)</option>
+          {% for option in filter_options.source_role %}
+          <option
+            value="{{ option }}"
+            {% if filters.source_role == option %}selected{% endif %}
+          >
+            {{ option }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">source_status</label>
+        <select class="form-select" name="source_status">
+          <option value="">(all)</option>
+          {% for option in filter_options.source_status %}
+          <option
+            value="{{ option }}"
+            {% if filters.source_status == option %}selected{% endif %}
+          >
+            {{ option }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
       <div class="col-md-3">
         <label class="form-label">case_type</label>
         <select class="form-select" name="case_type">
@@ -182,6 +282,12 @@
       <thead>
         <tr>
           <th>event_id</th>
+          <th>source_id</th>
+          <th>source_type</th>
+          <th>source_role</th>
+          <th>source_display_name</th>
+          <th>client_id</th>
+          <th>source_status</th>
           <th>sender</th>
           <th>subject</th>
           <th>body_short</th>
@@ -198,6 +304,12 @@
         {% for row in rows %}
         <tr>
           <td><strong>{{ row.event_id }}</strong></td>
+          <td>{{ row.source_id }}</td>
+          <td>{{ row.source_type }}</td>
+          <td>{{ row.source_role }}</td>
+          <td>{{ row.source_display_name }}</td>
+          <td>{{ row.client_id }}</td>
+          <td>{{ row.source_status }}</td>
           <td>{{ row.sender }}</td>
           <td>{{ row.subject }}</td>
           <td class="shell-body-short">{{ row.body_short }}</td>

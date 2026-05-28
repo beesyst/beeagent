@@ -148,12 +148,21 @@ def build_run_overview(run_dir: Path) -> dict[str, Any]:
 # Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def build_rop_dashboard(
     run_dir: Path,
+    source_id_filter: str | None,
+    source_role_filter: str | None,
+    source_status_filter: str | None,
     case_type_filter: str | None,
     priority_filter: str | None,
     fallback_filter: str | None,
     reason_code_filter: str | None,
 ) -> dict[str, Any]:
     summary_data, summary_error = read_json_file(run_dir / "operator_summary.json")
+    source_diagnostics_data, source_diagnostics_error = read_json_file(
+        run_dir / "source_diagnostics.json"
+    )
+    intake_metadata_data, intake_metadata_error = read_json_file(
+        run_dir / "intake_metadata.json"
+    )
     classified_data, classified_error = read_json_file(
         run_dir / "classified_events.json"
     )
@@ -166,6 +175,10 @@ def build_rop_dashboard(
 
     if summary_error:
         errors.append(f"operator_summary:{summary_error}")
+    if source_diagnostics_error:
+        errors.append(f"source_diagnostics:{source_diagnostics_error}")
+    if intake_metadata_error:
+        errors.append(f"intake_metadata:{intake_metadata_error}")
     if classified_error:
         errors.append(f"classified_events:{classified_error}")
     if normalized_error:
@@ -180,6 +193,18 @@ def build_rop_dashboard(
             if isinstance(event_id, str) and event_id:
                 normalized_lookup[event_id] = item
 
+    source_rows = _build_source_rows(
+        source_diagnostics=source_diagnostics_data,
+        intake_metadata=intake_metadata_data,
+        summary_data=summary_data,
+    )
+    source_status_by_id = {
+        str(item.get("source_id", "")): str(item.get("status", ""))
+        for item in source_rows
+        if item.get("source_id")
+    }
+    only_source = source_rows[0] if len(source_rows) == 1 else None
+
     if isinstance(classified_data, list):
         for item in classified_data:
             if not isinstance(item, dict):
@@ -188,10 +213,44 @@ def build_rop_dashboard(
             event_id = _as_text(item.get("event_id"))
             original_event_id = _as_text(item.get("original_event_id")) or event_id
             source_event = normalized_lookup.get(original_event_id, {})
+            source_id = _as_text(item.get("source_id")) or _as_text(
+                source_event.get("source_id")
+            )
+            source_type = _as_text(item.get("source_type")) or _as_text(
+                source_event.get("source_type")
+            )
+            source_role = _as_text(item.get("source_role")) or _as_text(
+                source_event.get("source_role")
+            )
+            source_display_name = _as_text(item.get("source_display_name")) or _as_text(
+                source_event.get("source_display_name")
+            )
+            client_id = _as_text(item.get("client_id")) or _as_text(
+                source_event.get("client_id")
+            )
+
+            if only_source is not None:
+                source_id = source_id or _as_text(only_source.get("source_id"))
+                source_type = source_type or _as_text(only_source.get("source_type"))
+                source_role = source_role or _as_text(only_source.get("source_role"))
+                source_display_name = source_display_name or _as_text(
+                    only_source.get("source_display_name")
+                )
+                client_id = client_id or _as_text(only_source.get("client_id"))
+
+            source_status = _as_text(source_status_by_id.get(source_id))
+            if not source_status and only_source is not None:
+                source_status = _as_text(only_source.get("status"))
 
             rows.append(
                 {
                     "event_id": event_id,
+                    "source_id": source_id,
+                    "source_type": source_type,
+                    "source_role": source_role,
+                    "source_display_name": source_display_name,
+                    "client_id": client_id,
+                    "source_status": source_status,
                     "sender": _as_text(source_event.get("sender")),
                     "subject": _as_text(source_event.get("subject")),
                     "body_short": _body_short(source_event),
@@ -206,6 +265,50 @@ def build_rop_dashboard(
                     "bot_is_fallback": _bool_text(item.get("is_fallback")),
                 }
             )
+
+    source_classification_counts = Counter(
+        row["source_id"] for row in rows if row.get("source_id")
+    )
+    source_fallback_counts = Counter(
+        row["source_id"]
+        for row in rows
+        if row.get("source_id") and row.get("bot_is_fallback") == "true"
+    )
+    for source_row in source_rows:
+        source_id = _as_text(source_row.get("source_id"))
+        source_row["classified_count"] = source_classification_counts.get(source_id, 0)
+        source_row["fallback_count"] = source_fallback_counts.get(source_id, 0)
+
+    source_id_values = sorted(
+        {
+            *{row["source_id"] for row in rows if row["source_id"]},
+            *{
+                _as_text(source.get("source_id"))
+                for source in source_rows
+                if source.get("source_id")
+            },
+        }
+    )
+    source_role_values = sorted(
+        {
+            *{row["source_role"] for row in rows if row["source_role"]},
+            *{
+                _as_text(source.get("source_role"))
+                for source in source_rows
+                if source.get("source_role")
+            },
+        }
+    )
+    source_status_values = sorted(
+        {
+            *{row["source_status"] for row in rows if row["source_status"]},
+            *{
+                _as_text(source.get("status"))
+                for source in source_rows
+                if source.get("status")
+            },
+        }
+    )
 
     case_type_values = sorted(
         {row["bot_case_type"] for row in rows if row["bot_case_type"]}
@@ -222,6 +325,9 @@ def build_rop_dashboard(
         for row in rows
         if _matches_filters(
             row=row,
+            source_id_filter=source_id_filter,
+            source_role_filter=source_role_filter,
+            source_status_filter=source_status_filter,
             case_type_filter=case_type_filter,
             priority_filter=priority_filter,
             fallback_filter=fallback_filter,
@@ -240,6 +346,10 @@ def build_rop_dashboard(
     )
     fallback_count = sum(1 for row in rows if row["bot_is_fallback"] == "true")
 
+    normalized_count = len(normalized_data) if isinstance(normalized_data, list) else 0
+    classified_count = len(classified_data) if isinstance(classified_data, list) else 0
+    classification_failed_count = max(normalized_count - classified_count, 0)
+
     tsv_exists = (run_dir / "rop_review_table.tsv").exists()
 
     source_block: dict[str, Any] = {}
@@ -251,12 +361,32 @@ def build_rop_dashboard(
         classification_value = summary_data.get("classification")
         if isinstance(classification_value, dict):
             classification_block = classification_value
+            classified_count = int(
+                classification_value.get("classified_count", classified_count)
+            )
+            classification_failed_count = int(
+                classification_value.get(
+                    "classification_failed_count", classification_failed_count
+                )
+            )
+
+    source_aggregate = _build_source_aggregate(
+        source_diagnostics=source_diagnostics_data,
+        intake_metadata=intake_metadata_data,
+        source_rows=source_rows,
+        normalized_count=normalized_count,
+        classified_count=classified_count,
+        classification_failed_count=classification_failed_count,
+        fallback_count=fallback_count,
+    )
 
     return {
         "errors": errors,
         "rows": filtered_rows,
         "total_rows": len(rows),
         "shown_rows": len(filtered_rows),
+        "source_aggregate": source_aggregate,
+        "sources": source_rows,
         "source": source_block,
         "classification": classification_block,
         "case_type_counts": case_type_counts,
@@ -264,12 +394,18 @@ def build_rop_dashboard(
         "reason_code_counts": reason_code_counts,
         "fallback_count": fallback_count,
         "filters": {
+            "source_id": source_id_filter or "",
+            "source_role": source_role_filter or "",
+            "source_status": source_status_filter or "",
             "case_type": case_type_filter or "",
             "priority": priority_filter or "",
             "fallback": fallback_filter or "",
             "reason_code": reason_code_filter or "",
         },
         "filter_options": {
+            "source_id": source_id_values,
+            "source_role": source_role_values,
+            "source_status": source_status_values,
             "case_type": case_type_values,
             "priority": priority_values,
             "reason_code": reason_code_values,
@@ -281,11 +417,20 @@ def build_rop_dashboard(
 # Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _matches_filters(
     row: dict[str, Any],
+    source_id_filter: str | None,
+    source_role_filter: str | None,
+    source_status_filter: str | None,
     case_type_filter: str | None,
     priority_filter: str | None,
     fallback_filter: str | None,
     reason_code_filter: str | None,
 ) -> bool:
+    if source_id_filter and row["source_id"] != source_id_filter:
+        return False
+    if source_role_filter and row["source_role"] != source_role_filter:
+        return False
+    if source_status_filter and row["source_status"] != source_status_filter:
+        return False
     if case_type_filter and row["bot_case_type"] != case_type_filter:
         return False
     if priority_filter and row["bot_priority"] != priority_filter:
@@ -355,6 +500,13 @@ def _attachments_summary(attachments: Any) -> str:
 
 # Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _bool_text(value: Any) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return "true"
+        if normalized in {"false", "0", "no", ""}:
+            return "false"
+
     return "true" if bool(value) else "false"
 
 
@@ -365,8 +517,182 @@ def _as_text(value: Any) -> str:
     return _sanitize(str(value))
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
+# Санитизация текстовых данных для безопасного отображения в веб-интерфейсе, удаление лишних пробелов и контрольных символов
 def _sanitize(value: str) -> str:
     return " ".join(
         value.replace("\t", " ").replace("\n", " ").replace("\r", " ").split()
     )
+
+
+# Билд
+def _build_source_rows(
+    source_diagnostics: Any,
+    intake_metadata: Any,
+    summary_data: Any,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    diagnostics_sources = []
+    if isinstance(source_diagnostics, dict):
+        raw_sources = source_diagnostics.get("sources")
+        if isinstance(raw_sources, list):
+            diagnostics_sources = [
+                item for item in raw_sources if isinstance(item, dict)
+            ]
+
+    intake_sources = []
+    if isinstance(intake_metadata, dict):
+        raw_sources = intake_metadata.get("sources")
+        if isinstance(raw_sources, list):
+            intake_sources = [item for item in raw_sources if isinstance(item, dict)]
+
+    source_map: dict[str, dict[str, Any]] = {}
+    for item in diagnostics_sources:
+        source_id = _as_text(item.get("source_id"))
+        if not source_id:
+            continue
+        source_map[source_id] = dict(item)
+
+    for item in intake_sources:
+        source_id = _as_text(item.get("source_id"))
+        if not source_id:
+            continue
+        merged = dict(source_map.get(source_id, {}))
+        merged.update(item)
+        source_map[source_id] = merged
+
+    if not source_map:
+        single = _build_single_source_row(
+            source_diagnostics, intake_metadata, summary_data
+        )
+        if single:
+            source_map[_as_text(single.get("source_id")) or "single_source"] = single
+
+    for source_id, item in source_map.items():
+        rows.append(
+            {
+                "source_id": _as_text(item.get("source_id") or source_id),
+                "source_type": _as_text(item.get("source_type")),
+                "source_role": _as_text(item.get("source_role")),
+                "source_display_name": _as_text(item.get("source_display_name")),
+                "client_id": _as_text(item.get("client_id")),
+                "authority": _as_text(item.get("authority")),
+                "mailbox_folder": _as_text(item.get("mailbox_folder")),
+                "status": _as_text(item.get("status")),
+                "reason": _as_text(item.get("reason")),
+                "items_max": _int_or_zero(item.get("items_max")),
+                "fetched_count": _int_or_zero(item.get("fetched_count")),
+                "loaded_count": _int_or_zero(item.get("loaded_count")),
+                "malformed_count": _int_or_zero(item.get("malformed_count")),
+                "classified_count": 0,
+                "fallback_count": 0,
+            }
+        )
+
+    rows.sort(key=lambda item: item.get("source_id", ""))
+    return rows
+
+
+# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
+def _build_single_source_row(
+    source_diagnostics: Any,
+    intake_metadata: Any,
+    summary_data: Any,
+) -> dict[str, Any] | None:
+    candidates = []
+    if isinstance(source_diagnostics, dict):
+        candidates.append(source_diagnostics)
+    if isinstance(intake_metadata, dict):
+        candidates.append(intake_metadata)
+    if isinstance(summary_data, dict):
+        source_value = summary_data.get("source")
+        if isinstance(source_value, dict):
+            candidates.append(source_value)
+
+    merged: dict[str, Any] = {}
+    for item in candidates:
+        merged.update(item)
+
+    source_id = _as_text(merged.get("source_id"))
+    if not source_id:
+        return None
+
+    return merged
+
+
+# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
+def _build_source_aggregate(
+    source_diagnostics: Any,
+    intake_metadata: Any,
+    source_rows: list[dict[str, Any]],
+    normalized_count: int,
+    classified_count: int,
+    classification_failed_count: int,
+    fallback_count: int,
+) -> dict[str, Any]:
+    aggregate: dict[str, Any] = {
+        "source_count": len(source_rows),
+        "loaded_source_count": sum(
+            1 for item in source_rows if item.get("status") == "ok"
+        ),
+        "degraded_source_count": sum(
+            1 for item in source_rows if item.get("status") == "degraded"
+        ),
+        "fetched_count": sum(
+            _int_or_zero(item.get("fetched_count")) for item in source_rows
+        ),
+        "loaded_count": sum(
+            _int_or_zero(item.get("loaded_count")) for item in source_rows
+        ),
+        "malformed_count": sum(
+            _int_or_zero(item.get("malformed_count")) for item in source_rows
+        ),
+        "normalized_count": normalized_count,
+        "classified_count": classified_count,
+        "classification_failed_count": classification_failed_count,
+        "fallback_count": fallback_count,
+    }
+
+    if isinstance(source_diagnostics, dict):
+        diagnostics_aggregate = source_diagnostics.get("aggregate")
+        if isinstance(diagnostics_aggregate, dict):
+            for key in (
+                "source_count",
+                "loaded_source_count",
+                "degraded_source_count",
+                "fetched_count",
+                "loaded_count",
+                "malformed_count",
+            ):
+                if key in diagnostics_aggregate:
+                    aggregate[key] = _int_or_zero(diagnostics_aggregate.get(key))
+
+    if isinstance(intake_metadata, dict):
+        for key in (
+            "source_count",
+            "loaded_source_count",
+            "degraded_source_count",
+            "fetched_count",
+            "loaded_count",
+            "malformed_count",
+        ):
+            if key in intake_metadata:
+                aggregate[key] = _int_or_zero(intake_metadata.get(key))
+
+    return aggregate
+
+
+# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
+def _int_or_zero(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0

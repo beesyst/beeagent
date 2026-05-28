@@ -200,6 +200,227 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
+# Написание артефактов для тестового запуска с несколькими источниками
+def _write_multi_source_run_artifacts(storage_dir: Path, run_id: str) -> Path:
+    run_dir = storage_dir / "runs" / run_id
+    module_dir = run_dir / "module-beeagent-rop"
+    module_dir.mkdir(parents=True)
+
+    operator_summary = {
+        "run_id": run_id,
+        "status": "ok",
+        "summary": "batch completed with partial degradation",
+        "source": {
+            "mode": "all_enabled",
+            "source_count": 2,
+            "loaded_source_count": 1,
+            "degraded_source_count": 1,
+            "status": "ok",
+            "reason": "partial_degradation",
+            "fetched_count": 2,
+            "loaded_count": 2,
+            "malformed_count": 0,
+        },
+        "sources": [
+            {
+                "source_id": "hotline_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "technical_aggregator",
+                "source_display_name": "Welding Hotline mailbox",
+                "client_id": "welding",
+                "status": "ok",
+                "reason": None,
+            },
+            {
+                "source_id": "sales_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "sales_mailbox",
+                "source_display_name": "Welding Sales mailbox",
+                "client_id": "welding",
+                "status": "degraded",
+                "reason": "source_load_error",
+            },
+        ],
+        "classification": {
+            "normalized_count": 2,
+            "classified_count": 2,
+            "classification_failed_count": 0,
+        },
+    }
+
+    source_diagnostics = {
+        "selection_mode": "all_enabled",
+        "status": "ok",
+        "reason": "partial_degradation",
+        "aggregate": {
+            "source_count": 2,
+            "loaded_source_count": 1,
+            "degraded_source_count": 1,
+            "fetched_count": 2,
+            "loaded_count": 2,
+            "malformed_count": 0,
+        },
+        "sources": [
+            {
+                "source_id": "hotline_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "technical_aggregator",
+                "source_display_name": "Welding Hotline mailbox",
+                "client_id": "welding",
+                "authority": "read_only",
+                "mailbox_folder": "welding",
+                "status": "ok",
+                "reason": None,
+                "items_max": 20,
+                "fetched_count": 2,
+                "loaded_count": 2,
+                "malformed_count": 0,
+            },
+            {
+                "source_id": "sales_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "sales_mailbox",
+                "source_display_name": "Welding Sales mailbox",
+                "client_id": "welding",
+                "authority": "read_only",
+                "mailbox_folder": "sales",
+                "status": "degraded",
+                "reason": "source_load_error",
+                "items_max": 20,
+                "fetched_count": 0,
+                "loaded_count": 0,
+                "malformed_count": 0,
+            },
+        ],
+    }
+
+    intake_metadata = {
+        "selection_mode": "all_enabled",
+        "period": "2026-05",
+        "raw_item_count": 2,
+        "loaded_item_count": 2,
+        "fetched_count": 2,
+        "loaded_count": 2,
+        "malformed_count": 0,
+        "source_count": 2,
+        "loaded_source_count": 1,
+        "degraded_source_count": 1,
+        "sources": [
+            {
+                "source_id": "hotline_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "technical_aggregator",
+                "source_display_name": "Welding Hotline mailbox",
+                "client_id": "welding",
+                "authority": "read_only",
+                "mailbox_folder": "welding",
+                "items_max": 20,
+                "loaded_count": 2,
+            },
+            {
+                "source_id": "sales_mailbox",
+                "source_type": "mailbox_readonly",
+                "source_role": "sales_mailbox",
+                "source_display_name": "Welding Sales mailbox",
+                "client_id": "welding",
+                "authority": "read_only",
+                "mailbox_folder": "sales",
+                "items_max": 20,
+                "loaded_count": 0,
+            },
+        ],
+    }
+
+    normalized_events = [
+        {
+            "event_id": "evt-ms-1",
+            "source_id": "hotline_mailbox",
+            "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "source_display_name": "Welding Hotline mailbox",
+            "client_id": "welding",
+            "sender": "first@example.com",
+            "subject": "Need price",
+            "body_preview": "Need welding consumables",
+            "attachments": [],
+        },
+        {
+            "event_id": "evt-ms-2",
+            "source_id": "hotline_mailbox",
+            "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "source_display_name": "Welding Hotline mailbox",
+            "client_id": "welding",
+            "sender": "second@example.com",
+            "subject": "Need logistics",
+            "body_preview": "Urgent logistics request",
+            "attachments": [],
+        },
+    ]
+
+    classified_events = [
+        {
+            "event_id": "evt-ms-1",
+            "original_event_id": "evt-ms-1",
+            "source_id": "hotline_mailbox",
+            "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "source_display_name": "Welding Hotline mailbox",
+            "client_id": "welding",
+            "case_type": "new_lead",
+            "priority": "high",
+            "confidence": 0.95,
+            "reason_code": "new_contact",
+            "reasoning": "sender is new",
+            "is_fallback": False,
+        },
+        {
+            "event_id": "evt-ms-2",
+            "original_event_id": "evt-ms-2",
+            "source_id": "hotline_mailbox",
+            "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "source_display_name": "Welding Hotline mailbox",
+            "client_id": "welding",
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.81,
+            "reason_code": "duplicate_sender",
+            "reasoning": "duplicate by sender",
+            "is_fallback": True,
+        },
+    ]
+
+    (run_dir / "operator_summary.json").write_text(
+        json.dumps(operator_summary),
+        encoding="utf-8",
+    )
+    (run_dir / "source_diagnostics.json").write_text(
+        json.dumps(source_diagnostics),
+        encoding="utf-8",
+    )
+    (run_dir / "intake_metadata.json").write_text(
+        json.dumps(intake_metadata),
+        encoding="utf-8",
+    )
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized_events),
+        encoding="utf-8",
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified_events),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_review_table.tsv").write_text(
+        "event_id\tbot_case_type\nevt-ms-1\tnew_lead\n",
+        encoding="utf-8",
+    )
+    (module_dir / "module_result.json").write_text("{}", encoding="utf-8")
+    (module_dir / "rop_summary_result.json").write_text("{}", encoding="utf-8")
+    return run_dir
+
+
+# Написание артефактов для тестового запуска с несколькими источниками
 def _client(storage_dir: Path) -> TestClient:
     app = create_web_app(
         settings={
@@ -304,8 +525,65 @@ def test_rop_dashboard_api_is_sanitized_and_filterable(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["metrics"]["shown_rows"] == 1
     assert payload["rows"][0]["event_id"] == "evt-2"
+    assert payload["rows"][0]["source_id"] == "hotline_mailbox"
     assert "RAW-EMAIL-ATTACHMENT-SHOULD-NOT-BE-RENDERED" not in json.dumps(payload)
     assert "original.eml" not in json.dumps(payload)
+
+
+# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
+def test_rop_dashboard_multisource_html_shows_source_rows(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-001")
+    client = _client(storage_dir)
+
+    response = client.get("/runs/run-ms-001/rop")
+
+    assert response.status_code == 200
+    assert "source aggregate" in response.text
+    assert "Welding Sales mailbox" in response.text
+    assert "source_status" in response.text
+
+
+# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
+def test_rop_dashboard_multisource_api_shape_and_source_filters(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-002")
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/runs/run-ms-002/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_aggregate"]["source_count"] == 2
+    assert payload["source_aggregate"]["degraded_source_count"] == 1
+    assert len(payload["sources"]) == 2
+    assert "source_id" in payload["filter_options"]
+    assert "source_status" in payload["filter_options"]
+    assert payload["rows"][0]["source_role"] == "technical_aggregator"
+
+    filtered = client.get(
+        "/api/rop/runs/run-ms-002/dashboard",
+        params={"source_status": "degraded"},
+    )
+    filtered_payload = filtered.json()
+    assert filtered.status_code == 200
+    assert filtered_payload["metrics"]["shown_rows"] == 0
+
+
+# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
+def test_rop_dashboard_multisource_html_source_status_filter(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-003")
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/runs/run-ms-003/rop",
+        params={"source_status": "ok"},
+    )
+
+    assert response.status_code == 200
+    assert "evt-ms-1" in response.text
+    assert "evt-ms-2" in response.text
 
 
 # Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов

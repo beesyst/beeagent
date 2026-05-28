@@ -88,6 +88,35 @@ Supporting API schema route:
 
 - `/api/openapi.json`
 
+### UI-2 ROP dashboard contract
+
+`GET /api/rop/runs/{run_id}/dashboard` now returns source-aware read-model data for
+both old single-source and new multi-source It24 artifacts.
+
+Added/extended fields:
+
+- `source_aggregate` with source and classification KPIs;
+- `sources[]` per-source summary rows;
+- source-aware `filter_options` (`source_id`, `source_role`, `source_status`);
+- source-aware `filters` values;
+- source-aware `rows[]` fields:
+  - `source_id`;
+  - `source_type`;
+  - `source_role`;
+  - `source_display_name`;
+  - `client_id`;
+  - `source_status`.
+
+Supported filters for HTML/API:
+
+- `source_id`
+- `source_role`
+- `source_status`
+- `case_type`
+- `priority`
+- `fallback`
+- `reason_code`
+
 ### Example response object
 
 `GET /api/runs/{run_id}`
@@ -146,6 +175,101 @@ Supporting API schema route:
 }
 ```
 
+`GET /api/rop/runs/{run_id}/dashboard`
+
+```json
+{
+  "run_id": "live-review-2026-05-15-multi",
+  "errors": [],
+  "source_aggregate": {
+    "source_count": 2,
+    "loaded_source_count": 1,
+    "degraded_source_count": 1,
+    "fetched_count": 3,
+    "loaded_count": 3,
+    "malformed_count": 0,
+    "normalized_count": 3,
+    "classified_count": 3,
+    "classification_failed_count": 0,
+    "fallback_count": 1
+  },
+  "sources": [
+    {
+      "source_id": "hotline_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_role": "technical_aggregator",
+      "source_display_name": "Welding Hotline mailbox",
+      "client_id": "welding",
+      "authority": "read_only",
+      "mailbox_folder": "welding",
+      "status": "ok",
+      "reason": "",
+      "items_max": 20,
+      "fetched_count": 3,
+      "loaded_count": 3,
+      "malformed_count": 0,
+      "classified_count": 3,
+      "fallback_count": 1
+    },
+    {
+      "source_id": "sales_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_role": "sales_mailbox",
+      "source_display_name": "Welding Sales mailbox",
+      "client_id": "welding",
+      "authority": "read_only",
+      "mailbox_folder": "sales",
+      "status": "degraded",
+      "reason": "source_load_error",
+      "items_max": 20,
+      "fetched_count": 0,
+      "loaded_count": 0,
+      "malformed_count": 0,
+      "classified_count": 0,
+      "fallback_count": 0
+    }
+  ],
+  "filters": {
+    "source_id": "",
+    "source_role": "",
+    "source_status": "",
+    "case_type": "",
+    "priority": "",
+    "fallback": "",
+    "reason_code": ""
+  },
+  "filter_options": {
+    "source_id": ["hotline_mailbox", "sales_mailbox"],
+    "source_role": ["sales_mailbox", "technical_aggregator"],
+    "source_status": ["degraded", "ok"],
+    "case_type": ["duplicate", "new_lead"],
+    "priority": ["high", "medium"],
+    "reason_code": ["duplicate_sender", "new_contact"]
+  },
+  "rows": [
+    {
+      "event_id": "evt-1",
+      "source_id": "hotline_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_role": "technical_aggregator",
+      "source_display_name": "Welding Hotline mailbox",
+      "client_id": "welding",
+      "source_status": "ok",
+      "sender": "first@example.com",
+      "subject": "Need price",
+      "body_short": "Need welding consumables",
+      "attachments": "brief.pdf (application/pdf, 1024)",
+      "bot_case_type": "new_lead",
+      "bot_priority": "high",
+      "bot_confidence": "0.95",
+      "bot_reason_code": "new_contact",
+      "bot_reasoning": "sender is new",
+      "bot_is_fallback": "false"
+    }
+  ]
+}
+```
+
 ## Artifact whitelist
 
 Allowed run artifacts:
@@ -190,9 +314,9 @@ Sanitization rules:
 - attachment entries with `.eml` or `message/rfc822` are removed from rendered payloads;
 - dashboard shows only metadata/preview fields.
 
-## Out of scope in UI-1
+## Out of scope in current Web Console UI-1/UI-2
 
-UI-1 intentionally does not include:
+UI-1/UI-2 intentionally do not include:
 
 - auth;
 - RBAC;
