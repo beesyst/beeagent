@@ -25,7 +25,7 @@
 
 ## Требования
 
-- Python 3.12+
+- Python 3.14+
 - `uv`
 
 ## Установка (dev)
@@ -605,7 +605,7 @@ bash start.sh
 
 ### Контекст
 
-- Проект: `beeagent` (`Python 3.12+`, `uv`)
+- Проект: `beeagent` (`Python 3.14+`, `uv`)
 - Архитектура: stateful orchestrator, артефакты в `storage/`, логи в `logs/app.log`
 - SDLC-light: `ROADMAP → Issue → branch → code → tests → artifacts → PR → merge`
 - Источник правды для runtime/config: `config/settings.yml`

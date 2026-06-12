@@ -1,4 +1,4 @@
-# UI ROADMAP — beeagent (FastAPI / Tabler operator console track)
+# UI ROADMAP — beeagent (BeeUI operator console track)
 
 ## Purpose
 
@@ -7,10 +7,11 @@
 UI roadmap нужен как lightweight planning-артефакт для operator/product layer:
 
 - не размывает `docs/ROADMAP.md` деталями web/frontend задач;
-- фиксирует порядок развития BeeAgent Web Console;
+- фиксирует порядок перехода BeeAgent Web Console на BeeUI;
 - помогает связывать UI Issue → Code → Tests → Artifacts → PR → Merge;
 - отделяет dashboard, metrics, auth, API, customer-safe access и bounded controls от core runtime roadmap;
-- фиксирует, что BeeAgent core остаётся source of truth, а UI остаётся operator layer.
+- фиксирует, что BeeAgent core остаётся source of truth, а UI остаётся interface/operator layer;
+- фиксирует, что BeeUI становится canonical web framework layer для новых web работ.
 
 Этот документ не заменяет:
 
@@ -30,13 +31,13 @@ UI roadmap нужен как lightweight planning-артефакт для operat
 
 ## Why UI track is separate
 
-UI в BeeAgent становится отдельным product/operator layer:
+UI в BeeAgent является отдельным product/operator layer:
 
-- read-only Operator Web Shell уже появился в It22;
-- ROP dashboard уже показывает artifacts без ручного чтения JSON/TSV;
-- дальше нужны FastAPI backend API, Tabler UI, auth, customer-safe access, control panel, bounded actions;
-- UI должен быть пригоден не только для `beeagent-rop`, но и для будущих `beescan`, `merch`, а также потенциально для общего `BeeConsole`;
-- эти задачи важны, но не должны засорять core `docs/ROADMAP.md`.
+- BeeAgent core отвечает за runtime, orchestration, modules, artifacts, config, capability boundary;
+- `beeagent-rop` отвечает за ROP domain logic: classification, duplicate/summary/recommendation;
+- UI отвечает за operator-visible read-model, dashboards, artifacts, source links, bounded controls later;
+- web UI должен быть пригоден не только для `beeagent-rop`, но и для будущих `beescan`, `merch`, MCP/API/operator surfaces;
+- UI задачи важны, но не должны засорять core `docs/ROADMAP.md`.
 
 UI track развивается отдельно, но строго по тому же SDLC-light процессу:
 
@@ -51,21 +52,80 @@ UI track развивается отдельно, но строго по том�
 - no hidden runtime/module/capability execution from UI;
 - no secrets in HTML/API/logs/artifacts.
 
+## UI ownership decision
+
+Web UI нужно делать в `beeagent`, не в `beeagent-rop`.
+
+`beeagent-rop` — доменный модуль. Его задача:
+
+```text
+inbound event
+→ classification
+→ duplicate/summary/recommendation
+```
+
+`beeagent` — runtime/orchestration/operator shell. Его задача:
+
+```text
+sources
+→ artifacts
+→ module dispatch
+→ operator-visible UI/API
+```
+
+Поэтому BeeUI интегрируется в `beeagent`.
+
+`beeagent-rop` не должен содержать:
+
+- FastAPI routes;
+- Jinja templates;
+- BeeUI adapter;
+- web static assets;
+- artifact browser;
+- operator dashboard;
+- UI actions.
+
+## BeeUI migration decision
+
+Новый canonical UI direction:
+
+```text
+BeeAgent
+  → interfaces/ui adapter/read-model/artifacts
+  → BeeUI
+  → FastAPI + Jinja2 + Tabler-compatible rendering
+```
+
+Старый пакет:
+
+```text
+src/beeagent_module/web
+```
+
+считается legacy/frozen surface после BeeUI cutover planning.
+
+Правило:
+
+- новые web features не добавлять в `src/beeagent_module/web`;
+- BeeUI integration делать через `src/beeagent_module/interfaces/ui`;
+- legacy web удалить после BeeUI MVP parity;
+- `./start.sh web` должен остаться canonical entrypoint.
+
 ## Vision
 
-| Block                   | Statement                                                                                                                                            |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Track identity**      | UI track развивается как operator-facing product layer поверх BeeAgent core, artifacts и module outputs, а не как второй runtime или второй backend. |
-| **Primary objective**   | Цель UI — дать оператору и заказчику понятную консоль: что пришло, что важно, что degraded, какие действия возможны и где evidence.                  |
-| **Backend rule**        | Backend UI layer должен быть FastAPI-based: routes, JSON API, auth, bounded action endpoints.                                                        |
-| **Frontend rule**       | Frontend v1 — Jinja2 + Tabler. Separate React/Tabler или Reflex допускаются позже только поверх stable `/api/*`.                                     |
-| **Source of truth**     | UI читает `config/settings.yml` и existing artifacts из `storage/`. UI не становится source of truth для runtime/business state.                     |
-| **KISS rule**           | Пока backend contracts меняются, используем FastAPI + Jinja2 + Tabler. Отдельный frontend откладывается до стабилизации API.                         |
-| **Safety rule**         | UI read-only по умолчанию. Любые write/control actions проходят через explicit backend action API, validation, confirmation и audit artifacts.       |
-| **Artifact rule**       | Все значения в UI должны быть traceable к source artifacts. Missing/partial/corrupted data отображается явно.                                        |
-| **Module rule**         | UI не содержит ROP business rules. Domain logic остаётся в `beeagent-rop`; UI показывает outputs/artifacts.                                          |
-| **Customer rule**       | Customer-facing link возможен только после auth/session/security hardening. До этого web surface local/private only.                                 |
-| **Future console rule** | Future `BeeConsole` может быть React + Tabler client over stable BeeAgent/BeeCap/BeeScan APIs, но не должен создавать второй backend truth.          |
+| Block                   | Statement                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Track identity**      | UI track развивается как operator-facing interface layer поверх BeeAgent core, artifacts и module outputs, а не как второй runtime или второй backend. |
+| **Primary objective**   | Цель UI — дать оператору и заказчику понятную консоль: что пришло, что важно, что degraded, какие actions возможны later и где evidence.               |
+| **BeeUI rule**          | BeeUI становится canonical web framework layer для BeeAgent. BeeAgent отдаёт adapter/read-model/artifacts, BeeUI рендерит.                             |
+| **Backend rule**        | Backend UI layer остаётся FastAPI-based через BeeUI embedded app. BeeAgent не дублирует BeeUI templates/static/common UI.                              |
+| **Frontend rule**       | Frontend v1 — BeeUI server-rendered UI. Separate React/Tabler допускается позже только поверх stable BeeUI/BeeAgent API.                               |
+| **Source of truth**     | UI читает `config/settings.yml` и existing artifacts из `storage/`. UI не становится source of truth для runtime/business state.                       |
+| **Safety rule**         | UI read-only по умолчанию. Любые write/control actions проходят через explicit product-owned backend action API, validation, confirmation и audit.     |
+| **Artifact rule**       | Все значения в UI должны быть traceable к source artifacts. Missing/partial/corrupted data отображается явно.                                          |
+| **Module rule**         | UI не содержит ROP business rules. Domain logic остаётся в `beeagent-rop`; UI показывает outputs/artifacts.                                            |
+| **Customer rule**       | Customer-facing link возможен только после auth/session/security hardening. До этого web surface local/private only.                                   |
+| **Future console rule** | Future standalone BeeUI или separate frontend может подключаться к stable BeeAgent/BeeUI API, но не должен создавать второй backend truth.             |
 
 ## Architecture direction
 
@@ -74,12 +134,20 @@ UI track развивается отдельно, но строго по том�
 ```text
 Browser
   ↓
-BeeAgent FastAPI Web
-  ├─ HTML pages: Jinja2 + Tabler
-  ├─ JSON API: /api/*
-  ├─ Auth/session layer
-  ├─ Bounded action routes
-  └─ Read-model services
+BeeUI FastAPI app
+  ├─ HTML pages: Jinja2 + Tabler-compatible blocks
+  ├─ JSON API
+  ├─ Artifact browser
+  ├─ Auth/session layer later
+  ├─ Bounded action shell later
+  └─ Product adapter boundary
+        ↓
+BeeAgent interfaces/ui
+  ├─ BeeAgentUiAdapter
+  ├─ read_model.py
+  ├─ artifacts.py
+  ├─ bounded_read.py
+  └─ config/action/admin later
         ↓
 BeeAgent core/services/cases
         ↓
@@ -90,30 +158,130 @@ modules.registry
 beeagent-rop outputs
 ```
 
-Frontend v1:
+Target source layout:
 
 ```text
-FastAPI + Jinja2 + Tabler
+src/beeagent_module/
+  cli/
+    web.py
+
+  core/
+    app.py
+    settings.py
+    paths.py
+    module_registry.py
+    artifact_api.py
+    capability.py
+    ...
+
+  interfaces/
+    ui/
+      __init__.py
+      app.py
+      adapter.py
+      read_model.py
+      artifacts.py
+      bounded_read.py
+      config.py      # later
+      admin.py       # later
+      actions.py     # later
+
+    mcp/
+      __init__.py
+      server.py      # later
+
+    telegram/
+      ...            # later, if transport is extracted
+
+  cases/
+    ...
 ```
 
-Frontend v2, только после стабилизации API:
+Do not use as target:
 
 ```text
-React + Tabler over /api/*
+src/beeagent_module/ui
+src/beeagent_module/web as canonical future UI
+src/beeagent_module/ui/mcp_server.py
+beeagent-rop web routes/templates
 ```
 
-Admin DB layer, только когда появятся DB-backed entities:
+## Responsibility split
+
+| Layer                           | Responsibility                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `beeagent_module.core`          | runtime, config validation, module registry, artifact API, capability boundary, authority policy |
+| `beeagent_module.cases`         | BeeAgent-owned application flows, including ROP orchestration wrappers                           |
+| `beeagent_module.interfaces.ui` | BeeAgent product adapter/read-model/artifact allowlist for BeeUI                                 |
+| `beeui`                         | rendering, navigation, layout blocks, artifact browser, HTML/API shell, auth shell later         |
+| `beeagent-rop`                  | domain classification/duplicate/summary/recommendation logic                                     |
+
+Canonical rule:
 
 ```text
-SQLAdmin mounted under /admin
+BeeUI renders.
+BeeAgent decides/orchestrates.
+beeagent-rop classifies.
 ```
 
-Не использовать как core foundation:
+## Source of truth
+
+Runtime/config source of truth:
 
 ```text
-Reflex as BeeAgent core
-FastUI as main UI foundation
-fastapi-admin as main admin platform
+config/settings.yml
+```
+
+BeeUI UI schema source of truth:
+
+```text
+config/beeui.yml
+```
+
+Artifact source of truth:
+
+```text
+storage/runs/<run_id>/*
+storage/interfaces/*
+```
+
+ROP source configuration source of truth:
+
+```text
+config/settings.yml
+→ rop.sources[]
+```
+
+UI must expose ROP source parameters read-only where useful, but must not create a second source of truth.
+
+Safe ROP source fields that UI may show:
+
+```text
+source_id
+source_type
+source_role
+client_id
+display_name
+enabled
+authority
+items_max
+mailbox.host
+mailbox.port
+mailbox.use_ssl
+mailbox.folder
+mailbox.username_env
+```
+
+UI must not show:
+
+```text
+mailbox.password
+mailbox password env value
+raw .env values
+raw message content
+raw .eml
+raw attachments
+secret values
 ```
 
 ## Development principles
@@ -121,26 +289,30 @@ fastapi-admin as main admin platform
 Каждая UI-итерация должна:
 
 - оставаться внутри одного focused scope;
-- работать через canonical BeeAgent web surface;
+- работать через canonical BeeAgent web entrypoint;
+- использовать BeeUI для rendering/common UI;
+- использовать BeeAgent interfaces/ui adapter/read-model as product boundary;
 - использовать existing artifacts/read-models как source of truth;
 - не вызывать mailbox/CRM/module/capability execution из GET routes;
 - не мутировать `storage/`, config или runtime state без явно заявленного bounded action flow;
 - сохранять read-only behavior для dashboard/run/detail/artifact GET routes;
-- использовать `config/settings.yml` как source of truth для UI config;
+- использовать `config/settings.yml` как source of truth для runtime config;
+- использовать `config/beeui.yml` как source of truth для UI schema/layout;
 - валидировать новые mandatory config keys fail-fast;
-- создавать audit artifacts для bounded write/control actions;
+- создавать audit artifacts для bounded write/control actions later;
 - не раскрывать secrets в HTML/API/logs/artifacts;
 - graceful-handle missing/empty/partial/corrupted artifacts;
 - закрываться через Issue / PR / tests / artifacts.
 
 Для BeeAgent UI это означает:
 
-- сначала read-only visibility;
-- затем stable backend API;
+- сначала BeeUI migration;
+- затем attachment-aware ROP dashboard;
+- затем Bitrix reconciliation dashboard;
+- затем stable API contract;
 - затем auth;
 - затем bounded operator controls;
-- затем optional separate frontend;
-- не делать React/Reflex до стабилизации backend API;
+- затем optional standalone/separate frontend;
 - не делать control panel до explicit action/audit contract.
 
 ## Status values
@@ -161,35 +333,37 @@ UI-итерация считается завершённой, если:
 - route/API contract покрыт тестами;
 - HTML/API output не раскрывает secrets;
 - GET/read-only routes не мутируют artifacts/config/runtime state;
-- bounded write/control paths создают audit artifacts;
-- новые mandatory config keys читаются из `config/settings.yml`;
-- новые mandatory config keys валидируются в `src/beeagent_module/core/settings.py`;
+- bounded write/control paths создают audit artifacts, если они есть в scope;
+- новые mandatory config keys читаются из `config/settings.yml` или `config/beeui.yml`;
+- новые mandatory config keys валидируются fail-fast;
 - missing/partial/corrupted artifacts handled gracefully;
 - source artifacts явно отражены в payload/view;
 - tests и smoke checks выполнены;
 - required quality/security checks выполнены по change level;
 - `docs/WEB_UI.md` обновлён, если изменился implemented route/API contract;
-- `README.ru.md` / `docs/DEV_GUIDE.md` обновлены, если изменился способ запуска/usage.
+- `README.ru.md` / `docs/DEV_GUIDE.md` обновлены, если изменился способ запуска/usage;
+- `pyproject.toml.version` не меняется в обычных UI feature PR.
 
 ## Change levels for UI track
 
 UI track использует те же change levels:
 
-- **low-risk** — docs, HTML copy, harmless visual cleanup, tests without route/API/config/runtime change;
-- **runtime-risk** — dashboard/read-model/API changes, artifact parsing, route behavior, template rendering, support/admin diagnostics;
+- **low-risk** — docs, harmless copy/style cleanup, tests without route/API/config/runtime change;
+- **runtime-risk** — dashboard/read-model/API changes, artifact parsing, route behavior, template rendering, BeeUI adapter payloads;
 - **security-sensitive** — auth, config mutation, operator controls, action API, runtime control artifacts, file/path handling, new dependencies, external exposure.
 
 Правило:
 
 - read-only dashboards обычно `runtime-risk`;
+- BeeUI dependency/migration с file/path/artifact browser обычно `security-sensitive`;
 - auth/control/action/config apply/file/path-sensitive changes — `security-sensitive`;
-- docs-only и copy/style-only changes — `low-risk`.
+- docs-only and copy/style-only changes — `low-risk`.
 
 ## Baseline already achieved
 
-К началу этого UI track baseline считается таким:
+К началу BeeUI migration baseline считается таким:
 
-- BeeAgent имеет read-only web shell после It22;
+- BeeAgent имеет legacy read-only Web Console after previous UI work;
 - route `/runs` показывает runs;
 - route `/runs/<run_id>` показывает run overview;
 - route `/runs/<run_id>/rop` показывает ROP dashboard;
@@ -199,23 +373,26 @@ UI track использует те же change levels:
 - web routes не делают CRM/mailbox actions;
 - raw `.eml` и attachment content не должны рендериться;
 - path traversal должен блокироваться;
-- `beeagent-rop` не меняется из UI задач.
+- `beeagent-rop` не меняется из UI задач;
+- It24 multi-source artifacts уже отображаются в legacy ROP dashboard;
+- BeeAgent It25 attachment extraction artifacts существуют;
+- `beeagent-rop It15` consuming attachment metadata is done.
 
-Это baseline. Дальше нужен не “ещё один web”, а controlled evolution toward BeeAgent Web Console.
+Это baseline. Дальше нужен не дальнейший рост legacy web, а controlled migration to BeeUI.
 
 ---
 
-# Этап 0 — Planning and architecture decision
+## Этап 0 — Planning and architecture decision
 
-## Итерация UI-0 — UI roadmap and FastAPI/Tabler decision
+### Итерация UI-0 — UI roadmap and FastAPI/Tabler decision
 
 **Статус:** DONE
 
-### Goal
+#### Goal
 
 Зафиксировать UI direction для BeeAgent: FastAPI backend, Jinja2 + Tabler frontend v1, stable `/api/*` как будущий контракт для отдельного frontend.
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -242,18 +419,18 @@ UI track использует те же change levels:
 - actions;
 - separate frontend.
 
-### Deliverable
+#### Deliverable
 
 Есть отдельный UI roadmap и принятое архитектурное решение по Web Console.
 
-### Checks
+#### Checks
 
 - docs review;
 - roadmap consistency review;
 - no runtime changes;
 - no tests required unless docs tooling exists.
 
-### DoD
+#### DoD
 
 - `docs/product/ui_roadmap.md` создан;
 - основной `docs/ROADMAP.md` не дублирует UI-track детали;
@@ -261,13 +438,13 @@ UI track использует те же change levels:
 
 ---
 
-# Этап 1 — FastAPI + Tabler web foundation
+## Этап 1 — FastAPI + Tabler web foundation
 
-## Итерация UI-1 — FastAPI + Tabler Web Console foundation v0
+### Итерация UI-1 — FastAPI + Tabler Web Console foundation v0
 
 **Статус:** DONE
 
-### Goal
+#### Goal
 
 Перевести текущий read-only BeeAgent Web Shell с `http.server` на FastAPI-based Web Console с Jinja2 + vendored Tabler static assets, сохранив текущие read-only route semantics, artifact source-of-truth и security boundary.
 
@@ -292,7 +469,7 @@ UI-0 зафиксировал архитектурное решение:
 - bounded operator controls;
 - future BeeConsole.
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -341,17 +518,17 @@ UI-0 зафиксировал архитектурное решение:
 - changes to `beeagent-rop`;
 - ROP business rules in BeeAgent core.
 
-### Deliverable
+#### Deliverable
 
 `./start.sh web` запускает FastAPI + Jinja2 + Tabler read-only Web Console поверх existing artifacts.
 
-### Change level
+#### Change level
 
 `runtime-risk`.
 
 Escalate to `security-sensitive` only if implementation changes file/path semantics, dependency surface beyond FastAPI/Uvicorn/TestClient, auth, secrets, POST actions or external exposure.
 
-### DoD
+#### DoD
 
 - UI-0 architecture decision reflected in docs;
 - UI-1 runtime foundation implemented;
@@ -374,17 +551,17 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 
 ---
 
-# Этап 2 — ROP operator dashboards
+## Этап 2 — ROP operator dashboards
 
-## Итерация UI-2 — ROP multi-source dashboard v1
+### Итерация UI-2 — ROP multi-source dashboard v1
 
 **Статус:** DONE
 
-### Goal
+#### Goal
 
 Расширить BeeAgent Web Console ROP dashboard под multi-source ROP run после BeeAgent It24: оператор должен видеть aggregate и per-source картину по всем источникам текущего run, включая source status, degraded reasons, loaded/classified counts и source-aware event table.
 
-### Почему это нужно
+#### Почему это нужно
 
 После `BeeAgent It24 — ROP multi-source ingestion artifacts v0` BeeAgent умеет запускать один ROP run по нескольким configured `rop.sources[]` и пишет source-aware artifacts:
 
@@ -403,11 +580,11 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 - API payload недостаточно удобен для будущего stable `/api/*`;
 - single-source и multi-source runs должны отображаться одинаково предсказуемо.
 
-### Depends on
+#### Depends on
 
 - `BeeAgent It24 — ROP multi-source ingestion artifacts v0`
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -515,7 +692,7 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 - changes to `beeagent-rop`;
 - ROP business rules in BeeAgent core.
 
-### Deliverable
+#### Deliverable
 
 `/runs/{run_id}/rop` и `/api/rop/runs/{run_id}/dashboard` показывают source-aware ROP dashboard для old single-source и new multi-source runs.
 
@@ -527,7 +704,7 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 - source filters;
 - classification/fallback metrics без скрытия failed/degraded sources.
 
-### Expected artifacts read
+#### Expected artifacts read
 
 ```text
 storage/runs/<run_id>/source_diagnostics.json
@@ -540,7 +717,7 @@ storage/runs/<run_id>/module-beeagent-rop/module_result.json
 storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
 ```
 
-### Change level
+#### Change level
 
 ```text
 runtime-risk
@@ -548,7 +725,7 @@ runtime-risk
 
 Escalate to `security-sensitive` only if implementation changes file/path handling, auth, secrets, POST/actions, external exposure, dependencies, or mailbox/CRM/capability execution.
 
-### Checks
+#### Checks
 
 - `uv run pytest -q`;
 - targeted Web Console tests;
@@ -568,7 +745,7 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
   - open `/runs/{run_id}/rop`;
   - open `/api/rop/runs/{run_id}/dashboard`.
 
-### DoD
+#### DoD
 
 - source-aware ROP dashboard works for old and new runs;
 - source status and degraded reasons are explicit;
@@ -582,7 +759,7 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
 - tests and docs updated;
 - `pyproject.toml.version` not changed.
 
-### Status notes
+#### Status notes
 
 - `/runs/{run_id}/rop` расширен под source-aware read-model:
   - aggregate source KPI card;
@@ -597,20 +774,553 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
 - backward compatibility сохранена для old single-source runs.
 - read-only/security boundary сохранены: no GET mutation, no mailbox/CRM/module/capability execution from GET routes, sanitization сохранена.
 
-## Итерация UI-3 — ROP attachment preview dashboard v1
+### Итерация UI-3 — UI roadmap and BeeUI migration decision
+
+**Статус:** DONE
+
+#### Goal
+
+Зафиксировать отдельный UI/operator-web track для BeeAgent и принять архитектурное решение: BeeUI становится canonical web framework layer, legacy `src/beeagent_module/web` подлежит удалению после BeeUI MVP parity.
+
+#### Scope
+
+**Включено:**
+
+- актуализировать `docs/product/ui_roadmap.md`;
+- зафиксировать BeeUI migration direction;
+- зафиксировать target structure:
+
+```text
+src/beeagent_module/interfaces/ui
+```
+
+- зафиксировать, что web UI принадлежит `beeagent`, не `beeagent-rop`;
+- зафиксировать, что `beeagent-rop` не содержит web routes/templates;
+- зафиксировать BeeUI-only direction for new web work;
+- legacy `src/beeagent_module/web` пометить как deprecated/frozen;
+- описать UI-1/UI-2 BeeUI migration path;
+- зафиксировать Python 3.14 / dependency hygiene prerequisite.
+
+**Не включено:**
+
+- кодовые изменения;
+- dependency `beeui`;
+- route switch;
+- удаление legacy web;
+- config/actions/auth;
+- changes to `beeagent-rop`.
+
+#### Deliverable
+
+Есть обновлённый UI roadmap и принятое архитектурное решение по BeeUI migration.
+
+#### Checks
+
+- docs review;
+- roadmap consistency review;
+- no runtime changes;
+- no tests required unless docs tooling exists.
+
+#### DoD
+
+- `docs/product/ui_roadmap.md` обновлён;
+- основной `docs/ROADMAP.md` не дублирует UI-track детали;
+- команда понимает, что новый web work идёт только через BeeUI adapter;
+- legacy web больше не развивается feature-wise.
+
+### Итерация UI-4 — BeeUI canonical ROP operator console MVP
 
 **Статус:** PLANNED
 
-### Goal
+#### Goal
 
-После BeeAgent It25 и beeagent-rop It15 показать attachment preview / extraction status в ROP dashboard без raw attachment content leakage.
+Подключить `beeui` как canonical BeeAgent web surface и дать минимальный read-only ROP operator console поверх существующих BeeAgent ROP artifacts.
 
-### Depends on
+#### Почему это нужно
 
-- `BeeAgent It25 — Attachment extraction v0`
-- `beeagent-rop It15 — Attachment preview classification hardening v1`
+После BeeAgent It24/It25 и `beeagent-rop It15` backend/artifact/domain path уже создаёт достаточно evidence для MVP:
 
-### Scope
+```text
+multi-source mailbox/json_batch
+→ attachment extraction artifacts
+→ normalized events
+→ beeagent-rop classification
+→ classified events
+→ ROP summary
+→ operator-visible artifacts
+```
+
+Но legacy web не должен дальше развиваться. BeeAgent должен перейти на reusable BeeUI layer, чтобы не копировать Tabler/Jinja/static/dashboard/artifact browser logic по продуктам.
+
+#### Depends on
+
+- BeeUI product adapter / embedded mount capabilities;
+- `beeui>=0.13,<0.30`;
+- BeeAgent It24 multi-source artifacts;
+- BeeAgent It25 attachment extraction artifacts;
+- `beeagent-rop It15` desirable for attachment-aware classification signals.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+- new dependency surface;
+- embedded web app integration;
+- artifact browser / file/path boundary;
+- route behavior change;
+- package/static/templates boundary;
+- user-controlled route params;
+- HTML/API exposure.
+
+#### Scope
+
+**Включено:**
+
+- добавить dependency `beeui>=0.13,<0.30`;
+- добавить local editable `beeui` source for dev if needed:
+
+```toml
+[tool.uv.sources]
+beeui = { path = "../beeui", editable = true }
+```
+
+- создать BeeAgent-side UI package:
+
+```text
+src/beeagent_module/interfaces/ui/
+  __init__.py
+  app.py
+  adapter.py
+  read_model.py
+  artifacts.py
+  bounded_read.py
+```
+
+- optional thin CLI entrypoint extraction:
+
+```text
+src/beeagent_module/cli/web.py
+```
+
+если это не раздувает scope; иначе сохранить dispatch через existing `config/start.py`;
+
+- добавить `config/beeui.yml`;
+- реализовать `BeeAgentUiAdapter`;
+- реализовать app composition через BeeUI embedded API;
+- переключить `./start.sh web` / `config/start.py web` на BeeUI-backed app;
+- legacy `src/beeagent_module/web` оставить как code fallback only до UI-5, но не развивать;
+- реализовать read-only dashboard;
+- реализовать runs list;
+- реализовать run detail;
+- реализовать ROP dashboard read-model;
+- реализовать modules/registry diagnostics read-model;
+- реализовать allowlisted artifact browser;
+- протянуть safe ROP source parameters в config read-model;
+- запретить arbitrary storage browsing;
+- bounded JSON/JSONL/text/TSV preview;
+- path traversal protection;
+- no raw `.eml`;
+- no raw attachment content;
+- no secrets in HTML/API/logs;
+- docs update:
+  - `docs/WEB_UI.md`;
+  - `docs/product/ui_roadmap.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/SECURITY.md` only if security rules materially change.
+
+**Не включено:**
+
+- удаление legacy `src/beeagent_module/web`;
+- config apply;
+- admin/actions;
+- auth/RBAC;
+- POST routes;
+- web-triggered ROP run;
+- CRM write-back;
+- Bitrix actions;
+- mailbox actions;
+- attachment parsing/OCR;
+- changing `beeagent-rop`;
+- changing ROP business rules;
+- stable API v1 freeze;
+- standalone BeeUI service.
+
+#### Required adapter methods
+
+Minimum BeeAgent-side adapter methods:
+
+```python
+class BeeAgentUiAdapter:
+    def get_dashboard(self): ...
+    def list_runs(self): ...
+    def get_run(self, run_id: str): ...
+    def list_artifacts(self, run_id: str): ...
+    def read_artifact(self, run_id: str, artifact_id: str): ...
+    def get_config_read_model(self): ...
+```
+
+If BeeUI supports module/venue-style pages, BeeAgent may additionally implement:
+
+```python
+def get_module_dashboard(self, module_id: str): ...
+def get_rop_dashboard(self, run_id: str | None = None): ...
+```
+
+If BeeUI does not expose `get_rop_dashboard`, ROP page can be implemented in BeeAgent `interfaces/ui/app.py` as a thin product-specific route using BeeUI primitives and BeeAgent adapter/read-model.
+
+#### ROP artifacts allowlist
+
+For BeeAgent ROP MVP, UI artifact allowlist should include only known safe artifacts:
+
+```text
+run_json                         -> run.json
+operator_summary_json            -> operator_summary.json
+source_diagnostics_json          -> source_diagnostics.json
+intake_metadata_json             -> intake_metadata.json
+normalized_events_json           -> normalized_events.json
+classified_events_json           -> classified_events.json
+attachment_extraction_json       -> attachment_extraction.json
+rop_review_table_tsv             -> rop_review_table.tsv
+module_result_json               -> module-beeagent-rop/module_result.json
+rop_summary_result_json          -> module-beeagent-rop/rop_summary_result.json
+lead_classification_result_json  -> module-beeagent-rop/lead_classification_result.json
+steps_json                       -> steps.json
+```
+
+Do not allow UI to read:
+
+```text
+raw .eml
+raw attachments
+arbitrary files
+logs with secrets
+env/config secrets
+mailbox password values
+provider tokens
+mailbox source content beyond normalized/sanitized artifacts
+```
+
+#### ROP dashboard should show
+
+```text
+- latest ROP run;
+- run_id;
+- source count;
+- loaded/classified/failed count;
+- counts by source_id;
+- counts by source_role;
+- counts by source_status;
+- counts by case_type;
+- counts by priority;
+- fallback/manual-review count;
+- attachment_count;
+- attachment preview/refused/unsupported counts, if artifacts provide it;
+- top attention items;
+- table of classified events:
+  - event_id;
+  - source_id;
+  - source_role;
+  - sender;
+  - subject;
+  - body_short;
+  - attachments;
+  - attachment status/preview markers where available;
+  - case_type;
+  - priority;
+  - confidence;
+  - reason_code;
+  - reasoning;
+  - is_fallback;
+- source artifact links.
+```
+
+#### ROP source parameters to surface read-only
+
+UI should show or expose through config read-model:
+
+```text
+rop.sources[].source_id
+rop.sources[].source_type
+rop.sources[].source_role
+rop.sources[].client_id
+rop.sources[].display_name
+rop.sources[].enabled
+rop.sources[].authority
+rop.sources[].items_max
+rop.sources[].mailbox.host
+rop.sources[].mailbox.port
+rop.sources[].mailbox.use_ssl
+rop.sources[].mailbox.folder
+rop.sources[].mailbox.username_env
+```
+
+Do not show env values:
+
+```text
+ROP_MAILBOX_USERNAME actual value
+ROP_MAILBOX_PASSWORD actual value
+```
+
+#### Expected routes
+
+Canonical BeeUI-backed route surface:
+
+```text
+/
+ /health
+ /runs
+ /runs/{run_id}
+ /runs/{run_id}/artifacts
+ /runs/{run_id}/artifacts/{artifact_id}
+ /rop
+ /modules
+
+/api/dashboard
+/api/runs
+/api/runs/{run_id}
+/api/runs/{run_id}/artifacts
+/api/runs/{run_id}/artifacts/{artifact_id}
+/api/modules
+/api/rop/dashboard
+```
+
+Optional compatibility routes can exist only if needed for transition, but new work should target BeeUI-backed routes.
+
+#### Checks
+
+- `uv run pytest -q`;
+- `./start.sh web --host 127.0.0.1 --port 8780 --no-open` if CLI supports flags;
+- or `uv run python3 config/start.py web` with `config/settings.yml` host/port;
+- `/` returns 200;
+- `/health` returns 200;
+- `/runs` returns 200;
+- `/runs/{run_id}` returns 200 for fixture/smoke run;
+- `/runs/{run_id}/artifacts` returns 200;
+- `/runs/{run_id}/artifacts/{artifact_id}` returns 200 for allowlisted artifact;
+- `/rop` returns 200;
+- `/modules` returns 200;
+- `/api/dashboard` returns 200;
+- `/api/rop/dashboard` returns 200;
+- invalid `run_id` rejected;
+- invalid `artifact_id` rejected;
+- path traversal rejected;
+- raw path artifact id rejected;
+- non-allowlisted artifact rejected;
+- oversized JSON bounded;
+- JSONL/TSV bounded;
+- malformed JSON warning, not crash;
+- GET routes do not mutate storage/config/runtime;
+- no mailbox/CRM/provider calls;
+- no module/capability execution from GET routes;
+- no secrets in HTML/API/logs;
+- no external CDN/scripts/tracking introduced;
+- SAST;
+- SCA because dependency files change;
+- DAST-style route misuse checks if practical.
+
+#### DoD
+
+- `./start.sh web` starts BeeUI-backed BeeAgent console;
+- BeeUI is canonical route surface for new web work;
+- ROP dashboard is useful for MVP review;
+- artifact browser is allowlisted and bounded;
+- ROP source parameters are visible as safe read-only config/read-model data;
+- legacy web receives no new feature work;
+- docs updated;
+- `pyproject.toml.version` unchanged;
+- `beeagent-rop` unchanged.
+
+### Итерация UI-5 — Remove legacy BeeAgent web after BeeUI MVP parity
+
+**Статус:** PLANNED
+
+#### Goal
+
+Удалить legacy `src/beeagent_module/web` и оставить BeeUI единственным web framework layer для BeeAgent.
+
+#### Почему это нужно
+
+После UI-4 BeeAgent будет иметь BeeUI-backed operator console. Старый package-local web shell:
+
+```text
+src/beeagent_module/web
+```
+
+будет дублировать:
+
+- routes;
+- templates;
+- static assets;
+- artifact sanitization;
+- dashboard rendering;
+- API behavior.
+
+Дублирование создаёт risk of drift. После route/API smoke нужно удалить legacy web.
+
+#### Depends on
+
+- BeeAgent UI-4;
+- one successful ROP run smoke;
+- one web smoke on real/synthetic ROP artifacts;
+- artifact browser parity;
+- route/API parity for required MVP pages.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+- удаляется legacy web package;
+- меняются imports/tests/docs;
+- route ownership changes;
+- package data changes;
+- file/path/artifact access must remain safe.
+
+#### Scope
+
+**Включено:**
+
+- удалить:
+
+```text
+src/beeagent_module/web/
+```
+
+- удалить legacy templates/static/routes;
+- удалить stale imports/tests/docs references;
+- оставить `./start.sh web` canonical;
+- оставить app composition в:
+
+```text
+src/beeagent_module/interfaces/ui/app.py
+```
+
+- оставить adapter/read-model/artifact allowlist в:
+
+```text
+src/beeagent_module/interfaces/ui/
+```
+
+- удалить legacy package-data from `pyproject.toml`:
+
+```toml
+[tool.setuptools.package-data]
+"beeagent_module.web" = [...]
+```
+
+- оставить only relevant package data if BeeAgent-side UI package needs it;
+- update `docs/WEB_UI.md`;
+- update `docs/product/ui_roadmap.md`;
+- update `README.ru.md`;
+- update `docs/DEV_GUIDE.md`;
+- route/API tests on BeeUI-only web;
+- check no stale imports:
+
+```text
+beeagent_module.web
+```
+
+- check no stale artifact/browser routes from legacy web;
+- check package install/import works.
+
+**Не включено:**
+
+- config/admin/actions;
+- POST routes;
+- auth/RBAC;
+- operator control panel;
+- Bitrix;
+- CRM write-back;
+- web-triggered ROP run;
+- BeeUI standalone service;
+- changes to `beeagent-rop`;
+- ROP business rules.
+
+#### Final structure after UI-5
+
+```text
+src/beeagent_module/
+  cli/
+    web.py               # optional if extracted
+
+  interfaces/
+    ui/
+      __init__.py
+      app.py
+      adapter.py
+      read_model.py
+      artifacts.py
+      bounded_read.py
+
+  core/
+  cases/
+  adapters/
+```
+
+#### Checks
+
+- `uv run pytest -q`;
+- `./start.sh web --host 127.0.0.1 --port 8780 --no-open` if supported;
+- `./start.sh routes` if route command exists;
+- no `src/beeagent_module/web` package;
+- no stale import `beeagent_module.web`;
+- `/` works;
+- `/health` works;
+- `/runs` works;
+- `/runs/{run_id}` works;
+- `/runs/{run_id}/artifacts` works;
+- `/runs/{run_id}/artifacts/{artifact_id}` works;
+- `/rop` works;
+- `/modules` works;
+- `/api/dashboard` works;
+- `/api/rop/dashboard` works;
+- GET routes read-only;
+- no secrets;
+- no path traversal;
+- no raw attachments;
+- no mailbox/CRM actions;
+- no module/capability execution from GET routes;
+- package install/import smoke;
+- SAST;
+- SCA if dependency/package metadata changes.
+
+#### DoD
+
+- `src/beeagent_module/web` removed;
+- BeeUI owns rendering/layout/common UI;
+- BeeAgent owns product adapter/read-model/artifact allowlist;
+- `./start.sh web` remains canonical;
+- route/API parity covered by tests;
+- docs reflect BeeUI-only architecture;
+- `pyproject.toml.version` unchanged.
+
+---
+
+## Этап 2 — ROP operator dashboards on BeeUI
+
+### Итерация UI-6 — Attachment-aware ROP dashboard
+
+**Статус:** PLANNED
+
+#### Goal
+
+Показать attachment preview / extraction status / refusal status в BeeUI-backed ROP dashboard без raw attachment content leakage.
+
+#### Depends on
+
+- BeeAgent It25 — Attachment extraction artifacts;
+- `beeagent-rop It15 — Use BeeAgent attachment extraction contract in classification`;
+- BeeAgent UI-4 or UI-5.
+
+#### Scope
 
 **Включено:**
 
@@ -621,19 +1331,37 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
   - extraction_status;
   - preview_available;
   - refusal_reason;
+  - reason_code;
+  - is_refused if present;
 
 - show bounded preview only if artifact contract explicitly marks it safe;
+
 - show classification reason codes affected by attachment preview;
+
 - warnings for:
   - unsupported attachment;
   - refused attachment;
+  - blocked `.eml`;
+  - `message/rfc822`;
   - extraction failure;
   - oversized file;
 
 - source artifact links;
+
+- integrate with ROP event table;
+
+- aggregate attachment KPIs:
+  - attachment_count;
+  - preview_available_count;
+  - refused_count;
+  - unsupported_count;
+  - extraction_error_count;
+
 - no raw files served;
+
 - no arbitrary attachment download;
-- docs update.
+
+- tests and docs update.
 
 **Не включено:**
 
@@ -642,41 +1370,49 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
 - raw attachment content;
 - file upload;
 - editing classification;
-- CRM write-back.
+- CRM write-back;
+- web-triggered extraction;
+- external parser calls from UI;
+- changes to `beeagent-rop`.
 
-### Deliverable
+#### Deliverable
 
-Оператор видит, какие письма получили attachment-derived context и где extraction/refusal affected classification.
+Оператор видит, какие письма получили attachment-derived context, где extraction/refusal affected classification, и где нужна manual review.
 
-### Checks
+#### Checks
 
 - attachment metadata rendering;
 - safe preview rendering;
 - refused/unsupported/oversized scenario;
+- `.eml` blocked scenario;
+- `message/rfc822` blocked scenario;
 - no raw attachment content served;
-- no `.eml` served;
 - no mutation;
-- no external parser calls from UI.
+- no external parser calls from UI;
+- malformed attachment artifact warning, not crash;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - attachment status is visible and safe;
 - raw content is not exposed;
-- UI remains artifact-only/read-only.
+- UI remains artifact-only/read-only;
+- source artifacts remain traceable.
 
-## Итерация UI-4 — ROP Bitrix reconciliation dashboard v1
+### Итерация UI-7 — ROP Bitrix reconciliation dashboard
 
 **Статус:** PLANNED
 
-### Goal
+#### Goal
 
-После BeeAgent It26 показать read-only Bitrix reconciliation evidence в ROP dashboard: найден ли lead/deal/contact, есть ли дубль, кто ответственный, какой статус и где требуется ручная проверка.
+После BeeAgent It26 показать read-only Bitrix reconciliation evidence в BeeUI-backed ROP dashboard: найден ли lead/deal/contact, есть ли дубль, кто ответственный, какой статус и где требуется ручная проверка.
 
-### Depends on
+#### Depends on
 
-- `BeeAgent It26 — Bitrix read-only reconciliation v0`
+- `BeeAgent It26 — Bitrix read-only reconciliation artifacts`;
+- BeeAgent UI-4 or UI-5.
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -689,6 +1425,7 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
   - Bitrix status if available;
 
 - per-event reconciliation columns;
+
 - filters:
   - matched/unmatched;
   - duplicate;
@@ -697,8 +1434,11 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
   - needs_review;
 
 - source artifact links;
+
 - no Bitrix API call from UI;
+
 - no CRM mutation;
+
 - docs update.
 
 **Не включено:**
@@ -708,13 +1448,14 @@ Escalate to `security-sensitive` only if implementation changes file/path handli
 - lead creation;
 - manager scoring;
 - automatic dedup merge;
-- Bitrix auth setup UI.
+- Bitrix auth setup UI;
+- changes to `beeagent-rop`.
 
-### Deliverable
+#### Deliverable
 
 ROP dashboard показывает CRM-read-only reconciliation поверх artifacts без ручного открытия Bitrix JSON.
 
-### Checks
+#### Checks
 
 - matched scenario;
 - unmatched scenario;
@@ -722,9 +1463,10 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 - degraded Bitrix connector scenario;
 - no CRM calls from UI;
 - no mutation;
-- no secrets.
+- no secrets;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - Bitrix reconciliation is visible and explainable;
 - UI remains read-only;
@@ -732,36 +1474,46 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 
 ---
 
-# Этап 3 — Stable backend API
+## Этап 3 — Stable backend API
 
-## Итерация UI-5 — Stable BeeAgent Web API contract v1
+### Итерация UI-8 — Stable BeeAgent Web API contract v1
 
 **Статус:** PLANNED
 
-### Goal
+#### Goal
 
-Стабилизировать JSON API contract для будущего separate frontend / BeeConsole без реализации React/Reflex frontend.
+Стабилизировать JSON API contract для future separate frontend / standalone BeeUI / BeeConsole без реализации React/Reflex frontend.
 
-### Scope
+#### Scope
 
 **Включено:**
 
 - freeze API routes v1:
   - `/api/health`;
+  - `/api/dashboard`;
   - `/api/runs`;
   - `/api/runs/{run_id}`;
-  - `/api/rop/runs/{run_id}/dashboard`;
+  - `/api/runs/{run_id}/artifacts`;
+  - `/api/runs/{run_id}/artifacts/{artifact_id}`;
+  - `/api/rop/dashboard`;
   - `/api/modules`;
-  - `/api/sources`;
-  - `/api/artifacts/{run_id}/{artifact_name}` or existing safe artifact route;
+  - `/api/config/read-model`;
 
 - stable response envelope:
-  - `ok`;
-  - `read_only`;
-  - `data`;
-  - `warnings`;
-  - `source_refs`;
 
+```json
+{
+  "ok": true,
+  "api": "beeagent-ui.v1",
+  "read_only": true,
+  "data": {},
+  "warnings": [],
+  "source_refs": [],
+  "meta": {}
+}
+```
+
+- stable error envelope;
 - docs examples;
 - fixture payloads for frontend development;
 - API tests.
@@ -772,21 +1524,23 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 - auth/RBAC;
 - POST actions;
 - DB migration;
-- web-triggered runs.
+- web-triggered runs;
+- standalone BeeUI service.
 
-### Deliverable
+#### Deliverable
 
-Future frontend can be built against documented `/api/*` without reading filesystem directly.
+Future frontend or standalone BeeUI can consume BeeAgent API without reading filesystem directly.
 
-### Checks
+#### Checks
 
 - API shape tests;
 - error envelope tests;
 - missing/malformed artifact scenarios;
 - no mutation;
-- no secrets.
+- no secrets;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - API contract is documented;
 - HTML and API use compatible read-models;
@@ -794,36 +1548,47 @@ Future frontend can be built against documented `/api/*` without reading filesys
 
 ---
 
-# Этап 4 — Auth and customer-safe access
+## Этап 4 — Auth and customer-safe access
 
-## Итерация UI-6 — Web auth boundary v0
+### Итерация UI-9 — Web auth boundary v0
 
-**Статус:** PLANNED\*\*
+**Статус:** PLANNED
 
-### Goal
+#### Goal
 
-Добавить минимальную auth boundary для BeeAgent Web Console, чтобы её можно было безопаснее показывать заказчику/оператору по ссылке в private deployment.
+Добавить минимальную auth/session boundary для BeeAgent Web Console через BeeUI, чтобы её можно было безопаснее показывать заказчику/оператору по ссылке в private deployment.
 
-### Change level
+#### Change level
 
-**security-sensitive**
+```text
+security-sensitive
+```
 
-### Scope
+#### Scope
 
 **Включено:**
+
+- use BeeUI auth/session boundary if available;
 
 - config-driven auth:
   - `web.auth.enabled`;
   - `web.auth.mode`;
-  - `web.auth.username_env`;
-  - `web.auth.password_env`;
+  - `web.auth.username_env` or token env;
+  - `web.auth.password_env` or token env;
+  - session secret env;
 
 - fail-fast validation for mandatory auth config when enabled;
-- login/basic/session mode, выбрать минимальный safe вариант;
-- logout if session mode;
+
+- login/logout if session mode;
+
+- API protection;
+
 - no auth secrets in logs/artifacts;
+
 - protect HTML and API routes;
+
 - local/private deployment note;
+
 - tests.
 
 **Не включено:**
@@ -832,26 +1597,27 @@ Future frontend can be built against documented `/api/*` without reading filesys
 - OAuth;
 - multi-tenant user DB;
 - password reset;
-- public internet deployment hardening automation;
+- public internet deployment automation;
 - action controls.
 
-### Deliverable
+#### Deliverable
 
 Web Console can require auth before showing runs/dashboard/API.
 
-### Checks
+#### Checks
 
-- auth disabled scenario;
+- auth disabled explicit local mode;
 - auth enabled success;
 - auth enabled failure;
-- missing env fail-fast/degraded behavior;
+- missing env fail-fast;
 - API protected;
 - no password leakage;
 - no secrets in logs/HTML/API;
 - SAST;
-- SCA only if dependencies change.
+- SCA only if dependencies change;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - auth boundary is explicit;
 - config is source of truth;
@@ -860,24 +1626,23 @@ Web Console can require auth before showing runs/dashboard/API.
 
 ---
 
-# Этап 5 — Operator Control Panel
+## Этап 5 — Operator Control Panel
 
-## Итерация UI-7 — Operator Web Control Panel v0
+### Итерация UI-10 — Operator Web Control Panel v0
 
 **Статус:** PLANNED
 
-### Goal
+#### Goal
 
 Добавить первый bounded operator control panel для BeeAgent ROP flow: оператор видит доступные действия, может запускать safe read-only/draft-only actions через explicit backend action API, а каждое действие создаёт audit artifact.
 
-### Depends on
+#### Depends on
 
-- UI-1 FastAPI + Tabler foundation;
-- UI-5 stable API preferred;
-- UI-6 auth preferred before customer-facing usage;
+- UI-8 stable API preferred;
+- UI-9 auth preferred before customer-facing usage;
 - BeeAgent It24/It25/It26 as backend evidence layers.
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -908,7 +1673,10 @@ Web Console can require auth before showing runs/dashboard/API.
   - `operator_controls.allow`;
 
 - audit artifacts for every accepted/rejected action:
-  - `storage/interfaces/operator_actions/<action_id>.json`;
+
+```text
+storage/interfaces/operator_actions/<action_id>.json
+```
 
 - confirmation step;
 - no mailbox destructive action;
@@ -931,11 +1699,6 @@ Web Console can require auth before showing runs/dashboard/API.
 
 Operator can use Web Control Panel for bounded BeeAgent actions without hidden execution paths.
 
-### Artifacts
-
-- `storage/interfaces/operator_actions/<action_id>.json`;
-- existing run artifacts if action launches ROP flow.
-
 ### Checks
 
 - actions read-model;
@@ -948,9 +1711,10 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 - audit artifact created for POST;
 - no secrets in audit/logs/HTML/API;
 - SAST/security review;
-- DAST-style route misuse checks if practical.
+- DAST-style route misuse checks if practical;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - control panel does not bypass BeeAgent core;
 - every action has explicit status and reason;
@@ -961,17 +1725,17 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 
 ---
 
-# Этап 6 — Admin/support surfaces
+## Этап 6 — Admin/support surfaces
 
-## Итерация UI-8 — Support/Admin diagnostics v0
+### Итерация UI-11 — Support/Admin diagnostics v0
 
 **Статус:** PLANNED
 
-### Goal
+#### Goal
 
 Добавить embedded support/admin diagnostics section для чтения audit/config/module/source diagnostics без отдельной heavy admin platform.
 
-### Scope
+#### Scope
 
 **Включено:**
 
@@ -988,6 +1752,7 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
   - config summary with secrets redacted;
 
 - graceful corrupted/missing audit artifacts;
+
 - no mutation.
 
 **Не включено:**
@@ -999,162 +1764,130 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 - config apply;
 - runtime control.
 
-### Deliverable
+#### Deliverable
 
 Internal support can inspect diagnostics and audit trail without browsing `storage/`.
 
-### Checks
+#### Checks
 
 - admin route smoke;
 - audit listing;
 - modules listing;
 - sources listing;
 - secret redaction;
-- no mutation.
+- no mutation;
+- `uv run pytest -q`.
 
-### DoD
+#### DoD
 
 - admin/support is read-only;
 - no second app/backend;
 - no secrets exposed.
 
-## Итерация UI-9 — SQLAdmin evaluation for DB-backed admin only
+---
+
+## Этап 7 — Deferred product/admin platform
+
+### Итерация UI-12 — SQLAdmin evaluation for DB-backed admin only
 
 **Статус:** DEFERRED
 
-### Goal
+#### Goal
 
 Оценить SQLAdmin only when BeeAgent introduces DB-backed entities such as users, tenants, projects, saved presets or review decisions.
 
-### Scope
+#### Scope
 
 Deferred until DB-backed models exist.
 
-### Not for immediate MVP
+#### Not for immediate MVP
 
 Current runtime source of truth is file-based artifacts and config, so SQLAdmin is not useful for current ROP dashboard/control panel.
 
----
-
-# Этап 7 — Future BeeConsole frontend readiness
-
-## Итерация UI-10 — Frontend contract pack v1
+## Итерация UI-13 — Standalone BeeUI / separate frontend readiness
 
 **Статус:** DEFERRED
 
-### Goal
+#### Goal
 
-Подготовить stable contract pack для будущего separate frontend without implementing frontend.
+Подготовить BeeAgent к future standalone BeeUI or separate frontend only after embedded BeeUI and stable API are proven.
 
-### Scope
+#### Scope
 
-**Включено:**
+**Включено later:**
 
 - documented API routes;
 - response examples;
 - fixture payloads;
 - error envelope examples;
-- frontend dev notes.
+- frontend/standalone dev notes.
 
-**Не включено:**
+**Не включено now:**
 
 - React implementation;
 - Reflex implementation;
 - API gateway;
 - DB migration;
-- second backend.
+- second backend;
+- standalone deployment.
 
-### Deliverable
+#### Deliverable
 
-Future `BeeConsole` can consume BeeAgent API without filesystem access.
-
-## Итерация UI-11 — BeeConsole frontend prototype v0
-
-**Статус:** DEFERRED
-
-### Goal
-
-Сделать отдельный frontend prototype only after backend API stabilizes.
-
-### Preferred stack
-
-```text
-React + Tabler
-```
-
-Alternative prototype only:
-
-```text
-Reflex over BeeAgent API
-```
-
-### Scope
-
-**Включено:**
-
-- consume `/api/*`;
-- no direct filesystem access;
-- no business logic duplication;
-- no runtime execution outside BeeAgent API.
-
-**Не включено:**
-
-- replacing BeeAgent backend;
-- moving orchestration into frontend;
-- direct connector/provider calls;
-- duplicate source of truth.
-
-### DoD
-
-- frontend is replaceable;
-- backend API remains canonical;
-- no BeeAgent core logic moves to frontend.
+Future `BeeConsole` / standalone BeeUI can consume BeeAgent API without filesystem access.
 
 ---
 
-# Этап 8 — Deferred product/admin platform
+## What not to do now
 
-## Итерация UI-12 — Product-grade RBAC and multi-user admin v1
+Do not add config/admin/actions in the BeeUI migration sprint.
 
-**Статус:** DEFERRED
+This would immediately require:
 
-### Goal
+```text
+POST routes
+auth/session/CSRF
+audit artifacts
+settings mutation
+operator authority
+```
 
-Добавить полноценный user/project/role model only when product deployment requires it.
+This is separate security-sensitive scope after MVP.
 
-### Not for immediate MVP
+Do not add web-triggered ROP run now.
 
-Do not build enterprise RBAC before actual deployment/user model is defined.
+Current safe launch remains CLI:
 
-## Итерация UI-13 — Database-backed UI index v1
+```bash
+./start.sh rop run --all-sources --items-max 20 --run-id ...
+```
 
-**Статус:** DEFERRED
+UI should remain read-only:
 
-### Goal
+```text
+run artifacts
+→ dashboard
+→ review
+```
 
-Move from filesystem artifact reads to DB-backed UI index only if storage scanning becomes insufficient.
+Do not put BeeUI into `beeagent-rop`.
 
-### Not for immediate MVP
-
-`storage/` remains canonical source of truth until scale/evidence says otherwise.
-
----
+`beeagent-rop` must remain a clean package-based domain module.
 
 ## Working rule for issues
 
 Для UI track действует правило:
 
 - одна UI-итерация = один Issue = один PR;
-- не смешивать FastAPI migration, auth, dashboard, controls и frontend split в одной задаче;
-- сначала read-only visibility;
+- не смешивать BeeUI migration, auth, dashboard-specific features, controls и frontend split в одной задаче;
+- сначала BeeUI read-only visibility;
+- затем remove legacy;
+- затем attachment/Bitrix dashboards;
 - затем stable API;
 - затем auth;
 - затем bounded controls;
 - controls require audit artifacts;
 - GET/read-model routes must not mutate state;
 - mailbox/CRM/module/capability execution from UI is forbidden unless future iteration explicitly adds bounded action path.
-
----
 
 ## Related documents
 
@@ -1165,4 +1898,10 @@ Move from filesystem artifact reads to DB-backed UI index only if storage scanni
 - `docs/SDLC.md`;
 - `docs/SECURITY.md`;
 - `docs/DEV_GUIDE.md`;
-- `README.ru.md`.
+- `README.ru.md`;
+- BeeUI docs:
+  - `beeui/docs/ROADMAP.md`;
+  - `beeui/docs/INTEGRATION.md`;
+  - `beeui/docs/API_CONTRACT.md`;
+  - `beeui/docs/WEB_UI.md`;
+  - `beeui/docs/COMPONENTS.md`.

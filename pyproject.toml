@@ -3,7 +3,7 @@ name = "beeagent"
 version = "0.31.0"
 description = "BeeAgent pre-MVP skeleton"
 readme = "README.ru.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "pyyaml>=6.0.3",
     "python-dotenv>=1.2.2",
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
