@@ -1,0 +1,66 @@
+app:
+  title: BeeAgent Console
+  product: beeagent
+  logo_text: BeeAgent
+  theme:
+    mode: dark
+    primary: blue
+    base: gray
+    font: sans-serif
+    radius: 1
+    density: default
+  layout:
+    type: vertical
+    container: xl
+    sidebar:
+      variant: dark
+      collapsed: false
+    navbar:
+      enabled: false
+      variant: default
+      sticky: false
+
+navigation:
+  - title: Operator
+    children:
+      - title: Dashboard
+        path: /
+        icon: dashboard
+      - title: Runs
+        path: /runs
+        icon: runs
+      - title: ROP Dashboard
+        path: /rop
+        icon: activity
+      - title: Modules
+        path: /modules
+        icon: modules
+
+data_sources: {}
+
+blocks: {}
+
+pages:
+  - id: dashboard
+    path: /
+    title: Dashboard
+    subtitle: Read-only operator dashboard
+    blocks: []
+
+  - id: runs
+    path: /runs
+    title: Runs
+    subtitle: Run history
+    blocks: []
+
+  - id: rop_dashboard
+    path: /rop
+    title: ROP Dashboard
+    subtitle: ROP operator dashboard
+    blocks: []
+
+  - id: modules
+    path: /modules
+    title: Modules
+    subtitle: Module diagnostics
+    blocks: []

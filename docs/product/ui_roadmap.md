@@ -830,7 +830,7 @@ src/beeagent_module/interfaces/ui
 
 ### Итерация UI-4 — BeeUI canonical ROP operator console MVP
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -852,13 +852,16 @@ multi-source mailbox/json_batch
 
 Но legacy web не должен дальше развиваться. BeeAgent должен перейти на reusable BeeUI layer, чтобы не копировать Tabler/Jinja/static/dashboard/artifact browser logic по продуктам.
 
+UI-4 является первым runtime/code increment после BeeUI migration decision: `./start.sh web` должен запускать BeeUI-backed BeeAgent console, а не legacy `src/beeagent_module/web`.
+
 #### Depends on
 
 - BeeUI product adapter / embedded mount capabilities;
 - `beeui>=0.13,<0.30`;
 - BeeAgent It24 multi-source artifacts;
 - BeeAgent It25 attachment extraction artifacts;
-- `beeagent-rop It15` desirable for attachment-aware classification signals.
+- `beeagent-rop It15` consuming attachment metadata;
+- Technical prerequisite before UI-4 — Python 3.14 and dependency hygiene.
 
 #### Change level
 
@@ -880,8 +883,13 @@ security-sensitive
 
 **Включено:**
 
-- добавить dependency `beeui>=0.13,<0.30`;
-- добавить local editable `beeui` source for dev if needed:
+- добавить dependency:
+
+```toml
+beeui>=0.13,<0.30
+```
+
+- добавить local editable `beeui` source for dev, если BeeUI используется как соседний local repo:
 
 ```toml
 [tool.uv.sources]
@@ -900,18 +908,35 @@ src/beeagent_module/interfaces/ui/
   bounded_read.py
 ```
 
-- optional thin CLI entrypoint extraction:
+- добавить thin CLI entrypoint:
 
 ```text
 src/beeagent_module/cli/web.py
 ```
 
-если это не раздувает scope; иначе сохранить dispatch через existing `config/start.py`;
+- переключить `config/start.py web` на `src/beeagent_module/cli/web.py`;
+- сохранить canonical запуск:
 
-- добавить `config/beeui.yml`;
+```bash
+./start.sh web
+```
+
+- добавить support for web CLI overrides:
+
+```bash
+./start.sh web --host 127.0.0.1 --port 8780 --no-open
+```
+
+- добавить route listing diagnostic, если это не раздувает scope:
+
+```bash
+./start.sh routes
+```
+
+- добавить `config/beeui.yml` как source of truth для BeeUI navigation/pages/blocks;
+- реализовать BeeAgent app composition через BeeUI embedded API;
 - реализовать `BeeAgentUiAdapter`;
-- реализовать app composition через BeeUI embedded API;
-- переключить `./start.sh web` / `config/start.py web` на BeeUI-backed app;
+- использовать BeeUI adapter / page / block registry style, а не hardcoded product UI внутри core;
 - legacy `src/beeagent_module/web` оставить как code fallback only до UI-5, но не развивать;
 - реализовать read-only dashboard;
 - реализовать runs list;
@@ -926,6 +951,8 @@ src/beeagent_module/cli/web.py
 - no raw `.eml`;
 - no raw attachment content;
 - no secrets in HTML/API/logs;
+- attachment aggregate counts можно показать только если они уже доступны в existing artifacts;
+- detailed attachment-aware dashboard оставить для UI-6;
 - docs update:
   - `docs/WEB_UI.md`;
   - `docs/product/ui_roadmap.md`;
@@ -945,6 +972,7 @@ src/beeagent_module/cli/web.py
 - Bitrix actions;
 - mailbox actions;
 - attachment parsing/OCR;
+- full attachment-aware dashboard;
 - changing `beeagent-rop`;
 - changing ROP business rules;
 - stable API v1 freeze;
@@ -964,7 +992,7 @@ class BeeAgentUiAdapter:
     def get_config_read_model(self): ...
 ```
 
-If BeeUI supports module/venue-style pages, BeeAgent may additionally implement:
+If BeeUI supports product-specific dashboard methods, BeeAgent may additionally implement:
 
 ```python
 def get_module_dashboard(self, module_id: str): ...
@@ -972,6 +1000,121 @@ def get_rop_dashboard(self, run_id: str | None = None): ...
 ```
 
 If BeeUI does not expose `get_rop_dashboard`, ROP page can be implemented in BeeAgent `interfaces/ui/app.py` as a thin product-specific route using BeeUI primitives and BeeAgent adapter/read-model.
+
+#### Config source of truth
+
+Runtime web bind settings remain:
+
+```text
+config/settings.yml
+→ web.host
+→ web.port
+→ web.open_browser
+```
+
+BeeUI layout/navigation/pages source of truth:
+
+```text
+config/beeui.yml
+```
+
+ROP source configuration source of truth remains:
+
+```text
+config/settings.yml
+→ rop.sources[]
+```
+
+UI must not create a second source of truth for ROP sources.
+
+#### Minimal `config/beeui.yml`
+
+```yaml
+app:
+  title: BeeAgent
+  product: beeagent
+  logo_text: BeeAgent
+  theme:
+    mode: dark
+    primary: yellow
+    base: gray
+    font: sans-serif
+    radius: 1
+    density: default
+  layout:
+    type: vertical
+    container: xl
+    sidebar:
+      variant: dark
+      collapsed: false
+    navbar:
+      enabled: false
+      variant: default
+      sticky: false
+
+navigation:
+  - title: BeeAgent
+    children:
+      - title: Dashboard
+        path: /
+        icon: dashboard
+      - title: Runs
+        path: /runs
+        icon: list
+      - title: ROP
+        path: /rop
+        icon: list-details
+      - title: Modules
+        path: /modules
+        icon: puzzle
+
+data_sources: {}
+
+blocks: {}
+
+pages:
+  - id: dashboard
+    path: /
+    title: Dashboard
+    subtitle: BeeAgent operator dashboard
+    blocks:
+      - id: beeagent_kpi
+        enabled: true
+      - id: latest_run
+        enabled: true
+      - id: attention
+        enabled: true
+
+  - id: runs
+    path: /runs
+    title: Runs
+    subtitle: Run history
+    blocks:
+      - id: runs_table
+        enabled: true
+
+  - id: rop
+    path: /rop
+    title: ROP
+    subtitle: Read-only ROP operator dashboard
+    blocks:
+      - id: rop_kpi
+        enabled: true
+      - id: rop_sources
+        enabled: true
+      - id: rop_events
+        enabled: true
+      - id: artifact_links
+        enabled: true
+
+  - id: modules
+    path: /modules
+    title: Modules
+    subtitle: Module registry diagnostics
+    blocks:
+      - id: modules_table
+        enabled: true
+```
 
 #### ROP artifacts allowlist
 
@@ -1018,8 +1161,7 @@ mailbox source content beyond normalized/sanitized artifacts
 - counts by case_type;
 - counts by priority;
 - fallback/manual-review count;
-- attachment_count;
-- attachment preview/refused/unsupported counts, if artifacts provide it;
+- attachment aggregate counts only if already available in existing artifacts;
 - top attention items;
 - table of classified events:
   - event_id;
@@ -1029,7 +1171,6 @@ mailbox source content beyond normalized/sanitized artifacts
   - subject;
   - body_short;
   - attachments;
-  - attachment status/preview markers where available;
   - case_type;
   - priority;
   - confidence;
@@ -1089,13 +1230,13 @@ Canonical BeeUI-backed route surface:
 /api/rop/dashboard
 ```
 
-Optional compatibility routes can exist only if needed for transition, but new work should target BeeUI-backed routes.
+Optional compatibility routes can exist only for transition and must not receive new feature work.
 
 #### Checks
 
 - `uv run pytest -q`;
-- `./start.sh web --host 127.0.0.1 --port 8780 --no-open` if CLI supports flags;
-- or `uv run python3 config/start.py web` with `config/settings.yml` host/port;
+- `./start.sh web --host 127.0.0.1 --port 8780 --no-open`;
+- `./start.sh routes`, if implemented;
 - `/` returns 200;
 - `/health` returns 200;
 - `/runs` returns 200;
@@ -1121,11 +1262,12 @@ Optional compatibility routes can exist only if needed for transition, but new w
 - no external CDN/scripts/tracking introduced;
 - SAST;
 - SCA because dependency files change;
-- DAST-style route misuse checks if practical.
+- DAST-style route misuse checks where practical.
 
 #### DoD
 
 - `./start.sh web` starts BeeUI-backed BeeAgent console;
+- `./start.sh web --host ... --port ... --no-open` works;
 - BeeUI is canonical route surface for new web work;
 - ROP dashboard is useful for MVP review;
 - artifact browser is allowlisted and bounded;

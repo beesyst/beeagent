@@ -4,7 +4,6 @@ from copy import deepcopy
 
 from dotenv import load_dotenv
 
-from beeagent_module.core.app import run_app
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -43,21 +42,31 @@ def main() -> None:
     args = sys.argv[1:]
 
     if not args:
+        from beeagent_module.core.app import run_app
+
         logger.info("No CLI args provided, using run.mode from settings")
         run_app(settings=settings, logger=logger)
         return
 
     if args and args[0] == "telegram":
+        from beeagent_module.core.app import run_app
+
         logger.info("Explicit telegram mode requested")
         telegram_settings = _with_run_mode(settings=settings, mode="telegram")
         run_app(settings=telegram_settings, logger=logger)
         return
 
     if args and args[0] == "web":
-        logger.info("Explicit web mode requested")
-        web_settings = _with_run_mode(settings=settings, mode="web")
-        run_app(settings=web_settings, logger=logger)
-        return
+        from beeagent_module.cli.web import run_web
+
+        exit_code = run_web(args[1:])
+        sys.exit(exit_code)
+
+    if args and args[0] == "routes":
+        from beeagent_module.cli.web import run_routes
+
+        exit_code = run_routes(args[1:])
+        sys.exit(exit_code)
 
     if args and args[0] == "rop":
         _handle_rop_cli(args[1:], settings=settings, logger=logger)
@@ -65,7 +74,7 @@ def main() -> None:
 
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, rop",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop",
         file=sys.stderr,
     )
     sys.exit(2)
