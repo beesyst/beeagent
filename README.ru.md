@@ -35,13 +35,13 @@
 - исполнять workflow через LangGraph;
 - сохранять run artifacts в `storage/`;
 - вести logs в `logs/app.log`;
-- запускать read-only Operator Web Console через `./start.sh web`;
-- использовать FastAPI backend для HTML и `/api/*`;
-- использовать Jinja2 server-side templates;
-- использовать vendored Tabler static assets без CDN/npm runtime;
+- запускать BeeUI-backed read-only Operator Web Console через `./start.sh web`;
+- использовать BeeUI поверх FastAPI/Jinja2/Tabler как canonical web layer;
+- читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
+- использовать локальные BeeUI/static assets без CDN и npm runtime;
 - показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
 - отдавать read-only JSON API поверх existing artifacts;
-- сохранять whitelist-based artifact access и sanitization;
+- сохранять allowlist-based artifact access, bounded previews и sanitization;
 - поддерживать approval / reject в demo-потоке;
 - хранить step timings / basic observability;
 - держать несколько demo-agents (`oos`, `promo`, `quiz`);
@@ -112,14 +112,12 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `body_short`, `attachments`, `bot_priority`, `bot_reasoning`;
 - Bitrix/duplicate placeholder columns для будущей сверки;
 - sanitized/bounded TSV export без raw `.eml` и attachment content;
-- read-only Operator Web Console через `./start.sh web`;
-- FastAPI backend для HTML routes и read-only `/api/*`;
-- Jinja2 server-side templates;
-- vendored Tabler static assets без CDN/npm runtime;
-- HTML routes `/`, `/runs`, `/runs/<run_id>`, `/runs/<run_id>/rop`, `/modules`;
-- JSON API routes `/api/runs`, `/api/runs/<run_id>`, `/api/rop/runs/<run_id>/dashboard`, `/api/modules`;
-- ROP dashboard с метриками, фильтрами и таблицей писем;
-- whitelisted artifact access с sanitization;
+- BeeUI-backed read-only Operator Web Console через `./start.sh web`;
+- BeeUI embedded app как canonical web layer поверх FastAPI/Jinja2/Tabler;
+- HTML routes `/`, `/health`, `/runs`, `/runs/<run_id>`, `/rop`, `/modules`;
+- JSON API routes `/api/dashboard`, `/api/runs`, `/api/runs/<run_id>`, `/api/rop/dashboard`, `/api/modules`;
+- artifact JSON routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>`, `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
+- allowlisted artifact access по `artifact_id` с bounded/redacted JSON preview;
 - protection from path traversal and raw `.eml` / `message/rfc822` exposure.
 
 Итерация 24 добавила:
@@ -174,7 +172,7 @@ run:
 ./start.sh rop export-review --run-id ID [--format tsv]
 ```
 
-### Operator Web Console v0
+### Operator Web Console v0 (UI-4 BeeUI-backed)
 
 Read-only web console запускается отдельной командой:
 
@@ -182,30 +180,47 @@ Read-only web console запускается отдельной командой
 ./start.sh web
 ```
 
-Web Console построен на FastAPI + Jinja2 + vendored Tabler.
+CLI overrides:
+
+```bash
+./start.sh web --host 127.0.0.1 --port 8780 --no-open
+```
+
+Route listing diagnostic:
+
+```bash
+./start.sh routes
+```
+
+Web Console построен на BeeUI как canonical web layer поверх FastAPI + Jinja2 + Tabler.
 
 Доступные HTML маршруты:
 
-- `/`
-- `/runs`
-- `/runs/<run_id>`
-- `/runs/<run_id>/rop`
-- `/modules`
+- `/` — dashboard
+- `/health` — health check
+- `/runs` — run history
+- `/runs/<run_id>` — run detail
+- `/rop` — ROP operator dashboard
+- `/modules` — module diagnostics
 
 JSON API маршруты:
 
+- `/api/dashboard`
 - `/api/runs`
 - `/api/runs/<run_id>`
-- `/api/rop/runs/<run_id>/dashboard`
 - `/api/modules`
+- `/api/rop/dashboard`
 
-Supporting artifact маршруты:
+Artifact JSON маршруты:
 
-- `/runs/<run_id>/tsv`
-- `/runs/<run_id>/artifact/<artifact_name>`
-- `/runs/<run_id>/module-artifact/<artifact_name>`
+- `/runs/<run_id>/artifacts`
+- `/runs/<run_id>/artifacts/<artifact_id>`
+- `/api/runs/<run_id>/artifacts`
+- `/api/runs/<run_id>/artifacts/<artifact_id>`
 
 Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
+Доступ к артефактам идёт по allowlisted `artifact_id`, а не по произвольным именам файлов.
+Artifact routes возвращают bounded/redacted JSON preview.
 Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 
 В scope v0 не входят:
@@ -401,10 +416,11 @@ AI используется как assistive layer, а не как неогра�
 - **PyYAML** — конфиг
 - **python-telegram-bot** — Telegram transport
 - **LangGraph** — orchestration/workflow baseline
-- **FastAPI** — canonical web backend для HTML и `/api/*`
+- **BeeUI** — canonical Web Console layer
+- **FastAPI** — runtime foundation для BeeUI-backed Web Console
 - **Uvicorn** — ASGI runtime для Web Console
-- **Jinja2** — server-side templates для Operator Web Console
-- **vendored Tabler assets** — локальный UI kit без CDN и npm runtime в `start.sh`
+- **Jinja2** — template/runtime layer, используемый через BeeUI и legacy frozen web shell
+- **Tabler assets** — локальные UI assets через BeeUI и legacy frozen web shell, без CDN и npm runtime
 - **file-based artifacts** — `storage/`
 - **единый лог** — `logs/app.log`
 
@@ -414,6 +430,7 @@ AI используется как assistive layer, а не как неогра�
 beeagent/
 ├── config/
 │   ├── start.py
+│   ├── beeui.yml
 │   ├── settings.yml
 │   ├── prompts.yml
 │   └── i18n/
@@ -428,13 +445,15 @@ beeagent/
 │   └── app.log
 ├── src/
 │   └── beeagent_module/
+│       ├── cli/
 │       ├── core/
 │       ├── cases/
 │       ├── agents/
 │       ├── adapters/
 │       ├── domain/
+│       ├── interfaces/ui/
 │       ├── mock/
-│       └── web/
+│       └── web/        # legacy frozen web shell
 ├── storage/
 ├── tests/
 ├── pyproject.toml
@@ -455,6 +474,17 @@ beeagent/
 7. case запускает workflow / module runtime path
 8. результат сохраняется в `storage/`
 9. UI показывает summary / report / operator-facing output
+
+Для web console текущий путь такой:
+
+1. `start.sh web`;
+2. `config/start.py`;
+3. `beeagent_module.cli.web.run_web`;
+4. `interfaces/ui/app.py`;
+5. embedded BeeUI app;
+6. BeeAgent UI adapter/read-model/artifact allowlist;
+7. existing artifacts из `storage/`;
+8. read-only HTML/API operator view без мутаций.
 
 Для внешних доменных модулей добавлен module execution path:
 
@@ -825,7 +855,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - **Enriched ROP review TSV** — DONE;
 - **ROP multi-source ingestion artifacts** — DONE;
 - **Operator Web Console v0 with ROP dashboard** — DONE;
-- **FastAPI Web Console foundation** — DONE.
+- **BeeUI-backed Web Console foundation** — DONE.
 
 Первый реальный модуль:
 
@@ -847,9 +877,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - production Bitrix/email/attachment connectors пока не входят в scope;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
 - CRM write-back пока не входит в scope;
-- `./start.sh web` запускает read-only Operator Web Console;
+- `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;
-- ROP dashboard показывает source/classification metrics, distributions, filters и таблицу писем;
+- ROP dashboard показывает latest/selected run summary, classification counts, priority/case type distributions and source status summary where artifacts are available;
 - web console отдаёт read-only `/api/*` поверх existing artifacts;
-- web console использует FastAPI + Jinja2 + vendored Tabler;
+- web console использует BeeUI поверх FastAPI/Jinja2/локальных Tabler assets;
 - web console читает existing artifacts и не запускает mailbox/CRM/module/capability actions.

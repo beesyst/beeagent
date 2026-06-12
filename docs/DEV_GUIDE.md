@@ -83,7 +83,7 @@ bash start.sh
 uv run python3 config/start.py
 ```
 
-### Operator Web Console v0
+### Operator Web Console v0 (UI-4 BeeUI-backed)
 
 Для запуска read-only operator web console используй:
 
@@ -93,20 +93,38 @@ uv run python3 config/start.py
 uv run python3 config/start.py web
 ```
 
-HTML маршруты v0:
+CLI overrides:
 
-- `/`
-- `/runs`
-- `/runs/<run_id>`
-- `/runs/<run_id>/rop`
-- `/modules`
+```bash
+./start.sh web --host 127.0.0.1 --port 8780 --no-open
+```
 
-JSON API маршруты v0:
+Route listing diagnostic:
 
+```bash
+./start.sh routes
+```
+
+Web Console построен на BeeUI (FastAPI + Jinja2 + Tabler).
+
+HTML маршруты:
+
+- `/` — dashboard
+- `/health` — health check
+- `/runs` — run history
+- `/runs/<run_id>` — run detail
+- `/rop` — ROP operator dashboard
+- `/modules` — module diagnostics
+
+JSON API маршруты:
+
+- `/api/dashboard`
 - `/api/runs`
 - `/api/runs/{run_id}`
-- `/api/rop/runs/{run_id}/dashboard`
+- `/api/runs/{run_id}/artifacts`
+- `/api/runs/{run_id}/artifacts/{artifact_id}`
 - `/api/modules`
+- `/api/rop/dashboard`
 
 Web console читает только existing artifacts из `storage/` и не выполняет runtime actions.
 Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.

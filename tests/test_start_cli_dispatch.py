@@ -43,7 +43,7 @@ def _base_settings() -> dict[str, Any]:
     }
 
 
-# Тест: при передаче CLI аргумента вызывается run_app с правильным mode
+# Тест: при передаче CLI аргумента web вызывается run_web из cli/web.py
 def test_main_dispatches_web_mode(monkeypatch) -> None:
     called: dict[str, Any] = {}
 
@@ -66,17 +66,24 @@ def test_main_dispatches_web_mode(monkeypatch) -> None:
 
     monkeypatch.setattr(start_module, "get_logger", lambda *args, **kwargs: _Logger())
 
-    def _fake_run_app(*, settings, logger):
-        called["mode"] = settings["run"]["mode"]
+    def _fake_run_web(argv):
+        called["web_called"] = True
+        called["argv"] = argv
+        return 0
 
-    monkeypatch.setattr(start_module, "run_app", _fake_run_app)
+    monkeypatch.setattr(
+        "beeagent_module.cli.web.run_web", _fake_run_web
+    )
     monkeypatch.setattr(start_module, "_handle_rop_cli", lambda *args, **kwargs: None)
 
     monkeypatch.setattr(start_module.sys, "argv", ["start.py", "web"])
 
-    start_module.main()
+    try:
+        start_module.main()
+    except SystemExit as exc:
+        assert exc.code == 0
 
-    assert called["mode"] == "web"
+    assert called.get("web_called") is True
 
 
 # Тест: при передаче неизвестного CLI аргумента происходит выход с кодом 2
