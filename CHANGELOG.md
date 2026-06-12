@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.31.0...beeagent-v0.32.0) (2026-06-12)
+
+
+### Features
+
+* **ui:** add BeeUI ROP operator console ([#98](https://github.com/beesyst/beeagent/issues/98)) ([8285afd](https://github.com/beesyst/beeagent/commit/8285afd45849e77a644cfad4df57ce6a63b3fc2f))
+
 ## [0.31.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.30.0...beeagent-v0.31.0) (2026-05-28)
 
 
