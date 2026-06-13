@@ -19,7 +19,7 @@ from beeagent_module.core.paths import get_project_root
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
 
 
-# Результат данных
+# Утилита для извлечения данных из результата адаптера с дефолтным значением при ошибке
 def _result_data(
     result: AdapterResult | AdapterErrorResult,
     default: Any,
@@ -50,6 +50,7 @@ def _result_warnings(
     return serialized
 
 
+# Утилита для формирования JSON-ответов с данными или ошибками для API маршрутов
 def _ok_json(
     data: Any,
     warnings: list[Any] | None = None,
@@ -200,7 +201,8 @@ def _register_custom_routes(
 
     @app.get("/rop", response_class=HTMLResponse, include_in_schema=False)
     async def rop_dashboard_html(request: Request) -> HTMLResponse:
-        result = adapter.get_rop_dashboard()
+        run_id_param = request.query_params.get("run_id")
+        result = adapter.get_rop_dashboard(run_id=run_id_param)
         if isinstance(result, AdapterErrorResult):
             return HTMLResponse(
                 content="<h1>ROP Dashboard unavailable</h1><p>No runs found.</p>",
@@ -208,43 +210,218 @@ def _register_custom_routes(
             )
         data = _result_data(result, {})
         run_id = data.get("run_id", "N/A")
-        sources = data.get("sources", [])
-        case_type_counts = data.get("case_type_counts", {})
-        priority_counts = data.get("priority_counts", {})
-        fallback_count = data.get("fallback_count", 0)
-        classified_count = data.get("classified_count", 0)
+        kpis = data.get("kpis", {})
+        funnel = data.get("funnel", [])
+        source_health = data.get("source_health", [])
+        class_dist = data.get("classification_distribution", {})
+        attachment_summary = data.get("attachment_summary", {})
+        recommendations = data.get("recommendations", [])
+        attention_events = data.get("attention_events", [])
+        evidence_links = data.get("evidence_links", [])
+        warnings = data.get("warnings", [])
+        available_runs = data.get("available_runs", [])
 
         html_parts = [
             "<!DOCTYPE html><html><head><meta charset='utf-8'>",
             "<title>ROP Dashboard</title>",
-            "<style>body{font-family:sans-serif;margin:2em;background:#1a1d23;color:#e5e7eb}a{color:#60a5fa}</style>",
-            "</head><body>",
+            "<style>"
+            "body{font-family:sans-serif;margin:2em;background:#1a1d23;color:#e5e7eb}"
+            "a{color:#60a5fa}h2{border-bottom:1px solid #374151;padding-bottom:6px}"
+            "table{border-collapse:collapse;width:100%;margin-bottom:1em}"
+            "th,td{border:1px solid #374151;padding:8px;text-align:left}"
+            "th{background:#374151}.kpi{display:inline-block;margin:8px;padding:12px 20px;"
+            "background:#2d3748;border-radius:8px;min-width:120px}"
+            ".kpi-val{font-size:1.8em;font-weight:bold;color:#60a5fa}"
+            ".kpi-label{font-size:0.85em;color:#9ca3af}"
+            ".rec-warn{border-left:4px solid #f59e0b;background:#2d3748;padding:10px 14px;margin:6px 0}"
+            ".rec-info{border-left:4px solid #3b82f6;background:#2d3748;padding:10px 14px;margin:6px 0}"
+            ".warn{color:#f59e0b}.degraded{color:#ef4444}.ok{color:#22c55e}"
+            ".severity-warning{color:#f59e0b}.severity-info{color:#60a5fa}"
+            "</style></head><body>",
             "<h1>ROP Dashboard</h1>",
-            f"<p>Run: <strong>{_html(run_id)}</strong></p>",
-            f"<p>Classified events: {_html(classified_count)} | Fallback: {_html(fallback_count)}</p>",
         ]
 
-        if case_type_counts:
-            html_parts.append("<h2>Case Types</h2><ul>")
-            for ct, count in sorted(case_type_counts.items()):
-                html_parts.append(f"<li>{_html(ct)}: {_html(count)}</li>")
-            html_parts.append("</ul>")
+        # Run selector
+        html_parts.append(f"<p>Run: <strong>{_html(run_id)}</strong></p>")
+        if len(available_runs) > 1:
+            html_parts.append("<p>Available runs:")
+            for rid in available_runs:
+                if rid == run_id:
+                    html_parts.append(f" <strong>{_html(rid)}</strong>")
+                else:
+                    html_parts.append(
+                        f' <a href="/rop?run_id={_html(rid)}">{_html(rid)}</a>'
+                    )
+            html_parts.append("</p>")
 
-        if priority_counts:
-            html_parts.append("<h2>Priorities</h2><ul>")
-            for p, count in sorted(priority_counts.items()):
-                html_parts.append(f"<li>{_html(p)}: {_html(count)}</li>")
-            html_parts.append("</ul>")
+        # Warnings
+        if warnings:
+            html_parts.append("<h2>Warnings</h2>")
+            for w in warnings:
+                msg = w.get("message", w.get("code", "Warning"))
+                html_parts.append(f'<p class="warn">⚠ {_html(msg)}</p>')
 
-        if sources:
-            html_parts.append("<h2>Sources</h2><ul>")
-            for s in sources:
-                sid = s.get("source_id", "?")
-                status = s.get("status", "?")
-                display = s.get("display_name", sid)
+        # KPI cards
+        html_parts.append("<h2>KPIs</h2><div>")
+        kpi_fields = [
+            ("Status", "run_status"),
+            ("Sources", "source_count"),
+            ("Loaded sources", "loaded_source_count"),
+            ("Degraded", "degraded_source_count"),
+            ("Fetched", "fetched_count"),
+            ("Loaded", "loaded_count"),
+            ("Malformed", "malformed_count"),
+            ("Normalized", "normalized_count"),
+            ("Classified", "classified_count"),
+            ("Fallback", "fallback_count"),
+            ("High pri", "high_priority_count"),
+            ("Medium pri", "medium_priority_count"),
+            ("Low pri", "low_priority_count"),
+            ("Attachments", "attachment_count"),
+            ("Preview", "attachment_preview_count"),
+            ("Refused", "attachment_refused_count"),
+        ]
+        for label, key in kpi_fields:
+            val = kpis.get(key, 0)
+            html_parts.append(
+                f'<div class="kpi"><div class="kpi-val">{_html(val)}</div>'
+                f'<div class="kpi-label">{_html(label)}</div></div>'
+            )
+        html_parts.append("</div>")
+
+        # Processing funnel
+        if funnel:
+            html_parts.append(
+                "<h2>Processing Funnel</h2><table><tr><th>Stage</th><th>Count</th></tr>"
+            )
+            for stage in funnel:
                 html_parts.append(
-                    f"<li>{_html(display)} ({_html(sid)}) — {_html(status)}</li>"
+                    f"<tr><td>{_html(stage.get('stage', ''))}</td>"
+                    f"<td>{_html(stage.get('count', 0))}</td></tr>"
                 )
+            html_parts.append("</table>")
+
+        # Recommendations
+        if recommendations:
+            html_parts.append("<h2>Recommendations</h2>")
+            for rec in recommendations:
+                cls = "rec-warn" if rec.get("severity") == "warning" else "rec-info"
+                html_parts.append(
+                    f'<div class="{cls}">'
+                    f'<strong class="severity-{_html(rec.get("severity", "info"))}">'
+                    f"{_html(rec.get('severity', 'info').upper())}</strong>: "
+                    f"{_html(rec.get('title', ''))} — {_html(rec.get('message', ''))}"
+                    f"</div>"
+                )
+
+        # Source health
+        if source_health:
+            html_parts.append(
+                "<h2>Source Health</h2><table>"
+                "<tr><th>Source</th><th>Type</th><th>Status</th>"
+                "<th>Reason</th><th>Fetched</th><th>Loaded</th>"
+                "<th>Malformed</th><th>Classified</th><th>Fallback</th></tr>"
+            )
+            for sh in source_health:
+                status = _html(sh.get("status", ""))
+                status_class = (
+                    "degraded" if sh.get("status") in ("degraded", "error") else "ok"
+                )
+                html_parts.append(
+                    f"<tr><td>{_html(sh.get('display_name', ''))}</td>"
+                    f"<td>{_html(sh.get('source_type', ''))}</td>"
+                    f'<td class="{status_class}">{status}</td>'
+                    f"<td>{_html(sh.get('reason', ''))}</td>"
+                    f"<td>{_html(sh.get('fetched_count', 0))}</td>"
+                    f"<td>{_html(sh.get('loaded_count', 0))}</td>"
+                    f"<td>{_html(sh.get('malformed_count', 0))}</td>"
+                    f"<td>{_html(sh.get('classified_count', 0))}</td>"
+                    f"<td>{_html(sh.get('fallback_count', 0))}</td></tr>"
+                )
+            html_parts.append("</table>")
+
+        case_type_counts = class_dist.get("case_type_counts", {})
+        priority_counts = class_dist.get("priority_counts", {})
+        reason_code_counts = class_dist.get("reason_code_counts", {})
+        if case_type_counts:
+            html_parts.append(
+                "<h2>Case Types</h2><table><tr><th>Type</th><th>Count</th></tr>"
+            )
+            for ct, count in sorted(case_type_counts.items()):
+                html_parts.append(
+                    f"<tr><td>{_html(ct)}</td><td>{_html(count)}</td></tr>"
+                )
+            html_parts.append("</table>")
+        if priority_counts:
+            html_parts.append(
+                "<h2>Priorities</h2><table><tr><th>Priority</th><th>Count</th></tr>"
+            )
+            for p, count in sorted(priority_counts.items()):
+                html_parts.append(
+                    f"<tr><td>{_html(p)}</td><td>{_html(count)}</td></tr>"
+                )
+            html_parts.append("</table>")
+        if reason_code_counts:
+            html_parts.append(
+                "<h2>Reason Codes</h2><table><tr><th>Code</th><th>Count</th></tr>"
+            )
+            for rc, count in sorted(reason_code_counts.items()):
+                html_parts.append(
+                    f"<tr><td>{_html(rc)}</td><td>{_html(count)}</td></tr>"
+                )
+            html_parts.append("</table>")
+
+        # Attachment summary
+        if attachment_summary and attachment_summary.get("total_attachments", 0) > 0:
+            html_parts.append(
+                "<h2>Attachment Summary</h2><table><tr><th>Metric</th><th>Value</th></tr>"
+            )
+            for key, label in [
+                ("total_attachments", "Total"),
+                ("preview_available_count", "Preview available"),
+                ("refused_count", "Refused"),
+                ("blocked_count", "Blocked"),
+                ("unsupported_count", "Unsupported"),
+                ("oversized_count", "Oversized"),
+                ("extraction_error_count", "Extraction errors"),
+            ]:
+                html_parts.append(
+                    f"<tr><td>{label}</td><td>{_html(attachment_summary.get(key, 0))}</td></tr>"
+                )
+            html_parts.append("</table>")
+
+        if attention_events:
+            html_parts.append(
+                "<h2>Attention Events</h2><p>Showing up to 50 events needing review.</p>"
+                "<table><tr><th>Event ID</th><th>Source</th><th>Sender</th>"
+                "<th>Subject</th><th>Type</th><th>Priority</th>"
+                "<th>Confidence</th><th>Reason</th><th>Review reason</th></tr>"
+            )
+            for evt in attention_events:
+                html_parts.append(
+                    f"<tr><td>{_html(evt.get('event_id', ''))}</td>"
+                    f"<td>{_html(evt.get('source_display_name', evt.get('source_id', '')))}</td>"
+                    f"<td>{_html(evt.get('sender', ''))}</td>"
+                    f"<td>{_html(evt.get('subject', ''))}</td>"
+                    f"<td>{_html(evt.get('case_type', ''))}</td>"
+                    f"<td>{_html(evt.get('priority', ''))}</td>"
+                    f"<td>{_html(evt.get('confidence', ''))}</td>"
+                    f"<td>{_html(evt.get('reason_code', ''))}</td>"
+                    f"<td>{_html(evt.get('review_reason', ''))}</td></tr>"
+                )
+            html_parts.append("</table>")
+
+        if evidence_links:
+            html_parts.append("<h2>Evidence Links</h2><ul>")
+            for link in evidence_links:
+                label = _html(link.get("label", link.get("artifact_id", "")))
+                if link.get("available"):
+                    url = _html(link.get("url", ""))
+                    html_parts.append(f'<li><a href="{url}">{label}</a> ✓</li>')
+                else:
+                    html_parts.append(
+                        f"<li>{label} — <span class='warn'>unavailable</span></li>"
+                    )
             html_parts.append("</ul>")
 
         html_parts.append('<p><a href="/">← Back to Dashboard</a></p></body></html>')
