@@ -40,6 +40,7 @@
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
 - использовать локальные BeeUI/static assets без CDN и npm runtime;
 - показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
+- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary и evidence links;
 - отдавать read-only JSON API поверх existing artifacts;
 - сохранять allowlist-based artifact access, bounded previews и sanitization;
 - поддерживать approval / reject в demo-потоке;
@@ -172,7 +173,7 @@ run:
 ./start.sh rop export-review --run-id ID [--format tsv]
 ```
 
-### Operator Web Console v0 (UI-4 BeeUI-backed)
+### Operator Web Console (UI-5 — Rich ROP dashboard)
 
 Read-only web console запускается отдельной командой:
 
@@ -200,7 +201,7 @@ Web Console построен на BeeUI как canonical web layer поверх 
 - `/health` — health check
 - `/runs` — run history
 - `/runs/<run_id>` — run detail
-- `/rop` — ROP operator dashboard
+- `/rop` — ROP operator dashboard (UI-5 enriched)
 - `/modules` — module diagnostics
 
 JSON API маршруты:
@@ -209,7 +210,7 @@ JSON API маршруты:
 - `/api/runs`
 - `/api/runs/<run_id>`
 - `/api/modules`
-- `/api/rop/dashboard`
+- `/api/rop/dashboard` (UI-5 enriched)
 
 Artifact JSON маршруты:
 
@@ -218,12 +219,24 @@ Artifact JSON маршруты:
 - `/api/runs/<run_id>/artifacts`
 - `/api/runs/<run_id>/artifacts/<artifact_id>`
 
+ROP dashboard (/rop и /api/rop/dashboard) поддерживает:
+
+- selected run через `run_id` query parameter (`/rop?run_id=...`);
+- KPI cards (source counts, processed counts, priority distribution, attachment counts);
+- processing funnel (configured sources → enabled → fetched → loaded → normalized → classified → review candidates);
+- source health table с явным указанием degraded источников и причин;
+- classification distribution (case types, priorities, reason codes);
+- deterministic recommendations (без LLM);
+- attention events (до 50 событий, сортировка по priority/fallback/confidence);
+- attachment summary (aggregate без raw content);
+- evidence links (allowlisted artifacts с флагом availability).
+
 Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
 Доступ к артефактам идёт по allowlisted `artifact_id`, а не по произвольным именам файлов.
 Artifact routes возвращают bounded/redacted JSON preview.
 Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 
-В scope v0 не входят:
+В текущем scope не входят:
 
 - login/auth;
 - web-triggered `rop run`;
@@ -855,7 +868,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - **Enriched ROP review TSV** — DONE;
 - **ROP multi-source ingestion artifacts** — DONE;
 - **Operator Web Console v0 with ROP dashboard** — DONE;
-- **BeeUI-backed Web Console foundation** — DONE.
+- **BeeUI-backed Web Console foundation** — DONE;
+- **Rich ROP dashboard parity + operator intelligence v1** — DONE.
 
 Первый реальный модуль:
 

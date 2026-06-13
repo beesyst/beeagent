@@ -1277,7 +1277,482 @@ Optional compatibility routes can exist only for transition and must not receive
 - `pyproject.toml.version` unchanged;
 - `beeagent-rop` unchanged.
 
-### Итерация UI-5 — Remove legacy BeeAgent web after BeeUI MVP parity
+### Итерация UI-5 — Rich ROP dashboard parity + operator intelligence v1
+
+**Статус:** DONE
+
+#### Goal
+
+Довести BeeUI-backed ROP dashboard до уровня полноценной операторской панели: вернуть parity с legacy Web Console и добавить operator intelligence поверх существующих ROP artifacts — KPI, source health, processing funnel, attention items, deterministic recommendations, review events table и evidence links.
+
+#### Почему это нужно
+
+UI-4 выполнил важную инфраструктурную задачу: `./start.sh web` теперь запускает BeeUI-backed console, а новый web work должен идти через `src/beeagent_module/interfaces/ui`.
+
+Но UI-4 был foundation/cutover, а не полноценный продуктовый dashboard. Текущий BeeUI ROP экран слишком бедный:
+
+- мало KPI;
+- нет полноценной processing funnel;
+- source health виден ограниченно;
+- нет операторских рекомендаций;
+- нет удобной таблицы событий для review;
+- attachment status виден недостаточно;
+- artifact evidence не собран в понятный блок;
+- главный dashboard и ROP-раздел не дают оператору быстрого ответа: что пришло, что обработано, где проблема и что делать дальше.
+
+Удалять legacy `src/beeagent_module/web` до восстановления dashboard parity преждевременно. Сначала BeeUI ROP dashboard должен стать не хуже legacy и полезнее для MVP review.
+
+#### Product direction
+
+Главный dashboard `/` остаётся общим BeeAgent operator dashboard:
+
+```text
+BeeAgent Console
+  → global overview
+  → runs
+  → modules
+  → module/operator sections
+      → ROP
+      → BeeScan later
+      → Merch later
+```
+
+ROP dashboard `/rop` — module/operator section для `beeagent-rop`, но реализация остаётся в `beeagent`, потому что UI принадлежит BeeAgent operator layer.
+
+Будущие модули должны подключаться и отключаться через module registry / artifacts без превращения UI в ROP-only приложение.
+
+#### Depends on
+
+- UI-4 — BeeUI canonical ROP operator console MVP;
+- BeeAgent It24 — ROP multi-source ingestion artifacts;
+- BeeAgent It25 — ROP attachment extraction artifacts;
+- `beeagent-rop It15` — classification uses BeeAgent attachment extraction contract;
+- existing artifacts:
+  - `operator_summary.json`;
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `attachment_extraction.json`;
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `rop_review_table.tsv`;
+  - `module-beeagent-rop/module_result.json`;
+  - `module-beeagent-rop/rop_summary_result.json`;
+  - `steps.json`.
+
+#### Change level
+
+```text
+runtime-risk
+```
+
+Причина:
+
+- меняются dashboard/read-model/API payloads;
+- меняется HTML rendering для operator dashboard;
+- UI читает и агрегирует existing artifacts;
+- появляются новые deterministic recommendations;
+- route/API behavior меняется, но без новых dependencies, auth, POST/actions, file/path contract changes или external execution.
+
+Escalate to `security-sensitive` only if implementation changes dependency surface, file/path handling, artifact allowlist semantics, auth, POST/actions, external exposure, mailbox/CRM/capability execution, or raw attachment rendering.
+
+#### Scope
+
+**Включено:**
+
+- расширить BeeAgent ROP read-model в:
+
+```text
+src/beeagent_module/interfaces/ui/read_model.py
+```
+
+- расширить BeeAgent ROP HTML/API rendering в:
+
+```text
+src/beeagent_module/interfaces/ui/app.py
+```
+
+- сохранить BeeUI-backed route surface from UI-4;
+- сделать `/rop` полноценной operator intelligence page;
+- поддержать latest run по умолчанию;
+- поддержать selected run через:
+
+```text
+/rop?run_id=<run_id>
+/api/rop/dashboard?run_id=<run_id>
+```
+
+- добавить ссылки из `/runs` или run detail на `/rop?run_id=<run_id>`, если это можно сделать без расширения scope;
+- добавить ROP KPI cards/read-model:
+
+```text
+total_runs
+selected_run_id
+run_status
+source_count
+loaded_source_count
+degraded_source_count
+fetched_count
+loaded_count
+malformed_count
+normalized_count
+classified_count
+classification_failed_count
+fallback_count
+high_priority_count
+medium_priority_count
+low_priority_count
+attachment_count
+attachment_preview_count
+attachment_refused_count
+attachment_blocked_count
+review_tsv_available
+```
+
+- добавить processing funnel:
+
+```text
+configured_sources
+→ enabled_sources
+→ fetched_items
+→ loaded_items
+→ normalized_events
+→ classified_events
+→ review_candidates
+```
+
+- добавить source health table:
+
+```text
+source_id
+display_name
+source_type
+source_role
+client_id
+authority
+status
+reason
+items_max
+fetched_count
+loaded_count
+malformed_count
+classified_count
+fallback_count
+```
+
+- добавить classification distribution:
+
+```text
+case_type_counts
+priority_counts
+reason_code_counts
+fallback_count
+```
+
+- добавить deterministic recommendations / operator attention block.
+
+Recommendations строятся без LLM, только из artifacts:
+
+```text
+if high_priority_count > 0:
+  Review high-priority events.
+
+if fallback_count > 0:
+  Review fallback classifications.
+
+if degraded_source_count > 0:
+  Check degraded sources.
+
+if malformed_count > 0:
+  Investigate malformed source items.
+
+if loaded_count > 0 and classified_count == 0:
+  Classification produced no output.
+
+if attachment_refused_count > 0 or attachment_blocked_count > 0:
+  Review blocked/refused attachments.
+
+if review_tsv_available:
+  Open/export review TSV for human review.
+```
+
+- добавить events needing review table, максимум 50 строк:
+
+```text
+event_id
+source_id
+source_display_name
+sender
+subject
+case_type
+priority
+confidence
+reason_code
+is_fallback
+attachment_count
+review_reason
+```
+
+- добавить attachment summary на aggregate уровне без raw content:
+
+```text
+total_attachments
+preview_available_count
+refused_count
+blocked_count
+unsupported_count
+oversized_count
+extraction_error_count
+```
+
+- добавить evidence/artifact links block:
+
+```text
+operator_summary_json
+source_diagnostics_json
+intake_metadata_json
+attachment_extraction_json
+normalized_events_json
+classified_events_json
+rop_review_table_tsv
+module_result_json
+rop_summary_result_json
+steps_json
+```
+
+- расширить `/api/rop/dashboard` read-model новыми полями:
+
+```text
+kpis
+funnel
+source_health
+classification_distribution
+attachment_summary
+recommendations
+attention_events
+evidence_links
+available_runs
+selected_run_id
+```
+
+- сохранить backward compatibility where practical:
+  - старые single-source runs;
+  - missing `attachment_extraction.json`;
+  - missing `source_diagnostics.json`;
+  - missing `intake_metadata.json`;
+  - malformed JSON artifacts;
+  - empty runs;
+  - non-ROP runs.
+
+- graceful handling:
+  - missing artifact → visible warning / empty block;
+  - malformed artifact → warning, not crash;
+  - partial run → dashboard still renders;
+  - no runs → clear empty state.
+
+- сохранить read-only/security boundary:
+  - no GET mutation;
+  - no POST routes;
+  - no web-triggered ROP run;
+  - no mailbox calls;
+  - no CRM/Bitrix calls;
+  - no module/capability execution from UI;
+  - no raw `.eml`;
+  - no raw attachment content;
+  - no arbitrary storage browsing;
+  - no secrets in HTML/API/logs.
+
+- обновить tests:
+  - ROP KPI read-model;
+  - processing funnel;
+  - recommendations;
+  - source health;
+  - attention events;
+  - attachment summary;
+  - evidence links;
+  - selected run via `run_id`;
+  - missing/malformed artifacts;
+  - HTML escaping;
+  - API payload shape;
+  - no GET mutation;
+  - no POST routes.
+
+- обновить docs:
+  - `docs/product/ui_roadmap.md`;
+  - `docs/WEB_UI.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`, если usage или route behavior меняется.
+
+**Не включено:**
+
+- удаление legacy `src/beeagent_module/web`;
+- auth/RBAC;
+- POST/operator actions;
+- web-triggered `rop run`;
+- mailbox execution;
+- CRM/Bitrix execution;
+- capability/MCP/n8n execution;
+- config editing;
+- full attachment-aware dashboard with per-file detail viewer;
+- OCR/parsing from UI;
+- raw attachment download;
+- human review editing;
+- manager scoring;
+- Bitrix reconciliation UI;
+- stable API v1 freeze;
+- separate React/Reflex frontend;
+- changes to `beeagent-rop`;
+- ROP classification/business logic changes.
+
+#### Deliverable
+
+BeeUI-backed `/rop` becomes a useful ROP operator dashboard.
+
+Operator can answer from one screen:
+
+```text
+1. Сколько событий пришло?
+2. Сколько реально обработано?
+3. Какие источники degraded?
+4. Какие события требуют внимания?
+5. Что делать дальше?
+6. Какие artifacts подтверждают вывод?
+```
+
+`/api/rop/dashboard` returns a richer read-only operator intelligence payload based on existing artifacts.
+
+No new runtime artifacts are required.
+
+#### Expected artifacts read
+
+```text
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/module-beeagent-rop/module_result.json
+storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
+storage/runs/<run_id>/steps.json
+```
+
+#### Expected `/api/rop/dashboard` payload shape
+
+```json
+{
+  "ok": true,
+  "read_only": true,
+  "data": {
+    "selected_run_id": "run-id",
+    "available_runs": [],
+    "kpis": {},
+    "funnel": [],
+    "source_health": [],
+    "classification_distribution": {},
+    "attachment_summary": {},
+    "recommendations": [],
+    "attention_events": [],
+    "evidence_links": [],
+    "warnings": []
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted BeeUI/ROP dashboard tests;
+- `uv run python config/start.py routes`;
+- route/API smoke:
+  - `/`;
+  - `/runs`;
+  - `/rop`;
+  - `/rop?run_id=<run_id>`;
+  - `/api/rop/dashboard`;
+  - `/api/rop/dashboard?run_id=<run_id>`;
+
+- single-source run fixture;
+- multi-source run fixture;
+- degraded source fixture;
+- fallback classification fixture;
+- high priority events fixture;
+- attachment extraction fixture;
+- missing artifact fixture;
+- malformed artifact fixture;
+- no GET mutation;
+- no POST routes;
+- no mailbox/CRM/module/capability execution from UI;
+- no secrets in HTML/API/logs;
+- no raw `.eml`;
+- no raw attachment content;
+- HTML escaping for artifact-derived values;
+- SAST mindset review.
+
+SCA is not required unless `pyproject.toml` / `uv.lock` changes.
+
+#### DoD
+
+- `/rop` is visibly richer than UI-4 foundation screen;
+- `/rop` supports selected run by `run_id`;
+- ROP KPIs are shown;
+- processing funnel is shown;
+- source health table is shown;
+- deterministic recommendations are shown;
+- attention events table is shown;
+- attachment aggregate summary is shown if artifact exists;
+- evidence links are shown;
+- `/api/rop/dashboard` exposes the same read-model;
+- old/single-source runs still render;
+- missing/malformed artifacts do not crash UI;
+- dashboard remains read-only;
+- no mailbox/CRM/module/capability execution from GET routes;
+- no secrets/raw `.eml`/raw attachment content in HTML/API;
+- tests and docs updated;
+- `pyproject.toml.version` not changed.
+
+#### Status notes
+
+- `build_rop_dashboard_read_model` расширен в `read_model.py`:
+  - добавлены helper-функции для KPIs, funnel, source health, classification distribution, attachment summary, recommendations, attention events, evidence links;
+  - сохранена backward compatibility для legacy single-source runs и старых полей (`sources`, `classified_count`, `case_type_counts`, `priority_counts`, `fallback_count`, `normalized_count`, `has_attachment_extraction`);
+  - missing/malformed artifacts не вызывают crash, а генерируют warning;
+  - deterministic recommendations без LLM;
+  - attention events capped до 50 строк;
+  - evidence links используют allowlist из `artifacts.py`.
+
+- `/rop` обновлён в `app.py`:
+  - добавлены секции: KPI cards, processing funnel, recommendations, source health table, classification distribution, attachment summary, attention events table, evidence links;
+  - поддержка `run_id` query parameter (`/rop?run_id=...`);
+  - все artifact-derived значения экранируются через `_html()`.
+
+- `/api/rop/dashboard` поддерживает `run_id` query parameter и возвращает полный rich payload.
+
+- `adapter.py` не менялся — метод `get_rop_dashboard(run_id=...)` уже существовал.
+
+- Tests добавлены:
+  - `test_rop_dashboard_api_rich_payload`;
+  - `test_rop_dashboard_selected_run`;
+  - `test_rop_dashboard_html_contains_kpis_and_recommendations`;
+  - `test_rop_dashboard_source_health_degraded`;
+  - `test_rop_dashboard_attention_events_are_capped`;
+  - `test_rop_dashboard_attachment_summary`;
+  - `test_rop_dashboard_evidence_links_use_allowlist`;
+  - `test_rop_dashboard_handles_missing_artifacts`;
+  - `test_rop_dashboard_handles_malformed_artifacts`;
+  - `test_rop_dashboard_escapes_html`;
+  - `test_rop_dashboard_get_routes_do_not_mutate_storage`.
+
+- `pyproject.toml.version` не изменён.
+- `beeagent-rop` не изменён.
+- legacy web не изменён.
+- зависимости не изменены.
+- CDN не добавлены.
+- raw content не раскрывается.
+
+### Итерация UI-6 — Remove legacy BeeAgent web after BeeUI MVP parity
 
 **Статус:** PLANNED
 
@@ -1448,7 +1923,7 @@ src/beeagent_module/
 
 ## Этап 2 — ROP operator dashboards on BeeUI
 
-### Итерация UI-6 — Attachment-aware ROP dashboard
+### Итерация UI-7 — Attachment-aware ROP dashboard
 
 **Статус:** PLANNED
 
@@ -1541,7 +2016,7 @@ src/beeagent_module/
 - UI remains artifact-only/read-only;
 - source artifacts remain traceable.
 
-### Итерация UI-7 — ROP Bitrix reconciliation dashboard
+### Итерация UI-8 — ROP Bitrix reconciliation dashboard
 
 **Статус:** PLANNED
 
@@ -1618,7 +2093,7 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 
 ## Этап 3 — Stable backend API
 
-### Итерация UI-8 — Stable BeeAgent Web API contract v1
+### Итерация UI-9 — Stable BeeAgent Web API contract v1
 
 **Статус:** PLANNED
 
@@ -1692,7 +2167,7 @@ Future frontend or standalone BeeUI can consume BeeAgent API without reading fil
 
 ## Этап 4 — Auth and customer-safe access
 
-### Итерация UI-9 — Web auth boundary v0
+### Итерация UI-10 — Web auth boundary v0
 
 **Статус:** PLANNED
 
@@ -1770,7 +2245,7 @@ Web Console can require auth before showing runs/dashboard/API.
 
 ## Этап 5 — Operator Control Panel
 
-### Итерация UI-10 — Operator Web Control Panel v0
+### Итерация UI-11 — Operator Web Control Panel v0
 
 **Статус:** PLANNED
 
@@ -1869,7 +2344,7 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 
 ## Этап 6 — Admin/support surfaces
 
-### Итерация UI-11 — Support/Admin diagnostics v0
+### Итерация UI-12 — Support/Admin diagnostics v0
 
 **Статус:** PLANNED
 
@@ -1930,7 +2405,7 @@ Internal support can inspect diagnostics and audit trail without browsing `stora
 
 ## Этап 7 — Deferred product/admin platform
 
-### Итерация UI-12 — SQLAdmin evaluation for DB-backed admin only
+### Итерация UI-13 — SQLAdmin evaluation for DB-backed admin only
 
 **Статус:** DEFERRED
 
