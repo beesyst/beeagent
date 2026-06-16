@@ -1713,7 +1713,7 @@ SCA is not required unless `pyproject.toml` / `uv.lock` changes.
 - tests and docs updated;
 - `pyproject.toml.version` not changed.
 
-#### Status notes
+#### Status notes (final)
 
 - `build_rop_dashboard_read_model` расширен в `read_model.py`:
   - добавлены helper-функции для KPIs, funnel, source health, classification distribution, attachment summary, recommendations, attention events, evidence links;
@@ -1723,27 +1723,35 @@ SCA is not required unless `pyproject.toml` / `uv.lock` changes.
   - attention events capped до 50 строк;
   - evidence links используют allowlist из `artifacts.py`.
 
-- `/rop` обновлён в `app.py`:
-  - добавлены секции: KPI cards, processing funnel, recommendations, source health table, classification distribution, attachment summary, attention events table, evidence links;
-  - поддержка `run_id` query parameter (`/rop?run_id=...`);
-  - все artifact-derived значения экранируются через `_html()`.
+- `/rop` переведён на BeeUI shared shell:
+  - рендеринг через Jinja2-шаблон `beeagent_page.html`, расширяющий `base.html`;
+  - левый sidebar с навигацией (Dashboard, Runs, ROP Dashboard, Modules);
+  - Tabler-совместимая вёрстка: card, datagrid, badges, alert, list-group;
+  - все artifact-derived значения экранируются.
 
-- `/api/rop/dashboard` поддерживает `run_id` query parameter и возвращает полный rich payload.
+- `/rop` layout полностью переработан:
+  - Row 1: Run Overview (datagrid) + KPI mini-cards (Connected Sources, Loaded Items, Classified Cases, Need Review, High-Priority Cases, Attachments/Preview);
+  - Row 2: Recommendations, Evidence & Exports (list-group с available/unavailable), Source Health (compact table);
+  - Row 3: Processing Funnel + Source Details (если >1 источника);
+  - Row 4: Classification Breakdown (Case Types, Priorities, Reason Codes в 3 колонки);
+  - Row 5: Operator Queue (полная таблица, max 50);
+  - Row 6: Attachment Processing (KPI mini-cards).
 
-- `adapter.py` не менялся — метод `get_rop_dashboard(run_id=...)` уже существовал.
+- `/runs/{run_id}/artifacts/{artifact_id}` теперь HTML artifact viewer:
+  - breadcrumb (Dashboard → Runs → Run → Artifact);
+  - TSV → HTML table;
+  - JSON → pretty block + "Open as JSON" link;
+  - ошибки/предупреждения в alert;
+  - экранирование HTML-значений.
 
-- Tests добавлены:
-  - `test_rop_dashboard_api_rich_payload`;
-  - `test_rop_dashboard_selected_run`;
-  - `test_rop_dashboard_html_contains_kpis_and_recommendations`;
-  - `test_rop_dashboard_source_health_degraded`;
-  - `test_rop_dashboard_attention_events_are_capped`;
-  - `test_rop_dashboard_attachment_summary`;
-  - `test_rop_dashboard_evidence_links_use_allowlist`;
-  - `test_rop_dashboard_handles_missing_artifacts`;
-  - `test_rop_dashboard_handles_malformed_artifacts`;
-  - `test_rop_dashboard_escapes_html`;
-  - `test_rop_dashboard_get_routes_do_not_mutate_storage`.
+- `/api/runs/{run_id}/artifacts/{artifact_id}` сохранён как JSON envelope.
+
+- `/modules` переведён на BeeUI shell.
+
+- `config/beeui.yml` navigation обновлён под UI-5.
+
+- Tests: 56 тестов в `test_beeui_console.py` (было 50):
+  - добавлены: `test_rop_renders_within_shell`, `test_artifact_viewer_html_returns_html_not_json`, `test_artifact_viewer_api_still_json`, `test_tsv_artifact_viewer_renders_table`, `test_json_artifact_viewer_readable`, `test_artifact_viewer_missing_artifact_shows_error`.
 
 - `pyproject.toml.version` не изменён.
 - `beeagent-rop` не изменён.
@@ -1751,6 +1759,22 @@ SCA is not required unless `pyproject.toml` / `uv.lock` changes.
 - зависимости не изменены.
 - CDN не добавлены.
 - raw content не раскрывается.
+
+#### UI-5 post-DONE polish (BeeUI 13.1 platform overview dashboard)
+
+**Статус:** DONE (добавлено post-merge после UI-5)
+
+What was added:
+
+- `config/beeui.yml`: locale seed (`app.locale.default: en`, `app.locale.available: [en, ru]`);
+- `src/beeagent_module/interfaces/ui/locale.py`: locale helper — resolve locale from `?lang=`, translate product labels (en/ru);
+- `/` dashboard: enriched `build_dashboard()` with KPI items (Total Runs, Loaded Modules, Latest Run Status, ROP Classified Cases, Needs Review, Degraded Sources), summary dict, Quick Links card, customer-facing layout via overridden `product_dashboard.html` template;
+- `/rop`: Tabler URL tabs (`ul.nav.nav-tabs.card-header-tabs`) for run switching (max 5 visible + dropdown for overflow), locale-aware labels in all sections, `col-lg-6` layout for Run Overview + 2x3 KPI grid, locale preserved in `?lang=` across tab links;
+- Locale-aware labels for all product UI sections on `/rop` and `/`;
+- Backward-compatible API: `/api/rop/dashboard` unchanged;
+- Artifact browser: browser route HTML, API route JSON, TSV as table, JSON pretty-escaped, raw `.eml` blocked;
+- Tests: 30+ new tests for locale, dashboard, Tabler URL tabs, backward-compatible API, artifact split;
+- `beeagent_module.interfaces.ui/templates/*.html` added to `pyproject.toml` package-data.
 
 ### Итерация UI-6 — Remove legacy BeeAgent web after BeeUI MVP parity
 

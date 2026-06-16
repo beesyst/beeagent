@@ -117,8 +117,8 @@ BeeAgent уже прошёл этап **module platform v0**:
 - BeeUI embedded app как canonical web layer поверх FastAPI/Jinja2/Tabler;
 - HTML routes `/`, `/health`, `/runs`, `/runs/<run_id>`, `/rop`, `/modules`;
 - JSON API routes `/api/dashboard`, `/api/runs`, `/api/runs/<run_id>`, `/api/rop/dashboard`, `/api/modules`;
-- artifact JSON routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>`, `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
-- allowlisted artifact access по `artifact_id` с bounded/redacted JSON preview;
+- browser artifact routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>` и API routes `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
+- allowlisted artifact access по `artifact_id` с bounded/redacted preview для HTML/JSON;
 - protection from path traversal and raw `.eml` / `message/rfc822` exposure.
 
 Итерация 24 добавила:
@@ -136,7 +136,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 2. запускать ROP MVP pipeline через CLI (`--source-id` или `--all-sources`), а результат смотреть через Operator Web Console;
 3. использовать `source_diagnostics.json`, `intake_metadata.json`, dashboard/TSV для human review и фиксации ошибок классификации/source degradation;
 4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
-5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts/UI, `beeagent-rop` — за ROP business logic.
+5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts/UI adapter surface, `beeagent-rop` — за ROP business logic.
 
 ## Режимы работы и CLI
 
@@ -173,7 +173,7 @@ run:
 ./start.sh rop export-review --run-id ID [--format tsv]
 ```
 
-### Operator Web Console (UI-5 — Rich ROP dashboard)
+### Operator Web Console (UI-5 — Rich ROP dashboard и operator intelligence)
 
 Read-only web console запускается отдельной командой:
 
@@ -193,15 +193,17 @@ Route listing diagnostic:
 ./start.sh routes
 ```
 
-Web Console построен на BeeUI как canonical web layer поверх FastAPI + Jinja2 + Tabler.
+Web Console запускается через `./start.sh web`.
+
+BeeUI — canonical web layer. BeeAgent в этом пути отвечает только за read-only adapter, read-model, layout builders и artifact allowlist. HTML/rendering/templates/shell и browser artifact pages принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-5 rendering path.
 
 Доступные HTML маршруты:
 
-- `/` — dashboard
+- `/` — dashboard (customer-facing KPI + Quick Links + Technical details)
 - `/health` — health check
 - `/runs` — run history
 - `/runs/<run_id>` — run detail
-- `/rop` — ROP operator dashboard (UI-5 enriched)
+- `/rop` — BeeUI generic adapter custom page для ROP dashboard
 - `/modules` — module diagnostics
 
 JSON API маршруты:
@@ -212,28 +214,34 @@ JSON API маршруты:
 - `/api/modules`
 - `/api/rop/dashboard` (UI-5 enriched)
 
-Artifact JSON маршруты:
+Browser artifact маршруты:
 
-- `/runs/<run_id>/artifacts`
-- `/runs/<run_id>/artifacts/<artifact_id>`
-- `/api/runs/<run_id>/artifacts`
-- `/api/runs/<run_id>/artifacts/<artifact_id>`
+- `/runs/<run_id>/artifacts` — HTML
+- `/runs/<run_id>/artifacts/<artifact_id>` — HTML
 
-ROP dashboard (/rop и /api/rop/dashboard) поддерживает:
+API artifact маршруты:
 
-- selected run через `run_id` query parameter (`/rop?run_id=...`);
-- KPI cards (source counts, processed counts, priority distribution, attachment counts);
-- processing funnel (configured sources → enabled → fetched → loaded → normalized → classified → review candidates);
-- source health table с явным указанием degraded источников и причин;
-- classification distribution (case types, priorities, reason codes);
-- deterministic recommendations (без LLM);
-- attention events (до 50 событий, сортировка по priority/fallback/confidence);
-- attachment summary (aggregate без raw content);
-- evidence links (allowlisted artifacts с флагом availability).
+- `/api/runs/<run_id>/artifacts` — JSON
+- `/api/runs/<run_id>/artifacts/<artifact_id>` — JSON envelope
+
+**Локализация:** интерфейс поддерживает en (по умолчанию) и ru через `?lang=ru`.
+Настройка локалей в `config/beeui.yml` → `app.locale`.
+Невалидный `?lang` безопасно сбрасывается на `en`.
+
+**Дашборд `/`:** показывает customer-facing KPI (Total Runs, Loaded Modules, Latest Run Status, ROP Classified Cases, Needs Review, Degraded Sources), Quick Links и Summary. Raw payload спрятан под "Technical details".
+
+**ROP dashboard (`/rop` и `/api/rop/dashboard`):**
+
+- `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
+- run selection доступен через `run_id` там, где это поддерживает read-model/API;
+- HTML tabs на `/rop`: Overview, Queue, Sources, Attachments, Evidence, Bitrix disabled/reserved;
+- Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
+- dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 50), attachment summary без raw content и evidence links по allowlist;
+- `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload.
 
 Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
-Доступ к артефактам идёт по allowlisted `artifact_id`, а не по произвольным именам файлов.
-Artifact routes возвращают bounded/redacted JSON preview.
+Доступ к артефактам идёт только по allowlisted `artifact_id`, а не по произвольным именам файлов.
+Browser artifact routes возвращают BeeUI HTML, API artifact routes возвращают bounded/redacted JSON.
 Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 
 В текущем scope не входят:
@@ -241,7 +249,7 @@ Artifact routes возвращают bounded/redacted JSON preview.
 - login/auth;
 - web-triggered `rop run`;
 - POST/write actions;
-- mailbox/CRM actions;
+- mailbox/CRM/module/capability execution;
 - attachment content parsing;
 - production deployment hardening.
 

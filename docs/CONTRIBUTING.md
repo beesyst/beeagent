@@ -133,7 +133,7 @@ git checkout main
 git pull --ff-only
 ```
 
-4. Удалить локальную ветку:
+6. Удалить локальную ветку:
 
 ```
 git branch -d feat/8-iteration-0-frame_and_launch
@@ -149,6 +149,18 @@ git push origin --delete feat/8-iteration-0-frame_and_launch
 
 ```
 git fetch -p
+```
+
+**После изменения версии в BeeUI**
+
+```
+uv lock --upgrade-package beeui
+./start.sh
+uv pip show beeui
+
+git add uv.lock
+git commit -m 'chore(deps): update beeui'
+git push
 ```
 
 ### Проверка PR соразработчика

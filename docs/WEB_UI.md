@@ -38,17 +38,28 @@ UI не хранит отдельный runtime state и не создаёт в�
 
 ## Runtime foundation
 
-Реализованная основа UI-4 (с расширениями UI-5):
+Реализованная основа UI-5:
 
 - **BeeUI** — canonical web layer для BeeAgent;
-- FastAPI backend через embedded BeeUI app в `src/beeagent_module/interfaces/ui/`;
-- BeeAgent product adapter/read-model/artifact allowlist в `src/beeagent_module/interfaces/ui/`;
+- BeeAgent UI code находится в `src/beeagent_module/interfaces/ui/`;
+- `app.py` создаёт embedded BeeUI app и BeeAgent read-only API routes;
+- `adapter.py` содержит adapter methods, custom pages и artifact access;
+- `read_model.py` содержит read-model и BeeUI `layout[]`;
+- `artifacts.py` содержит artifact allowlist;
+- `bounded_read.py` отвечает за bounded/redacted previews;
+- `locale.py` содержит locale helper;
 - thin CLI entrypoint в `src/beeagent_module/cli/web.py`;
-- `config/beeui.yml` — источник правды для UI layout/navigation/pages;
+- `config/beeui.yml` — источник правды для navigation/pages/tabs/locale/component seed;
+- ROP block composition пока задаётся в BeeAgent read-model layout builders, а не полностью через config;
 - `config/start.py` вызывает `beeagent_module.cli.web.run_web`;
 - legacy `src/beeagent_module/web` заморожен;
 - нет auth, POST actions и runtime control endpoints;
-- ROP dashboard расширен в UI-5: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links.
+- ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
+- локализация UI: en по умолчанию, ru через `?lang=ru`, конфигурация в `config/beeui.yml`;
+- product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
+- `/rop` рендерится как BeeUI generic adapter custom page;
+- browser artifact routes и shell принадлежат BeeUI;
+- `/api/runs/{run_id}/artifacts/{artifact_id}` остаётся JSON envelope.
 
 Entrypoint:
 
@@ -78,6 +89,8 @@ CLI overrides:
 - `/runs/{run_id}` — run detail
 - `/rop` — ROP operator dashboard
 - `/modules` — module diagnostics
+- `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
+- `/runs/{run_id}/artifacts/{artifact_id}` — browser artifact detail route, BeeUI-owned HTML
 
 ## JSON API routes
 
@@ -88,41 +101,29 @@ CLI overrides:
 - `/api/runs/{run_id}`
 - `/api/modules`
 - `/api/rop/dashboard`
-
-## Artifact JSON routes
-
-Реализованные artifact JSON routes:
-
-- `/runs/{run_id}/artifacts`
-- `/runs/{run_id}/artifacts/{artifact_id}`
 - `/api/runs/{run_id}/artifacts`
 - `/api/runs/{run_id}/artifacts/{artifact_id}`
+
+## Artifact routes
+
+Реализованные artifact routes:
+
+- `/runs/{run_id}/artifacts` — browser HTML route
+- `/runs/{run_id}/artifacts/{artifact_id}` — browser HTML route
+- `/api/runs/{run_id}/artifacts` — JSON (список доступных артефактов)
+- `/api/runs/{run_id}/artifacts/{artifact_id}` — JSON envelope (machine-readable)
 
 Правила:
 
 - доступ к артефактам идёт по allowlisted `artifact_id`, а не по произвольному имени файла;
-- ответы возвращаются в bounded/redacted JSON envelope;
-- произвольные имена файлов и path-like значения отклоняются.
+- browser-routes (`/runs/...`) возвращают BeeUI HTML;
+- API-route (`/api/runs/...`) возвращает bounded/redacted JSON envelope;
+- произвольные имена файлов и path-like значения отклоняются;
+- raw `.eml` и attachment content не отдаются.
 
-### ROP dashboard contract
+### Artifact viewer (browser route)
 
-`GET /api/rop/dashboard` возвращает текущий source-aware ROP dashboard read-model.
-
-Поддерживаемые query parameters:
-
-- `run_id` — optional explicit run selection; если параметр не передан, используется latest run.
-
-Возвращаемые данные включают:
-
-- `run_id`;
-- `summary`;
-- `source_diagnostics`;
-- `intake_metadata`;
-- `sources[]`;
-- `classified_count`;
-- `case_type_counts`;
-- `priority_counts`;
-- `fallback_count`.
+Browser route показывает bounded/redacted artifact preview через BeeUI. Внутренняя HTML-структура viewer не фиксируется этим документом.
 
 ### Примеры ответов
 
@@ -228,23 +229,6 @@ CLI overrides:
 }
 ```
 
-`GET /runs/{run_id}/artifacts/{artifact_id}`
-
-```json
-{
-  "ok": true,
-  "read_only": true,
-  "data": {
-    "artifact_id": "operator_summary_json",
-    "run_id": "live-review-2026-05-15",
-    "content": "{\n  \"status\": \"ok\"\n}",
-    "content_type": "application/json"
-  },
-  "warnings": [],
-  "meta": {}
-}
-```
-
 Пример ответа для non-allowlisted artifact:
 
 ```json
@@ -298,7 +282,20 @@ UI не отдаёт произвольные файлы из `storage/`. `artif
 
 Поддерживаемые query parameters:
 
-- `run_id` — optional explicit run selection; если параметр не передан, используется latest run.
+- `run_id` — optional explicit run selection; если параметр не передан, используется latest run;
+- `tab` — HTML page tab selector для `/rop`;
+- `lang` — HTML page locale selector для `/rop`.
+
+`/api/rop/dashboard` принимает `run_id`.
+
+HTML `/rop` использует BeeUI tabs:
+
+- `overview`
+- `queue`
+- `sources`
+- `attachments`
+- `evidence`
+- `bitrix` — disabled/reserved
 
 Возвращаемые данные (UI-5 enriched payload):
 
@@ -442,39 +439,43 @@ Backward-compatible поля сохранены:
 
 ### HTML route /rop (UI-5 enriched)
 
-`GET /rop` рендерит HTML-страницу с богатым ROP dashboard.
+`GET /rop` рендерит BeeUI generic adapter custom page для rich ROP dashboard.
 
 Поддерживаемые query parameters:
 
-- `run_id` — optional explicit run selection.
+- `run_id` — optional explicit run selection;
+- `tab` — tab selector;
+- `lang` — locale override (`en` или `ru`), fallback на `en`.
+
+Источник данных: `BeeAgentUiAdapter.get_page("rop_dashboard", query)`.
+
+Источник layout: `build_rop_page_layout(...)`.
 
 Секции страницы:
 
-- Run selector (если несколько runs);
-- Warnings block;
-- KPI cards (grid);
-- Processing funnel (table);
-- Recommendations (severity-colored blocks);
-- Source health (table с degraded highlighting);
-- Classification distribution (case types, priorities, reason codes);
-- Attachment summary (table);
-- Attention events (table, max 50);
-- Evidence links (available/unavailable).
+- `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда;
+- `queue`: attention events;
+- `sources`: source health details;
+- `attachments`: attachment processing summary;
+- `evidence`: allowlisted evidence links;
+- `bitrix`: disabled/reserved.
 
-Все artifact-derived значения экранируются через `_html()`.
+BeeAgent не держит manual HTML builders/templates для `/rop`.
 
 ## Read-only and security rules
 
 Web Console должен соблюдать:
 
 - no GET mutation;
+- no POST/write actions;
 - no mailbox/CRM/module/capability execution from GET routes;
 - no web-triggered `rop run`;
 - no raw `.eml` rendering;
 - no `message/rfc822` attachment rendering;
 - no attachment content rendering;
 - path traversal blocked for `run_id`/path-sensitive routes;
-- missing/malformed artifacts handled gracefully;
+- artifact access only by allowlisted IDs;
+- missing/malformed artifacts handled gracefully and degrade into warnings/errors, not crashes;
 - cache-control требования должны соблюдаться на route layer, но их фактический enforcement нужно подтверждать отдельно.
 
 Sanitization rules:
