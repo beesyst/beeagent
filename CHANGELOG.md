@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.32.0...beeagent-v0.33.0) (2026-06-16)
+
+
+### Features
+
+* **ui:** add rich ROP dashboard ([8cdca60](https://github.com/beesyst/beeagent/commit/8cdca60e4fb7838626296dba051c1765dd98f293))
+
 ## [0.32.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.31.0...beeagent-v0.32.0) (2026-06-12)
 
 
