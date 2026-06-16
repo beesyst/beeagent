@@ -41,6 +41,7 @@ where = ["src"]
     "static/vendor/tabler/LICENSE",
 ]
 
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

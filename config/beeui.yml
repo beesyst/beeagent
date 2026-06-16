@@ -2,6 +2,11 @@ app:
   title: BeeAgent Console
   product: beeagent
   logo_text: BeeAgent
+  locale:
+    default: en
+    available:
+      - en
+      - ru
   theme:
     mode: dark
     primary: blue
@@ -20,18 +25,24 @@ app:
       variant: default
       sticky: false
 
+components:
+  tabs:
+    variant: fill
+  accordion:
+    variant: default
+
 navigation:
   - title: Operator
     children:
       - title: Dashboard
         path: /
         icon: dashboard
+      - title: ROP
+        path: /rop
+        icon: users
       - title: Runs
         path: /runs
         icon: runs
-      - title: ROP Dashboard
-        path: /rop
-        icon: activity
       - title: Modules
         path: /modules
         icon: modules
@@ -43,20 +54,43 @@ blocks: {}
 pages:
   - id: dashboard
     path: /
-    title: Dashboard
+    title: BeeAgent Dashboard
     subtitle: Read-only operator dashboard
+    blocks: []
+
+  - id: rop_dashboard
+    path: /rop
+    title: ROP Dashboard
+    subtitle: Lead classification and operator queue
+    tabs:
+      variant: fill
+      active_param: tab
+      items:
+        - id: overview
+          title: Overview
+          href: /rop?tab=overview
+        - id: queue
+          title: Queue
+          href: /rop?tab=queue
+        - id: sources
+          title: Sources
+          href: /rop?tab=sources
+        - id: attachments
+          title: Attachments
+          href: /rop?tab=attachments
+        - id: evidence
+          title: Evidence
+          href: /rop?tab=evidence
+        - id: bitrix
+          title: Bitrix
+          href: /rop?tab=bitrix
+          disabled: true
     blocks: []
 
   - id: runs
     path: /runs
     title: Runs
     subtitle: Run history
-    blocks: []
-
-  - id: rop_dashboard
-    path: /rop
-    title: ROP Dashboard
-    subtitle: ROP operator dashboard
     blocks: []
 
   - id: modules

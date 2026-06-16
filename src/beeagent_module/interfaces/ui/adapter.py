@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -21,11 +22,14 @@ from beeagent_module.interfaces.ui.artifacts import (
     resolve_artifact_path,
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
+from beeagent_module.interfaces.ui.locale import resolve_locale, t
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
     build_modules_list,
+    build_modules_page_layout,
     build_rop_dashboard_read_model,
+    build_rop_page_layout,
     build_run_detail,
     build_runs_list,
 )
@@ -198,6 +202,45 @@ class BeeAgentUiAdapter:
             if "error" in data:
                 return error_result("not_found", data.get("message", "Not found"))
             return ok_result(data)
+        except Exception as exc:
+            return error_result_from_exception(exc)
+
+    def get_page(
+        self, page_id: str, query: Mapping[str, str]
+    ) -> AdapterResult | AdapterErrorResult:
+        try:
+            if page_id == "rop_dashboard":
+                tab = query.get("tab", "overview")
+                allowed_tabs = frozenset(
+                    {"overview", "queue", "sources", "attachments", "evidence"}
+                )
+                if tab not in allowed_tabs:
+                    tab = "overview"
+
+                run_id = query.get("run_id")
+                if run_id is not None:
+                    try:
+                        validate_run_id(run_id)
+                    except Exception:
+                        return error_result("invalid_run_id", "Invalid run_id")
+
+                data = build_rop_dashboard_read_model(self._storage_dir, run_id)
+                if "error" in data:
+                    return error_result("not_found", data.get("message", "Not found"))
+
+                locale = resolve_locale(query.get("lang"))
+                data["locale"] = locale
+                data["title"] = t("ROP Dashboard", locale)
+                layout = build_rop_page_layout(data, tab=tab, locale=locale)
+                data["layout"] = layout
+                return ok_result(data)
+
+            if page_id == "modules":
+                modules_data = build_modules_list(self._storage_dir)
+                modules_data["layout"] = build_modules_page_layout(modules_data)
+                return ok_result(modules_data)
+
+            return error_result("unavailable", f"Page '{page_id}' is unavailable")
         except Exception as exc:
             return error_result_from_exception(exc)
 

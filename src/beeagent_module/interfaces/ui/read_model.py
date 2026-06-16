@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.interfaces.ui.locale import t
+
 ATTENTION_EVENTS_MAX = 50
 ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "operator_summary_json",
@@ -54,6 +56,10 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
         )
 
     latest_run: dict[str, Any] | None = None
+    modules_count = 0
+    rop_classified = 0
+    needs_review = 0
+    degraded_count = 0
     if run_ids:
         latest_id = run_ids[0]
         latest_dir = runs_dir / latest_id
@@ -68,11 +74,57 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
                     summary, ("source", "source_display_name"), ""
                 ),
             }
+        classified = _read_json(latest_dir / "classified_events.json")
+        if isinstance(classified, list):
+            rop_classified = len(classified)
+            needs_review = sum(
+                1
+                for c in classified
+                if isinstance(c, dict)
+                and (c.get("is_fallback") or c.get("priority") == "high")
+            )
+        source_diag = _read_json(latest_dir / "source_diagnostics.json")
+        if isinstance(source_diag, dict):
+            agg = source_diag.get("aggregate", {})
+            if isinstance(agg, dict):
+                degraded_count = _int(agg.get("degraded_source_count", 0))
+
+    modules_path = storage_dir / "interfaces" / "modules.json"
+    modules_data = _read_json(modules_path)
+    if isinstance(modules_data, dict):
+        registry = modules_data.get("registry", [])
+        if isinstance(registry, list):
+            modules_count = len(registry)
+
+    kpi_items = [
+        {"label": "Total Runs", "value": len(run_ids)},
+        {"label": "Loaded Modules", "value": modules_count},
+        {
+            "label": "Latest Run Status",
+            "value": latest_run["status"] if latest_run else "none",
+        },
+        {"label": "ROP Classified Cases", "value": rop_classified},
+        {"label": "Needs Review", "value": needs_review},
+        {"label": "Degraded Sources", "value": degraded_count},
+    ]
+
+    summary = {
+        "total_runs": len(run_ids),
+        "loaded_modules": modules_count,
+        "rop_classified": rop_classified,
+        "needs_review": needs_review,
+        "degraded_sources": degraded_count,
+    }
+    if latest_run:
+        summary["latest_run_id"] = latest_run["run_id"]
+        summary["latest_run_status"] = latest_run["status"]
 
     return {
         "total_runs": len(run_ids),
         "recent_run_ids": run_ids[:10],
         "latest_run": latest_run,
+        "kpi_items": kpi_items,
+        "summary": summary,
         "layout": [],
     }
 
@@ -167,6 +219,51 @@ def build_modules_list(storage_dir: Path) -> dict[str, Any]:
     return {"modules": rows, "total_modules": len(rows)}
 
 
+# Сборка layout[] для страницы Modules на основе read-model данных
+def build_modules_page_layout(
+    data: dict[str, Any],
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    rows = data.get("modules", [])
+    if not rows:
+        return [
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": "Modules",
+                "items": [
+                    {
+                        "label": "No modules",
+                        "message": "No modules registered.",
+                        "severity": "info",
+                    }
+                ],
+            }
+        ]
+
+    table_rows: list[list[str]] = []
+    for item in rows:
+        table_rows.append(
+            [
+                str(item.get("id", "")),
+                str(item.get("package", "")),
+                str(item.get("entry", "")),
+                str(item.get("state", "")),
+                str(item.get("error", "")),
+            ]
+        )
+
+    return [
+        {
+            "type": "status_table",
+            "size": "XL",
+            "title": t("Modules Overview", locale),
+            "columns": ["ID", "Package", "Entry", "State", "Error"],
+            "rows": table_rows,
+        }
+    ]
+
+
 # Листинг разрешенных параметров командной строки для веб-конфигурации
 def _list_run_ids(runs_dir: Path) -> list[str]:
     if not runs_dir.is_dir():
@@ -259,7 +356,9 @@ def _build_kpis(
         kpis["attachment_count"] = _int(agg.get("attachment_count", 0))
         kpis["attachment_preview_count"] = _int(agg.get("preview_available_count", 0))
         kpis["attachment_refused_count"] = _int(agg.get("refused_count", 0))
-        kpis["attachment_blocked_count"] = _int(agg.get("refused_count", 0))
+        kpis["attachment_blocked_count"] = _int(
+            agg.get("blocked_count", agg.get("refused_count", 0))
+        )
     else:
         kpis["attachment_count"] = 0
         kpis["attachment_preview_count"] = 0
@@ -332,7 +431,6 @@ def _build_source_health(
     source_diag: dict | None,
     intake: dict | None,
     classified: list | None,
-    run_dir: Path,
 ) -> list[dict[str, Any]]:
     health: list[dict[str, Any]] = []
     diag_sources: list[dict] = []
@@ -452,7 +550,9 @@ def _build_attachment_summary(attachment_extraction: dict | None) -> dict[str, A
         default["total_attachments"] = _int(agg.get("attachment_count", 0))
         default["preview_available_count"] = _int(agg.get("preview_available_count", 0))
         default["refused_count"] = _int(agg.get("refused_count", 0))
-        default["blocked_count"] = _int(agg.get("refused_count", 0))
+        default["blocked_count"] = _int(
+            agg.get("blocked_count", agg.get("refused_count", 0))
+        )
         default["unsupported_count"] = _int(agg.get("unsupported_count", 0))
         default["extraction_error_count"] = _int(agg.get("failed_count", 0))
     else:
@@ -740,7 +840,6 @@ def build_rop_dashboard_read_model(
         source_diag=source_diag if isinstance(source_diag, dict) else None,
         intake=intake if isinstance(intake, dict) else None,
         classified=classified if isinstance(classified, list) else None,
-        run_dir=run_dir,
     )
 
     degraded_count = kpis.get("degraded_source_count", 0)
@@ -887,3 +986,405 @@ def _nested_get(d: dict, path: tuple[str, ...], default: Any = None) -> Any:
             return default
         d = d.get(key, {})
     return d if d != {} else default
+
+
+# Сборка layout[] для ROP dashboard по tab
+def build_rop_page_layout(
+    data: dict[str, Any],
+    tab: str,
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    if tab == "queue":
+        return _build_rop_queue_layout(data, locale=locale)
+    if tab == "sources":
+        return _build_rop_sources_layout(data, locale=locale)
+    if tab == "attachments":
+        return _build_rop_attachments_layout(data, locale=locale)
+    if tab == "evidence":
+        return _build_rop_evidence_layout(data, locale=locale)
+    return _build_rop_overview_layout(data, locale=locale)
+
+
+# Layout: Overview tab
+def _build_rop_overview_layout(
+    data: dict[str, Any], locale: str = "en"
+) -> list[dict[str, Any]]:
+    kpis = data.get("kpis", {})
+    run_id = data.get("run_id", "N/A")
+    run_status = kpis.get("run_status", "unknown")
+    source_health = data.get("source_health", [])
+    funnel = data.get("funnel", [])
+    recommendations = data.get("recommendations", [])
+    evidence_links = data.get("evidence_links", [])
+    class_dist = data.get("classification_distribution", {})
+    warnings_list = data.get("warnings", [])
+    available_runs = data.get("available_runs", [])
+
+    layout: list[dict[str, Any]] = []
+
+    if available_runs:
+        run_items: list[dict[str, Any]] = []
+        for rid in available_runs[:10]:
+            run_items.append(
+                {
+                    "label": rid,
+                    "value": "selected" if rid == run_id else "n/a",
+                    "href": f"/rop?run_id={rid}",
+                }
+            )
+        layout.append(
+            {
+                "type": "state_grid",
+                "width": 8,
+                "title": t("Run Overview", locale),
+                "subtitle": f"Run ID: {run_id}",
+                "status": run_status,
+                "items": run_items,
+            }
+        )
+
+    kpi_items: list[dict[str, Any]] = [
+        {"label": t("Connected Sources", locale), "value": kpis.get("source_count", 0)},
+        {"label": t("Loaded Items", locale), "value": kpis.get("loaded_count", 0)},
+        {
+            "label": t("Classified Cases", locale),
+            "value": kpis.get("classified_count", 0),
+        },
+        {"label": t("Need Review", locale), "value": kpis.get("fallback_count", 0)},
+        {
+            "label": t("High-Priority Cases", locale),
+            "value": kpis.get("high_priority_count", 0),
+        },
+        {
+            "label": "Attachments Preview",
+            "value": kpis.get("attachment_preview_count", 0),
+        },
+    ]
+    layout.append(
+        {
+            "type": "kpi_grid",
+            "width": 4,
+            "columns": 2,
+            "title": "Key Metrics",
+            "items": kpi_items,
+        }
+    )
+
+    if warnings_list:
+        attention_items: list[dict[str, Any]] = []
+        for w in warnings_list:
+            attention_items.append(
+                {
+                    "label": w.get("code", "warning"),
+                    "message": w.get("message", "Warning"),
+                    "severity": "warning",
+                }
+            )
+        layout.append(
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": "Warnings",
+                "items": attention_items,
+            }
+        )
+
+    if recommendations:
+        rec_items: list[dict[str, Any]] = []
+        for rec in recommendations:
+            rec_items.append(
+                {
+                    "label": rec.get("title", ""),
+                    "message": rec.get("message", ""),
+                    "severity": rec.get("severity", "info"),
+                }
+            )
+        layout.append(
+            {
+                "type": "attention_list",
+                "size": "M",
+                "title": t("Recommendations", locale),
+                "items": rec_items,
+            }
+        )
+
+    if evidence_links:
+        link_items: list[dict[str, Any]] = []
+        for link in evidence_links:
+            if link.get("available"):
+                link_items.append(
+                    {
+                        "label": link.get("label", link.get("artifact_id", "")),
+                        "href": link.get("url", ""),
+                    }
+                )
+        if link_items:
+            layout.append(
+                {
+                    "type": "quick_links",
+                    "size": "M",
+                    "title": "Evidence & Exports",
+                    "items": link_items,
+                }
+            )
+
+    if source_health:
+        sh_columns = ["Source", "Status", "Loaded"]
+        sh_rows: list[list[str]] = []
+        for sh in source_health:
+            sh_rows.append(
+                [
+                    sh.get("display_name", sh.get("source_id", "")),
+                    sh.get("status", ""),
+                    str(sh.get("loaded_count", 0)),
+                ]
+            )
+        layout.append(
+            {
+                "type": "status_table",
+                "size": "M",
+                "title": t("Source Health", locale),
+                "columns": sh_columns,
+                "rows": sh_rows,
+            }
+        )
+
+    if funnel:
+        f_columns = ["Stage", "Count"]
+        f_rows: list[list[str]] = []
+        for stage in funnel:
+            f_rows.append([stage.get("stage", ""), str(stage.get("count", 0))])
+        layout.append(
+            {
+                "type": "status_table",
+                "size": "M",
+                "title": t("Processing Funnel", locale),
+                "columns": f_columns,
+                "rows": f_rows,
+            }
+        )
+
+    case_type_counts = class_dist.get("case_type_counts", {})
+    priority_counts = class_dist.get("priority_counts", {})
+    reason_code_counts = class_dist.get("reason_code_counts", {})
+    if case_type_counts or priority_counts or reason_code_counts:
+        dist_items: list[dict[str, Any]] = []
+        for ct, count in sorted(case_type_counts.items()):
+            dist_items.append({"label": f"Case: {ct}", "value": str(count)})
+        for p, count in sorted(priority_counts.items()):
+            dist_items.append({"label": f"Priority: {p}", "value": str(count)})
+        for rc, count in sorted(reason_code_counts.items()):
+            dist_items.append({"label": f"Reason: {rc}", "value": str(count)})
+        if dist_items:
+            layout.append(
+                {
+                    "type": "state_grid",
+                    "size": "XL",
+                    "title": "Classification Breakdown",
+                    "items": dist_items,
+                }
+            )
+
+    return layout
+
+
+# Layout: Queue tab
+def _build_rop_queue_layout(
+    data: dict[str, Any], locale: str = "en"
+) -> list[dict[str, Any]]:
+    attention_events = data.get("attention_events", [])
+
+    if not attention_events:
+        return [
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": t("Operator Queue", locale),
+                "items": [
+                    {
+                        "label": "No events",
+                        "message": "Queue is empty",
+                        "severity": "info",
+                    }
+                ],
+            }
+        ]
+
+    q_items: list[dict[str, Any]] = []
+    for evt in attention_events:
+        reasons: list[str] = []
+        if evt.get("priority") == "high":
+            reasons.append("High priority")
+        if evt.get("is_fallback"):
+            reasons.append("Fallback")
+        conf = evt.get("confidence")
+        if isinstance(conf, (int, float)) and conf < 0.7:
+            reasons.append(f"Low conf ({conf:.2f})")
+
+        q_items.append(
+            {
+                "label": evt.get("event_id", ""),
+                "message": f"{evt.get('source_display_name', evt.get('source_id', ''))} | "
+                f"{evt.get('sender', '')} | {evt.get('subject', '')} | "
+                f"Type: {evt.get('case_type', '')} | Priority: {evt.get('priority', '')} | "
+                f"Reason: {'; '.join(reasons) if reasons else evt.get('review_reason', 'Needs review')}",
+                "severity": "high"
+                if evt.get("priority") == "high"
+                else ("warning" if evt.get("is_fallback") else "info"),
+            }
+        )
+
+    return [
+        {
+            "type": "attention_list",
+            "size": "XL",
+            "title": t("Operator Queue", locale),
+            "items": q_items,
+        }
+    ]
+
+
+# Layout: Sources tab
+def _build_rop_sources_layout(
+    data: dict[str, Any], locale: str = "en"
+) -> list[dict[str, Any]]:
+    source_health = data.get("source_health", [])
+
+    if not source_health:
+        return [
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": t("Source Health", locale),
+                "items": [
+                    {
+                        "label": "No sources",
+                        "message": "No source data available",
+                        "severity": "info",
+                    }
+                ],
+            }
+        ]
+
+    columns = [
+        "Source",
+        "Type",
+        "Status",
+        "Reason",
+        "Fetched",
+        "Loaded",
+        "Malformed",
+        "Classified",
+    ]
+    rows: list[list[str]] = []
+    for sh in source_health:
+        rows.append(
+            [
+                sh.get("display_name", sh.get("source_id", "")),
+                sh.get("source_type", ""),
+                sh.get("status", ""),
+                sh.get("reason", "") or "",
+                str(sh.get("fetched_count", 0)),
+                str(sh.get("loaded_count", 0)),
+                str(sh.get("malformed_count", 0)),
+                str(sh.get("classified_count", 0)),
+            ]
+        )
+
+    return [
+        {
+            "type": "status_table",
+            "size": "XL",
+            "title": "Source Health Details",
+            "columns": columns,
+            "rows": rows,
+        }
+    ]
+
+
+# Layout: Attachments tab
+def _build_rop_attachments_layout(
+    data: dict[str, Any],
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    att_summary = data.get("attachment_summary", {})
+
+    if not att_summary or att_summary.get("total_attachments", 0) == 0:
+        return [
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": t("Attachment Processing", locale),
+                "items": [
+                    {
+                        "label": "No attachments",
+                        "message": "No attachment data available",
+                        "severity": "info",
+                    }
+                ],
+            }
+        ]
+
+    kpi_items: list[dict[str, Any]] = [
+        {
+            "label": "Total Attachments",
+            "value": att_summary.get("total_attachments", 0),
+        },
+        {
+            "label": "Preview Available",
+            "value": att_summary.get("preview_available_count", 0),
+        },
+        {"label": "Refused", "value": att_summary.get("refused_count", 0)},
+        {"label": "Blocked", "value": att_summary.get("blocked_count", 0)},
+        {"label": "Unsupported", "value": att_summary.get("unsupported_count", 0)},
+        {
+            "label": "Extraction Errors",
+            "value": att_summary.get("extraction_error_count", 0),
+        },
+    ]
+
+    return [
+        {
+            "type": "kpi_grid",
+            "size": "XL",
+            "title": t("Attachment Processing", locale),
+            "items": kpi_items,
+        }
+    ]
+
+
+# Layout: Evidence tab
+def _build_rop_evidence_layout(
+    data: dict[str, Any],
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    evidence_links = data.get("evidence_links", [])
+
+    if not evidence_links:
+        return [
+            {
+                "type": "quick_links",
+                "size": "XL",
+                "title": t("Evidence & Exports", locale),
+                "items": [],
+            }
+        ]
+
+    link_items: list[dict[str, Any]] = []
+    for link in evidence_links:
+        if link.get("available"):
+            link_items.append(
+                {
+                    "label": link.get("label", link.get("artifact_id", "")),
+                    "href": link.get("url", ""),
+                }
+            )
+
+    return [
+        {
+            "type": "quick_links",
+            "size": "XL",
+            "title": t("Evidence & Exports", locale),
+            "items": link_items,
+        }
+    ]
