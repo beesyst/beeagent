@@ -113,14 +113,13 @@ rop:
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
 
-# Настройки Bitrix CRM read-only connector для сверки артефактов ROP с CRM
 bitrix:
   enabled: false # true/false - включить/выключить Bitrix connector
-  webhook_url_env: "BITRIX_WEBHOOK_URL" # имя переменной окружения с URL вебхука (без протокола/пути в settings.yml)
-  timeout_seconds: 10 # таймаут HTTP-запроса к Bitrix REST API
-  page_size: 50 # размер страницы для crm.item.list
-  max_pages: 3 # максимальное число страниц пагинации
-  entity_types: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
+  webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
+  timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
+  page_size: 50 # размер страницы для Bitrix list-запросов
+  pages_max: 3 # максимальное число страниц пагинации
+  types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
     - 1
     - 2
     - 3
@@ -128,4 +127,4 @@ bitrix:
   reconciliation:
     enabled: false # true/false - включить/выключить reconciliation по умолчанию
     candidate_limit: 20 # максимальное число кандидатов на одно событие
-    date_window_days: 180 # окно поиска по дате события (дней назад)
+    window_date: 180 # окно поиска по дате события (дней назад)

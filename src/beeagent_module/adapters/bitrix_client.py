@@ -1,103 +1,75 @@
-"""
-Bitrix24 read-only REST client v0.
-
-Read-only Bitrix REST client for CRM reconciliation.
-Only allowlisted methods are callable. No write methods are exposed.
-
-Allowed methods (read-only):
-  - crm.item.list        — универсальный список элементов (не поддерживает %EMAIL/%PHONE)
-  - crm.lead.list        — список лидов (поддерживает %EMAIL, %PHONE, %TITLE)
-  - crm.deal.list        — список сделок
-  - crm.contact.list     — список контактов
-  - crm.company.list     — список компаний
-  - crm.item.fields      — поля элемента
-  - crm.status.list      — справочник статусов
-  - crm.category.list    — список воронок
-
-Forbidden (must never be added to ALLOWED_METHODS):
-  - crm.item.add
-  - crm.item.update
-  - crm.item.delete
-  - crm.lead.add / update / delete
-  - crm.deal.add / update / delete
-  - crm.contact.add / update / delete
-  - crm.company.add / update / delete
-  - tasks.task.add
-  - any method with add/update/delete
-"""
-
 from __future__ import annotations
 
 import json
 import logging
 import os
-import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-# Legacy type-specific methods поддерживают фильтры %EMAIL, %PHONE, %TITLE
-# Универсальный crm.item.list не поддерживает фильтрацию по email/phone
+# Legacy communication lookup используется только для lead/contact/company
 ALLOWED_METHODS: frozenset[str] = frozenset({
     "crm.item.list",
     "crm.item.fields",
     "crm.status.list",
     "crm.category.list",
     "crm.lead.list",
-    "crm.deal.list",
     "crm.contact.list",
     "crm.company.list",
 })
-
 ENTITY_TYPE_NAMES: dict[int, str] = {
     1: "lead",
     2: "deal",
     3: "contact",
     4: "company",
 }
-
 ENTITY_TYPE_IDS: dict[str, int] = {v: k for k, v in ENTITY_TYPE_NAMES.items()}
+COMMUNICATION_ENTITY_TYPE_IDS: frozenset[int] = frozenset({1, 3, 4})
 
 
+# Базовое исключение Bitrix connector
 class BitrixConnectorError(RuntimeError):
-    """Базовое исключение Bitrix connector."""
+    pass
 
 
+# Ошибка аутентификации/доступа
 class BitrixAuthError(BitrixConnectorError):
-    """Ошибка аутентификации/доступа."""
+    pass
 
 
+# Ошибка Bitrix REST API (envelope error)
 class BitrixApiError(BitrixConnectorError):
-    """Ошибка Bitrix REST API (envelope error)."""
+    pass
 
 
+# Ошибка таймаута при подключении к Bitrix
 class BitrixTimeoutError(BitrixConnectorError):
-    """Таймаут подключения к Bitrix."""
+    pass
 
 
+# Транспортная ошибка (DNS, соединение, HTTP)
 class BitrixTransportError(BitrixConnectorError):
-    """Транспортная ошибка (DNS, соединение, HTTP)."""
+    pass
 
 
+# Ошибка при вызове метода, не входящего в allowlist
 class BitrixMethodNotAllowed(ValueError):
-    """Вызов метода, не входящего в allowlist."""
+    pass
 
 
+# Невалидный JSON ответ от Bitrix
 class BitrixMalformedResponse(BitrixConnectorError):
-    """Невалидный JSON ответ от Bitrix."""
+    pass
 
 
+# Read-only Bitrix REST client
 class BitrixReadonlyClient:
-    """Read-only Bitrix REST client.
-
-    Использует webhook URL из переменной окружения.
-    Никогда не логирует и не сериализует webhook URL.
-    """
-
     def __init__(
         self,
         webhook_url: str,
-        timeout_seconds: int = 10,
+        timeout: int = 10,
+        page_size: int = 50,
+        pages_max: int = 3,
         logger: logging.Logger | None = None,
     ) -> None:
         if not webhook_url or not webhook_url.startswith("https://"):
@@ -105,32 +77,16 @@ class BitrixReadonlyClient:
                 "Bitrix webhook URL must be a valid HTTPS URL"
             )
         self._webhook_url = webhook_url.rstrip("/")
-        self._timeout = timeout_seconds
+        self._timeout = timeout
+        self._page_size = page_size
+        self._pages_max = pages_max
         self._logger = logger or logging.getLogger("bitrix_client")
 
-    # --- Public API ---
     def call(
         self,
         method: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Вызвать read-only метод Bitrix REST API.
-
-        Args:
-            method: Имя метода (например 'crm.item.list').
-            params: Параметры запроса.
-
-        Returns:
-            Ответ Bitrix API (разобранный JSON).
-
-        Raises:
-            BitrixMethodNotAllowed: метод не в allowlist.
-            BitrixAuthError: 401/403.
-            BitrixApiError: ошибка в envelope.
-            BitrixTimeoutError: timeout.
-            BitrixTransportError: транспортная ошибка.
-            BitrixMalformedResponse: невалидный JSON.
-        """
         if method not in ALLOWED_METHODS:
             raise BitrixMethodNotAllowed(
                 f"Bitrix method '{method}' is not in allowed list: "
@@ -140,7 +96,6 @@ class BitrixReadonlyClient:
         url = f"{self._webhook_url}/{method}"
         payload = json.dumps(params or {}).encode("utf-8")
 
-        # Никогда не логируем webhook_url
         self._logger.debug(
             "bitrix call: method=%s params_keys=%s",
             method,
@@ -199,8 +154,8 @@ class BitrixReadonlyClient:
         filter_params: dict[str, Any] | None = None,
         select: list[str] | None = None,
         start: int = 0,
+        limit: int | None = None,
     ) -> dict[str, Any]:
-        """crm.item.list с базовым фильтром."""
         params: dict[str, Any] = {
             "entityTypeId": entity_type_id,
         }
@@ -208,20 +163,19 @@ class BitrixReadonlyClient:
             params["filter"] = filter_params
         if select:
             params["select"] = select
+        if limit:
+            params["limit"] = limit
         if start:
             params["start"] = start
         return self.call("crm.item.list", params)
 
     def item_fields(self, entity_type_id: int) -> dict[str, Any]:
-        """crm.item.fields — метаданные полей сущности."""
         return self.call("crm.item.fields", {"entityTypeId": entity_type_id})
 
     def status_list(self) -> dict[str, Any]:
-        """crm.status.list — список статусов."""
         return self.call("crm.status.list")
 
     def category_list(self, entity_type_id: int) -> dict[str, Any]:
-        """crm.category.list — список категорий для сущности."""
         return self.call("crm.category.list", {"entityTypeId": entity_type_id})
 
     def search_candidates(
@@ -229,40 +183,44 @@ class BitrixReadonlyClient:
         entity_type_id: int,
         query: str,
         fields: list[str] | None = None,
+        date_from: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Поиск кандидатов среди сущностей Bitrix.
-
-        Для email/phone использует legacy методы (crm.lead.list и т.д.),
-        которые поддерживают фильтры %EMAIL, %PHONE.
-        Для поиска по названию использует универсальный crm.item.list.
-
-        Возвращает список найденных сущностей.
-        """
         if not query or not query.strip():
             return []
 
-        select_fields = fields or ["ID", "TITLE", "STAGE_ID", "ASSIGNED_BY_ID",
-                                    "CONTACT_ID", "COMPANY_ID", "DATE_CREATE"]
+        select_fields = fields or [
+            "ID",
+            "TITLE",
+            "STAGE_ID",
+            "STATUS_ID",
+            "ASSIGNED_BY_ID",
+            "CONTACT_ID",
+            "COMPANY_ID",
+            "DATE_CREATE",
+            "EMAIL",
+            "PHONE",
+        ]
 
-        # Определяем тип поиска
         is_email = "@" in query
-        is_phone = query.replace(" ", "").replace("+", "").replace("-", "").isdigit() and len(query.strip()) >= 5
+        normalized_phone = (
+            query.replace(" ", "").replace("+", "").replace("-", "")
+        )
+        is_phone = normalized_phone.isdigit() and len(query.strip()) >= 5
 
         if is_email or is_phone:
-            # Используем legacy type-specific метод
             return self._search_by_communication(
                 entity_type_id=entity_type_id,
                 query=query,
                 is_email=is_email,
                 select_fields=select_fields,
+                date_from=date_from,
             )
-        else:
-            # Поиск по названию через универсальный crm.item.list
-            return self._search_by_title(
-                entity_type_id=entity_type_id,
-                query=query,
-                select_fields=select_fields,
-            )
+        return self._search_by_title(
+            entity_type_id=entity_type_id,
+            query=query,
+            select_fields=select_fields,
+            date_from=date_from,
+        )
 
     def _search_by_communication(
         self,
@@ -270,87 +228,120 @@ class BitrixReadonlyClient:
         query: str,
         is_email: bool,
         select_fields: list[str],
+        date_from: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Поиск по email или phone через legacy type-specific методы.
+        if entity_type_id not in COMMUNICATION_ENTITY_TYPE_IDS:
+            return []
 
-        Legacy методы (crm.lead.list, crm.deal.list и т.д.) возвращают
-        поля в UPPER_CASE и поддерживают %EMAIL, %PHONE фильтры.
-        """
         legacy_method = _entity_type_to_legacy_method(entity_type_id)
         if not legacy_method:
             return []
 
         filter_key = "%EMAIL" if is_email else "%PHONE"
+        filter_params: dict[str, Any] = {filter_key: query}
+        if date_from:
+            filter_params[">=DATE_CREATE"] = date_from
         params: dict[str, Any] = {
-            "filter": {filter_key: query},
+            "filter": filter_params,
             "select": select_fields,
+            "limit": self._page_size,
         }
 
-        try:
-            data = self.call(legacy_method, params)
-        except BitrixConnectorError:
-            return []
-
-        items = data.get("result", [])
-        if not isinstance(items, list):
-            return []
-        return items
+        return self._collect_legacy_pages(legacy_method, params)
 
     def _search_by_title(
         self,
         entity_type_id: int,
         query: str,
         select_fields: list[str],
+        date_from: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Поиск по названию через универсальный crm.item.list.
-
-        Универсальные методы возвращают поля в camelCase.
-        Фильтр %title работает для прямых полей.
-        """
-        # Конвертируем UPPER_CASE select-поля в camelCase для crm.item.list
         camel_fields = _convert_select_to_camel(select_fields)
+        filter_params: dict[str, Any] = {"%title": query}
+        if date_from:
+            filter_params[">=createdTime"] = date_from
 
-        try:
+        items: list[dict[str, Any]] = []
+        start = 0
+        for _ in range(self._pages_max):
             result = self.item_list(
                 entity_type_id=entity_type_id,
-                filter_params={"%title": query},
+                filter_params=filter_params,
                 select=camel_fields,
+                start=start,
+                limit=self._page_size,
             )
-        except BitrixConnectorError:
-            return []
 
-        items = result.get("result", {}).get("items", [])
-        if not isinstance(items, list):
-            return []
+            result_payload = result.get("result")
+            if not isinstance(result_payload, dict):
+                raise BitrixMalformedResponse(
+                    "Bitrix returned malformed crm.item.list result"
+                )
+            page_items = result_payload.get("items", [])
+            if not isinstance(page_items, list):
+                raise BitrixMalformedResponse(
+                    "Bitrix returned malformed crm.item.list items"
+                )
+            items.extend(page_items)
+
+            next_start = result.get("next")
+            if next_start is None:
+                break
+            if not isinstance(next_start, int):
+                raise BitrixMalformedResponse(
+                    "Bitrix returned malformed pagination cursor"
+                )
+            start = next_start
+        return items
+
+    def _collect_legacy_pages(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        start = 0
+        for _ in range(self._pages_max):
+            page_params = dict(params)
+            if start:
+                page_params["start"] = start
+            data = self.call(method, page_params)
+            page_items = data.get("result", [])
+            if not isinstance(page_items, list):
+                raise BitrixMalformedResponse(
+                    f"Bitrix returned malformed {method} result"
+                )
+            items.extend(page_items)
+
+            next_start = data.get("next")
+            if next_start is None:
+                break
+            if not isinstance(next_start, int):
+                raise BitrixMalformedResponse(
+                    "Bitrix returned malformed pagination cursor"
+                )
+            start = next_start
         return items
 
     def get_portal_url(self) -> str:
-        """Извлечь URL портала из webhook URL для artifact.
-
-        Никогда не возвращает полный webhook URL с секретом.
-        """
         parts = self._webhook_url.split("/")
         if len(parts) >= 3:
             return f"{parts[0]}//{parts[2]}"
         return ""
 
 
+# Маппинг entityTypeId -> legacy метод списка
 def _entity_type_to_legacy_method(entity_type_id: int) -> str | None:
-    """Маппинг entityTypeId → legacy метод списка."""
     mapping = {
         1: "crm.lead.list",
-        2: "crm.deal.list",
         3: "crm.contact.list",
         4: "crm.company.list",
     }
     return mapping.get(entity_type_id)
 
 
+# Конвертация UPPER_CASE полей в camelCase
 def _convert_select_to_camel(fields: list[str]) -> list[str]:
-    """Конвертация UPPER_CASE полей в camelCase для универсальных методов.
-
-    Пример: ID → id, TITLE → title, STAGE_ID → stageId, ASSIGNED_BY_ID → assignedById
-    """
     camel_map: dict[str, str] = {
         "ID": "id",
         "TITLE": "title",
@@ -363,15 +354,13 @@ def _convert_select_to_camel(fields: list[str]) -> list[str]:
     }
     return [camel_map.get(f, f.lower()) for f in fields]
 
+
+# Разрешить URL вебхука из env по имени из settings
 def resolve_bitrix_webhook_url(
     settings: dict,
     logger: logging.Logger | None = None,
 ) -> str:
-    """Прочитать webhook URL из env по имени из settings.
-
-    Никогда не логирует и не возвращает значение URL.
-    """
-    env_var = settings.get("bitrix", {}).get("webhook_url_env", "BITRIX_WEBHOOK_URL")
+    env_var = settings.get("bitrix", {}).get("webhook_env", "BITRIX_WEBHOOK_URL")
     url = os.environ.get(env_var)
 
     if not url:
@@ -388,18 +377,20 @@ def resolve_bitrix_webhook_url(
     return url
 
 
+# Фабрика BitrixReadonlyClient из settings
 def build_bitrix_client(
     settings: dict,
     logger: logging.Logger | None = None,
 ) -> BitrixReadonlyClient:
-    """Создать BitrixReadonlyClient из settings.
-
-    Resolve webhook URL из env.
-    """
     webhook_url = resolve_bitrix_webhook_url(settings, logger=logger)
-    timeout = settings.get("bitrix", {}).get("timeout_seconds", 10)
+    bitrix_cfg = settings.get("bitrix", {})
+    timeout = bitrix_cfg.get("timeout", 10)
+    page_size = bitrix_cfg.get("page_size", 50)
+    pages_max = bitrix_cfg.get("pages_max", 3)
     return BitrixReadonlyClient(
         webhook_url=webhook_url,
-        timeout_seconds=timeout,
+        timeout=timeout,
+        page_size=page_size,
+        pages_max=pages_max,
         logger=logger,
     )

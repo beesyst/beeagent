@@ -1,0 +1,25 @@
+{
+  "period": "2026-05",
+  "items": [
+    {
+      "event_id": "sample-001",
+      "source_id": "rop_batch_sample",
+      "sender": "client@example.com",
+      "subject": "Request for welding machine price",
+      "body_preview": "Please share pricing and delivery terms.",
+      "case_type": "new_lead",
+      "priority": "high",
+      "confidence": 0.9
+    },
+    {
+      "event_id": "sample-002",
+      "source_id": "rop_batch_sample",
+      "sender": "buyer@example.com",
+      "subject": "Commercial offer for electrodes",
+      "body_preview": "Need a quote for welding electrodes.",
+      "case_type": "new_lead",
+      "priority": "medium",
+      "confidence": 0.86
+    }
+  ]
+}

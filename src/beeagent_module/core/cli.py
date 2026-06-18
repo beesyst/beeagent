@@ -145,14 +145,7 @@ def handle_rop_reconcile_bitrix(
         run_id,
     )
 
-    # Проверяем, что Bitrix config присутствует
-    bitrix_cfg = settings.get("bitrix", {})
-    if not bitrix_cfg.get("enabled", False):
-        logger.warning(
-            "ROP CLI: bitrix.enabled is false, but reconciliation was explicitly invoked"
-        )
-
-    from beeagent_module.core.bitrix_reconciliation import run_reconciliation
+    from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
 
     try:
         result = run_reconciliation(
