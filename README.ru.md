@@ -103,7 +103,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 
 Добавлено:
 
-- ROP CLI entrypoint: `./start.sh rop run/summary/export-review`;
+- ROP CLI entrypoint: `./start.sh rop run/summary/export-review/reconcile-bitrix`;
 - in-memory source overrides через CLI args: `--source-id`, `--items-max`, `--period`, `--run-id`;
 - `rop run` запускает ROP batch pipeline без Telegram и автоматически экспортирует TSV для human review;
 - `rop summary` показывает readable summary для готового run;
@@ -171,6 +171,7 @@ run:
 ./start.sh rop run [--source-id SOURCE | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id ID]
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
+./start.sh rop reconcile-bitrix --run-id ID
 ```
 
 ### Operator Web Console (UI-5 — Rich ROP dashboard и operator intelligence)
@@ -631,6 +632,7 @@ uv run pytest -q
 - `./start.sh rop run`;
 - `./start.sh rop summary --run-id <run_id>`;
 - `./start.sh rop export-review --run-id <run_id> --format tsv`;
+- `./start.sh rop reconcile-bitrix --run-id <run_id>`;
 - тесты;
 - прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
 

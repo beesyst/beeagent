@@ -379,6 +379,79 @@ def validate_settings(settings: dict) -> None:
                     f"Missing or invalid rop.sources[{idx}].mailbox.use_ssl, expected bool"
                 )
 
+    # Bitrix config validation
+    _validate_bitrix_settings(settings)
+
+
+# Валидация Bitrix config блока: типы, entity_types, limits, fail-fast при enabled без env
+def _validate_bitrix_settings(settings: dict) -> None:
+    bitrix_cfg = _get_nested_value(settings, ("bitrix",))
+    if bitrix_cfg is None:
+        # Bitrix блок опционален — если его нет, валидация не требуется
+        return
+    if not isinstance(bitrix_cfg, dict):
+        raise RuntimeError("Invalid type for bitrix, expected mapping")
+
+    if not isinstance(bitrix_cfg.get("enabled"), bool):
+        raise RuntimeError("Invalid type for bitrix.enabled, expected bool")
+
+    webhook_url_env = bitrix_cfg.get("webhook_url_env")
+    if not isinstance(webhook_url_env, str) or not webhook_url_env.strip():
+        raise RuntimeError(
+            "Invalid or missing bitrix.webhook_url_env, expected non-empty string"
+        )
+
+    timeout = bitrix_cfg.get("timeout_seconds")
+    if not isinstance(timeout, int) or timeout <= 0:
+        raise RuntimeError(
+            "Invalid bitrix.timeout_seconds, expected int > 0"
+        )
+
+    page_size = bitrix_cfg.get("page_size")
+    if not isinstance(page_size, int) or page_size <= 0:
+        raise RuntimeError(
+            "Invalid bitrix.page_size, expected int > 0"
+        )
+
+    max_pages = bitrix_cfg.get("max_pages")
+    if not isinstance(max_pages, int) or max_pages <= 0:
+        raise RuntimeError(
+            "Invalid bitrix.max_pages, expected int > 0"
+        )
+
+    entity_types = bitrix_cfg.get("entity_types")
+    if not isinstance(entity_types, list) or not entity_types:
+        raise RuntimeError(
+            "Invalid bitrix.entity_types, expected non-empty list"
+        )
+    valid_entity_types = {1, 2, 3, 4}
+    for idx, et in enumerate(entity_types):
+        if not isinstance(et, int) or et not in valid_entity_types:
+            raise RuntimeError(
+                f"Invalid bitrix.entity_types[{idx}], expected one of {sorted(valid_entity_types)}"
+            )
+
+    recon_cfg = bitrix_cfg.get("reconciliation")
+    if not isinstance(recon_cfg, dict):
+        raise RuntimeError("Invalid type for bitrix.reconciliation, expected mapping")
+
+    if not isinstance(recon_cfg.get("enabled"), bool):
+        raise RuntimeError(
+            "Invalid type for bitrix.reconciliation.enabled, expected bool"
+        )
+
+    candidate_limit = recon_cfg.get("candidate_limit")
+    if not isinstance(candidate_limit, int) or candidate_limit <= 0:
+        raise RuntimeError(
+            "Invalid bitrix.reconciliation.candidate_limit, expected int > 0"
+        )
+
+    date_window_days = recon_cfg.get("date_window_days")
+    if not isinstance(date_window_days, int) or date_window_days <= 0:
+        raise RuntimeError(
+            "Invalid bitrix.reconciliation.date_window_days, expected int > 0"
+        )
+
 
 # Возврат вложенного значения по пути ключей или None.
 def _get_nested_value(settings: dict, key_path: tuple[str, ...]):

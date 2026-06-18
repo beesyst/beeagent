@@ -2734,7 +2734,7 @@ Reason:
 
 ### Итерация 26 — Bitrix read-only reconciliation artifacts v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
