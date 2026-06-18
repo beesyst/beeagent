@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.33.0...beeagent-v0.34.0) (2026-06-18)
+
+
+### Features
+
+* **bitrix:** add read-only reconciliation artifacts ([#105](https://github.com/beesyst/beeagent/issues/105)) ([dcde895](https://github.com/beesyst/beeagent/commit/dcde895fc95f6701a240b40ba8232bf9d3d99207))
+
 ## [0.33.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.32.0...beeagent-v0.33.0) (2026-06-16)
 
 
