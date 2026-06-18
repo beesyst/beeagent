@@ -2732,6 +2732,574 @@ Reason:
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 26 — Bitrix read-only reconciliation artifacts v0
+
+**Статус:** PLANNED
+
+#### Goal
+
+Добавить controlled read-only Bitrix reconciliation layer для ROP source flow: BeeAgent должен уметь сверять уже полученные и классифицированные входящие события с текущим состоянием Bitrix CRM, создавать воспроизводимый artifact `bitrix_reconciliation.json` и показывать, найден ли соответствующий lead/deal/contact/company, не выполняя никаких CRM write-back действий.
+
+#### Почему это нужно
+
+После It24/It25 BeeAgent уже умеет собирать multi-source ROP run и сохранять source-aware / attachment-aware artifacts:
+
+```text
+source_diagnostics.json
+intake_metadata.json
+normalized_events.json
+attachment_extraction.json
+classified_events.json
+operator_summary.json
+rop_review_table.tsv
+```
+
+После `beeagent-rop It15` доменный модуль умеет использовать BeeAgent attachment extraction contract при classification.
+
+Но для MVP заказчику нужно видеть не только:
+
+```text
+письмо пришло
+→ бот классифицировал обращение
+→ есть summary/review table
+```
+
+а полный read-only evidence chain:
+
+```text
+письмо пришло
+→ бот понял, что это
+→ видно, есть ли это в Bitrix
+→ видно, lead/deal/contact/company найден или нет
+→ видно, кто ответственный
+→ видно, какая стадия/статус в CRM
+→ видно, где потеря, дубль, ambiguity или manual review
+```
+
+Bitrix в этой итерации **не является source of truth для входящего email-потока**. Источник истины по входящим обращениям — BeeAgent source artifacts из mailbox/json_batch ingestion. Bitrix является CRM-state system, с которой BeeAgent сверяется.
+
+Поэтому `not_found` в Bitrix — это не ошибка BeeAgent, а важный MVP-сигнал:
+
+```text
+important email exists
+but Bitrix entity not found
+→ possible lost lead / CRM gap / manual review
+```
+
+Если пропустить эту итерацию, дальнейшая полировка `beeagent-rop` будет выполняться без CRM evidence, а UI будет показывать только классификацию без ответа на главный вопрос РОПа:
+
+```text
+Что с этим обращением в Bitrix?
+```
+
+#### Scope
+
+**Включено:**
+
+- добавить BeeAgent-owned Bitrix read-only reconciliation layer;
+- сохранить canonical ROP artifact pipeline;
+- добавить config-driven Bitrix connector contract в `config/settings.yml`;
+- читать Bitrix webhook URL только из env;
+- добавить fail-fast validation в `src/beeagent_module/core/settings.py` для обязательных Bitrix config keys;
+- Bitrix config не должен требовать secret/env при `bitrix.enabled: false`;
+- при явном запуске reconciliation без нужного env — понятный fail-fast error;
+- добавить минимальный Bitrix REST client / adapter для read-only вызовов;
+- использовать только allowlisted read-only Bitrix methods:
+  - `crm.item.list`;
+  - `crm.item.fields`, если нужно для диагностики/fields discovery;
+  - `crm.status.list`, если нужно для статусов/stages;
+  - `crm.category.list`, если нужно для deal categories;
+
+- поддержать системные CRM entity types:
+  - `1` — lead;
+  - `2` — deal;
+  - `3` — contact;
+  - `4` — company;
+
+- добавить CLI/runtime path для reconciliation существующего ROP run, например:
+
+```bash
+./start.sh rop reconcile-bitrix --run-id <run_id>
+```
+
+- читать existing run artifacts:
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - optional `attachment_extraction.json`;
+  - optional `operator_summary.json`;
+
+- выполнять candidate lookup в Bitrix по доступным безопасным сигналам:
+  - sender email;
+  - phone, если уже есть в normalized event;
+  - subject/title;
+  - company/client hints, если уже есть в event;
+  - source_id/source_role;
+  - event date, если есть;
+  - bot_case_type;
+
+- создавать artifact:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+- добавить per-event reconciliation result:
+  - `event_id`;
+  - `source_id`;
+  - `sender`;
+  - `subject`;
+  - `bot_case_type`;
+  - `bitrix_match_status`;
+  - `bitrix_entity_type`;
+  - `bitrix_entity_type_id`;
+  - `bitrix_entity_id`;
+  - `bitrix_title`;
+  - `bitrix_stage`;
+  - `bitrix_responsible_id`;
+  - `bitrix_contact_id`;
+  - `bitrix_company_id`;
+  - `bitrix_match_reason`;
+  - `bitrix_confidence`;
+  - `needs_manual_review`;
+  - `reconciliation_reason`;
+
+- поддержать статусы reconciliation:
+  - `matched_lead`;
+  - `matched_deal`;
+  - `matched_contact`;
+  - `matched_company`;
+  - `not_found`;
+  - `duplicate_candidate`;
+  - `ambiguous`;
+  - `skipped`;
+  - `connector_degraded`;
+  - `error`;
+
+- добавить aggregate counts:
+  - `event_count`;
+  - `matched_count`;
+  - `not_found_count`;
+  - `duplicate_candidate_count`;
+  - `ambiguous_count`;
+  - `skipped_count`;
+  - `connector_error_count`;
+
+- добавить degraded behavior:
+  - missing Bitrix env;
+  - invalid config;
+  - Bitrix auth/permission error;
+  - Bitrix API error;
+  - timeout;
+  - malformed response;
+  - pagination failure;
+  - partial candidate lookup failure;
+
+- не ломать existing ROP artifacts при connector failure;
+- обогатить `rop_review_table.tsv` Bitrix fields, если `bitrix_reconciliation.json` существует и `export-review` запускается повторно;
+- добавить tests с fake Bitrix responses;
+- обновить docs:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/SECURITY.md`, если меняется security contract.
+
+**Не включено:**
+
+- `crm.item.add`;
+- `crm.item.update`;
+- `crm.item.delete`;
+- создание лидов;
+- создание сделок;
+- создание контактов/компаний;
+- изменение стадий/категорий;
+- назначение ответственных;
+- создание задач;
+- комментарии в timeline;
+- автоматический merge/dedup в Bitrix;
+- CRM write-back;
+- Bitrix OAuth application flow;
+- Bitrix marketplace/app install flow;
+- web-triggered reconciliation;
+- Bitrix dashboard UI;
+- Bitrix settings UI;
+- auth/RBAC;
+- operator control panel;
+- 1C integration;
+- manager scoring;
+- изменение classification logic в `beeagent-rop`;
+- ROP business rules в BeeAgent core.
+
+#### Deliverable
+
+BeeAgent умеет выполнить read-only reconciliation для существующего ROP run:
+
+```bash
+./start.sh rop reconcile-bitrix --run-id <run_id>
+```
+
+После выполнения появляется artifact:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+Artifact показывает по каждому classified event:
+
+```text
+что пришло
+как бот классифицировал событие
+какой candidate найден в Bitrix
+какой entity type найден
+какая стадия/статус
+кто ответственный
+есть ли дубль/ambiguity
+нужно ли manual review
+почему принято reconciliation decision
+```
+
+После повторного export-review:
+
+```bash
+./start.sh rop export-review --run-id <run_id> --format tsv
+```
+
+`rop_review_table.tsv` может заполнять Bitrix columns на основе `bitrix_reconciliation.json`.
+
+#### Expected config contract
+
+Runtime/config source of truth:
+
+```text
+config/settings.yml
+```
+
+Expected config block:
+
+```yaml
+bitrix:
+  enabled: false
+  webhook_url_env: "BITRIX_WEBHOOK_URL"
+  timeout_seconds: 10
+  page_size: 50
+  max_pages: 3
+  entity_types:
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false
+    candidate_limit: 20
+    date_window_days: 180
+```
+
+Rules:
+
+- `BITRIX_WEBHOOK_URL` value must never be stored in `settings.yml`;
+- `BITRIX_WEBHOOK_URL` value must never be written to logs/artifacts/HTML/API;
+- `bitrix.enabled: false` must not require env during startup;
+- explicit reconciliation invocation must fail clearly if required env is missing;
+- no hidden required defaults for sensitive Bitrix behavior.
+
+#### Expected artifact
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+Example shape:
+
+```json
+{
+  "run_id": "rop-run-2026-06-18",
+  "status": "ok",
+  "read_only": true,
+  "connector": {
+    "system": "bitrix",
+    "portal_url": "https://my.welding.kz",
+    "auth_source": "env:BITRIX_WEBHOOK_URL",
+    "allowed_methods": [
+      "crm.item.list",
+      "crm.item.fields",
+      "crm.status.list",
+      "crm.category.list"
+    ]
+  },
+  "aggregate": {
+    "event_count": 20,
+    "matched_count": 9,
+    "not_found_count": 6,
+    "duplicate_candidate_count": 2,
+    "ambiguous_count": 2,
+    "skipped_count": 1,
+    "connector_error_count": 0
+  },
+  "items": [
+    {
+      "event_id": "evt-001",
+      "source_id": "hotline_mailbox",
+      "sender": "client@example.com",
+      "subject": "Request for welding machine price",
+      "bot_case_type": "new_lead",
+      "bitrix_match_status": "matched_lead",
+      "bitrix_entity_type": "lead",
+      "bitrix_entity_type_id": 1,
+      "bitrix_entity_id": 253,
+      "bitrix_title": "Request for welding machine price",
+      "bitrix_stage": "NEW",
+      "bitrix_responsible_id": 6,
+      "bitrix_contact_id": null,
+      "bitrix_company_id": null,
+      "bitrix_match_reason": "sender_email_exact",
+      "bitrix_confidence": 0.95,
+      "needs_manual_review": false,
+      "reconciliation_reason": "Exact sender email candidate found in Bitrix lead list."
+    },
+    {
+      "event_id": "evt-002",
+      "source_id": "online_mailbox",
+      "sender": "buyer@example.com",
+      "subject": "КП на сварочные электроды",
+      "bot_case_type": "new_lead",
+      "bitrix_match_status": "not_found",
+      "bitrix_entity_type": "",
+      "bitrix_entity_type_id": null,
+      "bitrix_entity_id": null,
+      "bitrix_title": "",
+      "bitrix_stage": "",
+      "bitrix_responsible_id": null,
+      "bitrix_contact_id": null,
+      "bitrix_company_id": null,
+      "bitrix_match_reason": "no_candidate_found",
+      "bitrix_confidence": 0.0,
+      "needs_manual_review": true,
+      "reconciliation_reason": "No Bitrix candidate was found for this classified event."
+    }
+  ],
+  "warnings": []
+}
+```
+
+#### Matching behavior v0
+
+Matching must be simple, bounded and explainable.
+
+Allowed matching signals:
+
+```text
+sender email
+phone if already normalized
+subject/title
+company/client hints if already normalized
+source_id/source_role
+event date if already available
+bot_case_type
+```
+
+Recommended v0 behavior:
+
+```text
+exact email/phone match
+→ high-confidence candidate
+
+company/contact-only match
+→ matched_contact or matched_company, often manual review
+
+title/subject weak match
+→ lower-confidence candidate
+
+multiple strong candidates
+→ duplicate_candidate
+
+multiple weak candidates
+→ ambiguous
+
+no candidate
+→ not_found
+
+connector/API failure
+→ connector_degraded or error
+```
+
+Important rule:
+
+```text
+not_found != connector failure
+```
+
+`not_found` means Bitrix was reachable, but no candidate was found.
+
+#### Expected TSV impact
+
+Existing `rop_review_table.tsv` already has Bitrix placeholder fields. After reconciliation and repeated export, these fields should be populated when possible:
+
+```text
+bitrix_status
+bitrix_lead_id
+bitrix_deal_id
+bitrix_responsible
+```
+
+Optional future-compatible fields may remain empty in v0 if TSV contract already includes them.
+
+If `bitrix_reconciliation.json` is missing:
+
+```text
+rop export-review
+→ still works
+→ Bitrix columns remain empty
+```
+
+#### Artifacts
+
+New artifact:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+Existing artifacts read:
+
+```text
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/operator_summary.json
+```
+
+Existing artifacts optionally updated/generated:
+
+```text
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+Logs:
+
+```text
+logs/app.log
+```
+
+Docs:
+
+```text
+docs/ROADMAP.md
+README.ru.md
+docs/DEV_GUIDE.md
+docs/SECURITY.md
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- external connector boundary;
+- env/secret handling;
+- Bitrix REST API integration;
+- external JSON response parsing;
+- stored artifact contract change;
+- CRM authority boundary;
+- future write-back risk must be explicitly blocked in v0.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted Bitrix reconciliation tests;
+- targeted config validation tests;
+- targeted ROP CLI tests;
+- fake Bitrix client tests;
+- fake Bitrix API error tests;
+- artifact inspection:
+  - `bitrix_reconciliation.json`;
+  - `rop_review_table.tsv`;
+
+- log verification;
+- secret leakage check;
+- no webhook URL in logs/artifacts;
+- no raw auth headers in logs/artifacts;
+- no CRM write methods in adapter/client allowlist;
+- no `crm.item.add`;
+- no `crm.item.update`;
+- no `crm.item.delete`;
+- no task/timeline write methods;
+- no destructive mailbox/CRM actions;
+- no direct `beeagent_rop` imports in BeeAgent core beyond existing module runtime path;
+- SAST required;
+- SCA only if dependencies change;
+- DAST-style route/runtime misuse checks if any network-facing path changes;
+- IAST not required;
+- fuzzing optional only for fragile JSON/TSV parsing, not mandatory.
+
+Required automated scenarios:
+
+```text
+config disabled does not require Bitrix env
+explicit reconciliation without env fails clearly
+invalid Bitrix config fails fast
+fake matched lead
+fake matched deal
+fake matched contact only
+fake matched company only
+not found
+duplicate candidate
+ambiguous candidate
+connector degraded
+Bitrix API error
+permission denied
+timeout / transport error
+malformed JSON response
+pagination next handling if implemented
+TSV enrichment when reconciliation artifact exists
+TSV remains valid when reconciliation artifact is missing
+no webhook URL in artifact/logs
+no write method called
+```
+
+Recommended smoke:
+
+```bash
+./start.sh rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-bitrix-recon-input
+
+./start.sh rop reconcile-bitrix \
+  --run-id smoke-bitrix-recon-input
+
+./start.sh rop export-review \
+  --run-id smoke-bitrix-recon-input \
+  --format tsv
+```
+
+Live Bitrix smoke is optional and must only be run if credentials are available and explicit approval is given.
+
+#### DoD
+
+- `bitrix` config block exists in `config/settings.yml`;
+- new required config keys are validated fail-fast in `src/beeagent_module/core/settings.py`;
+- Bitrix webhook URL is read only from env;
+- webhook URL does not appear in logs/artifacts/tests;
+- read-only Bitrix client/adapter exists;
+- only allowlisted read-only Bitrix methods are callable;
+- CRM write methods are absent from v0 path;
+- `./start.sh rop reconcile-bitrix --run-id <run_id>` works;
+- `bitrix_reconciliation.json` is created for a valid ROP run;
+- each classified event receives a reconciliation result or explicit skipped/degraded status;
+- `not_found` is represented as a valid CRM gap signal;
+- connector failure is represented separately from `not_found`;
+- existing ROP pipeline remains backward-compatible;
+- `rop export-review` works with and without `bitrix_reconciliation.json`;
+- Bitrix columns in TSV are populated when reconciliation data exists;
+- tests cover success, not found, duplicates, ambiguity and degraded connector cases;
+- no `beeagent-rop` code is changed;
+- BeeAgent core does not contain ROP classification/business rules;
+- docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
