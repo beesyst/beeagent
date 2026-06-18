@@ -49,4 +49,9 @@ logs/*
 storage/*
 !storage/.gitkeep
 
+# Tracked safe mock input for deterministic ROP smoke runs
+!storage/mock/
+storage/mock/*
+!storage/mock/rop_batch_sample.json
+
 scripts/*

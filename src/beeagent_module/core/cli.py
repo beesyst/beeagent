@@ -131,6 +131,51 @@ def handle_rop_export_review(
     _export_review_tsv_for_run(storage_dir=storage_dir, run_id=run_id, logger=logger)
 
 
+# Handler для команды 'rop reconcile-bitrix': запускает read-only Bitrix reconciliation для указанного run_id
+def handle_rop_reconcile_bitrix(
+    args: argparse.Namespace,
+    settings: dict,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+
+    logger.info(
+        "ROP CLI: starting bitrix reconciliation for run_id=%s",
+        run_id,
+    )
+
+    from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
+
+    try:
+        result = run_reconciliation(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            settings=settings,
+            logger=logger,
+        )
+        status = result.get("status", "?")
+        aggregate = result.get("aggregate", {})
+        print(
+            f"\nBitrix reconciliation completed: status={status}\n"
+            f"  events:     {aggregate.get('event_count', 0)}\n"
+            f"  matched:    {aggregate.get('matched_count', 0)}\n"
+            f"  not_found:  {aggregate.get('not_found_count', 0)}\n"
+            f"  duplicates: {aggregate.get('duplicate_candidate_count', 0)}\n"
+            f"  ambiguous:  {aggregate.get('ambiguous_count', 0)}\n"
+            f"  skipped:    {aggregate.get('skipped_count', 0)}\n"
+            f"  errors:     {aggregate.get('connector_error_count', 0)}\n"
+        )
+        logger.info(
+            "ROP CLI: bitrix reconciliation finished: run_id=%s status=%s",
+            run_id,
+            status,
+        )
+    except Exception as exc:
+        logger.error("ROP CLI: bitrix reconciliation failed: %s", exc)
+        raise RopCliError(f"Bitrix reconciliation failed: {exc}") from exc
+
+
 # Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника
 def _apply_source_overrides(
     settings: dict,
@@ -225,7 +270,27 @@ def _export_review_tsv_for_run(
     except json.JSONDecodeError as exc:
         raise RopCliError(f"Failed to parse JSON artifacts: {exc}") from exc
 
-    tsv_rows = _build_review_tsv_rows(normalized_events, classified_events)
+    # Пытаемся прочитать Bitrix reconciliation artifact для обогащения TSV
+    reconciliation_path = storage_dir / "runs" / run_id / "bitrix_reconciliation.json"
+    reconciliation_data = None
+    if reconciliation_path.exists():
+        try:
+            reconciliation_data = json.loads(
+                reconciliation_path.read_text(encoding="utf-8")
+            )
+            logger.debug(
+                "ROP CLI: bitrix reconciliation artifact found for TSV enrichment: %s",
+                reconciliation_path,
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "ROP CLI: failed to read bitrix reconciliation artifact: %s", exc
+            )
+
+    tsv_rows = _build_review_tsv_rows(
+        normalized_events, classified_events,
+        reconciliation_data=reconciliation_data,
+    )
 
     try:
         with tsv_output_path.open("w", encoding="utf-8", newline="") as f:
@@ -445,11 +510,23 @@ def _tsv_columns() -> list[str]:
 
 
 # Билд строк для TSV из normalized_events и classified_events, объединяя данные по event_id и добавляя поля для ручного обзора оператором
+# Если передан reconciliation_data (bitrix_reconciliation.json), заполняет Bitrix columns
 def _build_review_tsv_rows(
     normalized_events: list[dict],
     classified_events: list[dict],
+    reconciliation_data: dict | None = None,
 ) -> list[dict[str, str]]:
     normalized_lookup = {evt.get("event_id"): evt for evt in normalized_events}
+
+    # Строим lookup для Bitrix reconciliation данных по event_id
+    bitrix_lookup: dict[str, dict] = {}
+    if reconciliation_data and isinstance(reconciliation_data, dict):
+        items = reconciliation_data.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                eid = item.get("event_id", "")
+                if eid:
+                    bitrix_lookup[eid] = item
 
     rows: list[dict[str, str]] = []
 
@@ -466,6 +543,30 @@ def _build_review_tsv_rows(
         bot_reasoning = classified_evt.get("reasoning", "")
         is_duplicate = classified_evt.get("is_duplicate")
         duplicate_of = classified_evt.get("duplicate_of", "")
+
+        # Bitrix поля из reconciliation artifact
+        recon_item = bitrix_lookup.get(event_id, {})
+        bitrix_entity_type = recon_item.get("bitrix_entity_type", "")
+
+        # Определяем bitrix_status: use match_status or entity_type
+        bitrix_status = recon_item.get("bitrix_match_status", "")
+        if not bitrix_status and bitrix_entity_type:
+            bitrix_status = bitrix_entity_type
+
+        # Определяем lead_id/deal_id в зависимости от entity_type
+        bitrix_lead_id = ""
+        bitrix_deal_id = ""
+        bitrix_entity_id = recon_item.get("bitrix_entity_id")
+        if bitrix_entity_id is not None:
+            if bitrix_entity_type == "lead":
+                bitrix_lead_id = str(bitrix_entity_id)
+            elif bitrix_entity_type == "deal":
+                bitrix_deal_id = str(bitrix_entity_id)
+
+        bitrix_responsible = ""
+        responsible_id = recon_item.get("bitrix_responsible_id")
+        if responsible_id is not None:
+            bitrix_responsible = str(responsible_id)
 
         row = {
             "event_id": _safe_tsv_value(event_id),
@@ -490,11 +591,11 @@ def _build_review_tsv_rows(
             "bot_reasoning": _safe_tsv_value(bot_reasoning),
             "human_case_type": "",
             "should_rop_see": "",
-            "bitrix_status": "",
+            "bitrix_status": _safe_tsv_value(bitrix_status),
             "notes": "",
-            "bitrix_lead_id": "",
-            "bitrix_deal_id": "",
-            "bitrix_responsible": "",
+            "bitrix_lead_id": _safe_tsv_value(bitrix_lead_id),
+            "bitrix_deal_id": _safe_tsv_value(bitrix_deal_id),
+            "bitrix_responsible": _safe_tsv_value(bitrix_responsible),
             "is_duplicate": (
                 _safe_tsv_value(str(is_duplicate).lower())
                 if is_duplicate is not None
@@ -571,6 +672,17 @@ def create_rop_parser() -> argparse.ArgumentParser:
         choices=["tsv"],
         default="tsv",
         help="Export format (default: tsv)",
+    )
+
+    reconcile_parser = subparsers.add_parser(
+        "reconcile-bitrix",
+        help="Reconcile existing ROP run artifacts with Bitrix CRM (read-only)",
+    )
+    reconcile_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to reconcile with Bitrix",
     )
 
     return parser

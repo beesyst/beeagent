@@ -278,6 +278,18 @@ print(result["operator_text"])
 
 Последние 5 колонок — пусто, оператор заполняет вручную для validation.
 
+Если для run существует `bitrix_reconciliation.json`, колонки `bitrix_status`, `bitrix_lead_id`, `bitrix_deal_id`, `bitrix_responsible` заполняются автоматически.
+
+**`./start.sh rop reconcile-bitrix`** — выполнить read-only сверку существующего ROP run с Bitrix CRM:
+
+```bash
+./start.sh rop reconcile-bitrix --run-id <run_id>
+```
+
+Читает `normalized_events.json` и `classified_events.json`, выполняет поиск кандидатов в Bitrix CRM по email/phone/subject, создаёт `bitrix_reconciliation.json` в `storage/runs/<run_id>/`.
+
+Для работы требуется настроенный `bitrix` блок в `config/settings.yml` и переменная окружения `BITRIX_WEBHOOK_URL`. Если Bitrix отключён (`bitrix.enabled: false`), команда всё равно выполняется (если env доступен), но выдаёт предупреждение.
+
 #### CLI overrides — в памяти только
 
 CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не меняют** `config/settings.yml`:

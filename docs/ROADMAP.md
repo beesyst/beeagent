@@ -2734,7 +2734,7 @@ Reason:
 
 ### Итерация 26 — Bitrix read-only reconciliation artifacts v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -2977,20 +2977,20 @@ Expected config block:
 
 ```yaml
 bitrix:
-  enabled: false
-  webhook_url_env: "BITRIX_WEBHOOK_URL"
-  timeout_seconds: 10
-  page_size: 50
-  max_pages: 3
-  entity_types:
+  enabled: false # true/false - включить/выключить Bitrix connector
+  webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
+  timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
+  page_size: 50 # размер страницы для Bitrix list-запросов
+  pages_max: 3 # максимальное число страниц пагинации
+  types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
     - 1
     - 2
     - 3
     - 4
   reconciliation:
-    enabled: false
-    candidate_limit: 20
-    date_window_days: 180
+    enabled: false # true/false - включить/выключить reconciliation по умолчанию
+    candidate_limit: 20 # максимальное число кандидатов на одно событие
+    window_date: 180 # окно поиска по дате события (дней назад)
 ```
 
 Rules:

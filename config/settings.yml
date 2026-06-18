@@ -112,3 +112,19 @@ rop:
         folder: "welding" # mailbox folder для чтения
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
+
+bitrix:
+  enabled: false # true/false - включить/выключить Bitrix connector
+  webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
+  timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
+  page_size: 50 # размер страницы для Bitrix list-запросов
+  pages_max: 3 # максимальное число страниц пагинации
+  types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false # true/false - включить/выключить reconciliation по умолчанию
+    candidate_limit: 20 # максимальное число кандидатов на одно событие
+    window_date: 180 # окно поиска по дате события (дней назад)
