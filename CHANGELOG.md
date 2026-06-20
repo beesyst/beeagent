@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.34.0...beeagent-v0.35.0) (2026-06-20)
+
+
+### Features
+
+* **rop:** add current-state index and Bitrix evidence board ([#108](https://github.com/beesyst/beeagent/issues/108)) ([ed92381](https://github.com/beesyst/beeagent/commit/ed92381560861d5ad0eba0a09f2f0cd0ec72c97a))
+
 ## [0.34.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.33.0...beeagent-v0.34.0) (2026-06-18)
 
 
