@@ -290,6 +290,22 @@ print(result["operator_text"])
 
 Для работы требуется настроенный `bitrix` блок в `config/settings.yml` и переменная окружения `BITRIX_WEBHOOK_URL`. Если Bitrix отключён (`bitrix.enabled: false`), команда всё равно выполняется (если env доступен), но выдаёт предупреждение.
 
+**`./start.sh rop current`** — построить current-state index для указанного ROP run:
+
+```bash
+./start.sh rop current --run-id <run_id>
+```
+
+Читает все существующие артефакты run (`normalized_events.json`, `classified_events.json`, `source_diagnostics.json`, `intake_metadata.json`, `bitrix_reconciliation.json`) и создаёт artifact-level projection `rop_current_state.json` в директории run, а также интерфейсные артефакты:
+
+- `storage/interfaces/rop_current.json` — полный current-state
+- `storage/interfaces/rop_latest.json` — lightweight latest summary
+- `storage/interfaces/rop_index.json` — index всех current-state
+
+Current-state автоматически строится после успешного `rop run` и успешного `reconcile-bitrix`. После неудачного `reconcile-bitrix` current-state не обновляется.
+
+ROP dashboard использует current-state для вкладки Bitrix / Bitrix Evidence Board: matched, lost in Bitrix, ambiguous, connector degraded и unreconciled очереди остаются read-only.
+
 #### CLI overrides — в памяти только
 
 CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не меняют** `config/settings.yml`:

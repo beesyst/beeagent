@@ -212,7 +212,14 @@ class BeeAgentUiAdapter:
             if page_id == "rop_dashboard":
                 tab = query.get("tab", "overview")
                 allowed_tabs = frozenset(
-                    {"overview", "queue", "sources", "attachments", "evidence"}
+                    {
+                        "overview",
+                        "queue",
+                        "sources",
+                        "attachments",
+                        "evidence",
+                        "bitrix",
+                    }
                 )
                 if tab not in allowed_tabs:
                     tab = "overview"

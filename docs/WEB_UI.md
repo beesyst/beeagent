@@ -258,12 +258,16 @@ Browser route показывает bounded/redacted artifact preview через 
 | `classified_events_json` | `classified_events.json` |
 | `attachment_extraction_json` | `attachment_extraction.json` |
 | `rop_review_table_tsv` | `rop_review_table.tsv` |
+| `rop_current_state_json` | `rop_current_state.json` |
+| `bitrix_reconciliation_json` | `bitrix_reconciliation.json` |
 | `module_result_json` | `module-beeagent-rop/module_result.json` |
 | `rop_summary_result_json` | `module-beeagent-rop/rop_summary_result.json` |
 | `lead_classification_result_json` | `module-beeagent-rop/lead_classification_result.json` |
 | `steps_json` | `steps.json` |
 
 UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
+
+ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. Она читает только artifact-level current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json`, показывает read-only KPI и очереди matched/lost/ambiguous/degraded/unreconciled без POST actions или write-back.
 
 Отклоняются:
 

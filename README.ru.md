@@ -279,6 +279,9 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 # Повторно экспортировать TSV для human review по готовому run.
 # Обычно не требуется, потому что rop run уже создаёт rop_review_table.tsv автоматически.
 ./start.sh rop export-review --run-id live-review-2026-05-15 --format tsv
+
+# Построить current-state index для готового run.
+./start.sh rop current --run-id live-review-2026-05-15
 ```
 
 После `rop run` создаётся:
@@ -308,6 +311,25 @@ rop:
 - `--period` — override period для batch источника
 - `--run-id` — explicit run_id (если не указан, генерируется)
 - `--format` — формат export (пока только `tsv`)
+
+**ROP current-state index (`rop current`):**
+
+`rop current` строит единый read-model artifact для указанного run:
+
+```
+./start.sh rop current --run-id <run_id>
+```
+
+Артефакты:
+
+- `storage/runs/<run_id>/rop_current_state.json` — полный current-state
+- `storage/interfaces/rop_current.json` — current run state
+- `storage/interfaces/rop_latest.json` — lightweight latest summary
+- `storage/interfaces/rop_index.json` — index всех current-state
+
+Current-state — artifact-level projection поверх существующих run artifacts. Он содержит KPI (events, normalized, classified, Bitrix matching, очереди) и автоматически строится после успешного `rop run` и `reconcile-bitrix`.
+
+В ROP dashboard доступна вкладка Bitrix / Bitrix Evidence Board для просмотра matched/lost/ambiguous/degraded/unreconciled очередей, если есть current-state/Bitrix evidence.
 
 CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
 `--source-id` и `--all-sources` взаимоисключающие.

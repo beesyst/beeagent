@@ -84,7 +84,6 @@ pages:
         - id: bitrix
           title: Bitrix
           href: /rop?tab=bitrix
-          disabled: true
     blocks: []
 
   - id: runs

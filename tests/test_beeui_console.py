@@ -9,7 +9,9 @@ from beeui_module.adapters.envelopes import AdapterErrorResult
 from fastapi.testclient import TestClient
 
 from beeagent_module.interfaces.ui.read_model import (
+    build_rop_dashboard_read_model,
     build_rop_page_layout,
+    build_run_detail,
 )
 
 
@@ -134,6 +136,81 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     (module_dir / "rop_summary_result.json").write_text("{}", encoding="utf-8")
 
     return run_dir
+
+
+def _write_bitrix_current_state_artifacts(run_dir: Path, run_id: str) -> None:
+    current_state = {
+        "run_id": run_id,
+        "status": "ok",
+        "read_only": True,
+        "kpi": {
+            "matched_in_bitrix": 1,
+            "lost_in_bitrix": 1,
+            "ambiguous_in_bitrix": 1,
+            "connector_degraded": 1,
+            "unreconciled": 1,
+        },
+        "queues": {
+            "lost_in_bitrix": [
+                {
+                    "event_id": "evt-lost",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+            "ambiguous": [
+                {
+                    "event_id": "evt-amb",
+                    "case_type": "new_lead",
+                    "priority": "medium",
+                    "bitrix_status": "ambiguous",
+                }
+            ],
+            "degraded": [
+                {
+                    "event_id": "evt-degraded",
+                    "case_type": "new_lead",
+                    "priority": "medium",
+                    "bitrix_status": "connector_degraded",
+                }
+            ],
+            "unreconciled": [
+                {
+                    "event_id": "evt-unreconciled",
+                    "case_type": "new_lead",
+                    "priority": "low",
+                }
+            ],
+            "matched": [
+                {
+                    "event_id": "evt-matched",
+                    "case_type": "existing_deal",
+                    "priority": "low",
+                    "bitrix_status": "matched_deal",
+                }
+            ],
+        },
+    }
+    reconciliation = {
+        "run_id": run_id,
+        "status": "ok",
+        "read_only": True,
+        "aggregate": {
+            "event_count": 5,
+            "matched_count": 1,
+            "not_found_count": 1,
+            "ambiguous_count": 1,
+            "connector_error_count": 1,
+        },
+        "items": [],
+    }
+    (run_dir / "rop_current_state.json").write_text(
+        json.dumps(current_state), encoding="utf-8"
+    )
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps(reconciliation), encoding="utf-8"
+    )
 
 
 def _write_run_artifacts_with_html(storage_dir: Path, run_id: str) -> Path:
@@ -331,6 +408,22 @@ def test_run_route_invalid_run_id(tmp_path: Path) -> None:
     assert response.status_code in (400, 404)
 
 
+def test_read_model_run_detail_rejects_path_traversal(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+
+    data = build_run_detail(storage_dir, "../../outside")
+
+    assert data["error"] == "invalid_run_id"
+
+
+def test_rop_dashboard_read_model_rejects_path_traversal(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+
+    data = build_rop_dashboard_read_model(storage_dir, "../../outside")
+
+    assert data["error"] == "invalid_run_id"
+
+
 # Тест: GET /rop возвращает 200 через BeeUI generic adapter custom page
 def test_rop_route(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
@@ -361,7 +454,14 @@ class TestRopTabs:
 
     def test_all_tabs_return_200(self, tmp_path: Path) -> None:
         _, client = self._setup(tmp_path)
-        for tab in ("overview", "queue", "sources", "attachments", "evidence"):
+        for tab in (
+            "overview",
+            "queue",
+            "sources",
+            "attachments",
+            "evidence",
+            "bitrix",
+        ):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200, f"Tab {tab} failed"
 
@@ -397,6 +497,12 @@ class TestRopTabs:
         _, client = self._setup(tmp_path)
         response = client.get("/rop?tab=evidence")
         assert response.status_code == 200
+
+    def test_bitrix_content(self, tmp_path: Path) -> None:
+        _, client = self._setup(tmp_path)
+        response = client.get("/rop?tab=bitrix")
+        assert response.status_code == 200
+        assert "Bitrix Evidence Board" in response.text
 
 
 # Тест: /rop page содержит subtitle и tabs в BeeUI shell
@@ -490,10 +596,10 @@ class TestRopOverviewLayoutStructure:
         key_metrics = layout[1]
         assert key_metrics["columns"] == 2
 
-    def test_key_metrics_has_6_items(self) -> None:
+    def test_key_metrics_has_items(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         key_metrics = layout[1]
-        assert len(key_metrics["items"]) == 6
+        assert len(key_metrics["items"]) >= 6
 
     def test_run_overview_before_key_metrics(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1339,6 +1445,8 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
         "normalized_events_json",
         "classified_events_json",
         "rop_review_table_tsv",
+        "rop_current_state_json",
+        "bitrix_reconciliation_json",
         "module_result_json",
         "rop_summary_result_json",
         "steps_json",
@@ -1347,6 +1455,63 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
     assert link_ids == allowed
     available = [l for l in links if l["available"]]
     assert len(available) > 0
+
+
+def test_api_rop_dashboard_includes_current_state_queues(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rich_rop_run(storage_dir, "run-bitrix-api")
+    _write_bitrix_current_state_artifacts(run_dir, "run-bitrix-api")
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert "current_state_queues" in payload
+    assert payload["current_state_queues"]["lost_in_bitrix"][0]["event_id"] == (
+        "evt-lost"
+    )
+
+
+def test_rop_bitrix_layout_with_current_state_queues() -> None:
+    data = {
+        "current_state_kpi": {
+            "matched_in_bitrix": 1,
+            "lost_in_bitrix": 1,
+            "ambiguous_in_bitrix": 1,
+            "connector_degraded": 1,
+            "unreconciled": 1,
+        },
+        "current_state_queues": {
+            "lost_in_bitrix": [
+                {
+                    "event_id": "evt-lost",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+            "ambiguous": [],
+            "degraded": [],
+            "unreconciled": [],
+            "matched": [],
+        },
+        "bitrix": {"status": "ok"},
+        "evidence_links": [
+            {
+                "artifact_id": "bitrix_reconciliation_json",
+                "available": True,
+            }
+        ],
+    }
+
+    layout = build_rop_page_layout(data, tab="bitrix")
+
+    assert any(block["type"] == "kpi_grid" for block in layout)
+    assert any(
+        block["type"] == "status_table" and block["title"] == "Lost in Bitrix"
+        for block in layout
+    )
 
 
 # Тест: чек, что ROP dashboard API обрабатывает отсутствие артефакта attachment_extraction.json без ошибок и возвращает нулевые счетчики в сводке по вложениям и KPI

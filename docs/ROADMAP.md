@@ -3300,6 +3300,465 @@ Live Bitrix smoke is optional and must only be run if credentials are available 
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 27 — ROP MVP Current State Index + Bitrix Evidence Board v0
+
+**Статус:** DONE
+
+#### Goal
+
+Добавить BeeAgent-owned current-state/index слой для ROP MVP: система должна уметь собрать текущую операторскую картину по последнему или явно выбранному ROP run, объединить source/classification/attachment/Bitrix evidence в один стабильный read-model artifact и отдать его Web Console / BeeUI без необходимости вручную открывать несколько JSON/TSV файлов.
+
+Итерация должна превратить набор run artifacts:
+
+```text
+source_diagnostics.json
+intake_metadata.json
+normalized_events.json
+attachment_extraction.json
+classified_events.json
+bitrix_reconciliation.json
+operator_summary.json
+rop_review_table.tsv
+```
+
+в понятный current-state snapshot:
+
+```text
+что пришло
+что классифицировано
+что важно
+что найдено в Bitrix
+что потеряно в Bitrix
+что ambiguous/duplicate
+что требует ручного разбора
+какие evidence artifacts открыть
+```
+
+#### Почему это нужно
+
+После It26 BeeAgent уже умеет выполнять Bitrix read-only reconciliation и создавать `bitrix_reconciliation.json`.
+
+Но результат всё ещё run/artifact-oriented:
+
+- оператор должен знать `run_id`;
+- UI зависит от scattered artifacts;
+- нет единого latest/current alias;
+- нет стабильного read-model для MVP demo;
+- optional artifacts вроде `bitrix_reconciliation.json` могут быть missing/stale/degraded;
+- Bitrix evidence пока не превращено в рабочие очереди РОПа.
+
+Для MVP заказчику нужно видеть не “JSON артефакты”, а компактную операционную картину:
+
+```text
+важные обращения
+потерянные в Bitrix лиды
+ambiguous/dedup candidates
+ручная проверка
+evidence links
+```
+
+Итерация нужна, потому что она закрывает разрыв между backend artifacts и customer-visible MVP dashboard.
+
+#### Scope
+
+**Включено:**
+
+- добавить BeeAgent-owned current-state builder для ROP run;
+- читать только existing ROP artifacts из `storage/runs/<run_id>/...`;
+- создать per-run artifact:
+
+```text
+storage/runs/<run_id>/rop_current_state.json
+```
+
+- создать/update interface artifacts:
+
+```text
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+```
+
+- добавить CLI command:
+
+```bash
+./start.sh rop current --run-id <run_id>
+```
+
+- обновлять current-state после successful `rop run`;
+
+- обновлять current-state после successful `reconcile-bitrix`;
+
+- не создавать ложный success state после failed `reconcile-bitrix`;
+
+- добавить latest/current alias semantics:
+  - latest ROP run;
+  - selected/current run;
+  - current client/source context;
+  - technical `run_id` as evidence, not primary operator concept;
+
+- построить KPI/read-model:
+  - total events;
+  - normalized events;
+  - classified events;
+  - high priority;
+  - needs manual review;
+  - source degraded;
+  - attachment preview/refused counts;
+  - Bitrix matched;
+  - Bitrix not found / lost in Bitrix;
+  - Bitrix ambiguous/duplicate;
+  - Bitrix connector degraded;
+  - unreconciled/no Bitrix artifact;
+
+- построить operator queues:
+  - `lost_in_bitrix`;
+  - `needs_review`;
+  - `high_priority`;
+  - `ambiguous`;
+  - `matched`;
+  - `unreconciled`;
+  - `degraded`;
+
+- добавить evidence references:
+  - normalized event;
+  - classified event;
+  - attachment extraction;
+  - Bitrix reconciliation item;
+  - TSV review artifact;
+  - operator summary;
+
+- фиксировать artifact availability/freshness:
+  - artifact exists/missing;
+  - artifact malformed;
+  - artifact run_id mismatch;
+  - optional artifact older than primary classification/operator artifacts, if detectable;
+  - warning for stale optional Bitrix evidence;
+
+- обновить BeeAgent UI adapter/read-model:
+  - `/rop`;
+  - `/api/rop/dashboard`;
+  - `/runs/<run_id>`;
+  - artifact links where applicable;
+
+- включить Bitrix tab/section in ROP dashboard read-model, если current-state содержит Bitrix evidence;
+
+- добавить artifact allowlist entries:
+  - `rop_current_state_json`;
+  - `bitrix_reconciliation_json`;
+
+- graceful degraded behavior:
+  - missing current-state artifacts;
+  - missing Bitrix reconciliation;
+  - stale Bitrix reconciliation;
+  - malformed Bitrix artifact;
+  - missing classified events;
+  - missing operator summary;
+  - no runs;
+  - invalid/path-traversal run_id;
+
+- tests for builder, CLI, artifacts, UI read-model and security boundaries;
+
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/WEB_UI.md`;
+  - `docs/DEV_GUIDE.md`, if command/API behavior changes.
+
+**Не включено:**
+
+- Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- task creation;
+- timeline comments;
+- manager scoring;
+- 1C integration;
+- mailbox listener/polling;
+- web-triggered ROP run;
+- auth/RBAC;
+- Control Panel;
+- operator POST actions;
+- editing review labels in UI;
+- changes to `beeagent-rop`;
+- ROP business rules in BeeAgent core;
+- AI recommendation generation;
+- new dependencies unless strictly required.
+
+#### Deliverable
+
+BeeAgent can build and expose a stable current-state ROP read-model:
+
+```bash
+./start.sh rop current --run-id <run_id>
+```
+
+Expected artifacts:
+
+```text
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+```
+
+The Web Console / BeeUI ROP dashboard can open `/rop` without requiring the operator to manually know a `run_id`, and it can show latest/current ROP state with Bitrix evidence queues and safe artifact links.
+
+#### Expected current-state artifact
+
+```json
+{
+  "run_id": "live-review-2026-06-19",
+  "status": "ok",
+  "read_only": true,
+  "generated_at_utc": "2026-06-19T00:00:00Z",
+  "client_id": "welding",
+  "current_alias": "latest",
+  "source": {
+    "selection_mode": "single_explicit",
+    "source_count": 1,
+    "loaded_source_count": 1,
+    "degraded_source_count": 0
+  },
+  "kpi": {
+    "events_total": 20,
+    "normalized_count": 20,
+    "classified_count": 20,
+    "high_priority": 4,
+    "needs_manual_review": 6,
+    "source_degraded": 0,
+    "attachment_count": 3,
+    "attachment_preview_available": 1,
+    "attachment_refused": 1,
+    "matched_in_bitrix": 8,
+    "lost_in_bitrix": 5,
+    "ambiguous_in_bitrix": 3,
+    "connector_degraded": 0,
+    "unreconciled": 0
+  },
+  "queues": {
+    "lost_in_bitrix": [],
+    "needs_review": [],
+    "high_priority": [],
+    "ambiguous": [],
+    "matched": [],
+    "unreconciled": [],
+    "degraded": []
+  },
+  "artifact_refs": [
+    {
+      "artifact_id": "operator_summary_json",
+      "path": "runs/<run_id>/operator_summary.json",
+      "exists": true,
+      "status": "ok"
+    },
+    {
+      "artifact_id": "bitrix_reconciliation_json",
+      "path": "runs/<run_id>/bitrix_reconciliation.json",
+      "exists": true,
+      "status": "ok"
+    }
+  ],
+  "warnings": []
+}
+```
+
+#### Current-state behavior
+
+Rules:
+
+```text
+missing Bitrix reconciliation
+→ do not count as lost_in_bitrix
+→ mark as unreconciled/no_bitrix_evidence
+
+Bitrix not_found
+→ count as lost_in_bitrix
+→ needs_manual_review=true
+
+Bitrix ambiguous / duplicate_candidate
+→ count as ambiguous_in_bitrix
+→ needs_manual_review=true
+
+Bitrix matched_*
+→ count as matched_in_bitrix
+
+Bitrix connector_degraded / error
+→ count as connector_degraded
+→ do not treat as not_found
+
+optional Bitrix artifact appears stale/malformed/mismatched
+→ show warning
+→ do not silently trust it as current evidence
+```
+
+Important rule:
+
+```text
+not_found != connector failure
+missing/stale artifact != not_found
+```
+
+#### BeeUI / Web Console impact
+
+The BeeAgent UI adapter should use current-state artifacts as the primary source for `/rop` and `/api/rop/dashboard` when available.
+
+Expected ROP dashboard sections:
+
+- Overview;
+- Queue;
+- Sources;
+- Attachments;
+- Bitrix;
+- Evidence.
+
+Bitrix tab should no longer be reserved-only when current-state/Bitrix evidence exists.
+
+BeeUI must remain generic:
+
+```text
+BeeUI renders.
+BeeAgent adapter decides.
+```
+
+No ROP-specific business logic should be added to BeeUI generic framework.
+
+#### Expected UI blocks
+
+Use existing adapter-backed `layout[]` block types:
+
+- `state_grid`;
+- `kpi_grid`;
+- `event_table`;
+- `status_table`;
+- `attention_list`;
+- `artifact_links`;
+- `group`;
+- `degraded`.
+
+#### Artifacts
+
+New:
+
+```text
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+```
+
+Existing artifacts read:
+
+```text
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- artifact restore/parsing;
+- file/path handling;
+- UI/API exposure of client operational data;
+- artifact allowlist update;
+- malformed/stale artifact handling;
+- read-only Web/API behavior.
+
+No new external connector is added in this iteration.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or web or ui"
+```
+
+Targeted tests:
+
+```text
+current-state builder with normal run
+current-state builder without Bitrix artifact
+current-state builder with matched Bitrix artifact
+current-state builder with not_found Bitrix artifact
+current-state builder with ambiguous/duplicate Bitrix artifact
+current-state builder with connector_degraded Bitrix artifact
+current-state builder with stale/malformed Bitrix artifact
+current-state builder rejects path traversal run_id
+CLI rop current creates per-run and interface artifacts
+rop run updates current-state
+successful reconcile-bitrix updates current-state
+failed reconcile-bitrix does not create false success state
+/api/rop/dashboard includes current-state/Bitrix KPI fields
+/rop renders degraded state when current-state is missing
+artifact allowlist includes rop_current_state_json and bitrix_reconciliation_json
+secrets/raw .eml/attachment content are not exposed
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it27-current
+
+uv run python config/start.py rop current \
+  --run-id smoke-it27-current
+
+uv run python config/start.py rop summary \
+  --run-id smoke-it27-current
+
+uv run python config/start.py web --host 127.0.0.1 --port 8780 --no-open
+```
+
+Optional live Bitrix smoke only if credentials are available and explicitly approved.
+
+Security checks:
+
+- SAST required;
+- SCA only if dependencies change;
+- lightweight DAST-style route/runtime misuse checks for `/rop`, `/api/rop/dashboard`, artifact routes;
+- IAST not required;
+- fuzzing optional only for malformed artifact restore tests.
+
+#### DoD
+
+- `rop_current_state.json` is created for a valid ROP run;
+- `storage/interfaces/rop_current.json`, `rop_latest.json`, `rop_index.json` are created/updated;
+- `/rop` can show latest/current ROP state without requiring manual run_id;
+- current-state distinguishes:
+  - Bitrix `not_found`;
+  - missing Bitrix artifact;
+  - stale/malformed Bitrix artifact;
+  - connector degraded/error;
+
+- lost-in-Bitrix queue is based only on valid Bitrix `not_found`, not on missing/degraded evidence;
+- Bitrix matched/ambiguous/duplicate/manual-review queues are visible in current-state;
+- UI/API expose only read-only data;
+- no POST/write/action route is added;
+- no Bitrix write-back exists;
+- no `beeagent-rop` code is changed;
+- BeeAgent core does not contain ROP classification/business rules;
+- artifact access remains allowlisted;
+- path traversal is blocked;
+- secrets/raw `.eml`/attachment content are not exposed;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
