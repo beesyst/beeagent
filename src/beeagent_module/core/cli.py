@@ -6,6 +6,10 @@ import json
 import logging
 from typing import Any
 
+from beeagent_module.cases.rop_current_state import (
+    build_rop_current_state,
+    write_current_state,
+)
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.core.paths import get_project_root, get_storage_dir
 
@@ -75,6 +79,24 @@ def handle_rop_run(
             ) from exc
 
         print("Paste this TSV into Google Sheets for human review.")
+
+        try:
+            state = build_rop_current_state(
+                storage_dir=storage_dir,
+                run_id=effective_run_id,
+                logger=logger,
+            )
+            write_current_state(
+                storage_dir=storage_dir,
+                run_id=effective_run_id,
+                state=state,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: current-state build failed after run: %s",
+                exc,
+            )
 
         logger.info(
             "ROP CLI: run completed successfully: run_id=%s status=%s",
@@ -166,6 +188,25 @@ def handle_rop_reconcile_bitrix(
             f"  skipped:    {aggregate.get('skipped_count', 0)}\n"
             f"  errors:     {aggregate.get('connector_error_count', 0)}\n"
         )
+
+        try:
+            state = build_rop_current_state(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                logger=logger,
+            )
+            write_current_state(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                state=state,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: current-state build failed after bitrix reconciliation: %s",
+                exc,
+            )
+
         logger.info(
             "ROP CLI: bitrix reconciliation finished: run_id=%s status=%s",
             run_id,
@@ -288,7 +329,8 @@ def _export_review_tsv_for_run(
             )
 
     tsv_rows = _build_review_tsv_rows(
-        normalized_events, classified_events,
+        normalized_events,
+        classified_events,
         reconciliation_data=reconciliation_data,
     )
 
@@ -466,7 +508,7 @@ def _build_attachment_summary(attachments: Any) -> str:
             try:
                 size_int = int(size_bytes)
                 meta.append(str(size_int))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         summary = " ".join(parts)
@@ -609,6 +651,58 @@ def _build_review_tsv_rows(
     return rows
 
 
+# Handler для команды 'rop current': строит текущий state artifact для указанного run_id
+def handle_rop_current(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+
+    logger.info("ROP CLI: building current-state for run_id=%s", run_id)
+
+    try:
+        state = build_rop_current_state(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            logger=logger,
+        )
+        write_current_state(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            state=state,
+            logger=logger,
+        )
+
+        print(f"\nROP current-state built: run_id={run_id}")
+        print(f"  status:          {state.get('status', '?')}")
+        print(f"  current_alias:   {state.get('current_alias', '?')}")
+        print(f"  client_id:       {state.get('client_id', '?')}")
+        kpi = state.get("kpi", {})
+        print(f"  events_total:    {kpi.get('events_total', 0)}")
+        print(f"  normalized:      {kpi.get('normalized_count', 0)}")
+        print(f"  classified:      {kpi.get('classified_count', 0)}")
+        print(f"  matched_in_bitrix:  {kpi.get('matched_in_bitrix', 0)}")
+        print(f"  lost_in_bitrix:     {kpi.get('lost_in_bitrix', 0)}")
+        print(f"  unreconciled:       {kpi.get('unreconciled', 0)}")
+        warnings = state.get("warnings", [])
+        if warnings:
+            print(f"  warnings: {len(warnings)}")
+            for w in warnings:
+                print(f"    - [{w.get('code', '?')}] {w.get('message', '')}")
+        print()
+
+        logger.info(
+            "ROP CLI: current-state built successfully: run_id=%s status=%s warnings=%d",
+            run_id,
+            state.get("status"),
+            len(warnings),
+        )
+    except Exception as exc:
+        logger.error("ROP CLI: current-state build failed: %s", exc)
+        raise RopCliError(f"ROP current-state build failed: {exc}") from exc
+
+
 # Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника, а также items_max и period для ограничения количества обрабатываемых событий и периода для batch-источников
 def create_rop_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -672,6 +766,17 @@ def create_rop_parser() -> argparse.ArgumentParser:
         choices=["tsv"],
         default="tsv",
         help="Export format (default: tsv)",
+    )
+
+    current_parser = subparsers.add_parser(
+        "current",
+        help="Build current-state index for a ROP run",
+    )
+    current_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to build current-state for",
     )
 
     reconcile_parser = subparsers.add_parser(

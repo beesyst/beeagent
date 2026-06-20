@@ -15,6 +15,8 @@ ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "normalized_events_json",
     "classified_events_json",
     "rop_review_table_tsv",
+    "rop_current_state_json",
+    "bitrix_reconciliation_json",
     "module_result_json",
     "rop_summary_result_json",
     "steps_json",
@@ -27,6 +29,8 @@ EVIDENCE_LABELS: dict[str, str] = {
     "normalized_events_json": "Normalized events",
     "classified_events_json": "Classified events",
     "rop_review_table_tsv": "Review TSV",
+    "rop_current_state_json": "ROP current state",
+    "bitrix_reconciliation_json": "Bitrix reconciliation",
     "module_result_json": "Module result",
     "rop_summary_result_json": "ROP summary result",
     "steps_json": "Steps",
@@ -42,6 +46,22 @@ def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
     except json.JSONDecodeError, OSError:
         pass
     return None
+
+
+# Безопасное преобразование в int, при ошибке возвращается 0
+def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
+    runs_dir = (storage_dir / "runs").resolve()
+    run_dir = (runs_dir / run_id).resolve()
+
+    try:
+        run_dir.relative_to(runs_dir)
+    except ValueError:
+        return None, "invalid_run_id"
+
+    if not run_dir.is_dir():
+        return None, "not_found"
+
+    return run_dir, ""
 
 
 # Билд read-model для дашборда, списка ран, деталей рана, конфигурации и т.д. на основе файловой структуры и артефактов
@@ -172,9 +192,9 @@ def build_runs_list(storage_dir: Path) -> dict[str, Any]:
 
 # Сборка запуска, детальное чтение модели
 def build_run_detail(storage_dir: Path, run_id: str) -> dict[str, Any]:
-    run_dir = (storage_dir / "runs" / run_id).resolve()
-    if not run_dir.is_dir():
-        return {"error": "not_found", "run_id": run_id}
+    run_dir, error = _resolve_run_dir(storage_dir, run_id)
+    if run_dir is None:
+        return {"error": error, "run_id": run_id}
 
     summary = _read_json(run_dir / "operator_summary.json")
     source_diag = _read_json(run_dir / "source_diagnostics.json")
@@ -781,9 +801,9 @@ def build_rop_dashboard_read_model(
             return {"error": "no_runs", "message": "No runs found"}
         run_id = run_ids[0]
 
-    run_dir = (runs_dir / run_id).resolve()
-    if not run_dir.is_dir():
-        return {"error": "not_found", "run_id": run_id}
+    run_dir, error = _resolve_run_dir(storage_dir, run_id)
+    if run_dir is None:
+        return {"error": error, "run_id": run_id}
 
     summary = _read_json(run_dir / "operator_summary.json")
     source_diag = _read_json(run_dir / "source_diagnostics.json")
@@ -791,6 +811,8 @@ def build_rop_dashboard_read_model(
     normalized = _read_json(run_dir / "normalized_events.json")
     classified = _read_json(run_dir / "classified_events.json")
     attachment_extraction = _read_json(run_dir / "attachment_extraction.json")
+    current_state = _read_json(run_dir / "rop_current_state.json")
+    bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
 
     warnings: list[dict[str, Any]] = []
     if summary is None:
@@ -812,6 +834,10 @@ def build_rop_dashboard_read_model(
     if classified is None:
         warnings.append(
             {"code": "missing_artifact", "artifact": "classified_events.json"}
+        )
+    if current_state is None:
+        warnings.append(
+            {"code": "missing_artifact", "artifact": "rop_current_state.json"}
         )
 
     kpis = _build_kpis(
@@ -876,6 +902,32 @@ def build_rop_dashboard_read_model(
         path = resolve_artifact_path(storage_dir, run_id, aid)
         link["available"] = path is not None
 
+    current_state_kpi: dict[str, Any] = {}
+    current_state_queues: dict[str, Any] = {}
+    bitrix_state: dict[str, Any] = {}
+    if isinstance(current_state, dict):
+        kpi_data = current_state.get("kpi", {})
+        if isinstance(kpi_data, dict):
+            current_state_kpi = kpi_data
+        queues = current_state.get("queues", {})
+        if isinstance(queues, dict):
+            current_state_queues = queues
+
+    if isinstance(bitrix_reconciliation, dict):
+        bitrix_agg = bitrix_reconciliation.get("aggregate", {})
+        bitrix_state = {
+            "status": bitrix_reconciliation.get("status", "unknown"),
+            "matched_count": _int(bitrix_agg.get("matched_count", 0)),
+            "not_found_count": _int(bitrix_agg.get("not_found_count", 0)),
+            "ambiguous_count": _int(bitrix_agg.get("ambiguous_count", 0)),
+            "duplicate_candidate_count": _int(
+                bitrix_agg.get("duplicate_candidate_count", 0)
+            ),
+            "connector_error_count": _int(bitrix_agg.get("connector_error_count", 0)),
+        }
+    else:
+        bitrix_state = {"status": "unreconciled"}
+
     result: dict[str, Any] = {
         "run_id": run_id,
         "selected_run_id": run_id,
@@ -890,6 +942,10 @@ def build_rop_dashboard_read_model(
         "attention_events": attention_events,
         "evidence_links": evidence_links,
         "warnings": warnings,
+        "current_state_available": isinstance(current_state, dict),
+        "current_state_kpi": current_state_kpi,
+        "current_state_queues": current_state_queues,
+        "bitrix": bitrix_state,
     }
 
     # Preserve backward-compatible fields
@@ -1002,6 +1058,8 @@ def build_rop_page_layout(
         return _build_rop_attachments_layout(data, locale=locale)
     if tab == "evidence":
         return _build_rop_evidence_layout(data, locale=locale)
+    if tab == "bitrix":
+        return _build_rop_bitrix_layout(data, locale=locale)
     return _build_rop_overview_layout(data, locale=locale)
 
 
@@ -1043,6 +1101,9 @@ def _build_rop_overview_layout(
             }
         )
 
+    current_state_kpi = data.get("current_state_kpi", {})
+    bitrix_state = data.get("bitrix", {})
+
     kpi_items: list[dict[str, Any]] = [
         {"label": t("Connected Sources", locale), "value": kpis.get("source_count", 0)},
         {"label": t("Loaded Items", locale), "value": kpis.get("loaded_count", 0)},
@@ -1058,6 +1119,34 @@ def _build_rop_overview_layout(
         {
             "label": "Attachments Preview",
             "value": kpis.get("attachment_preview_count", 0),
+        },
+        {
+            "label": "Matched in Bitrix",
+            "value": current_state_kpi.get(
+                "matched_in_bitrix", bitrix_state.get("matched_count", 0)
+            ),
+        },
+        {
+            "label": "Lost in Bitrix",
+            "value": current_state_kpi.get(
+                "lost_in_bitrix", bitrix_state.get("not_found_count", 0)
+            ),
+        },
+        {
+            "label": "Unreconciled",
+            "value": current_state_kpi.get("unreconciled", 0),
+        },
+        {
+            "label": "Bitrix Errors",
+            "value": bitrix_state.get("connector_error_count", 0),
+        },
+        {
+            "label": "Bitrix Status",
+            "value": bitrix_state.get("status", "unavailable"),
+        },
+        {
+            "label": "Current State",
+            "value": "available" if data.get("current_state_available") else "missing",
         },
     ]
     layout.append(
@@ -1388,3 +1477,129 @@ def _build_rop_evidence_layout(
             "items": link_items,
         }
     ]
+
+
+def _build_rop_bitrix_layout(
+    data: dict[str, Any],
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    _ = locale
+    current_state_kpi = data.get("current_state_kpi", {})
+    if not isinstance(current_state_kpi, dict):
+        current_state_kpi = {}
+    current_state_queues = data.get("current_state_queues", {})
+    if not isinstance(current_state_queues, dict):
+        current_state_queues = {}
+    bitrix_state = data.get("bitrix", {})
+    if not isinstance(bitrix_state, dict):
+        bitrix_state = {}
+    evidence_links = data.get("evidence_links", [])
+
+    bitrix_available = any(
+        link.get("artifact_id") == "bitrix_reconciliation_json"
+        and link.get("available")
+        for link in evidence_links
+        if isinstance(link, dict)
+    )
+
+    if not bitrix_available:
+        return [
+            {
+                "type": "attention_list",
+                "size": "XL",
+                "title": "Bitrix Evidence Board",
+                "items": [
+                    {
+                        "label": "Bitrix unavailable",
+                        "message": (
+                            "Bitrix reconciliation artifact is not available "
+                            "for this run."
+                        ),
+                        "severity": "info",
+                    }
+                ],
+            }
+        ]
+
+    ambiguous_count = _int(current_state_kpi.get("ambiguous_in_bitrix", 0))
+    connector_degraded_count = _int(
+        current_state_kpi.get(
+            "connector_degraded",
+            bitrix_state.get("connector_error_count", 0),
+        )
+    )
+
+    layout: list[dict[str, Any]] = [
+        {
+            "type": "kpi_grid",
+            "size": "XL",
+            "columns": 3,
+            "title": "Bitrix Evidence Board",
+            "items": [
+                {
+                    "label": "Bitrix Status",
+                    "value": bitrix_state.get("status", "unknown"),
+                },
+                {
+                    "label": "Matched",
+                    "value": current_state_kpi.get(
+                        "matched_in_bitrix",
+                        bitrix_state.get("matched_count", 0),
+                    ),
+                },
+                {
+                    "label": "Lost in Bitrix",
+                    "value": current_state_kpi.get(
+                        "lost_in_bitrix",
+                        bitrix_state.get("not_found_count", 0),
+                    ),
+                },
+                {"label": "Ambiguous", "value": ambiguous_count},
+                {
+                    "label": "Connector Degraded",
+                    "value": connector_degraded_count,
+                },
+                {
+                    "label": "Unreconciled",
+                    "value": current_state_kpi.get("unreconciled", 0),
+                },
+            ],
+        }
+    ]
+
+    queue_specs = [
+        ("lost_in_bitrix", "Lost in Bitrix"),
+        ("ambiguous", "Ambiguous"),
+        ("degraded", "Connector Degraded"),
+        ("unreconciled", "Unreconciled"),
+        ("matched", "Matched"),
+    ]
+    for queue_id, title in queue_specs:
+        queue_items = current_state_queues.get(queue_id, [])
+        if not isinstance(queue_items, list):
+            queue_items = []
+
+        rows: list[list[str]] = []
+        for item in queue_items[:50]:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                [
+                    str(item.get("event_id", "")),
+                    str(item.get("case_type", "")),
+                    str(item.get("priority", "")),
+                    str(item.get("bitrix_status", "")),
+                ]
+            )
+
+        layout.append(
+            {
+                "type": "status_table",
+                "size": "XL",
+                "title": title,
+                "columns": ["Event ID", "Case Type", "Priority", "Bitrix Status"],
+                "rows": rows,
+            }
+        )
+
+    return layout
