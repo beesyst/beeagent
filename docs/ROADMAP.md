@@ -4407,6 +4407,391 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - Тесты: `tests/test_rop_dashboard.py` — period parsing, build, write, no-bitrix, empty, settings validation;
 - Docs: `docs/ROADMAP.md`, `README.ru.md`, `docs/WEB_UI.md`, `docs/DEV_GUIDE.md` обновлены.
 
+### Итерация 28 — ROP MVP handoff / readiness pack v0
+
+**Статус:** PLANNED
+
+#### Goal
+
+Собрать текущий ROP MVP evidence chain в один сдаваемый handoff/readiness pack для демонстрации заказчику: BeeAgent должен сформировать customer/demo-ready artifacts, которые объясняют, что было обработано, что классифицировано, что найдено/не найдено в Bitrix, какие очереди требуют внимания РОПа, какие ограничения остаются и какие evidence artifacts подтверждают вывод.
+
+#### Почему это нужно
+
+После It24–It27.1 BeeAgent уже умеет:
+
+```text
+multi-source ingestion
+→ attachment extraction evidence
+→ beeagent-rop classification
+→ Bitrix read-only reconciliation
+→ current-state index
+→ business dashboard with periods/queues/recommendations
+```
+
+Но результат всё ещё распределён по множеству artifacts и UI-секций:
+
+```text
+classified_events.json
+attachment_extraction.json
+bitrix_reconciliation.json
+rop_current_state.json
+rop_dashboard.json
+rop_review_table.tsv
+operator_summary.json
+/rop dashboard
+```
+
+Для MVP заказчику нужен не набор технических JSON, а единый handoff artifact:
+
+```text
+вот текущая картина
+вот что бот нашёл
+вот что не попало в Bitrix
+вот кому нужно заняться
+вот evidence
+вот ограничения
+вот что готово к demo
+вот что не является production/write-back
+```
+
+Эта итерация закрывает слой сдачи MVP без добавления CRM write-back, новых connectors, AI-рекомендаций или доменных правил в BeeAgent core.
+
+#### Scope
+
+**Включено:**
+
+- добавить BeeAgent-owned MVP pack builder поверх existing ROP artifacts;
+
+- читать только existing artifacts:
+  - `operator_summary.json`;
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `attachment_extraction.json`;
+  - `bitrix_reconciliation.json`;
+  - `rop_current_state.json`;
+  - `rop_review_table.tsv`;
+  - `storage/interfaces/rop_dashboard.json`;
+
+- добавить CLI command:
+
+```bash
+./start.sh rop mvp-pack --run-id <run_id> --period 7d
+```
+
+- создать per-run artifacts:
+
+```text
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+```
+
+- создать/update interface artifact:
+
+```text
+storage/interfaces/rop_mvp_latest.json
+```
+
+- включить в pack:
+  - run identity;
+  - selected period;
+  - source coverage;
+  - configured/enabled/loaded/degraded sources;
+  - processed events/emails;
+  - new leads;
+  - existing/follow-up cases;
+  - high-priority queue;
+  - needs-review queue;
+  - lost-in-Bitrix queue;
+  - ambiguous/duplicate queue;
+  - unreconciled queue;
+  - attachment refused/unsupported summary;
+  - source degraded summary;
+  - deterministic first actions for ROP;
+  - evidence links;
+  - demo readiness status;
+  - known limitations;
+  - explicit non-production/write-back status;
+
+- использовать existing `rop.sources[]` as source of truth for configured source coverage;
+
+- не хардкодить Welding mailbox names;
+
+- если expected source coverage не задана в config, не выводить выдуманные missing sources, а показать только configured/enabled/loaded/degraded coverage;
+
+- добавить safe artifact links for MVP pack/report in UI Evidence area if available;
+
+- добавить artifacts allowlist entries if needed;
+
+- graceful degraded behavior:
+  - missing dashboard artifact;
+  - missing current-state artifact;
+  - missing Bitrix artifact;
+  - stale/malformed optional artifact;
+  - missing TSV;
+  - no runs;
+  - invalid/path-traversal run_id;
+
+- tests for builder, CLI, artifacts, report rendering, UI allowlist and security boundaries;
+
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/WEB_UI.md`, if UI/API/artifact links change.
+
+**Не включено:**
+
+- Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- task creation;
+- timeline comments;
+- manager scoring;
+- 1C integration;
+- open registry checks;
+- mailbox listener/polling;
+- web-triggered ROP run;
+- auth/RBAC;
+- Control Panel;
+- POST/operator actions;
+- editing review labels in UI;
+- OCR/PDF/DOCX/XLSX deep parsing;
+- AI recommendation generation;
+- changes to `beeagent-rop`;
+- ROP classification/business rules in BeeAgent core;
+- removal of legacy `src/beeagent_module/web`.
+
+#### Deliverable
+
+BeeAgent can build a customer/demo-ready MVP handoff pack for a selected ROP run:
+
+```bash
+./start.sh rop mvp-pack \
+  --run-id mvp-welding-2026-06-22 \
+  --period 7d
+```
+
+Expected artifacts:
+
+```text
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+storage/interfaces/rop_mvp_latest.json
+```
+
+The pack/report should let the team demonstrate the MVP without asking the customer to inspect raw JSON/TSV files.
+
+#### Expected pack shape
+
+```json
+{
+  "run_id": "mvp-welding-2026-06-22",
+  "period": "7d",
+  "status": "ready_with_limitations",
+  "read_only": true,
+  "generated_at_utc": "2026-06-22T00:00:00Z",
+  "client_id": "welding",
+  "source_coverage": {
+    "configured_sources": 2,
+    "enabled_sources": 2,
+    "loaded_sources": 1,
+    "degraded_sources": 1,
+    "warnings": []
+  },
+  "business_summary": {
+    "processed_events": 50,
+    "processed_emails": 50,
+    "new_leads": 12,
+    "existing_clients": 18,
+    "follow_ups": 8,
+    "high_priority": 6,
+    "needs_review": 10,
+    "lost_in_bitrix": 4,
+    "ambiguous_or_duplicate": 3,
+    "unreconciled": 0,
+    "source_degraded": 1,
+    "attachment_refused": 2,
+    "bitrix_errors": 0
+  },
+  "queues": {
+    "first_actions": [],
+    "high_priority": [],
+    "needs_review": [],
+    "lost_in_bitrix": [],
+    "ambiguous_or_duplicate": [],
+    "unreconciled": []
+  },
+  "demo_readiness": {
+    "status": "ready_with_limitations",
+    "ready_items": [],
+    "limitations": [],
+    "blockers": []
+  },
+  "evidence_links": [],
+  "warnings": []
+}
+```
+
+#### Report behavior
+
+`rop_mvp_report.md` should be human-readable and customer-demo oriented.
+
+Expected sections:
+
+```text
+# ROP MVP Handoff Report
+
+## Executive summary
+## Period and run
+## Source coverage
+## Business KPI
+## First actions for ROP
+## Queues
+## Bitrix evidence
+## Attachment evidence
+## Evidence artifacts
+## Known limitations
+## Not included in MVP
+## Recommended next step
+```
+
+The report must not include secrets, raw `.eml`, raw attachment content or Bitrix webhook URLs.
+
+#### Artifacts
+
+New:
+
+```text
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+storage/interfaces/rop_mvp_latest.json
+```
+
+Existing read:
+
+```text
+storage/interfaces/rop_dashboard.json
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+storage/runs/<run_id>/rop_current_state.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- artifact restore/parsing;
+- file/path handling;
+- Markdown/JSON serialization of customer operational data;
+- UI/API exposure of handoff artifacts;
+- artifact allowlist update;
+- malformed/stale artifact handling.
+
+No new external connector is added in this iteration.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or web or ui"
+```
+
+Targeted tests:
+
+```text
+MVP pack builder with full artifact set
+MVP pack builder without Bitrix artifact
+MVP pack builder with connector degraded Bitrix artifact
+MVP pack builder with missing/malformed dashboard artifact
+MVP pack builder with missing TSV
+source coverage from configured rop.sources
+no hardcoded Welding source names
+CLI rop mvp-pack creates per-run artifacts
+CLI rop mvp-pack updates storage/interfaces/rop_mvp_latest.json
+Markdown report contains expected sections
+Markdown report does not contain secrets/raw .eml/raw attachment content
+artifact allowlist includes rop_mvp_pack_json and rop_mvp_report_md if UI links are added
+/rop Evidence area shows MVP pack/report links if available
+GET routes do not mutate storage
+invalid/path-traversal run_id rejected/degraded
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it28-mvp-pack
+
+uv run python config/start.py rop current \
+  --run-id smoke-it28-mvp-pack
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it28-mvp-pack
+
+uv run python config/start.py rop mvp-pack \
+  --period 7d \
+  --run-id smoke-it28-mvp-pack
+```
+
+Security checks:
+
+```text
+SAST required
+SCA only if dependencies change
+lightweight DAST-style route/API misuse checks if UI artifact links/routes change
+IAST not required
+fuzzing optional only for malformed artifact restore tests
+```
+
+Secret/content grep:
+
+```bash
+grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+  logs storage/runs/smoke-it28-mvp-pack storage/interfaces -n || true
+```
+
+#### DoD
+
+- `rop_mvp_pack.json` is created for a valid ROP run;
+- `rop_mvp_report.md` is created for a valid ROP run;
+- `storage/interfaces/rop_mvp_latest.json` is updated after successful `rop mvp-pack`;
+- pack summarizes business state, queues, Bitrix evidence, attachment evidence, source coverage, first actions and limitations;
+- source coverage is derived from `config/settings.yml -> rop.sources[]`, not hardcoded mailbox names;
+- missing Bitrix evidence is not confused with `not_found`;
+- connector degraded/error is not confused with `lost_in_bitrix`;
+- report is readable without opening raw JSON artifacts;
+- GET routes remain read-only;
+- no POST/write/action route is added;
+- no Bitrix write-back exists;
+- no `beeagent-rop` code is changed;
+- BeeAgent core does not contain ROP classification/business rules;
+- artifact access remains allowlisted;
+- path traversal is blocked;
+- secrets/raw `.eml`/raw attachment content are not exposed;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
