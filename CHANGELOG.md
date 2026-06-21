@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.35.0...beeagent-v0.36.0) (2026-06-21)
+
+
+### Features
+
+* **rop:** add business dashboard period analytics ([#111](https://github.com/beesyst/beeagent/issues/111)) ([7476a21](https://github.com/beesyst/beeagent/commit/7476a2186ac18721792c563d7c8a92ffd2e8a03e))
+
 ## [0.35.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.34.0...beeagent-v0.35.0) (2026-06-20)
 
 
