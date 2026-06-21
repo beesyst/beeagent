@@ -92,6 +92,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 365d
+      - all
   sources: []
 """.strip()
         + "\n",
@@ -203,6 +212,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 365d
+      - all
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -316,6 +334,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 365d
+      - all
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -441,6 +468,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 365d
+      - all
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"

@@ -50,6 +50,8 @@ REQUIRED_KEYS = (
     ("rop", "attachments", "size_max"),
     ("rop", "attachments", "types"),
     ("rop", "sources"),
+    ("rop", "dashboard", "default_period"),
+    ("rop", "dashboard", "periods"),
 )
 
 
@@ -379,7 +381,61 @@ def validate_settings(settings: dict) -> None:
                     f"Missing or invalid rop.sources[{idx}].mailbox.use_ssl, expected bool"
                 )
 
+    _validate_rop_dashboard_settings(settings)
+
     _validate_bitrix_settings(settings)
+
+
+# Валидация rop.dashboard config блока
+_ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(
+    {
+        "today",
+        "yesterday",
+        "7d",
+        "30d",
+        "90d",
+        "365d",
+        "all",
+    }
+)
+
+
+# Валидация rop.dashboard блока
+def _validate_rop_dashboard_settings(settings: dict) -> None:
+    dash_cfg = _get_nested_value(settings, ("rop", "dashboard"))
+    if dash_cfg is None:
+        return
+    if not isinstance(dash_cfg, dict):
+        raise RuntimeError("Invalid type for rop.dashboard, expected mapping")
+
+    default_period = dash_cfg.get("default_period")
+    if not isinstance(default_period, str) or not default_period.strip():
+        raise RuntimeError(
+            "Invalid or missing rop.dashboard.default_period, expected non-empty string"
+        )
+    if default_period not in _ALLOWED_DASHBOARD_PERIODS:
+        raise RuntimeError(
+            f"Invalid rop.dashboard.default_period '{default_period}', "
+            f"expected one of: {sorted(_ALLOWED_DASHBOARD_PERIODS)}"
+        )
+
+    periods = dash_cfg.get("periods")
+    if not isinstance(periods, list) or not periods:
+        raise RuntimeError(
+            "Invalid or missing rop.dashboard.periods, expected non-empty list"
+        )
+    for idx, period in enumerate(periods):
+        if not isinstance(period, str) or period not in _ALLOWED_DASHBOARD_PERIODS:
+            raise RuntimeError(
+                f"Invalid rop.dashboard.periods[{idx}] '{period}', "
+                f"expected one of: {sorted(_ALLOWED_DASHBOARD_PERIODS)}"
+            )
+
+    if default_period not in periods:
+        raise RuntimeError(
+            f"rop.dashboard.default_period '{default_period}' must be "
+            f"included in rop.dashboard.periods"
+        )
 
 
 # Валидация Bitrix config блока
@@ -415,27 +471,19 @@ def _validate_bitrix_settings(settings: dict) -> None:
 
     timeout = bitrix_cfg.get("timeout")
     if not isinstance(timeout, int) or timeout <= 0:
-        raise RuntimeError(
-            "Invalid bitrix.timeout, expected int > 0"
-        )
+        raise RuntimeError("Invalid bitrix.timeout, expected int > 0")
 
     page_size = bitrix_cfg.get("page_size")
     if not isinstance(page_size, int) or page_size <= 0:
-        raise RuntimeError(
-            "Invalid bitrix.page_size, expected int > 0"
-        )
+        raise RuntimeError("Invalid bitrix.page_size, expected int > 0")
 
     pages_max = bitrix_cfg.get("pages_max")
     if not isinstance(pages_max, int) or pages_max <= 0:
-        raise RuntimeError(
-            "Invalid bitrix.pages_max, expected int > 0"
-        )
+        raise RuntimeError("Invalid bitrix.pages_max, expected int > 0")
 
     entity_types = bitrix_cfg.get("types_entity")
     if not isinstance(entity_types, list) or not entity_types:
-        raise RuntimeError(
-            "Invalid bitrix.types_entity, expected non-empty list"
-        )
+        raise RuntimeError("Invalid bitrix.types_entity, expected non-empty list")
     valid_entity_types = {1, 2, 3, 4}
     for idx, et in enumerate(entity_types):
         if not isinstance(et, int) or et not in valid_entity_types:

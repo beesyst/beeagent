@@ -61,7 +61,7 @@ pages:
   - id: rop_dashboard
     path: /rop
     title: ROP Dashboard
-    subtitle: Lead classification and operator queue
+    subtitle: Inbound leads, review queue and Bitrix reconciliation
     tabs:
       variant: fill
       active_param: tab

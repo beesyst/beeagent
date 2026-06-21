@@ -257,7 +257,6 @@ def write_current_state(
         latest_path.relative_to(storage_dir),
     )
 
-    # rop_index.json — append/update index entry
     index_path = interfaces_dir / "rop_index.json"
     index: list[dict[str, Any]] = []
     if index_path.exists():
@@ -265,7 +264,7 @@ def write_current_state(
             index = json.loads(index_path.read_text(encoding="utf-8"))
             if not isinstance(index, list):
                 index = []
-        except json.JSONDecodeError, OSError:
+        except (json.JSONDecodeError, OSError):
             index = []
 
     existing_entry = None

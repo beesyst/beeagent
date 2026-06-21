@@ -17,8 +17,8 @@ from beeagent_module.cases.rop_current_state import (
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
-    handle_rop_reconcile_bitrix,
     handle_rop_current,
+    handle_rop_reconcile_bitrix,
     handle_rop_run,
 )
 
@@ -29,6 +29,18 @@ def _null_logger() -> logging.Logger:
     logger.addHandler(logging.NullHandler())
     logger.propagate = False
     return logger
+
+
+# Фикстура: настройки для тестов
+def _settings() -> dict:
+    return {
+        "rop": {
+            "dashboard": {
+                "default_period": "7d",
+                "periods": ["today", "yesterday", "7d", "30d", "365d", "all"],
+            }
+        }
+    }
 
 
 # Фикстура: создание минимального каталога запуска ROP с базовыми артефактами
@@ -359,9 +371,7 @@ class TestBuildRopCurrentState:
         assert len(stale) >= 1
         assert "degraded" in stale[0]["message"]
 
-    def test_older_bitrix_artifact_warning(
-        self, run_dir: Path, tmp_path: Path
-    ) -> None:
+    def test_older_bitrix_artifact_warning(self, run_dir: Path, tmp_path: Path) -> None:
         storage_dir = tmp_path
         run_id = run_dir.name
         _add_bitrix_reconciliation(
@@ -480,7 +490,7 @@ class TestCliRopCurrent:
         monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
 
         args = argparse.Namespace(run_id=run_dir.name)
-        handle_rop_current(args, logger=_null_logger())
+        handle_rop_current(args, settings=_settings(), logger=_null_logger())
 
         output = capsys.readouterr().out
         assert "ROP current-state built" in output
@@ -495,7 +505,7 @@ class TestCliRopCurrent:
 
         args = argparse.Namespace(run_id="nonexistent-run")
         with pytest.raises(RopCliError, match="ROP current-state build failed"):
-            handle_rop_current(args, logger=_null_logger())
+            handle_rop_current(args, settings=_settings(), logger=_null_logger())
 
     def test_cli_rop_current_path_traversal_raises_error(
         self, tmp_path: Path, monkeypatch
@@ -506,7 +516,7 @@ class TestCliRopCurrent:
 
         args = argparse.Namespace(run_id="../../etc/passwd")
         with pytest.raises(RopCliError, match="current-state build failed"):
-            handle_rop_current(args, logger=_null_logger())
+            handle_rop_current(args, settings=_settings(), logger=_null_logger())
 
 
 class TestCliCurrentStatePostHooks:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.cases.rop_dashboard import build_rop_dashboard
 from beeagent_module.interfaces.ui.locale import t
 
 ATTENTION_EVENTS_MAX = 50
@@ -778,6 +781,18 @@ def _build_evidence_links(run_id: str) -> list[dict[str, Any]]:
     return links
 
 
+# Извлечение timestamp из события
+def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
+    for key in ("event_date", "received_at", "timestamp", "created_at", "date"):
+        raw = evt.get(key)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+    return None
+
+
 # Безопасное преобразование в int, возвращает 0 при ошибке или неподходящем типе
 def _int(value: Any) -> int:
     if isinstance(value, int):
@@ -789,7 +804,11 @@ def _int(value: Any) -> int:
 
 # Билд полной read-model для ROP Dashboard на основе всех доступных артефактов и данных, с обработкой ошибок и отсутствующих данных
 def build_rop_dashboard_read_model(
-    storage_dir: Path, run_id: str | None = None
+    storage_dir: Path,
+    run_id: str | None = None,
+    period: str | None = None,
+    default_period: str | None = None,
+    configured_periods: list[str] | None = None,
 ) -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     if not runs_dir.is_dir():
@@ -928,6 +947,54 @@ def build_rop_dashboard_read_model(
     else:
         bitrix_state = {"status": "unreconciled"}
 
+    effective_period = period or default_period
+    allowed_periods = set(configured_periods or [])
+    if period and allowed_periods and period not in allowed_periods:
+        warnings.append(
+            {
+                "code": "invalid_period",
+                "message": (
+                    f"Invalid period '{period}', using default period "
+                    f"'{default_period}'."
+                ),
+            }
+        )
+        effective_period = default_period
+
+    dashboard_payload: dict[str, Any] = {}
+    if effective_period:
+        try:
+            dashboard_payload = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=effective_period,
+                logger=logging.getLogger("beeagent.ui.rop_dashboard"),
+                run_id=run_id,
+            )
+        except ValueError:
+            warnings.append(
+                {
+                    "code": "invalid_period",
+                    "message": f"Invalid period '{effective_period}'",
+                }
+            )
+
+    for warning in dashboard_payload.get("warnings", []):
+        if isinstance(warning, dict):
+            warnings.append(warning)
+
+    business_kpi = dashboard_payload.get("business_kpi", {})
+    if not isinstance(business_kpi, dict):
+        business_kpi = {}
+    series = dashboard_payload.get("series", {})
+    if not isinstance(series, dict):
+        series = {}
+    queues = dashboard_payload.get("queues", {})
+    if not isinstance(queues, dict):
+        queues = {}
+    rop_recommendations = dashboard_payload.get("rop_recommendations", [])
+    if not isinstance(rop_recommendations, list):
+        rop_recommendations = []
+
     result: dict[str, Any] = {
         "run_id": run_id,
         "selected_run_id": run_id,
@@ -946,6 +1013,25 @@ def build_rop_dashboard_read_model(
         "current_state_kpi": current_state_kpi,
         "current_state_queues": current_state_queues,
         "bitrix": bitrix_state,
+        "business_kpi": business_kpi,
+        "series": series,
+        "queues": queues,
+        "rop_recommendations": rop_recommendations,
+        "configured_periods": list(configured_periods or []),
+        "default_period": default_period,
+        "updated_at": dashboard_payload.get("generated_at_utc")
+        if dashboard_payload
+        else None,
+        "period": dashboard_payload.get("period") if dashboard_payload else None,
+        "period_start_utc": dashboard_payload.get("period_start_utc")
+        if dashboard_payload
+        else None,
+        "period_end_utc": dashboard_payload.get("period_end_utc")
+        if dashboard_payload
+        else None,
+        "time_basis": dashboard_payload.get("time_basis", "unknown")
+        if dashboard_payload
+        else "unknown",
     }
 
     # Preserve backward-compatible fields
@@ -1063,237 +1149,724 @@ def build_rop_page_layout(
     return _build_rop_overview_layout(data, locale=locale)
 
 
-# Layout: Overview tab
+# Пользовательские метки для периодов, отображаемые в UI
+_PERIOD_LABELS: dict[str, str] = {
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "90d": "Last 3 months",
+    "365d": "Last year",
+    "all": "All time",
+}
+_OVERVIEW_PERIODS: tuple[str, ...] = (
+    "today",
+    "yesterday",
+    "7d",
+    "30d",
+    "90d",
+    "365d",
+    "all",
+)
+
+
+# Получение пользовательской метки для периода, с fallback на исходное значение
+def _period_label(period: str) -> str:
+    return _PERIOD_LABELS.get(period, period)
+
+
+def _overview_cell(value: object, tone: str = "") -> dict[str, str]:
+    cell = {"label": str(value)}
+    if tone:
+        cell["tone"] = tone
+    return cell
+
+
+def _period_link_items(current_period: str, current_tab: str) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for period_value in _OVERVIEW_PERIODS:
+        label = _period_label(period_value)
+        if period_value == current_period:
+            label = f"{label} (current)"
+        items.append(
+            {
+                "label": label,
+                "href": f"/rop?tab={current_tab}&period={period_value}",
+            }
+        )
+    return items
+
+
+def _initials(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "?"
+    if "@" in text:
+        text = text.split("@", 1)[0]
+    parts = [part for part in text.replace(".", " ").replace("_", " ").split() if part]
+    if not parts:
+        return text[:1].upper()
+    return "".join(part[:1].upper() for part in parts[:2])
+
+
+def _bitrix_status_tone(status: object) -> str:
+    value = str(status or "").lower()
+    if value.startswith("matched"):
+        return "success"
+    if value in ("not_found", "ambiguous", "duplicate_candidate"):
+        return "warning"
+    if value in ("connector_degraded", "error"):
+        return "danger"
+    if value in ("unreconciled", "skipped", ""):
+        return "info"
+    return "unknown"
+
+
+def _readable_quality_note(warning: dict[str, Any]) -> str:
+    code = warning.get("code", "")
+    if code == "time_basis_fallback":
+        return (
+            "Some leads had no source timestamp; dashboard used run time for "
+            "period filtering."
+        )
+    if code == "degraded_sources":
+        return "One or more sources reported degraded intake health."
+    message = warning.get("message")
+    return str(message) if message else "Review diagnostics for data quality notes."
+
+
+def _chart_block(
+    title: str,
+    kind: str,
+    chart_data: dict[str, Any],
+) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "type": "chart",
+        "size": "M",
+        "title": title,
+        "kind": kind,
+        "series": chart_data.get("series", []),
+        "empty_message": "No chart data for this period",
+    }
+    if kind == "donut":
+        block["labels"] = chart_data.get("labels", [])
+    else:
+        block["categories"] = chart_data.get("labels", [])
+    return block
+
+
+# Chart label humanization map
+_CHART_LABEL_MAP: dict[str, str] = {
+    "new_lead": "New leads",
+    "existing_client": "Existing clients",
+    "existing_deal": "Existing deals",
+    "existing_lead": "Existing leads",
+    "follow_up": "Follow-ups",
+    "reminder": "Reminders",
+    "needs_review": "Needs review",
+    "high_priority": "High priority",
+    "matched": "Matched in Bitrix",
+    "lost": "Lost in Bitrix",
+    "ambiguous": "Ambiguous / duplicate",
+    "unreconciled": "Not reconciled",
+    "duplicate_candidate": "Duplicate candidate",
+    "not_found": "Not found in Bitrix",
+    "other": "Other",
+}
+
+
+# Нормализация меток для графиков, с поддержкой пользовательских меток
+def _humanize_label(raw: str) -> str:
+    return _CHART_LABEL_MAP.get(raw, raw.replace("_", " ").title())
+
+
+def _non_zero_segments(values: list[Any]) -> int:
+    total = 0
+    for value in values:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value:
+            total += 1
+    return total
+
+
+def _series_total(values: list[Any]) -> int:
+    total = 0
+    for value in values:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total += int(value)
+    return total
+
+
+def _breakdown_block(
+    title: str,
+    labels: list[Any],
+    values: list[Any],
+    *,
+    size: str = "M",
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for label, value in zip(labels, values, strict=False):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            items.append(
+                {
+                    "label": _humanize_label(str(label)),
+                    "value": int(value),
+                }
+            )
+    if not items:
+        items.append({"label": "This period", "value": "No chart data"})
+    return {
+        "type": "state_grid",
+        "size": size,
+        "title": title,
+        "items": items,
+    }
+
+
+def _chart_series_total(series_items: Any) -> int:
+    if not isinstance(series_items, list):
+        return 0
+    total = 0
+    for item in series_items:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data", [])
+        if isinstance(data, list):
+            total += _series_total(data)
+    return total
+
+
+def _as_chart_series(chart_data: Any) -> list[dict[str, Any]]:
+    if not isinstance(chart_data, dict):
+        return []
+    series_items = chart_data.get("series", [])
+    return series_items if isinstance(series_items, list) else []
+
+
+def _as_chart_labels(chart_data: Any) -> list[Any]:
+    if not isinstance(chart_data, dict):
+        return []
+    labels = chart_data.get("labels", [])
+    return labels if isinstance(labels, list) else []
+
+
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _day_label(value: datetime) -> str:
+    return value.date().isoformat()
+
+
+def _period_day_labels(period: str, period_end_utc: Any) -> list[str]:
+    end = _parse_utc_datetime(period_end_utc) or datetime.now(timezone.utc)
+    if period == "yesterday":
+        return [_day_label(end - timedelta(days=1))]
+    if period == "today":
+        return [_day_label(end)]
+    if period == "7d":
+        days = 7
+    elif period == "30d":
+        days = 30
+    else:
+        return []
+    start = end - timedelta(days=days - 1)
+    return [_day_label(start + timedelta(days=offset)) for offset in range(days)]
+
+
+def _bucket_daily_chart_series(
+    chart_data: Any,
+    *,
+    period: str,
+    period_end_utc: Any,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    labels = [str(label) for label in _as_chart_labels(chart_data)]
+    series_items = _as_chart_series(chart_data)
+    target_labels = _period_day_labels(period, period_end_utc) or labels
+    if not target_labels:
+        return [], series_items
+
+    label_index = {label: index for index, label in enumerate(labels)}
+    bucketed: list[dict[str, Any]] = []
+    for item in series_items:
+        if not isinstance(item, dict):
+            continue
+        source_values = item.get("data", [])
+        if not isinstance(source_values, list):
+            source_values = []
+        values: list[int] = []
+        for label in target_labels:
+            source_index = label_index.get(label)
+            if source_index is None or source_index >= len(source_values):
+                values.append(0)
+            else:
+                values.append(_int(source_values[source_index]))
+        bucketed.append(
+            {
+                "name": _humanize_label(str(item.get("name", "Processed"))),
+                "data": values,
+            }
+        )
+    return target_labels, bucketed
+
+
+def _source_display_labels(source_health: list[Any]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for item in source_health:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("source_id", "")).strip()
+        display_name = str(
+            item.get("display_name") or item.get("source_display_name") or ""
+        ).strip()
+        if source_id and display_name:
+            labels[source_id] = display_name
+    return labels
+
+
+def _period_href(tab: str, period: str) -> str:
+    return f"/rop?tab={tab}&period={period}"
+
+
+def _collect_priority_queue_preview(
+    queues: dict[str, Any],
+    current_period: str,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    order = (
+        "high_priority",
+        "needs_review",
+        "ambiguous",
+        "lost_in_bitrix",
+        "unreconciled",
+        "degraded",
+    )
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for bucket in order:
+        items = queues.get(bucket, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            event_id = str(item.get("event_id", ""))
+            if event_id and event_id in seen:
+                continue
+            if event_id:
+                seen.add(event_id)
+            subject = item.get("subject") or (
+                f"Lead event {event_id}" if event_id else "Lead event"
+            )
+            sender = (
+                item.get("sender")
+                or item.get("source_display_name")
+                or item.get("source_id")
+                or "Unknown sender"
+            )
+            priority = item.get("bot_priority") or item.get("priority") or bucket
+            next_step = item.get("recommended_next_step") or "Open Queue"
+            evidence_href = item.get("evidence_href") or _period_href(
+                "queue", current_period
+            )
+            rows.append(
+                {
+                    "priority": {
+                        "label": _humanize_label(str(priority)),
+                        "tone": "danger"
+                        if priority == "high" or bucket == "high_priority"
+                        else "warning"
+                        if bucket in {"needs_review", "ambiguous", "lost_in_bitrix"}
+                        else "info",
+                    },
+                    "sender": sender,
+                    "subject": subject,
+                    "reason": _humanize_label(
+                        str(item.get("reason") or item.get("review_reason", bucket))
+                    ),
+                    "next_step": next_step.replace("_", " "),
+                    "evidence": {"label": "Open", "href": evidence_href},
+                }
+            )
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+# Сборка layout[] для вкладки Overview
 def _build_rop_overview_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
+    _ = locale
+    business_kpi = data.get("business_kpi", {})
+    if not isinstance(business_kpi, dict):
+        business_kpi = {}
     kpis = data.get("kpis", {})
-    run_id = data.get("run_id", "N/A")
-    run_status = kpis.get("run_status", "unknown")
+    series = data.get("series", {})
+    if not isinstance(series, dict):
+        series = {}
     source_health = data.get("source_health", [])
-    funnel = data.get("funnel", [])
-    recommendations = data.get("recommendations", [])
-    evidence_links = data.get("evidence_links", [])
-    class_dist = data.get("classification_distribution", {})
+    if not isinstance(source_health, list):
+        source_health = []
     warnings_list = data.get("warnings", [])
-    available_runs = data.get("available_runs", [])
+    if not isinstance(warnings_list, list):
+        warnings_list = []
+    current_period = data.get("period", "")
+    period_hint = _period_label(current_period) if current_period else ""
+    updated_at = data.get("updated_at") or data.get("generated_at_utc") or ""
 
     layout: list[dict[str, Any]] = []
 
-    if available_runs:
-        run_items: list[dict[str, Any]] = []
-        for rid in available_runs[:10]:
-            run_items.append(
-                {
-                    "label": rid,
-                    "value": "selected" if rid == run_id else "n/a",
-                    "href": f"/rop?run_id={rid}",
-                }
-            )
-        layout.append(
-            {
-                "type": "state_grid",
-                "width": 8,
-                "title": t("Run Overview", locale),
-                "subtitle": f"Run ID: {run_id}",
-                "status": run_status,
-                "items": run_items,
-            }
-        )
+    total_leads = business_kpi.get("processed_events", 0)
+    new_leads = business_kpi.get("new_leads", 0)
+    high_priority = business_kpi.get("high_priority", 0)
+    needs_review = business_kpi.get("needs_review", 0)
+    lost_in_bitrix = business_kpi.get("lost_in_bitrix", 0)
+    unreconciled = business_kpi.get("unreconciled", 0)
+    ambiguous_or_duplicate = business_kpi.get("ambiguous_or_duplicate", 0)
+    bitrix_errors = business_kpi.get("bitrix_errors", 0)
 
-    current_state_kpi = data.get("current_state_kpi", {})
-    bitrix_state = data.get("bitrix", {})
-
-    kpi_items: list[dict[str, Any]] = [
-        {"label": t("Connected Sources", locale), "value": kpis.get("source_count", 0)},
-        {"label": t("Loaded Items", locale), "value": kpis.get("loaded_count", 0)},
-        {
-            "label": t("Classified Cases", locale),
-            "value": kpis.get("classified_count", 0),
-        },
-        {"label": t("Need Review", locale), "value": kpis.get("fallback_count", 0)},
-        {
-            "label": t("High-Priority Cases", locale),
-            "value": kpis.get("high_priority_count", 0),
-        },
-        {
-            "label": "Attachments Preview",
-            "value": kpis.get("attachment_preview_count", 0),
-        },
-        {
-            "label": "Matched in Bitrix",
-            "value": current_state_kpi.get(
-                "matched_in_bitrix", bitrix_state.get("matched_count", 0)
-            ),
-        },
-        {
-            "label": "Lost in Bitrix",
-            "value": current_state_kpi.get(
-                "lost_in_bitrix", bitrix_state.get("not_found_count", 0)
-            ),
-        },
-        {
-            "label": "Unreconciled",
-            "value": current_state_kpi.get("unreconciled", 0),
-        },
-        {
-            "label": "Bitrix Errors",
-            "value": bitrix_state.get("connector_error_count", 0),
-        },
-        {
-            "label": "Bitrix Status",
-            "value": bitrix_state.get("status", "unavailable"),
-        },
-        {
-            "label": "Current State",
-            "value": "available" if data.get("current_state_available") else "missing",
-        },
+    source_count = kpis.get("source_count", 0)
+    degraded_sources = kpis.get("degraded_source_count", 0)
+    classified_count = kpis.get("classified_count", 0)
+    loaded_count = kpis.get("loaded_count", 0)
+    source_summary = (
+        f"{source_count} / {degraded_sources} degraded"
+        if degraded_sources
+        else f"{source_count} connected"
+    )
+    bitrix_summary = (
+        f"{unreconciled} not reconciled"
+        if unreconciled
+        else ("OK" if not lost_in_bitrix else f"{lost_in_bitrix} lost")
+    )
+    readable_warnings = [
+        _readable_quality_note(w) for w in warnings_list if isinstance(w, dict)
     ]
+    data_quality = readable_warnings[0] if readable_warnings else "OK"
+    period_emails = _int(
+        business_kpi.get(
+            "processed_emails",
+            business_kpi.get("processed_events", kpis.get("loaded_count", 0)),
+        )
+    )
+    todays_emails = period_emails
+    if current_period == "today":
+        todays_emails = period_emails
+
+    action_required_count = (
+        _int(high_priority)
+        + _int(needs_review)
+        + _int(ambiguous_or_duplicate)
+        + _int(unreconciled)
+        + _int(business_kpi.get("source_degraded", degraded_sources))
+        + _int(business_kpi.get("attachment_refused", 0))
+        + _int(bitrix_errors)
+    )
+    action_required_ratio = int(
+        min(100, round((action_required_count / max(_int(total_leads), 1)) * 100))
+    )
+    bitrix_gap_count = _int(unreconciled) + _int(lost_in_bitrix) + _int(
+        ambiguous_or_duplicate
+    )
+    data_quality_count = (
+        _int(business_kpi.get("source_degraded", degraded_sources))
+        + _int(business_kpi.get("attachment_refused", 0))
+        + _int(bitrix_errors)
+        + len(readable_warnings)
+    )
+    configured_periods = data.get("configured_periods", [])
+    configured_values = (
+        {str(value) for value in configured_periods}
+        if isinstance(configured_periods, list)
+        else set()
+    )
+    period_actions = [
+        item
+        for item in _period_link_items(current_period, "overview")
+        if item["href"].rsplit("=", 1)[-1] in configured_values
+    ]
+    queue_href = _period_href("queue", current_period)
+    bitrix_href = _period_href("bitrix", current_period)
+    evidence_href = _period_href("evidence", current_period)
+
+    processed_by_day = series.get("processed_by_day", {})
+    workload_labels, workload_series = _bucket_daily_chart_series(
+        processed_by_day,
+        period=str(current_period or ""),
+        period_end_utc=data.get("period_end_utc"),
+    )
+    source_label_map = _source_display_labels(source_health)
+
     layout.append(
         {
-            "type": "kpi_grid",
-            "width": 4,
-            "columns": 2,
-            "title": "Key Metrics",
-            "items": kpi_items,
+            "type": "operator_hero",
+            "width": 6,
+            "title": "ROP Control Center",
+            "subtitle": "Inbound email intake, lead quality and Bitrix reconciliation",
+            "status": period_hint,
+            "items": [
+                {"label": "TODAY'S EMAILS", "value": todays_emails},
+                {"label": "NEW LEADS", "value": new_leads},
+                {"label": "Period", "value": period_hint},
+                {"label": "Sources", "value": source_summary},
+                {"label": "Bitrix", "value": bitrix_summary},
+                {"label": "Data quality", "value": data_quality},
+            ],
+            "primary_links": period_actions
+            + [
+                {"label": "Open Queue", "href": queue_href},
+                {"label": "Open Bitrix", "href": bitrix_href},
+            ],
+        }
+    )
+    layout.append(
+        {
+            "type": "chart",
+            "width": 3,
+            "title": "Email Workload",
+            "subtitle": (
+                f"{period_emails} processed inbound items in selected period"
+            ),
+            "kind": "area",
+            "series": workload_series
+            or [{"name": "Processed", "data": [period_emails]}],
+            "categories": workload_labels or [period_hint or "Selected period"],
+            "height": 180,
+            "empty_message": "No chart data for this period",
+        }
+    )
+    layout.append(
+        {
+            "type": "chart",
+            "width": 3,
+            "title": "Action Required",
+            "subtitle": (
+                f"{action_required_count} items need review · "
+                f"{action_required_ratio}% action ratio"
+            ),
+            "kind": "donut",
+            "series": [
+                action_required_count,
+                max(_int(total_leads) - action_required_count, 0),
+            ],
+            "labels": ["Needs attention", "Clear"],
+            "height": 180,
+            "empty_message": "No chart data for this period",
         }
     )
 
-    if warnings_list:
-        attention_items: list[dict[str, Any]] = []
-        for w in warnings_list:
-            attention_items.append(
+    small_cards = [
+        {
+            "type": "venue_card",
+            "width": 3,
+            "title": "Urgent leads",
+            "subtitle": "Open now",
+            "status": str(high_priority),
+            "items": [{"label": "Count", "value": high_priority}],
+            "links": [{"label": "Open Queue", "href": queue_href}],
+        },
+        {
+            "type": "venue_card",
+            "width": 3,
+            "title": "Needs review",
+            "subtitle": "Operator queue",
+            "status": str(needs_review),
+            "items": [{"label": "Count", "value": needs_review}],
+            "links": [{"label": "Open Queue", "href": queue_href}],
+        },
+        {
+            "type": "venue_card",
+            "width": 3,
+            "title": "Bitrix gaps",
+            "subtitle": "Check CRM evidence",
+            "status": str(bitrix_gap_count),
+            "items": [{"label": "Count", "value": bitrix_gap_count}],
+            "links": [{"label": "Open Bitrix", "href": bitrix_href}],
+        },
+        {
+            "type": "venue_card",
+            "width": 3,
+            "title": "Data quality",
+            "subtitle": "Timestamp/source/attachment issues",
+            "status": str(data_quality_count),
+            "items": [{"label": "Issues", "value": data_quality_count}],
+            "links": [{"label": "Open Evidence", "href": evidence_href}],
+        },
+    ]
+    layout.extend(small_cards)
+
+    layout.append(
+        {
+            "type": "chart",
+            "size": "M",
+            "title": "Email intake trend",
+            "kind": "area",
+            "series": workload_series
+            or [{"name": "Processed", "data": [period_emails]}],
+            "categories": workload_labels or [period_hint or "Selected period"],
+            "height": 240,
+            "empty_message": "No chart data for this period",
+        }
+    )
+
+    outcome_labels = [
+        "New leads",
+        "Existing clients",
+        "Follow-ups",
+        "Needs review",
+        "High priority",
+    ]
+    outcome_values = [
+        _int(new_leads),
+        _int(business_kpi.get("existing_clients", 0)),
+        _int(business_kpi.get("follow_ups", 0)),
+        _int(needs_review),
+        _int(high_priority),
+    ]
+    layout.append(
+        {
+            "type": "chart",
+            "size": "M",
+            "title": "Lead outcome mix",
+            "kind": "bar",
+            "series": [{"name": "Leads", "data": outcome_values}],
+            "categories": outcome_labels,
+            "height": 240,
+            "empty_message": "No chart data for this period",
+        }
+    )
+
+    bitrix_labels = [
+        "Matched in Bitrix",
+        "Lost in Bitrix",
+        "Ambiguous / duplicate",
+        "Not reconciled",
+    ]
+    bitrix_values = [
+        _int(business_kpi.get("matched_in_bitrix", 0)),
+        _int(lost_in_bitrix),
+        _int(ambiguous_or_duplicate),
+        _int(unreconciled),
+    ]
+    layout.append(
+        {
+            "type": "chart",
+            "size": "M",
+            "title": "Bitrix reconciliation",
+            "kind": "bar",
+            "series": [{"name": "Leads", "data": bitrix_values}],
+            "categories": bitrix_labels,
+            "height": 240,
+            "empty_message": "No chart data for this period",
+        }
+    )
+
+    source_data = series.get("source_contribution", {})
+    source_labels = _as_chart_labels(source_data)
+    source_values = source_data.get("series", []) if isinstance(source_data, dict) else []
+    source_categories = [
+        source_label_map.get(str(label), _humanize_label(str(label)))
+        for label in source_labels
+    ]
+    layout.append(
+        {
+            "type": "chart",
+            "size": "M",
+            "title": "Source contribution",
+            "kind": "bar",
+            "series": [{"name": "Leads", "data": source_values or [0]}],
+            "categories": source_categories or ["No data"],
+            "height": 240,
+            "empty_message": "No chart data for this period",
+        }
+    )
+
+    queues = data.get("queues", {})
+    if not isinstance(queues, dict):
+        queues = {}
+    preview_rows = _collect_priority_queue_preview(queues, current_period)
+    layout.append(
+        {
+            "type": "data_table",
+            "size": "XL",
+            "title": "Priority review queue",
+            "compact": True,
+            "mobile": "md",
+            "columns": [
+                {"key": "priority", "label": "Priority/status", "cell": "badge"},
+                {"key": "sender", "label": "Sender / source", "cell": "text"},
+                {"key": "subject", "label": "Subject", "cell": "text"},
+                {"key": "reason", "label": "Reason", "cell": "muted"},
                 {
-                    "label": w.get("code", "warning"),
-                    "message": w.get("message", "Warning"),
-                    "severity": "warning",
-                }
-            )
-        layout.append(
-            {
-                "type": "attention_list",
-                "size": "XL",
-                "title": "Warnings",
-                "items": attention_items,
-            }
-        )
-
-    if recommendations:
-        rec_items: list[dict[str, Any]] = []
-        for rec in recommendations:
-            rec_items.append(
-                {
-                    "label": rec.get("title", ""),
-                    "message": rec.get("message", ""),
-                    "severity": rec.get("severity", "info"),
-                }
-            )
-        layout.append(
-            {
-                "type": "attention_list",
-                "size": "M",
-                "title": t("Recommendations", locale),
-                "items": rec_items,
-            }
-        )
-
-    if evidence_links:
-        link_items: list[dict[str, Any]] = []
-        for link in evidence_links:
-            if link.get("available"):
-                link_items.append(
-                    {
-                        "label": link.get("label", link.get("artifact_id", "")),
-                        "href": link.get("url", ""),
-                    }
-                )
-        if link_items:
-            layout.append(
-                {
-                    "type": "quick_links",
-                    "size": "M",
-                    "title": "Evidence & Exports",
-                    "items": link_items,
-                }
-            )
-
-    if source_health:
-        sh_columns = ["Source", "Status", "Loaded"]
-        sh_rows: list[list[str]] = []
-        for sh in source_health:
-            sh_rows.append(
-                [
-                    sh.get("display_name", sh.get("source_id", "")),
-                    sh.get("status", ""),
-                    str(sh.get("loaded_count", 0)),
-                ]
-            )
-        layout.append(
-            {
-                "type": "status_table",
-                "size": "M",
-                "title": t("Source Health", locale),
-                "columns": sh_columns,
-                "rows": sh_rows,
-            }
-        )
-
-    if funnel:
-        f_columns = ["Stage", "Count"]
-        f_rows: list[list[str]] = []
-        for stage in funnel:
-            f_rows.append([stage.get("stage", ""), str(stage.get("count", 0))])
-        layout.append(
-            {
-                "type": "status_table",
-                "size": "M",
-                "title": t("Processing Funnel", locale),
-                "columns": f_columns,
-                "rows": f_rows,
-            }
-        )
-
-    case_type_counts = class_dist.get("case_type_counts", {})
-    priority_counts = class_dist.get("priority_counts", {})
-    reason_code_counts = class_dist.get("reason_code_counts", {})
-    if case_type_counts or priority_counts or reason_code_counts:
-        dist_items: list[dict[str, Any]] = []
-        for ct, count in sorted(case_type_counts.items()):
-            dist_items.append({"label": f"Case: {ct}", "value": str(count)})
-        for p, count in sorted(priority_counts.items()):
-            dist_items.append({"label": f"Priority: {p}", "value": str(count)})
-        for rc, count in sorted(reason_code_counts.items()):
-            dist_items.append({"label": f"Reason: {rc}", "value": str(count)})
-        if dist_items:
-            layout.append(
-                {
-                    "type": "state_grid",
-                    "size": "XL",
-                    "title": "Classification Breakdown",
-                    "items": dist_items,
-                }
-            )
+                    "key": "next_step",
+                    "label": "Recommended next step",
+                    "cell": "muted",
+                },
+                {"key": "evidence", "label": "Open", "cell": "link"},
+            ],
+            "rows": preview_rows,
+        }
+    )
 
     return layout
 
 
-# Layout: Queue tab
+# Сборка layout[] для вкладки Queue
 def _build_rop_queue_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
     attention_events = data.get("attention_events", [])
+    queues = data.get("queues", {})
+    if not isinstance(queues, dict):
+        queues = {}
+
+    queue_specs = (
+        "high_priority",
+        "needs_review",
+        "lost_in_bitrix",
+        "ambiguous",
+        "degraded",
+        "unreconciled",
+    )
+    queue_rows: list[dict[str, Any]] = []
+    seen_event_ids: set[str] = set()
+    for key in queue_specs:
+        rows_source = queues.get(key, [])
+        if not isinstance(rows_source, list):
+            continue
+        for item in rows_source:
+            if not isinstance(item, dict):
+                continue
+            event_id = str(item.get("event_id", ""))
+            if event_id and event_id in seen_event_ids:
+                continue
+            if event_id:
+                seen_event_ids.add(event_id)
+            queue_rows.append(item)
+
+    if queue_rows:
+        return [_queue_table("ROP Work Queue", queue_rows)]
 
     if not attention_events:
         return [
             {
-                "type": "attention_list",
+                "type": "state_grid",
                 "size": "XL",
                 "title": t("Operator Queue", locale),
                 "items": [
                     {
                         "label": "No events",
-                        "message": "Queue is empty",
-                        "severity": "info",
+                        "value": "Queue is empty",
+                        "status": "clear",
                     }
                 ],
             }
@@ -1313,24 +1886,85 @@ def _build_rop_queue_layout(
         q_items.append(
             {
                 "label": evt.get("event_id", ""),
-                "message": f"{evt.get('source_display_name', evt.get('source_id', ''))} | "
+                "value": f"{evt.get('source_display_name', evt.get('source_id', ''))} | "
                 f"{evt.get('sender', '')} | {evt.get('subject', '')} | "
                 f"Type: {evt.get('case_type', '')} | Priority: {evt.get('priority', '')} | "
                 f"Reason: {'; '.join(reasons) if reasons else evt.get('review_reason', 'Needs review')}",
-                "severity": "high"
+                "status": "urgent"
                 if evt.get("priority") == "high"
-                else ("warning" if evt.get("is_fallback") else "info"),
+                else ("review" if evt.get("is_fallback") else ""),
             }
         )
 
     return [
         {
-            "type": "attention_list",
+            "type": "state_grid",
             "size": "XL",
             "title": t("Operator Queue", locale),
             "items": q_items,
         }
     ]
+
+
+# Сборка таблицы для вкладки Queue
+def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = []
+    for item in rows_source[:50]:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("event_id", ""))
+        priority = item.get("bot_priority") or item.get("priority", "n/a")
+        bitrix_status = item.get("bitrix_status", "unreconciled")
+        evidence_href = item.get("evidence_href") or (
+            f"/rop?tab=evidence#event-{event_id}" if event_id else "/rop?tab=evidence"
+        )
+        rows.append(
+            {
+                "priority": {
+                    "label": priority,
+                    "tone": "danger" if priority == "high" else "secondary",
+                },
+                "client": {
+                    "title": item.get("sender", "") or "Unknown sender",
+                    "subtitle": item.get("source_display_name")
+                    or item.get("source_id", ""),
+                    "initials": _initials(item.get("sender", "")),
+                    "color": "red" if priority == "high" else "blue",
+                },
+                "subject": item.get("subject", ""),
+                "classification": item.get("bot_case_type")
+                or item.get("case_type", ""),
+                "bitrix_status": {
+                    "label": bitrix_status,
+                    "status": _bitrix_status_tone(bitrix_status),
+                },
+                "reason": item.get("reason") or item.get("review_reason", ""),
+                "next_step": item.get("recommended_next_step", ""),
+                "evidence": {
+                    "label": "Evidence",
+                    "href": evidence_href,
+                },
+            }
+        )
+
+    return {
+        "type": "data_table",
+        "size": "XL",
+        "title": title,
+        "striped": True,
+        "mobile": "md",
+        "columns": [
+            {"key": "priority", "label": "Priority", "cell": "badge"},
+            {"key": "client", "label": "Sender / Client", "cell": "avatar_text"},
+            {"key": "subject", "label": "Subject / Request", "cell": "text"},
+            {"key": "classification", "label": "Classification", "cell": "text"},
+            {"key": "bitrix_status", "label": "Bitrix status", "cell": "status"},
+            {"key": "reason", "label": "Reason", "cell": "muted"},
+            {"key": "next_step", "label": "Recommended next step", "cell": "muted"},
+            {"key": "evidence", "label": "Evidence link", "cell": "link"},
+        ],
+        "rows": rows,
+    }
 
 
 # Layout: Sources tab
@@ -1342,14 +1976,14 @@ def _build_rop_sources_layout(
     if not source_health:
         return [
             {
-                "type": "attention_list",
+                "type": "state_grid",
                 "size": "XL",
                 "title": t("Source Health", locale),
                 "items": [
                     {
                         "label": "No sources",
-                        "message": "No source data available",
-                        "severity": "info",
+                        "value": "No source data available",
+                        "status": "empty",
                     }
                 ],
             }
@@ -1401,14 +2035,14 @@ def _build_rop_attachments_layout(
     if not att_summary or att_summary.get("total_attachments", 0) == 0:
         return [
             {
-                "type": "attention_list",
+                "type": "state_grid",
                 "size": "XL",
                 "title": t("Attachment Processing", locale),
                 "items": [
                     {
                         "label": "No attachments",
-                        "message": "No attachment data available",
-                        "severity": "info",
+                        "value": "No attachment data available",
+                        "status": "empty",
                     }
                 ],
             }
@@ -1494,6 +2128,12 @@ def _build_rop_bitrix_layout(
     if not isinstance(bitrix_state, dict):
         bitrix_state = {}
     evidence_links = data.get("evidence_links", [])
+    business_kpi = data.get("business_kpi", {})
+    if not isinstance(business_kpi, dict):
+        business_kpi = {}
+    period_queues = data.get("queues", {})
+    if not isinstance(period_queues, dict):
+        period_queues = {}
 
     bitrix_available = any(
         link.get("artifact_id") == "bitrix_reconciliation_json"
@@ -1505,29 +2145,32 @@ def _build_rop_bitrix_layout(
     if not bitrix_available:
         return [
             {
-                "type": "attention_list",
+                "type": "state_grid",
                 "size": "XL",
                 "title": "Bitrix Evidence Board",
                 "items": [
                     {
-                        "label": "Bitrix unavailable",
-                        "message": (
-                            "Bitrix reconciliation artifact is not available "
-                            "for this run."
+                        "label": "Not reconciled",
+                        "value": (
+                            "Bitrix reconciliation artifact is not available for this run. "
+                            "Run read-only reconcile-bitrix to create CRM evidence."
                         ),
-                        "severity": "info",
+                        "status": "read-only",
                     }
                 ],
             }
         ]
 
     ambiguous_count = _int(current_state_kpi.get("ambiguous_in_bitrix", 0))
-    connector_degraded_count = _int(
-        current_state_kpi.get(
-            "connector_degraded",
-            bitrix_state.get("connector_error_count", 0),
+    if "bitrix_errors" in business_kpi:
+        connector_degraded_count = _int(business_kpi.get("bitrix_errors", 0))
+    else:
+        connector_degraded_count = _int(
+            current_state_kpi.get(
+                "connector_degraded",
+                bitrix_state.get("connector_error_count", 0),
+            )
         )
-    )
 
     layout: list[dict[str, Any]] = [
         {
@@ -1542,26 +2185,25 @@ def _build_rop_bitrix_layout(
                 },
                 {
                     "label": "Matched",
-                    "value": current_state_kpi.get(
-                        "matched_in_bitrix",
-                        bitrix_state.get("matched_count", 0),
-                    ),
+                    "value": business_kpi.get("matched_in_bitrix", 0),
                 },
                 {
                     "label": "Lost in Bitrix",
-                    "value": current_state_kpi.get(
-                        "lost_in_bitrix",
-                        bitrix_state.get("not_found_count", 0),
+                    "value": business_kpi.get("lost_in_bitrix", 0),
+                },
+                {
+                    "label": "Ambiguous",
+                    "value": business_kpi.get(
+                        "ambiguous_or_duplicate", ambiguous_count
                     ),
                 },
-                {"label": "Ambiguous", "value": ambiguous_count},
                 {
                     "label": "Connector Degraded",
                     "value": connector_degraded_count,
                 },
                 {
                     "label": "Unreconciled",
-                    "value": current_state_kpi.get("unreconciled", 0),
+                    "value": business_kpi.get("unreconciled", 0),
                 },
             ],
         }
@@ -1575,7 +2217,10 @@ def _build_rop_bitrix_layout(
         ("matched", "Matched"),
     ]
     for queue_id, title in queue_specs:
-        queue_items = current_state_queues.get(queue_id, [])
+        if queue_id in period_queues:
+            queue_items = period_queues.get(queue_id, [])
+        else:
+            queue_items = current_state_queues.get(queue_id, [])
         if not isinstance(queue_items, list):
             queue_items = []
 
@@ -1586,8 +2231,8 @@ def _build_rop_bitrix_layout(
             rows.append(
                 [
                     str(item.get("event_id", "")),
-                    str(item.get("case_type", "")),
-                    str(item.get("priority", "")),
+                    str(item.get("bot_case_type") or item.get("case_type", "")),
+                    str(item.get("bot_priority") or item.get("priority", "")),
                     str(item.get("bitrix_status", "")),
                 ]
             )

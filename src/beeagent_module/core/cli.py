@@ -21,6 +21,15 @@ class RopCliError(Exception):
     pass
 
 
+# Поулчение default period для ROP dashboard из настроек
+def _dashboard_default_period(settings: dict) -> str:
+    return settings["rop"]["dashboard"]["default_period"]
+
+
+def _dashboard_periods(settings: dict) -> list[str]:
+    return list(settings["rop"]["dashboard"]["periods"])
+
+
 # Обработчик CLI для ROP: поддерживает команды 'run', 'summary' и 'export-review' с соответствующими аргументами
 def handle_rop_run(
     args: argparse.Namespace,
@@ -95,6 +104,29 @@ def handle_rop_run(
         except Exception as exc:
             logger.warning(
                 "ROP CLI: current-state build failed after run: %s",
+                exc,
+            )
+
+        try:
+            from beeagent_module.cases.rop_dashboard import (
+                build_rop_dashboard,
+                write_rop_dashboard,
+            )
+
+            dashboard = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=_dashboard_default_period(settings),
+                logger=logger,
+                run_id=effective_run_id,
+            )
+            write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: dashboard build failed after run: %s",
                 exc,
             )
 
@@ -212,6 +244,30 @@ def handle_rop_reconcile_bitrix(
             run_id,
             status,
         )
+
+        try:
+            from beeagent_module.cases.rop_dashboard import (
+                build_rop_dashboard,
+                write_rop_dashboard,
+            )
+
+            dashboard = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=_dashboard_default_period(settings),
+                logger=logger,
+                run_id=run_id,
+            )
+            write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: dashboard build failed after reconciliation: %s",
+                exc,
+            )
+
     except Exception as exc:
         logger.error("ROP CLI: bitrix reconciliation failed: %s", exc)
         raise RopCliError(f"Bitrix reconciliation failed: {exc}") from exc
@@ -654,6 +710,7 @@ def _build_review_tsv_rows(
 # Handler для команды 'rop current': строит текущий state artifact для указанного run_id
 def handle_rop_current(
     args: argparse.Namespace,
+    settings: dict,
     logger: logging.Logger,
 ) -> None:
     storage_dir = get_storage_dir()
@@ -692,6 +749,29 @@ def handle_rop_current(
                 print(f"    - [{w.get('code', '?')}] {w.get('message', '')}")
         print()
 
+        try:
+            from beeagent_module.cases.rop_dashboard import (
+                build_rop_dashboard,
+                write_rop_dashboard,
+            )
+
+            dashboard = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=_dashboard_default_period(settings),
+                logger=logger,
+                run_id=run_id,
+            )
+            write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: dashboard build failed after current-state: %s",
+                exc,
+            )
+
         logger.info(
             "ROP CLI: current-state built successfully: run_id=%s status=%s warnings=%d",
             run_id,
@@ -701,6 +781,88 @@ def handle_rop_current(
     except Exception as exc:
         logger.error("ROP CLI: current-state build failed: %s", exc)
         raise RopCliError(f"ROP current-state build failed: {exc}") from exc
+
+
+# Handler для команды 'rop dashboard': строит business-facing dashboard read-model с period analytics
+def handle_rop_dashboard(
+    args: argparse.Namespace,
+    settings: dict,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    period = args.period or _dashboard_default_period(settings)
+    if period not in _dashboard_periods(settings):
+        raise RopCliError(
+            f"Invalid period '{period}', expected one of: {_dashboard_periods(settings)}"
+        )
+    run_id = args.run_id
+
+    logger.info(
+        "ROP CLI: building dashboard for period=%s run_id=%s",
+        period,
+        run_id or "latest",
+    )
+
+    from beeagent_module.cases.rop_dashboard import (
+        build_rop_dashboard,
+        write_rop_dashboard,
+    )
+
+    try:
+        dashboard = build_rop_dashboard(
+            storage_dir=storage_dir,
+            period=period,
+            logger=logger,
+            run_id=run_id,
+        )
+
+        path = write_rop_dashboard(
+            storage_dir=storage_dir,
+            dashboard=dashboard,
+            logger=logger,
+        )
+
+        status = dashboard.get("status", "?")
+        bkpi = dashboard.get("business_kpi", {})
+        print(f"\nROP dashboard built: period={period} status={status}")
+        print(f"  artifact:          {path}")
+        print(f"  run_id:            {dashboard.get('run_id', '?')}")
+        print(f"  client_id:         {dashboard.get('client_id', '?')}")
+        print(f"  processed_events:  {bkpi.get('processed_events', 0)}")
+        print(f"  new_leads:         {bkpi.get('new_leads', 0)}")
+        print(f"  high_priority:     {bkpi.get('high_priority', 0)}")
+        print(f"  needs_review:      {bkpi.get('needs_review', 0)}")
+        print(f"  lost_in_bitrix:    {bkpi.get('lost_in_bitrix', 0)}")
+        print(f"  unreconciled:      {bkpi.get('unreconciled', 0)}")
+        print(f"  source_degraded:   {bkpi.get('source_degraded', 0)}")
+        print(f"  attachment_refused: {bkpi.get('attachment_refused', 0)}")
+
+        recs = dashboard.get("rop_recommendations", [])
+        if recs:
+            print(f"  recommendations:   {len(recs)}")
+            for rec in recs:
+                print(
+                    f"    - [{rec.get('severity', '?')}] "
+                    f"{rec.get('title', '')} "
+                    f"({rec.get('count', 0)})"
+                )
+
+        warnings = dashboard.get("warnings", [])
+        if warnings:
+            print(f"  warnings:          {len(warnings)}")
+            for w in warnings:
+                print(f"    - [{w.get('code', '?')}] {w.get('message', '')}")
+        print()
+
+        logger.info(
+            "ROP CLI: dashboard built successfully: period=%s run_id=%s status=%s",
+            period,
+            dashboard.get("run_id", "?"),
+            status,
+        )
+    except Exception as exc:
+        logger.error("ROP CLI: dashboard build failed: %s", exc)
+        raise RopCliError(f"ROP dashboard build failed: {exc}") from exc
 
 
 # Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника, а также items_max и period для ограничения количества обрабатываемых событий и периода для batch-источников
@@ -777,6 +939,23 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="run_id to build current-state for",
+    )
+
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="Build ROP business dashboard with period analytics",
+    )
+    dashboard_parser.add_argument(
+        "--period",
+        type=str,
+        default=None,
+        help="Period for dashboard analytics; defaults to rop.dashboard.default_period",
+    )
+    dashboard_parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Explicit run_id (optional, uses latest ROP run if not provided)",
     )
 
     reconcile_parser = subparsers.add_parser(

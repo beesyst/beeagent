@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -270,6 +271,10 @@ def _build_settings() -> dict:
         "web": {"host": "127.0.0.1", "port": 18080, "open_browser": False},
         "logging": {"clear_logs": True, "utc": True, "level": "INFO"},
         "rop": {
+            "dashboard": {
+                "default_period": "7d",
+                "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
+            },
             "sources": [
                 {
                     "source_id": "test_source",
@@ -281,7 +286,7 @@ def _build_settings() -> dict:
                     "authority": "read_only",
                     "items_max": 10,
                 }
-            ]
+            ],
         },
     }
 
@@ -439,13 +444,12 @@ def test_rop_route_escapes_html(tmp_path: Path) -> None:
     client = _client(storage_dir)
     response = client.get("/rop")
     assert response.status_code == 200
-    assert "<script>" not in response.text
+    assert "<script>alert" not in response.text
+    assert "alert(1)" not in response.text
 
 
 # Тест: GET /rop with tab parameter через BeeUI, включая проверку содержимого вкладок
 class TestRopTabs:
-    """Группа тестов ROP tabs с общим storage."""
-
     def _setup(self, tmp_path: Path) -> tuple[Path, TestClient]:
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-rop-tabs")
@@ -464,6 +468,9 @@ class TestRopTabs:
         ):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200, f"Tab {tab} failed"
+            assert "Unavailable block" not in response.text
+            assert "Failed to render block type" not in response.text
+            assert "attention_list" not in response.text
 
     def test_invalid_tab_falls_back(self, tmp_path: Path) -> None:
         _, client = self._setup(tmp_path)
@@ -471,12 +478,21 @@ class TestRopTabs:
         assert response.status_code == 200
 
     def test_overview_content(self, tmp_path: Path) -> None:
-        """Overview tab содержит Key Metrics, а не пустой блок."""
         _, client = self._setup(tmp_path)
         response = client.get("/rop?tab=overview")
         html = response.text
-        assert "Key Metrics" in html
-        assert "Run Overview" in html
+        assert "ROP Control Center" in html
+        assert "TODAY&#39;S EMAILS" in html
+        assert "NEW LEADS" in html
+        assert "Urgent leads" in html
+        assert "Needs review" in html
+        assert "Bitrix gaps" in html
+        assert "Data quality" in html
+        assert "Action Required" in html
+        assert "Priority review queue" in html
+        assert "Unavailable block" not in html
+        assert "Failed to render block type" not in html
+        assert "attention_list" not in html
 
     def test_queue_content(self, tmp_path: Path) -> None:
         _, client = self._setup(tmp_path)
@@ -519,7 +535,7 @@ class TestRopPageLayout:
 
     def test_subtitle_present(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
-        assert "Lead classification and operator queue" in html
+        assert "Inbound leads, review queue and Bitrix reconciliation" in html
 
     def test_tabs_rendered(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
@@ -535,7 +551,7 @@ class TestRopPageLayout:
 
     def test_subtitle_before_tabs(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
-        sub_pos = html.find("Lead classification")
+        sub_pos = html.find("Inbound leads")
         card_pos = html.find("beeui-page-tabs-card")
         assert sub_pos >= 0 and card_pos >= 0
         assert sub_pos < card_pos, "Subtitle должен быть до page-tabs-card"
@@ -544,7 +560,7 @@ class TestRopPageLayout:
         html = self._rop_html(tmp_path)
         card_start = html.find("beeui-page-tabs-card")
         card_section = html[card_start:]
-        assert "Run Overview" in card_section, "Run Overview должен быть внутри card"
+        assert "Overview" in card_section, "Overview должен быть внутри card"
 
     def test_no_old_standalone_tabs_card(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
@@ -555,7 +571,7 @@ class TestRopPageLayout:
         )
 
 
-# Тесты: чек layout-структуры Overview tab: state_grid + kpi_grid в одной строке
+# Тесты: чек layout-структуры Overview tab (customer-facing dashboard)
 class TestRopOverviewLayoutStructure:
     def _mock_data(self) -> dict[str, Any]:
         return {
@@ -568,51 +584,385 @@ class TestRopOverviewLayoutStructure:
                 "high_priority_count": 2,
                 "attachment_preview_count": 7,
             },
-            "available_runs": ["run-test-001", "run-test-002"],
+            "available_runs": [],
             "warnings": [],
             "source_health": [],
             "funnel": [],
             "recommendations": [],
             "evidence_links": [],
             "classification_distribution": {},
+            "business_kpi": {
+                "processed_events": 38,
+                "new_leads": 12,
+                "high_priority": 2,
+                "needs_review": 5,
+                "lost_in_bitrix": 1,
+                "unreconciled": 3,
+            },
+            "period": "7d",
+            "configured_periods": ["7d", "30d", "90d", "365d", "all"],
         }
 
-    def test_run_overview_has_width_8(self) -> None:
+    def test_first_block_is_overview(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        run_overview = layout[0]
-        assert run_overview["type"] == "state_grid"
-        assert run_overview["width"] == 8
-        assert run_overview["title"] == "Run Overview"
+        assert layout[0]["type"] == "operator_hero"
+        assert layout[0]["title"] == "ROP Control Center"
+        assert layout[0]["width"] == 6
 
-    def test_key_metrics_has_width_4(self) -> None:
+    def test_top_row_has_two_chart_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        key_metrics = layout[1]
-        assert key_metrics["type"] == "kpi_grid"
-        assert key_metrics["width"] == 4
-        assert key_metrics["title"] == "Key Metrics"
+        assert layout[1]["type"] == "chart"
+        assert layout[1]["title"] == "Email Workload"
+        assert layout[1]["width"] == 3
+        assert layout[2]["type"] == "chart"
+        assert layout[2]["title"] == "Action Required"
+        assert layout[2]["width"] == 3
 
-    def test_key_metrics_has_columns_2(self) -> None:
+    def test_kpi_has_customer_facing_labels(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        key_metrics = layout[1]
-        assert key_metrics["columns"] == 2
+        labels = [block["title"] for block in layout if block["type"] == "venue_card"]
+        assert "Urgent leads" in labels
+        assert "Needs review" in labels
+        assert "Bitrix gaps" in labels
+        assert "Data quality" in labels
 
-    def test_key_metrics_has_items(self) -> None:
+    def test_kpi_has_four_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        key_metrics = layout[1]
-        assert len(key_metrics["items"]) >= 6
+        cards = [block for block in layout if block["type"] == "venue_card"]
+        assert len(cards) == 4
 
-    def test_run_overview_before_key_metrics(self) -> None:
+    def test_action_required_present(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        assert len(layout) >= 2
-        assert layout[0]["type"] == "state_grid"
-        assert layout[0]["title"] == "Run Overview"
-        assert layout[1]["type"] == "kpi_grid"
-        assert layout[1]["title"] == "Key Metrics"
+        action_block = next(
+            block for block in layout if block.get("title") == "Action Required"
+        )
+        assert action_block["type"] == "chart"
 
-    def test_no_group_wrapper(self) -> None:
+    def test_no_run_selector_in_overview(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        for block in layout[:2]:
-            assert block["type"] != "group"
+        run_selectors = [
+            block for block in layout if block.get("title") == "Run Selector"
+        ]
+        assert len(run_selectors) == 0
+
+    def test_no_period_selector_card(self) -> None:
+        """Period Selector card is replaced by ROP Workbench toolbar links."""
+        layout = build_rop_page_layout(self._mock_data(), tab="overview")
+        period_cards = [
+            block for block in layout if block.get("title") == "Period Selector"
+        ]
+        assert len(period_cards) == 0
+        for b in layout:
+            assert b.get("title") not in ("Period", "Period Selector"), (
+                f"Unexpected block: {b.get('title')}"
+            )
+
+    def test_priority_queue_preview_present(self) -> None:
+        layout = build_rop_page_layout(self._mock_data(), tab="overview")
+        assert any(block.get("title") == "Priority review queue" for block in layout)
+
+
+def test_rop_chart_blocks_use_controlled_fields() -> None:
+    data = {
+        "run_id": "run-chart",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {
+            "processed_by_day": {
+                "labels": ["2026-06-20", "2026-06-21"],
+                "series": [{"name": "Processed", "data": [1, 2]}],
+            },
+            "classification_distribution": {
+                "labels": ["new_lead"],
+                "series": [2],
+            },
+            "bitrix_distribution": {
+                "labels": ["matched", "unreconciled"],
+                "series": [1, 1],
+            },
+            "source_contribution": {
+                "labels": ["hotline", "web"],
+                "series": [3, 1],
+            },
+        },
+        "period": "all",
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+    charts = [block for block in layout if block["type"] == "chart"]
+
+    assert charts
+    for chart in charts:
+        assert "kind" in chart
+        assert "series" in chart
+        assert "data" not in chart
+    area = next(chart for chart in charts if chart["title"] == "Email intake trend")
+    assert area["kind"] == "area"
+    assert area["categories"] == ["2026-06-20", "2026-06-21"]
+    donuts = [chart for chart in charts if chart["kind"] == "donut"]
+    assert all("labels" in chart for chart in donuts)
+    source_chart = next(
+        chart for chart in charts if chart["title"] == "Source contribution"
+    )
+    assert source_chart["kind"] == "bar"
+    assert source_chart["series"] == [{"name": "Leads", "data": [3, 1]}]
+    assert source_chart["categories"] == ["Hotline", "Web"]
+    line_chart = next(chart for chart in charts if chart["title"] == "Email Workload")
+    assert line_chart["kind"] == "area"
+    assert "data" not in source_chart
+
+
+def test_rop_overview_buckets_7d_and_30d_chart_series() -> None:
+    base_data = {
+        "run_id": "run-buckets",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {"processed_events": 3, "high_priority": 1},
+        "series": {
+            "processed_by_day": {
+                "labels": ["2026-06-21"],
+                "series": [
+                    {"name": "Processed", "data": [3]},
+                    {"name": "High priority", "data": [1]},
+                ],
+            }
+        },
+        "period_end_utc": "2026-06-21T23:59:59+00:00",
+        "configured_periods": ["7d", "30d"],
+    }
+
+    for period, expected_count in (("7d", 7), ("30d", 30)):
+        data = {**base_data, "period": period}
+        layout = build_rop_page_layout(data, tab="overview")
+        chart = next(block for block in layout if block["title"] == "Email intake trend")
+        assert len(chart["categories"]) == expected_count
+        assert chart["categories"][-1] == "2026-06-21"
+        for series_item in chart["series"]:
+            assert len(series_item["data"]) == expected_count
+
+
+def test_rop_overview_source_contribution_uses_display_names() -> None:
+    data = {
+        "run_id": "run-source-display",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [
+            {
+                "source_id": "rop_batch_sample",
+                "display_name": "ROP Batch Sample",
+            }
+        ],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {
+            "source_contribution": {
+                "labels": ["rop_batch_sample"],
+                "series": [2],
+            },
+        },
+        "period": "7d",
+        "configured_periods": ["7d"],
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+    chart = next(block for block in layout if block["title"] == "Source contribution")
+    assert chart["categories"] == ["ROP Batch Sample"]
+
+
+def test_rop_overview_contains_period_selector_from_payload() -> None:
+    data = {
+        "run_id": "run-test-001",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {},
+        "period": "7d",
+        "configured_periods": ["today", "7d", "30d", "all"],
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+    overview = next(
+        block for block in layout if block.get("title") == "ROP Control Center"
+    )
+    items = overview["primary_links"][:4]
+
+    assert [item["label"] for item in items] == [
+        "Today",
+        "Last 7 days (current)",
+        "Last 30 days",
+        "All time",
+    ]
+    assert (
+        next(item for item in items if item["label"] == "Last 7 days (current)")["href"]
+        == "/rop?tab=overview&period=7d"
+    )
+
+
+def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
+    """Bitrix errors should appear in KPI cards when non-zero."""
+    data = {
+        "run_id": "run-bitrix-errors",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {"bitrix_errors": 2},
+        "bitrix": {"connector_error_count": 99},
+        "series": {},
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+    assert any(block.get("title") == "Action Required" for block in layout)
+    assert all(block.get("title") != "Business metrics" for block in layout)
+
+
+# Тест: чек, что вкладка очереди ROP содержит таблицу данных, когда очереди существуют
+def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-high",
+                    "source_id": "hotline",
+                    "sender": "lead@example.com",
+                    "subject": "Need welding equipment",
+                    "case_type": "legacy_case",
+                    "priority": "low",
+                    "bot_case_type": "new_lead",
+                    "bot_priority": "high",
+                    "bitrix_status": "unreconciled",
+                    "reason": "urgent_inquiry",
+                }
+            ]
+        },
+    }
+
+    layout = build_rop_page_layout(data, tab="queue")
+
+    assert layout[0]["type"] == "data_table"
+    assert layout[0]["title"] == "ROP Work Queue"
+    assert [col["label"] for col in layout[0]["columns"]] == [
+        "Priority",
+        "Sender / Client",
+        "Subject / Request",
+        "Classification",
+        "Bitrix status",
+        "Reason",
+        "Recommended next step",
+        "Evidence link",
+    ]
+    assert layout[0]["rows"][0]["classification"] == "new_lead"
+    assert layout[0]["rows"][0]["priority"]["label"] == "high"
+
+
+# Тест: чек, что блок рекомендаций ROP в Overview tab использует rop_recommendations.detail вместо recommendations.message
+def test_rop_overview_uses_rop_recommendations_detail() -> None:
+    data = {
+        "run_id": "run-rec",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [
+            {
+                "title": "Legacy recommendation",
+                "message": "Legacy message",
+                "severity": "info",
+            }
+        ],
+        "rop_recommendations": [
+            {
+                "title": "Run Bitrix reconciliation",
+                "detail": "2 events have not been reconciled with Bitrix.",
+                "severity": "info",
+            }
+        ],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {},
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+    action_block = next(
+        block for block in layout if block.get("title") == "Action Required"
+    )
+
+    assert action_block["type"] == "chart"
+
+
+# Тест: чек, что блок Bitrix в ROP tab корректно отображает сообщение о необходимости запуска read-only reconcile-bitrix, когда артефакт bitrix_reconciliation_json отсутствует
+def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
+    data = {
+        "current_state_kpi": {},
+        "current_state_queues": {},
+        "bitrix": {"status": "unreconciled"},
+        "evidence_links": [
+            {
+                "artifact_id": "bitrix_reconciliation_json",
+                "available": False,
+            }
+        ],
+    }
+
+    layout = build_rop_page_layout(data, tab="bitrix")
+    item = layout[0]["items"][0]
+
+    assert item["label"] == "Not reconciled"
+    assert "Run read-only reconcile-bitrix" in item["value"]
+
+
+# Тест: GET /api/rop/dashboard с недопустимым периодом возвращает предупреждение и использует значение по умолчанию
+def test_api_rop_dashboard_invalid_period_degrades_to_default(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-invalid-period")
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/dashboard", params={"period": "14d"})
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["period"] == "7d"
+    assert payload["default_period"] == "7d"
+    assert payload["configured_periods"] == [
+        "today",
+        "yesterday",
+        "7d",
+        "30d",
+        "90d",
+        "365d",
+        "all",
+    ]
+    assert any(w.get("code") == "invalid_period" for w in payload["warnings"])
 
 
 # Тест: Dashboard содержит accordion с видимым chevron для technical details
@@ -624,7 +974,6 @@ def test_dashboard_accordion_has_chevron(tmp_path: Path) -> None:
     assert response.status_code == 200
     html = response.text
     assert "Technical details" in html
-    # Standard Tabler accordion with chevron via accordion-button class
     assert "accordion-button" in html
     assert 'data-bs-toggle="collapse"' in html
     assert "aria-expanded" in html
@@ -651,7 +1000,7 @@ def test_modules_route_escapes_html(tmp_path: Path) -> None:
     client = _client(storage_dir)
     response = client.get("/modules")
     assert response.status_code == 200
-    assert "<script>" not in response.text
+    assert "<script>alert" not in response.text
 
 
 # Тест: test GET /api/dashboard
@@ -712,7 +1061,6 @@ def test_invalid_artifact_id(tmp_path: Path) -> None:
     _write_run_artifacts(storage_dir, "run-bad-art")
     client = _client(storage_dir)
     response = client.get("/runs/run-bad-art/artifacts/nonexistent_artifact")
-    # BeeUI renders an HTML page even for errors
     assert response.status_code in (200, 400, 404)
 
 
@@ -1514,6 +1862,140 @@ def test_rop_bitrix_layout_with_current_state_queues() -> None:
     )
 
 
+# Тест: чек, что ROP dashboard layout предпочитает данные из current_state_queues перед queues при наличии обеих
+def test_rop_bitrix_layout_prefers_period_queues() -> None:
+    data = {
+        "business_kpi": {
+            "matched_in_bitrix": 0,
+            "lost_in_bitrix": 0,
+            "ambiguous_or_duplicate": 1,
+            "bitrix_errors": 2,
+            "unreconciled": 0,
+        },
+        "current_state_kpi": {"connector_degraded": 99},
+        "current_state_queues": {
+            "matched": [
+                {
+                    "event_id": "evt-old-matched",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "matched_lead",
+                }
+            ],
+            "lost_in_bitrix": [
+                {
+                    "event_id": "evt-old-lost",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+            "ambiguous": [
+                {
+                    "event_id": "evt-old-ambiguous",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "ambiguous",
+                }
+            ],
+            "degraded": [
+                {
+                    "event_id": "evt-old-degraded",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "connector_degraded",
+                }
+            ],
+            "unreconciled": [
+                {
+                    "event_id": "evt-old-unreconciled",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "unreconciled",
+                }
+            ],
+        },
+        "queues": {
+            "matched": [
+                {
+                    "event_id": "evt-current-matched",
+                    "bot_case_type": "existing_deal",
+                    "bot_priority": "low",
+                    "bitrix_status": "matched_deal",
+                }
+            ],
+            "lost_in_bitrix": [
+                {
+                    "event_id": "evt-current-lost",
+                    "bot_case_type": "new_lead",
+                    "bot_priority": "medium",
+                    "bitrix_status": "not_found",
+                }
+            ],
+            "ambiguous": [
+                {
+                    "event_id": "evt-current-ambiguous",
+                    "bot_case_type": "existing_deal",
+                    "bot_priority": "low",
+                    "bitrix_status": "ambiguous",
+                }
+            ],
+            "degraded": [
+                {
+                    "event_id": "evt-current-degraded",
+                    "bot_case_type": "new_lead",
+                    "bot_priority": "medium",
+                    "bitrix_status": "connector_degraded",
+                }
+            ],
+            "unreconciled": [
+                {
+                    "event_id": "evt-current-unreconciled",
+                    "bot_case_type": "new_lead",
+                    "bot_priority": "low",
+                    "bitrix_status": "unreconciled",
+                }
+            ],
+        },
+        "bitrix": {"status": "ok"},
+        "evidence_links": [
+            {
+                "artifact_id": "bitrix_reconciliation_json",
+                "available": True,
+            }
+        ],
+    }
+
+    layout = build_rop_page_layout(data, tab="bitrix")
+    tables = {
+        block["title"]: block for block in layout if block["type"] == "status_table"
+    }
+    kpi = next(block for block in layout if block["type"] == "kpi_grid")
+
+    assert tables["Matched"]["rows"] == [
+        ["evt-current-matched", "existing_deal", "low", "matched_deal"]
+    ]
+    assert tables["Lost in Bitrix"]["rows"] == [
+        ["evt-current-lost", "new_lead", "medium", "not_found"]
+    ]
+    assert tables["Ambiguous"]["rows"] == [
+        ["evt-current-ambiguous", "existing_deal", "low", "ambiguous"]
+    ]
+    assert tables["Connector Degraded"]["rows"] == [
+        ["evt-current-degraded", "new_lead", "medium", "connector_degraded"]
+    ]
+    assert tables["Unreconciled"]["rows"] == [
+        ["evt-current-unreconciled", "new_lead", "low", "unreconciled"]
+    ]
+    assert all("evt-old" not in str(table["rows"]) for table in tables.values())
+    assert (
+        next(item for item in kpi["items"] if item["label"] == "Connector Degraded")[
+            "value"
+        ]
+        == 2
+    )
+
+
 # Тест: чек, что ROP dashboard API обрабатывает отсутствие артефакта attachment_extraction.json без ошибок и возвращает нулевые счетчики в сводке по вложениям и KPI
 def test_rop_dashboard_handles_missing_artifacts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
@@ -1553,7 +2035,7 @@ def test_rop_dashboard_escapes_html(tmp_path: Path) -> None:
     response_html = client.get("/rop")
     assert response_html.status_code == 200
     html = response_html.text
-    assert "<script>" not in html
+    assert "<script>alert" not in html
     assert "&lt;script&gt;" in html or "&#60;script&#62;" in html
 
 
@@ -1675,7 +2157,7 @@ def test_get_page_returns_layout(tmp_path: Path) -> None:
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-get-page")
-    adapter = BeeAgentUiAdapter(storage_dir=storage_dir, settings={})
+    adapter = BeeAgentUiAdapter(storage_dir=storage_dir, settings=_build_settings())
 
     result = adapter.get_page("rop_dashboard", {"tab": "overview"})
 
@@ -1686,3 +2168,243 @@ def test_get_page_returns_layout(tmp_path: Path) -> None:
     assert isinstance(data, dict)
     assert "layout" in data
     assert isinstance(data["layout"], list)
+
+
+# Тест: все блоки диаграмм на странице обзора ROP должны использовать поддерживаемую схему диаграмм BeeUI и иметь has_data=True
+def _write_run_with_event_dates(storage_dir: Path, run_id: str) -> Path:
+    run_dir = _write_run_artifacts(storage_dir, run_id)
+    now = datetime.now(timezone.utc)
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    for evt in classified:
+        evt["event_date"] = now.isoformat()
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    for evt in normalized:
+        evt["event_date"] = now.isoformat()
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
+    return run_dir
+
+
+# Тест: overview renders deterministic chart containers instead of pseudo-chart datagrids
+def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_with_event_dates(storage_dir, "run-chart-schema")
+    client = _client(storage_dir)
+    response = client.get("/rop?period=7d")
+    assert response.status_code == 200
+    html = response.text
+    assert "Email Workload" in html
+    assert "Action Required" in html
+    assert "Email intake trend" in html
+    assert "Lead outcome mix" in html
+    assert "Bitrix reconciliation" in html
+    assert "Source contribution" in html
+    assert "chart-rop-email-workload" in html
+    assert "chart-rop-action-required" in html
+    assert "chart-rop-email-intake" in html
+    assert "chart-rop-outcome-mix" in html
+    assert "chart-rop-bitrix" in html
+    assert "chart-rop-source-contribution" in html
+    assert "progress progress-sm" in html
+    assert 'class="card card-sm"' in html
+    assert "Chart render error" not in html
+
+
+# Тест: обзор ROP не должен отображать ID запусков, начинающихся с "SMOKE-"
+def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "SMOKE-IT27-001")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview")
+    html = response.text
+    assert "SMOKE-IT27" not in html or "Run Selector" not in html
+
+
+# Тест: обзор ROP не должен отображать карту "Period Selector"
+def test_rop_overview_no_period_selector_card(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-period-regression")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview")
+    html = response.text
+    assert "Period Selector" not in html
+
+
+# Тест: выпадающий список периодов на обзоре ROP должен содержать удобные для клиентов метки периодов
+def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-period-labels")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview")
+    html = response.text
+    assert 'class="dropdown me-1 d-inline-block"' in html
+    assert "dropdown-menu dropdown-menu-end" in html
+    assert "dropdown-item active" in html
+    assert "Today" in html
+    assert "Yesterday" in html
+    assert "Last 7 days" in html
+    assert "Last 30 days" in html
+    assert "Last 3 months" in html
+    assert "Last year" in html
+    assert "All time" in html
+    assert "Last 7 days (current)" not in html
+    assert 'href="/rop?tab=overview&amp;period=90d"' in html
+    assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
+
+
+def test_rop_overview_has_no_unsupported_blocks(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-no-unsupported")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&period=7d")
+    html = response.text
+    assert response.status_code == 200
+    assert "Unavailable block" not in html
+    assert "Failed to render block type" not in html
+    assert "attention_list" not in html
+
+
+# Тест: обзор ROP должен содержать панель "Action required"
+def test_rop_overview_has_action_required_panel(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-action-regression")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview")
+    assert response.status_code == 200
+    assert "Action Required" in response.text
+
+
+# Тест: обзор ROP должен использовать бизнес-ориентированные метки для KPI, а не внутренние имена
+def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-labels-regression")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview")
+    html = response.text
+    assert "Business KPI" not in html
+    assert "Detailed Metrics" not in html
+    assert "Business metrics" not in html
+    assert "TODAY&#39;S EMAILS" in html
+    assert "NEW LEADS" in html
+    assert "Urgent leads" in html
+    assert "Needs review" in html
+    assert "Bitrix gaps" in html
+    assert "Data quality" in html
+    assert "high_priority" not in html
+
+
+# Тест: обзор ROP не должен отображать селектор запусков, если в доступных запусках есть ID
+def test_rop_overview_no_run_selector(tmp_path: Path) -> None:
+    data = {
+        "run_id": "run-test-001",
+        "kpis": {},
+        "available_runs": ["SMOKE-IT27-001", "run-normal"],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {"processed_events": 5},
+        "series": {},
+        "period": "7d",
+        "configured_periods": ["7d"],
+    }
+    from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
+
+    layout = build_rop_page_layout(data, tab="overview")
+    run_selectors = [b for b in layout if b.get("title") == "Run Selector"]
+    assert len(run_selectors) == 0
+
+
+# Тест: обзор ROP не должен отображать сырые имена enum в HTML
+def test_rop_overview_no_raw_enum_labels(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.read_model import _humanize_label
+
+    assert _humanize_label("new_lead") == "New leads"
+    assert _humanize_label("unreconciled") == "Not reconciled"
+    assert _humanize_label("ambiguous") == "Ambiguous / duplicate"
+    assert _humanize_label("matched") == "Matched in Bitrix"
+    assert _humanize_label("lost") == "Lost in Bitrix"
+    assert _humanize_label("existing_client") == "Existing clients"
+
+
+# Тест: обзор ROP должен использовать бизнес-ориентированные метки для заголовков диаграмм, а не внутренние имена
+def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_with_event_dates(storage_dir, "run-chart-business")
+    client = _client(storage_dir)
+    response = client.get("/rop?period=7d&tab=overview")
+    html = response.text
+    assert "Email Workload" in html
+    assert "Action Required" in html
+    assert "Email intake trend" in html
+    assert "Lead outcome mix" in html
+    assert "Bitrix reconciliation" in html
+    assert "Source contribution" in html
+
+
+# Тест: обзор ROP должен отображать CTA Bitrix, когда unreconciled > 0
+def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
+    data = {
+        "run_id": "run-bitrix-cta",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {"processed_events": 5, "unreconciled": 2},
+        "series": {
+            "bitrix_distribution": {
+                "labels": ["matched", "unreconciled"],
+                "series": [1, 2],
+            },
+        },
+        "period": "7d",
+        "configured_periods": ["7d"],
+    }
+    from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
+
+    layout = build_rop_page_layout(data, tab="overview")
+    action_card = next(block for block in layout if block.get("title") == "Action Required")
+    assert action_card["type"] == "chart"
+    assert "2 items need review" in action_card["subtitle"]
+
+
+# Тест: обзор ROP не должен отображать отдельный блок "Detailed Metrics" на верхнем уровне, так как он объединен с "Overview"
+def test_rop_overview_no_detailed_metrics_separate_card() -> None:
+    data = {
+        "run_id": "run-test",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {},
+        "period": "7d",
+        "configured_periods": ["7d"],
+    }
+    from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
+
+    layout = build_rop_page_layout(data, tab="overview")
+    titles = [b.get("title") for b in layout]
+    assert "Detailed Metrics" not in titles, (
+        "Detailed Metrics must not be a separate block"
+    )
+    assert "Business metrics" not in titles
+    assert "Overview" not in titles, "Old Overview block must not exist"

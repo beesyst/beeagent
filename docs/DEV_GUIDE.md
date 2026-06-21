@@ -99,6 +99,20 @@ CLI overrides:
 ./start.sh web --host 127.0.0.1 --port 8780 --no-open
 ```
 
+ROP dashboard (`rop dashboard`):
+
+```bash
+./start.sh rop dashboard --period 7d
+./start.sh rop dashboard --period today
+./start.sh rop dashboard --period all --run-id <run_id>
+```
+
+Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
+
+Артефакт: `storage/interfaces/rop_dashboard.json`.
+
+Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
+
 Route listing diagnostic:
 
 ```bash
@@ -305,6 +319,18 @@ print(result["operator_text"])
 Current-state автоматически строится после успешного `rop run` и успешного `reconcile-bitrix`. После неудачного `reconcile-bitrix` current-state не обновляется.
 
 ROP dashboard использует current-state для вкладки Bitrix / Bitrix Evidence Board: matched, lost in Bitrix, ambiguous, connector degraded и unreconciled очереди остаются read-only.
+
+**`./start.sh rop dashboard`** — построить ROP dashboard read-model с period analytics:
+
+```bash
+./start.sh rop dashboard --period 7d
+./start.sh rop dashboard --period today
+./start.sh rop dashboard --period all --run-id <run_id>
+```
+
+Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all` (задаются в `config/settings.yml` → `rop.dashboard`).  
+Артефакт: `storage/interfaces/rop_dashboard.json` с полями `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.  
+Dashboard автоматически обновляется после `rop run`, `rop current` и `reconcile-bitrix`.
 
 #### CLI overrides — в памяти только
 
