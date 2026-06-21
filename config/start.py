@@ -8,6 +8,7 @@ from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
     handle_rop_current,
+    handle_rop_dashboard,
     handle_rop_export_review,
     handle_rop_reconcile_bitrix,
     handle_rop_run,
@@ -108,7 +109,9 @@ def _handle_rop_cli(
         elif args.rop_command == "reconcile-bitrix":
             handle_rop_reconcile_bitrix(args, settings=settings, logger=logger)
         elif args.rop_command == "current":
-            handle_rop_current(args, logger=logger)
+            handle_rop_current(args, settings=settings, logger=logger)
+        elif args.rop_command == "dashboard":
+            handle_rop_dashboard(args, settings=settings, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)

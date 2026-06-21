@@ -12,6 +12,7 @@ from beeagent_module.core.cli import (
     _apply_source_overrides,
     _tsv_columns,
     create_rop_parser,
+    handle_rop_dashboard,
     handle_rop_export_review,
     handle_rop_run,
     handle_rop_summary,
@@ -96,6 +97,22 @@ class TestRopCliArgumentParser:
             ["export-review", "--run-id", "test-run-123", "--format", "tsv"]
         )
         assert args.format == "tsv"
+
+    def test_rop_dashboard_period_defaults_to_config_at_handler(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["dashboard", "--run-id", "test-run-123"])
+        assert args.rop_command == "dashboard"
+        assert args.period is None
+        assert args.run_id == "test-run-123"
+
+    def test_rop_dashboard_rejects_period_not_configured(self) -> None:
+        import argparse
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        args = argparse.Namespace(period="14d", run_id="test-run-123")
+
+        with pytest.raises(RopCliError, match="Invalid period"):
+            handle_rop_dashboard(args, settings=settings, logger=_null_logger())
 
 
 # Тесты для функции применения переопределений источников: проверяют, что правильные источники включаются/настраиваются, а ошибки обрабатываются корректно

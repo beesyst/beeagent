@@ -189,7 +189,7 @@ class BeeAgentUiAdapter:
             return error_result_from_exception(exc)
 
     def get_rop_dashboard(
-        self, run_id: str | None = None
+        self, run_id: str | None = None, period: str | None = None
     ) -> AdapterResult | AdapterErrorResult:
         try:
             if run_id is not None:
@@ -198,7 +198,15 @@ class BeeAgentUiAdapter:
                 except Exception:
                     return error_result("invalid_run_id", "Invalid run_id")
 
-            data = build_rop_dashboard_read_model(self._storage_dir, run_id)
+            default_period = self._settings["rop"]["dashboard"]["default_period"]
+            configured_periods = self._settings["rop"]["dashboard"]["periods"]
+            data = build_rop_dashboard_read_model(
+                self._storage_dir,
+                run_id,
+                period=period,
+                default_period=default_period,
+                configured_periods=configured_periods,
+            )
             if "error" in data:
                 return error_result("not_found", data.get("message", "Not found"))
             return ok_result(data)
@@ -225,13 +233,22 @@ class BeeAgentUiAdapter:
                     tab = "overview"
 
                 run_id = query.get("run_id")
+                period = query.get("period")
                 if run_id is not None:
                     try:
                         validate_run_id(run_id)
                     except Exception:
                         return error_result("invalid_run_id", "Invalid run_id")
 
-                data = build_rop_dashboard_read_model(self._storage_dir, run_id)
+                default_period = self._settings["rop"]["dashboard"]["default_period"]
+                configured_periods = self._settings["rop"]["dashboard"]["periods"]
+                data = build_rop_dashboard_read_model(
+                    self._storage_dir,
+                    run_id,
+                    period=period,
+                    default_period=default_period,
+                    configured_periods=configured_periods,
+                )
                 if "error" in data:
                     return error_result("not_found", data.get("message", "Not found"))
 

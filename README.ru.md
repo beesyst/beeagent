@@ -284,6 +284,24 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 ./start.sh rop current --run-id live-review-2026-05-15
 ```
 
+**ROP dashboard (`rop dashboard`):**
+
+`rop dashboard` строит business-facing dashboard read-model с period analytics, chart-ready series, Bitrix evidence и deterministic рекомендациями.
+
+```bash
+./start.sh rop dashboard --period 7d
+./start.sh rop dashboard --period today
+./start.sh rop dashboard --period all --run-id <run_id>
+```
+
+Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
+
+Артефакт:
+
+- `storage/interfaces/rop_dashboard.json` — dashboard read-model с `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.
+
+Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
+
 После `rop run` создаётся:
 
 ```
@@ -330,6 +348,24 @@ rop:
 Current-state — artifact-level projection поверх существующих run artifacts. Он содержит KPI (events, normalized, classified, Bitrix matching, очереди) и автоматически строится после успешного `rop run` и `reconcile-bitrix`.
 
 В ROP dashboard доступна вкладка Bitrix / Bitrix Evidence Board для просмотра matched/lost/ambiguous/degraded/unreconciled очередей, если есть current-state/Bitrix evidence.
+
+**ROP dashboard (`rop dashboard`):**
+
+`rop dashboard` строит business-facing dashboard read-model с period analytics:
+
+```bash
+./start.sh rop dashboard --period 7d
+./start.sh rop dashboard --period today
+./start.sh rop dashboard --period all --run-id <run_id>
+```
+
+Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
+
+Артефакт:
+
+- `storage/interfaces/rop_dashboard.json` — dashboard read-model с `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.
+
+Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
 
 CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
 `--source-id` и `--all-sources` взаимоисключающие.

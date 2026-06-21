@@ -259,6 +259,7 @@ Browser route показывает bounded/redacted artifact preview через 
 | `attachment_extraction_json` | `attachment_extraction.json` |
 | `rop_review_table_tsv` | `rop_review_table.tsv` |
 | `rop_current_state_json` | `rop_current_state.json` |
+| `rop_dashboard_json` | `rop_dashboard.json` (via `storage/interfaces/rop_dashboard.json`) |
 | `bitrix_reconciliation_json` | `bitrix_reconciliation.json` |
 | `module_result_json` | `module-beeagent-rop/module_result.json` |
 | `rop_summary_result_json` | `module-beeagent-rop/rop_summary_result.json` |
@@ -266,6 +267,8 @@ Browser route показывает bounded/redacted artifact preview через 
 | `steps_json` | `steps.json` |
 
 UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
+
+ROP dashboard поддерживает period query parameter: `?period=today`, `?period=7d`, `?period=30d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
 
 ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. Она читает только artifact-level current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json`, показывает read-only KPI и очереди matched/lost/ambiguous/degraded/unreconciled без POST actions или write-back.
 
@@ -287,10 +290,28 @@ ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. О
 Поддерживаемые query parameters:
 
 - `run_id` — optional explicit run selection; если параметр не передан, используется latest run;
+- `period` — period filter для dashboard data: `today`, `yesterday`, `7d`, `30d`, `365d`, `all` (default определяется `config/settings.yml` → `rop.dashboard.default_period`);
 - `tab` — HTML page tab selector для `/rop`;
 - `lang` — HTML page locale selector для `/rop`.
 
-`/api/rop/dashboard` принимает `run_id`.
+`/api/rop/dashboard` принимает `run_id` и `period`.
+
+Новые поля в UI-5 enriched payload (It27.1):
+
+- `business_kpi` — бизнес-метрики:
+  - `processed_events`, `processed_emails`;
+  - `new_leads`, `existing_clients`, `follow_ups`;
+  - `high_priority`, `needs_review`;
+  - `lost_in_bitrix`, `ambiguous_or_duplicate`, `unreconciled`;
+  - `source_degraded`, `attachment_refused`, `bitrix_errors`;
+- `series` — chart-ready series:
+  - `processed_by_day` — processed events over time (labels + series with Processed/High priority);
+  - `classification_distribution` — case type distribution;
+  - `bitrix_distribution` — matched/lost/ambiguous/unreconciled;
+  - `source_contribution` — events per source;
+- `period` — текущий период;
+- `period_start_utc`, `period_end_utc` — границы периода;
+- `time_basis` — basis used: `event_timestamp`, `run_generated_at`, `run_mtime_fallback`, `mixed`, `unknown`.
 
 HTML `/rop` использует BeeUI tabs:
 

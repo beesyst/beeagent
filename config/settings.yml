@@ -112,6 +112,16 @@ rop:
         folder: "welding" # mailbox folder для чтения
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 90d
+      - 365d
+      - all
 
 bitrix:
   enabled: false # true/false - включить/выключить Bitrix connector

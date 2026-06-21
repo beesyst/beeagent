@@ -3759,6 +3759,654 @@ Security checks:
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 27.1 — ROP Business Dashboard UX + Period Analytics v0
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать ROP dashboard в BeeAgent продуктово полезным для РОПа: заменить технический run/artifact overview на business-facing dashboard с периодами, бизнес-метриками, chart-ready series, Bitrix evidence, operator queues и deterministic рекомендациями на основе existing ROP artifacts/current-state.
+
+Итерация должна использовать уже закрытый BeeUI It13.6:
+
+```text
+chart
+data_table
+kpi_grid
+state_grid
+attention_list
+artifact_links
+group
+degraded
+```
+
+BeeUI остаётся generic renderer:
+
+```text
+BeeUI renders.
+BeeAgent adapter decides.
+```
+
+BeeAgent должен отдавать нормализованный ROP dashboard read-model и `layout[]`, но не должен переносить в core классификацию, клиентские правила или Bitrix write-back.
+
+#### Почему это нужно
+
+После It27 BeeAgent создаёт current-state artifacts:
+
+```text
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+```
+
+Но текущий `/rop` UI всё ещё выглядит как debug/interface layer:
+
+```text
+run_id list
+n/a values
+generic metrics
+empty Bitrix unavailable card
+```
+
+Для MVP заказчику и РОПу нужен не список технических run_id, а операционная картина:
+
+```text
+что пришло за период
+сколько лидов обработано
+какие источники работают
+какие обращения важные
+какие обращения не найдены в Bitrix
+где ambiguous / duplicates
+что РОП должен проверить первым
+какие evidence artifacts открыть
+```
+
+Итерация закрывает разрыв между backend current-state artifacts и customer-facing ROP dashboard.
+
+#### Scope
+
+**Включено**
+
+- добавить BeeAgent-owned ROP dashboard read-model builder поверх existing It27 artifacts;
+- использовать `rop_current_state.json`, `rop_index.json`, `rop_latest.json`, `operator_summary.json`, `classified_events.json`, `bitrix_reconciliation.json`, `attachment_extraction.json`, `rop_review_table.tsv`;
+- добавить period support:
+  - `today`;
+  - `yesterday`;
+  - `7d`;
+  - `30d`;
+  - `365d`;
+  - `all`;
+- добавить config/source-of-truth для dashboard period behavior в `config/settings.yml`, если такого блока ещё нет:
+
+```yaml
+rop:
+  dashboard:
+    default_period: "7d"
+    periods:
+      - today
+      - yesterday
+      - 7d
+      - 30d
+      - 365d
+      - all
+```
+
+- валидировать новые keys fail-fast в `src/beeagent_module/core/settings.py`;
+- default period должен быть явно задан в config, а не скрыт в коде;
+- добавить CLI command для явной генерации dashboard read-model:
+
+```bash
+./start.sh rop dashboard --period 7d
+```
+
+- после successful `rop run` / `rop current` обновлять dashboard artifact для default period;
+- после successful `reconcile-bitrix` обновлять dashboard artifact;
+- failed `reconcile-bitrix` не должен создавать ложный Bitrix success state;
+- создать/update interface artifact:
+
+```text
+storage/interfaces/rop_dashboard.json
+```
+
+- artifact должен содержать dashboard payload по supported periods или по default period с явным `period`;
+- GET routes не должны мутировать storage;
+- `/rop` должен читать prepared dashboard/current-state artifacts и рендерить business dashboard;
+- `/api/rop/dashboard?period=7d` должен отдавать read-only payload;
+- сохранить backward compatibility старых API fields, если они уже используются тестами/UI.
+
+#### Business KPI
+
+ROP dashboard должен показывать business-facing KPI:
+
+```text
+processed_events
+processed_emails
+new_leads
+existing_clients
+follow_ups
+high_priority
+needs_review
+lost_in_bitrix
+ambiguous_or_duplicate
+unreconciled
+source_degraded
+attachment_refused
+bitrix_errors
+```
+
+Если часть полей невозможно получить из текущих artifacts, поле должно быть явно `0` или `n/a` с warning, но не должно маскироваться под полноценную аналитику.
+
+#### Time period behavior
+
+Allowed query values:
+
+```text
+period=today
+period=yesterday
+period=7d
+period=30d
+period=365d
+period=all
+```
+
+Dashboard payload должен содержать:
+
+```json
+{
+  "period": "7d",
+  "period_start_utc": "2026-06-13T00:00:00Z",
+  "period_end_utc": "2026-06-20T23:59:59Z",
+  "time_basis": "event_timestamp",
+  "warnings": []
+}
+```
+
+Allowed `time_basis`:
+
+```text
+event_timestamp
+run_generated_at
+run_mtime_fallback
+mixed
+unknown
+```
+
+Rules:
+
+```text
+event timestamp available
+→ use event_timestamp
+
+event timestamp missing but current-state generated_at exists
+→ use run_generated_at and add warning if needed
+
+generated_at missing
+→ use run directory mtime fallback and add warning time_basis_fallback
+
+missing time basis
+→ include item only for period=all or degrade explicitly
+```
+
+#### Charts / series
+
+Если BeeUI It13.6 chart block доступен, BeeAgent adapter должен отдавать chart blocks в `layout[]`.
+
+Expected chart blocks:
+
+```text
+Processed events over time
+Lead classification distribution
+Bitrix evidence distribution
+Source contribution by source_id/source_role
+```
+
+Example chart-ready API shape:
+
+```json
+{
+  "series": {
+    "processed_by_day": {
+      "labels": ["2026-06-14", "2026-06-15"],
+      "series": [
+        { "name": "Processed", "data": [12, 18] },
+        { "name": "High priority", "data": [2, 4] }
+      ]
+    },
+    "classification_distribution": {
+      "labels": ["new_lead", "follow_up", "other"],
+      "series": [8, 5, 2]
+    },
+    "bitrix_distribution": {
+      "labels": ["matched", "lost", "ambiguous", "unreconciled"],
+      "series": [7, 3, 2, 4]
+    }
+  }
+}
+```
+
+#### Data tables / queues
+
+Использовать BeeUI `data_table` для operator queues:
+
+- High-priority queue;
+- Needs review queue;
+- Lost in Bitrix queue;
+- Ambiguous / duplicate queue;
+- Unreconciled queue;
+- Source degraded queue;
+- Evidence table.
+
+Expected row fields:
+
+```text
+event_id
+source_id
+source_display_name
+sender
+subject
+bot_case_type
+bot_priority
+bitrix_status
+reason
+recommended_next_step
+run_id
+evidence_href
+```
+
+#### ROP recommendations
+
+Добавить deterministic ROP recommendations на основе existing artifacts/current-state.
+
+Это не AI-рекомендации и не client-specific classification logic.
+
+Rules:
+
+```text
+high_priority > 0
+→ recommend immediate review/call for high-priority cases
+
+lost_in_bitrix > 0
+→ recommend checking CRM gap / manual lead review
+
+ambiguous_or_duplicate > 0
+→ recommend resolving duplicate/ambiguous Bitrix matches
+
+unreconciled > 0 and Bitrix artifact missing
+→ recommend running read-only Bitrix reconciliation
+
+connector_degraded > 0
+→ recommend checking Bitrix connector
+
+source_degraded > 0
+→ recommend checking source/mailbox ingestion
+
+attachment_refused > 0
+→ recommend manual review of refused attachment metadata
+```
+
+Expected recommendation item:
+
+```json
+{
+  "severity": "warning",
+  "title": "Review lost Bitrix leads",
+  "detail": "3 classified events were not found in Bitrix.",
+  "reason_code": "lost_in_bitrix",
+  "count": 3,
+  "read_only": true,
+  "action_type": "manual_review",
+  "evidence_href": "/rop?tab=bitrix&period=7d"
+}
+```
+
+#### Bitrix Evidence Board behavior
+
+Bitrix tab/section must be useful even when Bitrix artifact is missing.
+
+Rules:
+
+```text
+valid Bitrix evidence exists
+→ show matched/lost/ambiguous/duplicate tables and chart
+
+Bitrix artifact missing
+→ show status "Not reconciled"
+→ show unreconciled count
+→ show next step: run read-only reconcile-bitrix
+→ do not call it "Bitrix unavailable" unless connector failure is actually known
+
+Bitrix connector degraded/error
+→ show connector degraded state
+→ do not treat as not_found
+
+Bitrix not_found
+→ count as lost_in_bitrix
+
+missing/stale/malformed Bitrix artifact
+→ warning, no false lost_in_bitrix count
+```
+
+Important invariant:
+
+```text
+not_found != connector failure
+missing/stale Bitrix artifact != not_found
+```
+
+#### UI layout expectation
+
+`/rop` should become a product dashboard, not a debug run list.
+
+Expected tabs:
+
+```text
+Overview
+Queue
+Sources
+Attachments
+Bitrix
+Evidence
+```
+
+Overview should show:
+
+- period selector;
+- business KPI cards;
+- charts;
+- top recommendations;
+- compact current state;
+- key evidence links.
+
+Technical run list may remain only as compact selector or Evidence/Debug area, not the main content.
+
+#### API expectation
+
+`GET /api/rop/dashboard?period=7d`
+
+Expected payload:
+
+```json
+{
+  "run_id": "smoke-it27-current",
+  "selected_run_id": "smoke-it27-current",
+  "period": "7d",
+  "time_basis": "run_generated_at",
+  "read_only": true,
+  "business_kpi": {
+    "processed_events": 2,
+    "processed_emails": 2,
+    "new_leads": 1,
+    "existing_clients": 0,
+    "follow_ups": 1,
+    "high_priority": 1,
+    "needs_review": 0,
+    "lost_in_bitrix": 0,
+    "ambiguous_or_duplicate": 0,
+    "unreconciled": 2,
+    "source_degraded": 0,
+    "attachment_refused": 0,
+    "bitrix_errors": 0
+  },
+  "series": {},
+  "queues": {},
+  "rop_recommendations": [],
+  "evidence_links": [],
+  "warnings": []
+}
+```
+
+Backward-compatible fields should remain if currently exposed:
+
+```text
+available_runs
+kpis
+funnel
+source_health
+classification_distribution
+recommendations
+current_state_kpi
+current_state_queues
+bitrix
+```
+
+#### Artifacts
+
+New / updated:
+
+```text
+storage/interfaces/rop_dashboard.json
+```
+
+Existing read:
+
+```text
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+storage/runs/<run_id>/rop_current_state.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+#### Config / contract impact
+
+Expected:
+
+- `config/settings.yml` changes if `rop.dashboard` does not already exist;
+- fail-fast validation in `src/beeagent_module/core/settings.py`;
+- artifact contract change:
+  - `storage/interfaces/rop_dashboard.json`;
+
+- API contract change:
+  - `/api/rop/dashboard?period=...`;
+
+- UI adapter/read-model behavior change;
+- docs update required.
+
+#### Не включено
+
+- Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- task creation;
+- timeline comments;
+- manager scoring;
+- 1C integration;
+- mailbox listener/polling;
+- web-triggered ROP run;
+- auth/RBAC;
+- Control Panel;
+- POST/operator actions;
+- editing review labels in UI;
+- changes to `beeagent-rop`;
+- AI recommendation generation;
+- arbitrary ApexCharts options;
+- BeeUI core changes, unless a real incompatibility is found;
+- DataTables/List.js runtime.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- artifact restore/parsing;
+- file/path handling;
+- UI/API exposure of client operational data;
+- serialization into BeeUI `chart` and `data_table` blocks;
+- config validation if `rop.dashboard` is added;
+- malformed/stale artifact handling;
+- read-only Web/API behavior.
+
+No new external connector is added in this iteration.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or web or ui"
+```
+
+Targeted tests:
+
+```text
+settings validation for rop.dashboard.default_period
+settings validation for allowed dashboard periods
+dashboard builder with normal current-state
+dashboard builder with no Bitrix artifact
+dashboard builder with valid Bitrix matched/not_found/ambiguous/degraded data
+dashboard builder with stale/malformed Bitrix artifact
+period parser accepts today/yesterday/7d/30d/365d/all
+period parser rejects unsafe/unknown values
+time_basis fallback is explicit
+business_kpi is present in API
+chart-ready series are present
+data_table queue blocks are present in layout
+deterministic recommendations are generated
+missing Bitrix artifact produces Not reconciled state, not Bitrix unavailable
+lost_in_bitrix uses only valid Bitrix not_found
+/rop renders business overview, not primary debug run list
+/api/rop/dashboard?period=7d works
+GET routes do not mutate storage
+path traversal run_id/query attempts are rejected/degraded
+artifact links remain allowlisted
+secrets/raw .eml/attachment content are not exposed
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it27-1-business-dashboard
+
+uv run python config/start.py rop current \
+  --run-id smoke-it27-1-business-dashboard
+
+uv run python config/start.py rop dashboard \
+  --period 7d
+
+uv run python config/start.py web \
+  --host 127.0.0.1 \
+  --port 8780 \
+  --no-open
+```
+
+Manual browser/API checks:
+
+```text
+GET /rop
+GET /rop?period=today
+GET /rop?period=7d
+GET /rop?tab=bitrix&period=7d
+GET /api/rop/dashboard?period=7d
+GET /api/rop/dashboard?period=invalid
+```
+
+Security checks:
+
+```text
+SAST required
+SCA only if dependencies change
+lightweight DAST-style route/API misuse checks required for /rop and /api/rop/dashboard
+IAST not required
+fuzzing optional only for malformed artifact restore tests
+```
+
+Secret/content grep:
+
+```bash
+grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+  logs storage/runs/smoke-it27-1-business-dashboard storage/interfaces -n || true
+```
+
+#### DoD
+
+- `/rop` reads like a ROP business dashboard, not a debug artifact browser;
+- period selector works for supported periods;
+- `storage/interfaces/rop_dashboard.json` is created/updated;
+- `/api/rop/dashboard?period=7d` includes `business_kpi`, `series`, `queues`, `rop_recommendations`;
+- chart blocks are returned for BeeUI when chart data exists;
+- data_table blocks are returned for operator queues;
+- Bitrix Board shows useful states:
+  - matched;
+  - lost/not_found;
+  - ambiguous/duplicate;
+  - unreconciled;
+  - connector degraded;
+  - missing/stale artifact warning;
+- `not_found`, missing evidence and connector failure are not confused;
+- recommendations are deterministic and read-only;
+- technical run list is not the primary Overview content;
+- GET routes do not mutate storage;
+- no POST/write/action route is added;
+- no Bitrix write-back exists;
+- no `beeagent-rop` code is changed;
+- BeeAgent core does not contain ROP classification rules;
+- config/source-of-truth is explicit if new dashboard keys are added;
+- path traversal is blocked;
+- secrets/raw `.eml`/attachment content are not exposed;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
+#### Реализовано
+
+- `src/beeagent_module/cases/rop_dashboard.py` — новый модуль:
+  - `ALLOWED_PERIODS` — константа с поддерживаемыми периодами;
+  - `parse_period(period)` — парсинг периода в `{period, period_start_utc, period_end_utc, time_basis}`;
+  - `validate_period(period)` — валидация периода против ALLOWED_PERIODS;
+  - `build_rop_dashboard(storage_dir, period, logger, run_id=None)` — построение dashboard read-model;
+  - `write_rop_dashboard(storage_dir, dashboard, logger)` — запись артефакта `storage/interfaces/rop_dashboard.json`;
+- `config/settings.yml` — добавлен блок `rop.dashboard`:
+  - `default_period: "7d"`;
+  - `periods: [today, yesterday, 7d, 30d, 365d, all]`;
+- `src/beeagent_module/core/settings.py`:
+  - добавлены обязательные ключи `rop.dashboard.default_period` и `rop.dashboard.periods`;
+  - добавлена `_validate_rop_dashboard_settings()` — fail-fast валидация:
+    - `default_period` — non-empty string, must be in allowlist;
+    - `periods` — non-empty list, каждый элемент в allowlist;
+    - `default_period` must be in `periods`;
+- `src/beeagent_module/core/cli.py`:
+  - добавлен `handle_rop_dashboard(args, settings, logger)` — CLI handler;
+  - добавлен `dashboard` subparser с `--period` и `--run-id`;
+  - после успешного `rop run` автоматически строится dashboard для default period;
+  - после успешного `rop current` автоматически строится dashboard;
+  - после успешного `reconcile-bitrix` автоматически строится dashboard;
+- Dashboard read-model содержит:
+  - `business_kpi` — processed_events, new_leads, existing_clients, follow_ups, high_priority, needs_review, lost_in_bitrix, ambiguous_or_duplicate, unreconciled, source_degraded, attachment_refused;
+  - `series` — processed_by_day, classification_distribution, bitrix_distribution, source_contribution;
+  - `queues` — high_priority, needs_review, lost_in_bitrix, unreconciled;
+  - `rop_recommendations` — deterministic рекомендации по high_priority, lost_in_bitrix, ambiguous/duplicate, unreconciled, source_degraded, attachment_refused;
+  - `evidence_links` — ссылки на все allowlisted artifact_id для данного run;
+- Dashboard поддерживает period filtering: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`;
+- `src/beeagent_module/interfaces/ui/read_model.py`:
+  - `build_rop_dashboard_read_model` уже использует `beeagent_module.cases.rop_dashboard.parse_period/validate_period`;
+  - `/api/rop/dashboard?period=7d` отдаёт `business_kpi`, `series`, `queues`, `rop_recommendations`;
+  - `/rop` Overview — business KPI cards, charts, рекомендации, compact run selector;
+- CLI entrypoint:
+
+```bash
+./start.sh rop dashboard --period 7d
+./start.sh rop dashboard --period today --run-id <run_id>
+./start.sh rop dashboard --period all
+```
+
+- Артефакт: `storage/interfaces/rop_dashboard.json`;
+- Dashboard автоматически обновляется после `rop run`, `rop current` и `reconcile-bitrix`;
+- `./start.sh web` — `/rop` и `/api/rop/dashboard` поддерживают `period` query parameter;
+- Тесты: `tests/test_rop_dashboard.py` — period parsing, build, write, no-bitrix, empty, settings validation;
+- Docs: `docs/ROADMAP.md`, `README.ru.md`, `docs/WEB_UI.md`, `docs/DEV_GUIDE.md` обновлены.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
