@@ -304,6 +304,20 @@ print(result["operator_text"])
 
 Для работы требуется настроенный `bitrix` блок в `config/settings.yml` и переменная окружения `BITRIX_WEBHOOK_URL`. Если Bitrix отключён (`bitrix.enabled: false`), команда всё равно выполняется (если env доступен), но выдаёт предупреждение.
 
+**`./start.sh rop mvp-pack`** — собрать MVP handoff/readiness pack v0 из existing ROP artifacts (BeeAgent-owned):
+
+```bash
+./start.sh rop mvp-pack --run-id <run_id> [--period 7d]
+```
+
+Создаёт артефакты:
+
+- `storage/runs/<run_id>/rop_mvp_pack.json` — JSON-сводка
+- `storage/runs/<run_id>/rop_mvp_report.md` — Markdown-отчёт
+- `storage/interfaces/rop_mvp_latest.json` — интерфейсный артефакт
+
+Pack включает: source coverage (из `config/settings.yml → rop.sources[]`, не хардкод), business KPI, очереди, first actions, demo readiness, evidence links и known limitations. Pack read-only, non-production, без write-back.
+
 **`./start.sh rop current`** — построить current-state index для указанного ROP run:
 
 ```bash

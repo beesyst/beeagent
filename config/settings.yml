@@ -124,7 +124,7 @@ rop:
       - all
 
 bitrix:
-  enabled: false # true/false - включить/выключить Bitrix connector
+  enabled: true # true/false - включить/выключить Bitrix connector
   webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
   timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
   page_size: 50 # размер страницы для Bitrix list-запросов

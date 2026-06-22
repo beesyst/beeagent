@@ -10,6 +10,7 @@ from beeagent_module.core.cli import (
     handle_rop_current,
     handle_rop_dashboard,
     handle_rop_export_review,
+    handle_rop_mvp_pack,
     handle_rop_reconcile_bitrix,
     handle_rop_run,
     handle_rop_summary,
@@ -112,6 +113,8 @@ def _handle_rop_cli(
             handle_rop_current(args, settings=settings, logger=logger)
         elif args.rop_command == "dashboard":
             handle_rop_dashboard(args, settings=settings, logger=logger)
+        elif args.rop_command == "mvp-pack":
+            handle_rop_mvp_pack(args, settings=settings, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)

@@ -10,6 +10,10 @@ from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
 )
+from beeagent_module.cases.rop_mvp_pack import (
+    build_rop_mvp_pack,
+    write_mvp_pack_artifacts,
+)
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.core.paths import get_project_root, get_storage_dir
 
@@ -865,6 +869,85 @@ def handle_rop_dashboard(
         raise RopCliError(f"ROP dashboard build failed: {exc}") from exc
 
 
+# Handler для команды 'rop mvp-pack': собирает MVP handoff/readiness pack для указанного run_id
+def handle_rop_mvp_pack(
+    args: argparse.Namespace,
+    settings: dict,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+    period = args.period or settings.get("rop", {}).get("dashboard", {}).get(
+        "default_period", "7d"
+    )
+
+    logger.info(
+        "ROP CLI: building MVP pack for run_id=%s period=%s",
+        run_id,
+        period,
+    )
+
+    try:
+        pack = build_rop_mvp_pack(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            period=period,
+            settings=settings,
+            logger=logger,
+        )
+        paths = write_mvp_pack_artifacts(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            pack=pack,
+            logger=logger,
+        )
+
+        print(f"\nROP MVP pack built: run_id={run_id} period={period}")
+        print(f"  status:             {pack.get('status', '?')}")
+        print(f"  client_id:          {pack.get('client_id', '?')}")
+        print(f"  configured_sources: {pack.get('source_coverage', {}).get('configured', 0)}")
+        print(f"  loaded_sources:     {pack.get('source_coverage', {}).get('loaded', 0)}")
+        print(f"  degraded_sources:   {pack.get('source_coverage', {}).get('degraded', 0)}")
+        print(f"  classified_events:  {pack.get('business_summary', {}).get('classified_count', 0)}")
+        print(f"  high_priority:      {pack.get('business_summary', {}).get('high_priority', 0)}")
+        print(f"  demo_readiness:     {pack.get('demo_readiness', {}).get('status', '?')}")
+        print()
+        print(f"  pack JSON:   {paths['pack']}")
+        print(f"  report MD:   {paths['report']}")
+        print(f"  interface:   {paths['latest']}")
+        print()
+
+        warnings = pack.get("warnings", [])
+        if warnings:
+            print(f"  warnings: {len(warnings)}")
+            for w in warnings:
+                print(f"    - {w}")
+        print()
+
+        limitations = pack.get("limitations", [])
+        if limitations:
+            print("  Known limitations:")
+            for lim in limitations:
+                print(f"    - {lim}")
+        print()
+
+        logger.info(
+            "ROP CLI: MVP pack built successfully: run_id=%s status=%s warnings=%d",
+            run_id,
+            pack.get("status"),
+            len(warnings),
+        )
+    except FileNotFoundError as exc:
+        logger.error("ROP CLI: MVP pack build failed (run not found): %s", exc)
+        raise RopCliError(str(exc)) from exc
+    except ValueError as exc:
+        logger.error("ROP CLI: MVP pack build failed (invalid input): %s", exc)
+        raise RopCliError(str(exc)) from exc
+    except Exception as exc:
+        logger.error("ROP CLI: MVP pack build failed: %s", exc)
+        raise RopCliError(f"ROP MVP pack build failed: {exc}") from exc
+
+
 # Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника, а также items_max и period для ограничения количества обрабатываемых событий и периода для batch-источников
 def create_rop_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -967,6 +1050,23 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="run_id to reconcile with Bitrix",
+    )
+
+    mvp_parser = subparsers.add_parser(
+        "mvp-pack",
+        help="Build ROP MVP handoff/readiness pack from existing artifacts",
+    )
+    mvp_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to build MVP pack for",
+    )
+    mvp_parser.add_argument(
+        "--period",
+        type=str,
+        default=None,
+        help="Period label for report (e.g. 7d, 30d); defaults to rop.dashboard.default_period",
     )
 
     return parser

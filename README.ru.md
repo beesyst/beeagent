@@ -172,6 +172,10 @@ run:
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
 ./start.sh rop reconcile-bitrix --run-id ID
+
+# ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
+./start.sh rop mvp-pack --run-id ID [--period 7d]
+```
 ```
 
 ### Operator Web Console (UI-5 — Rich ROP dashboard и operator intelligence)
