@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.36.0...beeagent-v0.37.0) (2026-06-23)
+
+
+### Features
+
+* **rop:** add MVP handoff readiness pack ([#115](https://github.com/beesyst/beeagent/issues/115)) ([b47a60d](https://github.com/beesyst/beeagent/commit/b47a60d4f20fd684f3da75b91060562943e2de1a))
+
 ## [0.36.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.35.0...beeagent-v0.36.0) (2026-06-21)
 
 
