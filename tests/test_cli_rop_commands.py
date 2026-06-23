@@ -14,6 +14,7 @@ from beeagent_module.core.cli import (
     create_rop_parser,
     handle_rop_dashboard,
     handle_rop_export_review,
+    handle_rop_mvp_pack,
     handle_rop_run,
     handle_rop_summary,
 )
@@ -113,6 +114,15 @@ class TestRopCliArgumentParser:
 
         with pytest.raises(RopCliError, match="Invalid period"):
             handle_rop_dashboard(args, settings=settings, logger=_null_logger())
+
+    def test_rop_mvp_pack_rejects_period_not_configured(self) -> None:
+        import argparse
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        args = argparse.Namespace(period="14d", run_id="test-run-123")
+
+        with pytest.raises(RopCliError, match="Invalid period"):
+            handle_rop_mvp_pack(args, settings=settings, logger=_null_logger())
 
 
 # Тесты для функции применения переопределений источников: проверяют, что правильные источники включаются/настраиваются, а ошибки обрабатываются корректно

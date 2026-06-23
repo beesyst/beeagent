@@ -877,9 +877,20 @@ def handle_rop_mvp_pack(
 ) -> None:
     storage_dir = get_storage_dir()
     run_id = args.run_id
-    period = args.period or settings.get("rop", {}).get("dashboard", {}).get(
-        "default_period", "7d"
-    )
+
+    try:
+        configured_periods = _dashboard_periods(settings)
+        period = args.period or _dashboard_default_period(settings)
+    except KeyError as exc:
+        raise RopCliError(
+            "rop.dashboard.default_period and rop.dashboard.periods are required "
+            "for ROP MVP pack period selection"
+        ) from exc
+
+    if period not in configured_periods:
+        raise RopCliError(
+            f"Invalid period '{period}', expected one of: {configured_periods}"
+        )
 
     logger.info(
         "ROP CLI: building MVP pack for run_id=%s period=%s",

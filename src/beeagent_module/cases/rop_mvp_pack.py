@@ -1,11 +1,3 @@
-"""
-ROP MVP handoff / readiness pack builder v0.
-
-BeeAgent-owned: consolidates existing ROP artifacts into customer/demo-ready
-JSON and Markdown report artifacts. No write-back, no new connectors,
-no changes to beeagent-rop.
-"""
-
 from __future__ import annotations
 
 import json
@@ -14,9 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 _PACK_ARTIFACT = "rop_mvp_pack.json"
 _REPORT_ARTIFACT = "rop_mvp_report.md"
@@ -52,7 +41,6 @@ def _read_json_list(path: Path) -> list[dict[str, Any]] | None:
 
 
 def _resolve_run_dir(storage_dir: Path, run_id: str) -> Path:
-    """Resolve and validate run directory, blocking path traversal."""
     runs_root = (storage_dir / "runs").resolve()
     run_dir = (runs_root / run_id).resolve()
     try:
@@ -68,13 +56,7 @@ def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# ---------------------------------------------------------------------------
-# Source coverage builder (from config, not hardcoded)
-# ---------------------------------------------------------------------------
-
-
 def _build_source_coverage(settings: dict) -> dict[str, Any]:
-    """Read source coverage from config/settings.yml -> rop.sources[]."""
     raw_sources = settings.get("rop", {}).get("sources", [])
     if not isinstance(raw_sources, list):
         return {
@@ -117,7 +99,6 @@ def _enrich_source_coverage_from_diag(
     coverage: dict[str, Any],
     source_diag: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Overlay runtime source diagnostics on top of config coverage."""
     if not isinstance(source_diag, dict):
         coverage["warning"] = "source_diagnostics.json not available; showing config-only coverage"
         return coverage
@@ -149,7 +130,6 @@ def _enrich_source_coverage_from_diag(
             else:
                 s["runtime_status"] = "not_loaded"
 
-    # Infer loaded from runtime data
     loaded = sum(
         1
         for s in coverage.get("sources", [])
@@ -168,11 +148,6 @@ def _enrich_source_coverage_from_diag(
     return coverage
 
 
-# ---------------------------------------------------------------------------
-# Business summary builder
-# ---------------------------------------------------------------------------
-
-
 def _build_business_summary(
     current_state: dict[str, Any] | None,
     dashboard: dict[str, Any] | None,
@@ -180,13 +155,11 @@ def _build_business_summary(
 ) -> dict[str, Any]:
     kpi: dict[str, Any] = {}
 
-    # Prefer dashboard business_kpi when available
     if isinstance(dashboard, dict):
         bkpi = dashboard.get("business_kpi", {})
         if isinstance(bkpi, dict):
             kpi.update(bkpi)
 
-    # Fall back to current_state KPI
     if isinstance(current_state, dict):
         ckpi = current_state.get("kpi", {})
         if isinstance(ckpi, dict):
@@ -199,7 +172,6 @@ def _build_business_summary(
                 if key not in kpi and key in ckpi:
                     kpi[key] = ckpi[key]
 
-    # Compute from classified events if nothing else available
     if not kpi and isinstance(classified_events, list):
         kpi["classified_count"] = len(classified_events)
         kpi["high_priority"] = sum(
@@ -208,11 +180,6 @@ def _build_business_summary(
         )
 
     return kpi
-
-
-# ---------------------------------------------------------------------------
-# Queue builders (from current_state or classified events)
-# ---------------------------------------------------------------------------
 
 
 def _build_queues(
@@ -233,12 +200,23 @@ def _build_queues(
     if isinstance(current_state, dict):
         cq = current_state.get("queues", {})
         if isinstance(cq, dict):
-            for key in queues:
-                raw = cq.get(key)
-                if isinstance(raw, list):
-                    queues[key] = raw
+            queue_aliases = {
+                "high_priority": ("high_priority",),
+                "needs_review": ("needs_review",),
+                "lost_in_bitrix": ("lost_in_bitrix",),
+                "ambiguous_or_duplicate": ("ambiguous_or_duplicate", "ambiguous"),
+                "unreconciled": ("unreconciled",),
+                "matched": ("matched",),
+                "degraded": ("degraded",),
+            }
 
-    # If no current_state, build minimal from classified events
+            for target_key, source_keys in queue_aliases.items():
+                for source_key in source_keys:
+                    raw = cq.get(source_key)
+                    if isinstance(raw, list):
+                        queues[target_key] = raw
+                        break
+
     if not isinstance(current_state, dict) and isinstance(classified_events, list):
         for evt in classified_events:
             if not isinstance(evt, dict):
@@ -256,11 +234,6 @@ def _build_queues(
             queues["unreconciled"].append(entry)
 
     return queues
-
-
-# ---------------------------------------------------------------------------
-# Attachment summary
-# ---------------------------------------------------------------------------
 
 
 def _build_attachment_summary(
@@ -283,11 +256,6 @@ def _build_attachment_summary(
         default["refused"] = _int(agg.get("refused_count", 0))
         default["unsupported"] = _int(agg.get("unsupported_count", 0))
     return default
-
-
-# ---------------------------------------------------------------------------
-# First actions for ROP
-# ---------------------------------------------------------------------------
 
 
 def _build_first_actions(queues: dict[str, Any],
@@ -344,38 +312,104 @@ def _build_first_actions(queues: dict[str, Any],
     return actions
 
 
-# ---------------------------------------------------------------------------
-# Evidence links (safe, no secrets)
-# ---------------------------------------------------------------------------
-
-
 def _build_evidence_links(storage_dir: Path, run_id: str) -> list[dict[str, Any]]:
-    """Build safe evidence links from available run-level artifacts."""
-    evidence_ids = (
-        "operator_summary_json",
-        "source_diagnostics_json",
-        "intake_metadata_json",
-        "attachment_extraction_json",
-        "normalized_events_json",
-        "classified_events_json",
-        "rop_review_table_tsv",
-        "rop_current_state_json",
-        "bitrix_reconciliation_json",
+    evidence_artifacts = (
+        ("operator_summary_json", "operator_summary.json"),
+        ("source_diagnostics_json", "source_diagnostics.json"),
+        ("intake_metadata_json", "intake_metadata.json"),
+        ("attachment_extraction_json", "attachment_extraction.json"),
+        ("normalized_events_json", "normalized_events.json"),
+        ("classified_events_json", "classified_events.json"),
+        ("rop_review_table_tsv", "rop_review_table.tsv"),
+        ("rop_current_state_json", "rop_current_state.json"),
+        ("bitrix_reconciliation_json", "bitrix_reconciliation.json"),
     )
+
+    runs_root = (storage_dir / "runs").resolve()
+    run_dir = (runs_root / run_id).resolve()
+
+    try:
+        run_dir.relative_to(runs_root)
+    except ValueError:
+        return []
+
     links: list[dict[str, Any]] = []
-    for aid in evidence_ids:
-        links.append({
-            "artifact_id": aid,
-            "label": aid.replace("_", " ").title(),
-            "href": f"/runs/{run_id}/artifacts/{aid}",
-            "available": False,
-        })
+    for artifact_id, filename in evidence_artifacts:
+        artifact_path = (run_dir / filename).resolve()
+        try:
+            artifact_path.relative_to(run_dir)
+            available = artifact_path.is_file()
+        except ValueError:
+            available = False
+
+        links.append(
+            {
+                "artifact_id": artifact_id,
+                "label": artifact_id.replace("_", " ").title(),
+                "href": f"/runs/{run_id}/artifacts/{artifact_id}",
+                "available": available,
+            }
+        )
+
     return links
 
 
-# ---------------------------------------------------------------------------
-# Main builder
-# ---------------------------------------------------------------------------
+def _build_bitrix_evidence(
+    business_summary: dict[str, Any],
+    bitrix_reconciliation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    bitrix_status = "unreconciled"
+    aggregate: dict[str, Any] = {}
+
+    if isinstance(bitrix_reconciliation, dict):
+        bitrix_status = str(bitrix_reconciliation.get("status", "unreconciled"))
+        raw_aggregate = bitrix_reconciliation.get("aggregate", {})
+        if isinstance(raw_aggregate, dict):
+            aggregate = raw_aggregate
+
+    evidence_status = "reconciled" if bitrix_status == "ok" else bitrix_status
+
+    if "matched_in_bitrix" in business_summary:
+        matched = _int(business_summary.get("matched_in_bitrix"))
+    else:
+        matched = _int(aggregate.get("matched_count", 0))
+
+    if "lost_in_bitrix" in business_summary:
+        lost = _int(business_summary.get("lost_in_bitrix"))
+    else:
+        lost = _int(aggregate.get("not_found_count", 0))
+
+    if "ambiguous_or_duplicate" in business_summary:
+        ambiguous = _int(business_summary.get("ambiguous_or_duplicate"))
+    elif "ambiguous_in_bitrix" in business_summary:
+        ambiguous = _int(business_summary.get("ambiguous_in_bitrix"))
+    else:
+        ambiguous = _int(aggregate.get("ambiguous_count", 0)) + _int(
+            aggregate.get("duplicate_candidate_count", 0)
+        )
+
+    if "unreconciled" in business_summary:
+        unreconciled = _int(business_summary.get("unreconciled"))
+    else:
+        unreconciled = _int(aggregate.get("skipped_count", 0))
+
+    if "bitrix_errors" in business_summary:
+        bitrix_errors = _int(business_summary.get("bitrix_errors"))
+    elif "connector_error_count" in business_summary:
+        bitrix_errors = _int(business_summary.get("connector_error_count"))
+    else:
+        bitrix_errors = _int(
+            aggregate.get("connector_error_count", aggregate.get("error_count", 0))
+        )
+
+    return {
+        "status": evidence_status,
+        "matched_in_bitrix": matched,
+        "lost_in_bitrix": lost,
+        "ambiguous_or_duplicate": ambiguous,
+        "unreconciled": unreconciled,
+        "bitrix_errors": bitrix_errors,
+    }
 
 
 def build_rop_mvp_pack(
@@ -385,16 +419,10 @@ def build_rop_mvp_pack(
     settings: dict,
     logger: logging.Logger,
 ) -> dict[str, Any]:
-    """Build the MVP handoff/readiness pack for a given run.
-
-    Returns the pack dict (also written to disk). The pack is always
-    read-only and explicitly flagged as non-production.
-    """
     logger.info("ROP MVP pack: building for run_id=%s period=%s", run_id, period)
 
     run_dir = _resolve_run_dir(storage_dir, run_id)
 
-    # --- Read existing artifacts (best-effort) ---
     current_state = _read_json_dict(run_dir / "rop_current_state.json")
     source_diag = _read_json_dict(run_dir / "source_diagnostics.json")
     intake = _read_json_dict(run_dir / "intake_metadata.json")
@@ -404,13 +432,23 @@ def build_rop_mvp_pack(
     bitrix_reconciliation = _read_json_dict(run_dir / "bitrix_reconciliation.json")
     operator_summary = _read_json_dict(run_dir / "operator_summary.json")
 
-    # Dashboard from interfaces (may exist without current run)
     interfaces_dir = storage_dir / "interfaces"
-    dashboard = _read_json_dict(interfaces_dir / "rop_dashboard.json")
+    dashboard_artifact = _read_json_dict(interfaces_dir / "rop_dashboard.json")
 
     warnings: list[str] = []
 
-    # --- Source coverage from config enriched with diagnostics ---
+    dashboard: dict[str, Any] | None = None
+    if isinstance(dashboard_artifact, dict):
+        dashboard_run_id = dashboard_artifact.get("run_id")
+        dashboard_period = dashboard_artifact.get("period")
+        if dashboard_run_id == run_id and dashboard_period == period:
+            dashboard = dashboard_artifact
+        else:
+            warnings.append(
+                "rop_dashboard.json does not match requested run_id/period; "
+                "using run-level artifacts for business summary"
+            )
+
     source_coverage = _build_source_coverage(settings)
     source_coverage = _enrich_source_coverage_from_diag(source_coverage, source_diag)
     loaded = _int(source_coverage.get("loaded", 0))
@@ -420,7 +458,6 @@ def build_rop_mvp_pack(
     if degraded > 0:
         warnings.append(f"{degraded} source(s) reported degradation")
 
-    # --- Client ID ---
     client_id = "unknown"
     if isinstance(current_state, dict):
         cid = current_state.get("client_id")
@@ -437,26 +474,24 @@ def build_rop_mvp_pack(
                 client_id = s["client_id"]
                 break
 
-    # --- Business summary ---
     business_summary = _build_business_summary(
         current_state, dashboard, classified_events,
     )
 
-    # --- Queues ---
     queues = _build_queues(current_state, classified_events)
 
-    # --- Attachment summary ---
     attachment_summary = _build_attachment_summary(attachment_extraction)
 
-    # --- First actions ---
     first_actions = _build_first_actions(queues, business_summary)
 
-    # --- Bitrix evidence status ---
     bitrix_status = "unreconciled"
     if isinstance(bitrix_reconciliation, dict):
-        bitrix_status = bitrix_reconciliation.get("status", "unreconciled")
+        bitrix_status = str(bitrix_reconciliation.get("status", "unreconciled"))
+    bitrix_evidence = _build_bitrix_evidence(
+        business_summary=business_summary,
+        bitrix_reconciliation=bitrix_reconciliation,
+    )
 
-    # --- Demo readiness ---
     demo_readiness = _build_demo_readiness(
         warnings=warnings,
         source_coverage=source_coverage,
@@ -464,16 +499,13 @@ def build_rop_mvp_pack(
         bitrix_status=bitrix_status,
     )
 
-    # --- Evidence links (safe, no secrets) ---
     evidence_links = _build_evidence_links(storage_dir, run_id)
 
-    # --- Known limitations ---
     limitations = _build_limitations(
         bitrix_reconciliation=bitrix_reconciliation,
         attachment_extraction=attachment_extraction,
     )
 
-    # Assemble pack
     pack: dict[str, Any] = {
         "run_id": run_id,
         "period": period,
@@ -496,6 +528,7 @@ def build_rop_mvp_pack(
             "degraded_count": len(queues.get("degraded", [])),
         },
         "attachment_summary": attachment_summary,
+        "bitrix_evidence": bitrix_evidence,
         "first_actions": first_actions,
         "demo_readiness": demo_readiness,
         "evidence_links": evidence_links,
@@ -511,11 +544,6 @@ def build_rop_mvp_pack(
         len(warnings),
     )
     return pack
-
-
-# ---------------------------------------------------------------------------
-# Demo readiness
-# ---------------------------------------------------------------------------
 
 
 def _build_demo_readiness(
@@ -567,11 +595,6 @@ def _build_demo_readiness(
     }
 
 
-# ---------------------------------------------------------------------------
-# Known limitations
-# ---------------------------------------------------------------------------
-
-
 def _build_limitations(
     bitrix_reconciliation: dict[str, Any] | None,
     attachment_extraction: dict[str, Any] | None,
@@ -594,13 +617,7 @@ def _build_limitations(
     return limitations
 
 
-# ---------------------------------------------------------------------------
-# Markdown report builder
-# ---------------------------------------------------------------------------
-
-
 def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
-    """Build a human-readable Markdown report from the MVP pack."""
     lines: list[str] = []
     _md = lines.append
 
@@ -612,7 +629,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     _md(f"**Non-production snapshot:** {pack.get('non_production', True)}")
     _md("")
 
-    # --- Executive summary ---
     _md("## Executive Summary")
     _md("")
     ds = pack.get("demo_readiness", {})
@@ -625,7 +641,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md(f"  - 🚫 {blocker}")
     _md("")
 
-    # --- Period and run ---
     _md("## Period and Run")
     _md("")
     _md(f"- **Run ID:** `{pack.get('run_id', '?')}`")
@@ -633,7 +648,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     _md(f"- **Client ID:** `{pack.get('client_id', '?')}`")
     _md("")
 
-    # --- Source coverage ---
     _md("## Source Coverage")
     _md("")
     sc = pack.get("source_coverage", {})
@@ -654,17 +668,26 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md(f"  - ⚠️ *{warning}*")
     _md("")
 
-    # --- Business KPI ---
     _md("## Business KPI")
     _md("")
     bkpi = pack.get("business_summary", {})
     if bkpi:
-        _md(f"- **Processed events:** {bkpi.get('processed_events', bkpi.get('classified_count', 0))}")
+        processed_events = bkpi.get(
+            "processed_events",
+            bkpi.get("events_total", bkpi.get("classified_count", 0)),
+        )
+        needs_review = bkpi.get("needs_review", bkpi.get("needs_manual_review", 0))
+        ambiguous = bkpi.get(
+            "ambiguous_or_duplicate",
+            bkpi.get("ambiguous_in_bitrix", 0),
+        )
+
+        _md(f"- **Processed events:** {processed_events}")
         _md(f"- **High priority:** {bkpi.get('high_priority', 0)}")
-        _md(f"- **Needs review:** {bkpi.get('needs_review', bkpi.get('needs_manual_review', 0))}")
+        _md(f"- **Needs review:** {needs_review}")
         _md(f"- **Matched in Bitrix:** {bkpi.get('matched_in_bitrix', 0)}")
         _md(f"- **Lost in Bitrix:** {bkpi.get('lost_in_bitrix', 0)}")
-        _md(f"- **Ambiguous/duplicate:** {bkpi.get('ambiguous_in_bitrix', 0)}")
+        _md(f"- **Ambiguous/duplicate:** {ambiguous}")
         _md(f"- **Unreconciled:** {bkpi.get('unreconciled', 0)}")
         _md(f"- **Source degraded:** {bkpi.get('source_degraded', 0)}")
         _md(f"- **Attachment refused:** {bkpi.get('attachment_refused', 0)}")
@@ -672,7 +695,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md("- No KPI data available")
     _md("")
 
-    # --- First actions for ROP ---
     _md("## First Actions for ROP")
     _md("")
     actions = pack.get("first_actions", [])
@@ -685,7 +707,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md("- No actions identified")
     _md("")
 
-    # --- Queues summary ---
     _md("## Queues")
     _md("")
     q = pack.get("queues", {})
@@ -698,31 +719,35 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     _md(f"- **Degraded:** {q.get('degraded_count', 0)}")
     _md("")
 
-    # --- Bitrix evidence ---
     _md("## Bitrix Evidence")
     _md("")
-    bkpi = pack.get("business_summary", {})
-    total_bitrix = (
-        bkpi.get("matched_in_bitrix", 0)
-        + bkpi.get("lost_in_bitrix", 0)
-        + bkpi.get("ambiguous_in_bitrix", 0)
-        + bkpi.get("bitrix_errors", 0)
+    bitrix_evidence = pack.get("bitrix_evidence", {})
+    if not isinstance(bitrix_evidence, dict):
+        bitrix_evidence = {}
+    _md(f"- **Status:** {bitrix_evidence.get('status', 'unreconciled')}")
+    _md(
+        f"- **Matched in Bitrix:** "
+        f"{bitrix_evidence.get('matched_in_bitrix', 0)}"
     )
-    bitrix_status = "reconciled" if total_bitrix > 0 else "unreconciled"
-    _md(f"- **Status:** {bitrix_status}")
-    _md(f"- **Matched in Bitrix:** {bkpi.get('matched_in_bitrix', 0)}")
-    _md(f"- **Lost in Bitrix:** {bkpi.get('lost_in_bitrix', 0)}")
-    _md(f"- **Ambiguous/duplicate:** {bkpi.get('ambiguous_in_bitrix', 0)}")
-    _md(f"- **Unreconciled:** {bkpi.get('unreconciled', 0)}")
-    _md(f"- **Bitrix errors:** {bkpi.get('bitrix_errors', 0)}")
+    _md(
+        f"- **Lost in Bitrix:** "
+        f"{bitrix_evidence.get('lost_in_bitrix', 0)}"
+    )
+    _md(
+        f"- **Ambiguous/duplicate:** "
+        f"{bitrix_evidence.get('ambiguous_or_duplicate', 0)}"
+    )
+    _md(f"- **Unreconciled:** {bitrix_evidence.get('unreconciled', 0)}")
+    _md(f"- **Bitrix errors:** {bitrix_evidence.get('bitrix_errors', 0)}")
     limitations_list = pack.get("limitations", [])
     if any("Bitrix reconciliation not yet run" in lim for lim in limitations_list):
         _md("")
-        _md("⚠️ **Note:** Bitrix reconciliation has not been run for this period. "
-            "Run `rop reconcile-bitrix` to enable Bitrix evidence.")
+        _md(
+            "⚠️ **Note:** Bitrix reconciliation has not been run for this period. "
+            "Run `rop reconcile-bitrix` to enable Bitrix evidence."
+        )
     _md("")
 
-    # --- Attachment evidence ---
     _md("## Attachment Evidence")
     _md("")
     attn = pack.get("attachment_summary", {})
@@ -731,7 +756,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     _md(f"- **Refused/unsupported:** {attn.get('refused', 0)}")
     _md("")
 
-    # --- Evidence artifacts ---
     _md("## Evidence Artifacts")
     _md("")
     links = pack.get("evidence_links", [])
@@ -740,14 +764,12 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
             _md(f"- `{link.get('artifact_id', '?')}` — {link.get('label', '?')}")
     _md("")
 
-    # --- Known limitations ---
     _md("## Known Limitations")
     _md("")
     for lim in pack.get("limitations", []):
         _md(f"- {lim}")
     _md("")
 
-    # --- Not included in MVP ---
     _md("## Not Included in MVP")
     _md("")
     not_included = [
@@ -765,7 +787,6 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md(f"- {item}")
     _md("")
 
-    # --- Recommended next step ---
     _md("## Recommended Next Step")
     _md("")
     if pack.get("status") == "ready":
@@ -781,18 +802,12 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Disk I/O
-# ---------------------------------------------------------------------------
-
-
 def write_mvp_pack_artifacts(
     storage_dir: Path,
     run_id: str,
     pack: dict[str, Any],
     logger: logging.Logger,
 ) -> dict[str, Path]:
-    """Write MVP pack JSON, Markdown report, and update interface file."""
     runs_root = (storage_dir / "runs").resolve()
     run_dir = (runs_root / run_id).resolve()
     try:
@@ -802,7 +817,6 @@ def write_mvp_pack_artifacts(
 
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # JSON pack
     pack_path = run_dir / _PACK_ARTIFACT
     pack_path.write_text(
         json.dumps(pack, indent=2, ensure_ascii=False),
@@ -813,7 +827,6 @@ def write_mvp_pack_artifacts(
         str(pack_path.relative_to(storage_dir)),
     )
 
-    # Markdown report
     report_md = build_mvp_report_markdown(pack)
     report_path = run_dir / _REPORT_ARTIFACT
     report_path.write_text(report_md, encoding="utf-8")
@@ -822,7 +835,6 @@ def write_mvp_pack_artifacts(
         str(report_path.relative_to(storage_dir)),
     )
 
-    # Interface file (latest)
     interfaces_dir = (storage_dir / "interfaces").resolve()
     interfaces_dir.mkdir(parents=True, exist_ok=True)
     latest_path = interfaces_dir / _LATEST_INTERFACE

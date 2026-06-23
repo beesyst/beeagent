@@ -40,9 +40,8 @@ uv sync
 
 ## Управление зависимостями (`uv`)
 
-
 > ⚠️ Пример выше требует, чтобы source `rop_batch_sample` был включён (`enabled: true`) в `config/settings.yml`. По умолчанию он выключен (enabled: false) для безопасности. Включите его вручную для теста/dev запуска.
-Источник правды по зависимостям:
+> Источник правды по зависимостям:
 
 - `pyproject.toml` — список зависимостей и constraints
 - `uv.lock` — зафиксированные версии для воспроизводимой установки
@@ -160,9 +159,11 @@ Web console читает только existing artifacts из `storage/` и не
 
 1. убедись, что в `config/settings.yml` есть блок `rop.sources` с ровно одним `enabled: true` источником;
 2. убедись, что каждый `rop.sources[]` содержит обязательный profile contract:
-  - `source_role`;
-  - `client_id`;
-  - `display_name`;
+
+- `source_role`;
+- `client_id`;
+- `display_name`;
+
 3. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
 4. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
 5. запусти flow напрямую через case invocation:
@@ -765,7 +766,7 @@ bash start.sh
 ### Code style / execution rules
 
 - Соблюдай PEP 8: имена, длина строк, структура.
-- Добавляй короткие комментарии на русском только там, где без них теряется смысл.
+- Не добавляй никаких комментариев.
 - Логи, имена полей, JSON/JSONL, runtime messages — на английском языке.
 - Все команды запуска, тестов и smoke-check указывай через `uv run`, если это применимо.
 - Не предлагай второй runtime, второй orchestrator или отдельный service/container без явной необходимости по итерации.

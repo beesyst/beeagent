@@ -177,10 +177,22 @@ class TestBitrixConfigValidation:
         assert "bitrix" in settings, "bitrix config block not found"
         assert isinstance(settings["bitrix"], dict)
 
-    def test_bitrix_disabled_does_not_require_env(self) -> None:
+    def test_bitrix_disabled_does_not_require_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from beeagent_module.core.settings import validate_settings
+
+        monkeypatch.delenv("BITRIX_WEBHOOK_URL", raising=False)
+
         settings = _load_test_settings()
+        settings["bitrix"]["enabled"] = False
+        settings["bitrix"]["reconciliation"]["enabled"] = False
+
         assert settings["bitrix"]["enabled"] is False
         assert settings["bitrix"]["webhook_env"] == "BITRIX_WEBHOOK_URL"
+
+        validate_settings(settings)
 
     def test_new_config_keys_are_validated(self) -> None:
         from beeagent_module.core.settings import validate_settings
