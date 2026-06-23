@@ -23,6 +23,8 @@ ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "module_result_json",
     "rop_summary_result_json",
     "steps_json",
+    "rop_mvp_pack_json",
+    "rop_mvp_report_md",
 )
 EVIDENCE_LABELS: dict[str, str] = {
     "operator_summary_json": "Operator summary",
@@ -37,6 +39,8 @@ EVIDENCE_LABELS: dict[str, str] = {
     "module_result_json": "Module result",
     "rop_summary_result_json": "ROP summary result",
     "steps_json": "Steps",
+    "rop_mvp_pack_json": "ROP MVP pack (JSON)",
+    "rop_mvp_report_md": "ROP MVP report (Markdown)",
 }
 
 

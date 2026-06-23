@@ -4409,7 +4409,7 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 
 ### Итерация 28 — ROP MVP handoff / readiness pack v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 

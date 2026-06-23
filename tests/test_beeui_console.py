@@ -1798,6 +1798,8 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
         "module_result_json",
         "rop_summary_result_json",
         "steps_json",
+        "rop_mvp_pack_json",
+        "rop_mvp_report_md",
     }
     link_ids = {l["artifact_id"] for l in links}
     assert link_ids == allowed

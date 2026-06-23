@@ -19,6 +19,8 @@ ARTIFACT_ALLOWLIST: dict[str, str] = {
         "module-beeagent-rop/lead_classification_result.json"
     ),
     "steps_json": "steps.json",
+    "rop_mvp_pack_json": "rop_mvp_pack.json",
+    "rop_mvp_report_md": "rop_mvp_report.md",
 }
 MODULE_ARTIFACT_IDS = frozenset(
     {
@@ -42,6 +44,8 @@ CONTENT_TYPE_MAP: dict[str, str] = {
     "rop_summary_result_json": "application/json",
     "lead_classification_result_json": "application/json",
     "steps_json": "application/json",
+    "rop_mvp_pack_json": "application/json",
+    "rop_mvp_report_md": "text/markdown",
 }
 
 
