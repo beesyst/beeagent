@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.37.0...beeagent-v0.38.0) (2026-06-24)
+
+
+### Features
+
+* **rop:** add Bitrix match quality gate and action drafts ([#118](https://github.com/beesyst/beeagent/issues/118)) ([c775e3a](https://github.com/beesyst/beeagent/commit/c775e3ae2fac7babc06243ba94e9ba69f99e5317))
+
 ## [0.37.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.36.0...beeagent-v0.37.0) (2026-06-23)
 
 
