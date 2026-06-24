@@ -16,7 +16,6 @@ from beeagent_module.core.module_contract import AuthorityLevel
 CapabilityHandler = Callable[[CapabilityRequest], dict]
 
 
-# Временный runtime для локального использования внутри одного модуля, без сетевых взаимодействий
 @dataclass(frozen=True)
 class CapabilityEntry:
     name: str
@@ -25,7 +24,6 @@ class CapabilityEntry:
     enabled: bool = True
 
 
-# Временный runtime для локального использования внутри одного модуля, без сетевых взаимодействий
 class LocalCapabilityRuntime:
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
@@ -203,7 +201,6 @@ _AUTHORITY_RANK = {
 }
 
 
-# Временный runtime для локального использования внутри одного модуля, без сетевых взаимодействий
 def _is_authority_sufficient(
     provided: AuthorityLevel,
     required: AuthorityLevel,

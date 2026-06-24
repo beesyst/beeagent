@@ -14,7 +14,6 @@ from beeagent_module.domain.models import Alert, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
 
 
-# Схема состояний для workflow promo
 class PromoState(TypedDict, total=False):
     storage_dir: Path
     logger: logging.Logger
@@ -39,7 +38,6 @@ class PromoState(TypedDict, total=False):
     steps: list[dict[str, Any]]
 
 
-# Добавление шага observability в state и логирование
 def _record_step(state: PromoState, step: str, duration_ms: int) -> None:
     steps: list[dict[str, Any]] = state.setdefault("steps", [])
     steps.append({"step": step, "duration_ms": duration_ms})
@@ -49,7 +47,6 @@ def _record_step(state: PromoState, step: str, duration_ms: int) -> None:
         logger.info("step=%s duration_ms=%d", step, duration_ms)
 
 
-# Node 1: сбор пользовательских данных и инициализация состояния workflow
 def collect_input(
     state: PromoState, config: RunnableConfig | None = None
 ) -> PromoState:
@@ -63,7 +60,6 @@ def collect_input(
     return state
 
 
-# Node 2: загрузка данных из adapter и инициализация метаданных запуска
 def load_data(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
@@ -109,7 +105,6 @@ def load_data(state: PromoState, config: RunnableConfig | None = None) -> PromoS
     return state
 
 
-# Node 3: детекция promo-кандидатов по простым правилам
 def detect_promo_rules(
     state: PromoState,
     config: RunnableConfig | None = None,
@@ -161,7 +156,6 @@ def detect_promo_rules(
     return state
 
 
-# Node 4: генерация задач promo на основе алертов
 def draft_tasks(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
@@ -188,7 +182,6 @@ def draft_tasks(state: PromoState, config: RunnableConfig | None = None) -> Prom
     return state
 
 
-# Node 5: формирование promo-отчета для пользователя
 def render_report(
     state: PromoState, config: RunnableConfig | None = None
 ) -> PromoState:
@@ -218,7 +211,6 @@ def render_report(
     return state
 
 
-# Чек статуса задач по run_id
 def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
     counts = {
         "draft": 0,
@@ -240,7 +232,6 @@ def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
     return summary, None
 
 
-# Чек формирования отчета в формате Markdown
 def _build_report_md(report_text: str, summary: str, reject_reason: str | None) -> str:
     report_md = f"{report_text}\n\n{summary}"
     if reject_reason:
@@ -248,7 +239,6 @@ def _build_report_md(report_text: str, summary: str, reject_reason: str | None) 
     return report_md
 
 
-# Чек формирования отчета в формате HTML
 def _build_report_html(report_md: str) -> str:
     return (
         "<!doctype html>\n"
@@ -267,7 +257,6 @@ def _build_report_html(report_md: str) -> str:
     )
 
 
-# Node 6: сохранение результатов promo run в storage
 def persist_run(state: PromoState, config: RunnableConfig | None = None) -> PromoState:
     _ = config
     start_time = time.perf_counter()
@@ -336,7 +325,6 @@ def persist_run(state: PromoState, config: RunnableConfig | None = None) -> Prom
     return state
 
 
-# Построение графа promo workflow
 def build_promo_graph():
     workflow = StateGraph(PromoState)
     workflow.add_node("collect_input", collect_input)
@@ -355,7 +343,6 @@ def build_promo_graph():
     return workflow.compile()
 
 
-# Запуск promo workflow с заданными параметрами
 def run_promo_workflow(
     storage_dir: Path,
     adapter: DataAdapter,

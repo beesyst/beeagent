@@ -4,23 +4,19 @@ import imaplib
 from typing import Protocol, runtime_checkable
 
 
-# Ошибка аутентификации mailbox source
 class MailboxAuthError(RuntimeError):
     pass
 
 
-# Ошибка недоступности mailbox source
 class MailboxUnavailableError(RuntimeError):
     pass
 
 
-# Read-only контракт mailbox client для fake/live реализаций
 @runtime_checkable
 class MailboxReadonlyClient(Protocol):
     def fetch_latest(self, folder: str, items_max: int) -> list[bytes]: ...
 
 
-# Минимальный IMAP read-only client для smoke ingestion.
 class ImapReadonlyMailboxClient:
     def __init__(
         self,
@@ -54,11 +50,7 @@ class ImapReadonlyMailboxClient:
                 raise MailboxUnavailableError("mailbox search failed")
 
             raw_ids = data[0] if data else b""
-            message_ids = [
-                item.decode("ascii")
-                for item in raw_ids.split()
-                if item
-            ]
+            message_ids = [item.decode("ascii") for item in raw_ids.split() if item]
             latest_ids = list(reversed(message_ids[-items_max:]))
 
             messages: list[bytes] = []
@@ -93,7 +85,6 @@ class ImapReadonlyMailboxClient:
             ) from exc
 
 
-# Извлечь RFC822 байты из fetch-ответа
 def _extract_rfc822(fetch_data: object) -> bytes | None:
     if not isinstance(fetch_data, list):
         return None

@@ -12,13 +12,11 @@ from beeagent_module.core.paths import get_project_root
 OOS_SUMMARY_PROMPT_KEY = "oos.llm_summary"
 
 
-# Функция для получения объяснения рекомендаций с помощью LLM (например, OpenAI)
 class _SafeDict(dict):
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
 
 
-# Резолв относительного пути к конфигу от корня проекта.
 def _resolve_config_path(path: str) -> Path:
     path_value = Path(path)
     if path_value.is_absolute():
@@ -26,7 +24,6 @@ def _resolve_config_path(path: str) -> Path:
     return get_project_root() / path_value
 
 
-# Получение вложенного значения по пути ключей.
 def _get_nested_value(payload: dict[str, Any], key_path: tuple[str, ...]) -> Any:
     current: Any = payload
     for key in key_path:
@@ -36,7 +33,6 @@ def _get_nested_value(payload: dict[str, Any], key_path: tuple[str, ...]) -> Any
     return current
 
 
-# Загрузка промптов из YAML и проверка структуры.
 def _load_prompts(path: str) -> dict[str, Any]:
     file_path = _resolve_config_path(path)
     if not file_path.exists():
@@ -51,7 +47,6 @@ def _load_prompts(path: str) -> dict[str, Any]:
     return content
 
 
-# Подготовка system/user промптов по ключу и шаблону.
 def _build_prompt_messages_by_key(
     llm_cfg: dict[str, Any],
     prompt_key: str,
@@ -73,12 +68,9 @@ def _build_prompt_messages_by_key(
     if not isinstance(user_template, str) or not user_template:
         raise RuntimeError(f"Prompt '{prompt_key}.user' must be a non-empty string")
 
-    # Render template safely. Unknown placeholders are preserved.
     user_prompt = user_template.format_map(_SafeDict(**template_vars))
 
-    # If template still contains placeholders, fallback to a minimal prompt.
     if "{" in user_prompt and "}" in user_prompt:
-        # Fallback: не пытаемся угадывать тип промпта по ключу (ключи задаются в конфиге).
         template_dump = json.dumps(template_vars, ensure_ascii=False)
         user_prompt = (
             "Use the template variables below to answer the user request. "
@@ -241,7 +233,6 @@ def _request_openai_response(
     return None
 
 
-# Функция для получения объяснения рекомендаций с помощью LLM (например, OpenAI)
 def explain_recommendations(
     llm_cfg: dict[str, Any],
     recommendations: list[dict[str, Any]],

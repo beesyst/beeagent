@@ -10,7 +10,6 @@ from beeagent_module.agents.oos.graph import run_oos_workflow
 from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
 
 
-# Кейс OOS: генерация mock-данных, запуск workflow, сохранение отчета и утверждение/отклонение задач
 def run_oos_case(
     settings: dict,
     storage_dir: Path,
@@ -55,7 +54,6 @@ def run_oos_case(
     return result
 
 
-# Кейс получения последнего отчета OOS с добавлением статуса задач и причины отклонения
 def get_last_report_case(storage_dir: Path) -> str | None:
     report_path = storage_dir / "reports" / "last_oos_report.md"
     if not report_path.exists():
@@ -70,7 +68,6 @@ def get_last_report_case(storage_dir: Path) -> str | None:
     return _append_status_to_report(report_text, summary_line, reject_reason)
 
 
-# Кейс утверждения/отклонения задач последнего запуска OOS с сохранением статуса и причины в артефактах
 def approve_last_run_case(settings: dict, storage_dir: Path, decision: str) -> str:
     run_id = _load_last_run_id(storage_dir)
     if not run_id:
@@ -103,7 +100,6 @@ def approve_last_run_case(settings: dict, storage_dir: Path, decision: str) -> s
     return f"Tasks {decision} for run {run_id}."
 
 
-# Вспомогательные функции для загрузки статуса задач и причины отклонения из артефактов последнего запуска
 def _load_last_run_id(storage_dir: Path) -> str | None:
     last_run_path = storage_dir / "reports" / "last_run.json"
     if not last_run_path.exists():
@@ -113,7 +109,6 @@ def _load_last_run_id(storage_dir: Path) -> str | None:
     return payload.get("run_id")
 
 
-# Чек: загрузка статуса задач и причины отклонения из артефактов последнего запуска OOS
 def _load_tasks_status_summary(
     storage_dir: Path,
     run_id: str,
@@ -148,7 +143,6 @@ def _load_tasks_status_summary(
     return summary_line, reject_reason
 
 
-# Чек: добавление статуса задач и причины отклонения в текст отчета последнего запуска OOS
 def _append_status_to_report(
     report_text: str,
     summary_line: str,

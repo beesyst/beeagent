@@ -31,7 +31,6 @@ from beeagent_module.ui.telegram_bot import (
 )
 
 
-# Фейк: объекты для имитации Telegram Update, Message, CallbackQuery и Bot в тестах
 class FakeMessage:
     def __init__(self, text: str = "") -> None:
         self.text = text
@@ -42,7 +41,6 @@ class FakeMessage:
         self.replies.append(text)
 
 
-# Фейк: CallbackQuery для имитации нажатия кнопок в Telegram
 class FakeCallbackQuery:
     def __init__(self, data: str, message: FakeMessage) -> None:
         self.data = data
@@ -53,7 +51,6 @@ class FakeCallbackQuery:
         self.answered = True
 
 
-# Фейк: Bot для имитации отправки сообщений в Telegram
 class FakeBot:
     def __init__(self) -> None:
         self.sent_messages: list[dict[str, Any]] = []
@@ -62,7 +59,6 @@ class FakeBot:
         self.sent_messages.append({"chat_id": chat_id, "text": text})
 
 
-# Фейк: App для хранения bot_data и имитации жизненного цикла приложения в тестах
 class FakeApp:
     def __init__(self, bot_data: dict[str, Any]) -> None:
         self.bot_data = bot_data
@@ -73,7 +69,6 @@ def run_async_handler(handler: Any, update: Any, context: Any) -> None:
     asyncio.run(handler(update, context))
 
 
-# Вспомогательные функции для создания контекста и обновлений Telegram в тестах, а также тесты для проверки логики бота и сценария OOS
 def make_context(
     tmp_path: Path,
     chat_id: int = 1,
@@ -142,7 +137,6 @@ def make_context(
     )
 
 
-# Вспомогательные функции для создания обновлений Telegram с сообщениями и кнопками для тестов
 def make_message_update(
     chat_id: int,
     text: str,
@@ -161,7 +155,6 @@ def make_message_update(
     )
 
 
-# Вспомогательная функция для создания обновлений Telegram с данными кнопок для тестов
 def make_callback_update(
     chat_id: int,
     callback_data: str,
@@ -181,7 +174,6 @@ def make_callback_update(
     )
 
 
-# Тест: доступ к боту разрешен только для админского чата, остальные получают отказ в доступе
 def test_start_denies_non_admin(tmp_path: Path) -> None:
     update = make_message_update(chat_id=2, text="/start")
     context = make_context(tmp_path=tmp_path, chat_id=1)
@@ -191,7 +183,6 @@ def test_start_denies_non_admin(tmp_path: Path) -> None:
     assert update.effective_message.replies[-1] == "Доступ запрещен: только admin chat."
 
 
-# Тест: выполнение сценария OOS через команду и получение отчета, а также отображение статуса задач и причины отклонения в последнем отчете
 def test_run_oos_then_last_report(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -206,7 +197,6 @@ def test_run_oos_then_last_report(tmp_path: Path) -> None:
     assert "Tasks status:" in last_update.effective_message.replies[-1]
 
 
-# Тест: нажатия кнопок "Run OOS" и "Show Report" вызывают одни и те же обработчики и возвращают отчет OOS
 def test_buttons_call_same_handlers(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -224,7 +214,6 @@ def test_buttons_call_same_handlers(tmp_path: Path) -> None:
     assert "📊 Отчёт OOS" in show_button_update.effective_message.replies[-1]
 
 
-# Тест: нажатия кнопок "Approve Tasks" и "Reject Tasks" возвращают соответствующие ответы и сохраняют статус задач
 def test_approve_tasks_button(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -241,7 +230,6 @@ def test_approve_tasks_button(tmp_path: Path) -> None:
     assert "Tasks approved" in approve_update.effective_message.replies[-1]
 
 
-# Тест: нажатия кнопки "Reject Tasks" возвращает соответствующий ответ и сохраняет статус задач с причиной отклонения
 def test_reject_tasks_button(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -258,7 +246,6 @@ def test_reject_tasks_button(tmp_path: Path) -> None:
     assert "Tasks rejected" in reject_update.effective_message.replies[-1]
 
 
-# Тест: последний отчет OOS содержит статус задач и причину отклонения после нажатия кнопки "Reject Tasks"
 def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -281,7 +268,6 @@ def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
     )
 
 
-# Тест: неизвестная команда не вызывает ошибок и возвращает сообщение об неизвестной команде
 def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
     update = make_message_update(chat_id=1, text="/abc", update_id=20)
     context = make_context(tmp_path=tmp_path, chat_id=1)
@@ -294,7 +280,6 @@ def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
     )
 
 
-# Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями
 def test_telemetry_writes_jsonl(tmp_path: Path) -> None:
     update = make_message_update(chat_id=1, text="/start", update_id=77)
     context = make_context(tmp_path=tmp_path, chat_id=1, telemetry_enabled=True)
@@ -311,7 +296,6 @@ def test_telemetry_writes_jsonl(tmp_path: Path) -> None:
     assert payload["update_id"] == 77
 
 
-# Тест: при выключенной телеметрии файл не создается и обновления не записываются
 def test_scheduler_not_started_when_disabled(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
     app = FakeApp(bot_data=context.bot_data)
@@ -321,7 +305,6 @@ def test_scheduler_not_started_when_disabled(tmp_path: Path) -> None:
     assert "scheduler_task" not in app.bot_data
 
 
-# Тест: при включенной телеметрии обновления Telegram записываются в JSONL файл с правильными полями при нажатии кнопки "Run OOS"
 def test_scheduler_tick_uses_scheduled_trigger(tmp_path: Path, monkeypatch) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
     app = FakeApp(bot_data=context.bot_data)
@@ -354,7 +337,6 @@ def test_scheduler_tick_uses_scheduled_trigger(tmp_path: Path, monkeypatch) -> N
     assert "Готов новый запуск run-test" in app.bot.sent_messages[0]["text"]
 
 
-# Тест: если сценарий OOS в scheduled-run выбрасывает ошибку, она логируется, и цикл продолжает работать
 def test_scheduler_loop_continues_after_case_error(
     tmp_path: Path,
     monkeypatch,
@@ -413,7 +395,6 @@ def test_scheduler_loop_continues_after_case_error(
     assert "scheduled run failed" in caplog.text
 
 
-# Тест: нажатия кнопки "Run Promo" вызывает сценарий promo и возвращает отчет promo
 def test_run_promo_returns_report(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
 
@@ -566,7 +547,6 @@ def test_assistant_question_without_last_run_returns_hint(tmp_path: Path) -> Non
     )
 
 
-# Тест: нажатия кнопки "Run ROP" вызывает сценарий ROP оператора и возвращает текст оператора
 def test_run_rop_returns_operator_text(tmp_path: Path, monkeypatch) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
     update = make_message_update(chat_id=1, text="/run_rop", update_id=80)
@@ -604,7 +584,6 @@ def test_run_rop_returns_operator_text(tmp_path: Path, monkeypatch) -> None:
     assert update.effective_message.replies[-1] == "ROP operator run v0"
 
 
-# Вспомогательная функция для получения конфигурации ROP оператора из settings.yml
 def test_build_application_registers_run_rop_command(monkeypatch) -> None:
     class _Filter:
         def __and__(self, other: Any) -> "_Filter":

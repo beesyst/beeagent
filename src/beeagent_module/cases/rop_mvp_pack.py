@@ -136,7 +136,6 @@ def _enrich_source_coverage_from_diag(
     )
     coverage["loaded"] = max(coverage.get("loaded", 0), loaded)
 
-    # Degraded count from runtime data
     degraded = sum(
         1
         for s in coverage.get("sources", [])

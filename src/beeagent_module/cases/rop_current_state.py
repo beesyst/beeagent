@@ -10,7 +10,6 @@ CURRENT_STATE_FILENAME = "rop_current_state.json"
 BITRIX_RECONCILIATION_FILENAME = "bitrix_reconciliation.json"
 
 
-# Билд артефакта текущего состояния для заданного запуска ROP
 def build_rop_current_state(
     storage_dir: Path,
     run_id: str,
@@ -30,7 +29,6 @@ def build_rop_current_state(
     warnings: list[dict[str, Any]] = []
     artifact_refs: list[str] = []
 
-    # --- Read normalized events ---
     normalized_path = run_dir / "normalized_events.json"
     if not normalized_path.exists():
         warnings.append(
@@ -197,7 +195,6 @@ def build_rop_current_state(
     return state
 
 
-# Запись артефакта текущего состояния и обновление интерфейсных файлов
 def write_current_state(
     storage_dir: Path,
     run_id: str,
@@ -296,7 +293,6 @@ def write_current_state(
     )
 
 
-# Билд блока source для текущего состояния
 def _build_source_block(
     source_diag: dict | None,
     intake: dict | None,
@@ -327,7 +323,6 @@ def _build_source_block(
     }
 
 
-# Билд KPI блока для текущего состояния
 def _build_kpi(
     classified_events: list[dict],
     normalized_events: list[dict],
@@ -439,7 +434,6 @@ def _build_kpi(
     }
 
 
-# Бмлд очков очередей для текущего состояния на основе классифицированных событий и Bitrix evidence
 def _build_queues(
     classified_events: list[dict],
     bitrix_reconciliation: dict | None,
@@ -526,7 +520,6 @@ def _build_queues(
     }
 
 
-# Определение текущего алиаса для запуска: "latest" если это последний запуск, иначе "explicit"
 def _determine_current_alias(storage_dir: Path, run_id: str) -> str:
     runs_dir = storage_dir / "runs"
     if not runs_dir.is_dir():
@@ -572,7 +565,6 @@ def _check_bitrix_staleness(
     return None
 
 
-# Чтение JSON-списка из файла с проверкой типа
 def _read_json_list(path: Path) -> list[dict]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
@@ -580,7 +572,6 @@ def _read_json_list(path: Path) -> list[dict]:
     return data
 
 
-# Чтение JSON-словаря из файла с проверкой типа
 def _read_json_dict(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -588,7 +579,6 @@ def _read_json_dict(path: Path) -> dict:
     return data
 
 
-# Проведение безопасного преобразования значения в int, с fallback на 0 для нечисловых типов
 def _int(value: object) -> int:
     if isinstance(value, int):
         return value

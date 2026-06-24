@@ -11,7 +11,6 @@ from langgraph.graph import END, StateGraph
 from beeagent_module.domain.models import QuizAnswer, QuizResult
 
 
-# Тип состояния для квиза, хранящий все необходимые данные для работы и переходов между узлами
 class QuizState(TypedDict, total=False):
     storage_dir: Path
     logger: logging.Logger
@@ -28,7 +27,6 @@ class QuizState(TypedDict, total=False):
     steps: list[dict[str, Any]]
 
 
-# Вспомогательная функция для записи шагов и их длительности в состоянии
 def _record_step(state: QuizState, step: str, duration_ms: int) -> None:
     steps: list[dict[str, Any]] = state.setdefault("steps", [])
     steps.append({"step": step, "duration_ms": duration_ms})
@@ -38,7 +36,6 @@ def _record_step(state: QuizState, step: str, duration_ms: int) -> None:
         logger.info("step=%s duration_ms=%d", step, duration_ms)
 
 
-# Node 1: инициализация квиза, генерация run_id, загрузка спецификации и подготовка состояния
 def quiz_init(state: QuizState, config: RunnableConfig | None = None) -> QuizState:
     _ = config
     start_time = time.perf_counter()
@@ -53,7 +50,6 @@ def quiz_init(state: QuizState, config: RunnableConfig | None = None) -> QuizSta
     return state
 
 
-# Node 2: построение и отображение текущего вопроса для UI
 def render_question(
     state: QuizState, config: RunnableConfig | None = None
 ) -> QuizState:
@@ -86,7 +82,6 @@ def render_question(
     return state
 
 
-# Node 3: обработка ответа (answer_idx кладём в state заранее)
 def process_answer(state: QuizState, config: RunnableConfig | None = None) -> QuizState:
     _ = config
     start_time = time.perf_counter()
@@ -140,7 +135,6 @@ def process_answer(state: QuizState, config: RunnableConfig | None = None) -> Qu
     return state
 
 
-# Node 4: завершение квиза и вычисление результата
 def quiz_finalize(state: QuizState, config: RunnableConfig | None = None) -> QuizState:
     _ = config
     start_time = time.perf_counter()
@@ -173,7 +167,6 @@ def quiz_finalize(state: QuizState, config: RunnableConfig | None = None) -> Qui
     return state
 
 
-# Билд LangGraph workflow
 def build_quiz_graph():
     graph = StateGraph(QuizState)
     graph.add_node("init", quiz_init)
@@ -189,7 +182,6 @@ def build_quiz_graph():
     return graph
 
 
-# Хелпер: запуск всего workflow для квиза с заданными параметрами и возврат результатов
 def run_quiz_workflow(
     storage_dir: Path,
     quiz_spec: dict[str, Any],

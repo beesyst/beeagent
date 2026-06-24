@@ -14,7 +14,6 @@ from beeagent_module.domain.models import (
 from beeagent_module.domain.serialization import model_to_dict
 
 
-# Генерация мокового набора данных
 def generate_mock_dataset(
     seed: int,
     weeks: int,
@@ -113,7 +112,6 @@ def generate_mock_dataset(
     }
 
 
-# Сохранение мокового набора данных в файл JSON
 def save_mock_dataset(dataset: dict, storage_dir: Path) -> Path:
     dataset_id = dataset.get("meta", {}).get("dataset_id")
     if not dataset_id:
@@ -128,7 +126,6 @@ def save_mock_dataset(dataset: dict, storage_dir: Path) -> Path:
     return dataset_path
 
 
-# Загрузка мокового набора данных из файла JSON
 def load_mock_dataset(dataset_path: Path) -> dict:
     if not dataset_path.exists():
         raise RuntimeError(f"Dataset file not found: {dataset_path}")
@@ -151,7 +148,6 @@ def load_mock_dataset(dataset_path: Path) -> dict:
     }
 
 
-# Генерация идентификатора набора данных
 def _build_dataset_id(
     seed: int, weeks: int, stores: int, skus: int, category: str
 ) -> str:
@@ -159,14 +155,12 @@ def _build_dataset_id(
     return f"seed-{seed}-w{weeks}-s{stores}-k{skus}-{safe_category}"
 
 
-# Генерация времени создания набора данных
 def _build_created_at(seed: int, weeks: int, stores: int, skus: int) -> str:
     seconds = abs(seed * 97 + weeks * 13 + stores * 7 + skus * 3)
     base = datetime(2026, 1, 1, tzinfo=UTC)
     return (base + timedelta(seconds=seconds)).isoformat()
 
 
-# Генерация серии дат для набора данных
 def _date_series(weeks: int) -> list[str]:
     total_days = weeks * 7
     start = datetime(2025, 1, 1, tzinfo=UTC)
@@ -176,7 +170,6 @@ def _date_series(weeks: int) -> list[str]:
     ]
 
 
-# Принудительное добавление аномалий в набор данных
 def _force_anomalies(
     rng: random.Random,
     stock_rows: list[StockRow],

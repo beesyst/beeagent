@@ -26,7 +26,6 @@ SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
 )
 
 
-# Чек, что Bitrix reconciliation preconditions выполнены: bitrix.enabled must be true
 def _validate_bitrix_reconciliation_preconditions(settings: dict) -> None:
     bitrix_cfg = settings.get("bitrix", {})
     if not bitrix_cfg.get("enabled", False):
@@ -36,7 +35,6 @@ def _validate_bitrix_reconciliation_preconditions(settings: dict) -> None:
         )
 
 
-# Запуск Bitrix reconciliation для существующего ROP run
 def run_reconciliation(
     storage_dir: Path,
     run_id: str,
@@ -176,7 +174,6 @@ def run_reconciliation(
     return artifact
 
 
-# Рид обязательного JSON artifact из run директории
 def _read_required_artifact(
     run_dir: Path,
     filename: str,
@@ -206,7 +203,6 @@ def _read_required_artifact(
     return data
 
 
-# Объединение normalized и classified events по event_id
 def _merge_events(
     normalized: list[dict[str, Any]],
     classified: list[dict[str, Any]],
@@ -244,7 +240,6 @@ def _merge_events(
     return merged
 
 
-# Выполнение reconciliation для одного события
 def _reconcile_event(
     event: dict[str, Any],
     client: BitrixReadonlyClient,
@@ -288,7 +283,6 @@ def _reconcile_event(
     )
 
 
-# Поиск кандидатов по entity type
 def _search_entity(
     client: BitrixReadonlyClient,
     entity_type_id: int,
@@ -349,7 +343,6 @@ def _search_entity(
         )
         _add_candidates(results)
 
-    # 3. Поиск по subject/title (если есть)
     if subject and not candidates:
         search_title = " ".join(subject.split()[:5])
         logger.debug("bitrix search by title for entity_type=%s", entity_type_id)
@@ -401,7 +394,6 @@ def _normalize_phone(value: str) -> str:
     return "".join(char for char in value if char.isdigit())
 
 
-# Классификация кандидатов
 def _classify_candidates(
     event: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -491,7 +483,6 @@ def _classify_candidates(
     return _make_not_found_item(event, "no_candidate_found", 0)
 
 
-# Создание reconciliation item для статуса matched
 def _make_matched_item(
     event: dict[str, Any],
     entity_type_id: int,
@@ -537,7 +528,6 @@ def _make_matched_item(
     }
 
 
-# Создание reconciliation item для статуса not_found
 def _make_not_found_item(
     event: dict[str, Any],
     reason: str,
@@ -571,7 +561,6 @@ def _make_not_found_item(
     }
 
 
-# Создание reconciliation item для статуса skipped
 def _make_skipped_item(
     event: dict[str, Any],
     reason: str,
@@ -602,7 +591,6 @@ def _make_skipped_item(
     }
 
 
-# Создание reconciliation item для статуса duplicate_candidate
 def _make_duplicate_item(
     event: dict[str, Any],
     candidates: list[tuple[int, dict[str, Any]]],
@@ -645,7 +633,6 @@ def _make_duplicate_item(
     }
 
 
-# Создание reconciliation item для статуса ambiguous
 def _make_ambiguous_item(
     event: dict[str, Any],
     candidates: list[tuple[int, dict[str, Any]]],
@@ -683,7 +670,6 @@ def _make_ambiguous_item(
     }
 
 
-# Создание reconciliation item для статуса weak_match
 def _make_weak_match_item(
     event: dict[str, Any],
     entity_type_id: int,
@@ -725,7 +711,6 @@ def _make_weak_match_item(
     }
 
 
-# Создание reconciliation item для статуса connector_degraded
 def _make_connector_error_item(
     event: dict[str, Any],
     error: str,
@@ -757,7 +742,6 @@ def _make_connector_error_item(
     }
 
 
-# Создание reconciliation item для неожиданной ошибки application layer
 def _make_error_item(
     event: dict[str, Any],
     error_type: str,
@@ -790,7 +774,6 @@ def _make_error_item(
     }
 
 
-# Безопасное приведение к int или None
 def _int_or_none(value: Any) -> int | None:
     if value is None:
         return None

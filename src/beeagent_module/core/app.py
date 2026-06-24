@@ -5,7 +5,6 @@ from beeagent_module.ui.telegram_bot import start_telegram_mode
 from beeagent_module.web.app import start_web_mode
 
 
-# Запуск приложения в выбранном режиме
 def run_app(settings: dict, logger: logging.Logger) -> None:
     mode = settings["run"]["mode"]
     logger.info("BeeAgent started")

@@ -1,7 +1,6 @@
 import re
 
 
-# Универсальные нормализаторы текста (без доменной логики и без i18n)
 def normalize_bullets(text: str, bullet: str = "• ") -> str:
     lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
     if not lines:

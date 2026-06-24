@@ -9,7 +9,6 @@ from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
     AdapterResult,
 )
-from beeui_module.adapters.ids import validate_run_id
 from beeui_module.web.app import create_beeui_app
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -18,7 +17,6 @@ from starlette.routing import Route
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
 
 
-# Утилита для извлечения данных из результата адаптера с дефолтным значением при ошибке
 def _result_data(
     result: AdapterResult | AdapterErrorResult,
     default: Any,
@@ -49,7 +47,6 @@ def _result_warnings(
     return serialized
 
 
-# Утилита для формирования JSON-ответов с данными или ошибками для API маршрутов
 def _ok_json(
     data: Any,
     warnings: list[Any] | None = None,
@@ -90,7 +87,6 @@ def _error_json(
     )
 
 
-# Создание словаря настроек для BeeUI
 def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
     web_cfg = agent_settings.get("web", {})
     log_cfg = agent_settings.get("logging", {})
@@ -138,16 +134,13 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-
-
-
-# Создание FastAPI-приложения BeeUI для BeeAgent
 def build_beeui_app(
     settings: dict[str, Any],
     logger: logging.Logger,
     storage_dir: Path | None = None,
 ) -> FastAPI:
-    from beeagent_module.core.paths import get_project_root, get_storage_dir as _get_storage_dir
+    from beeagent_module.core.paths import get_project_root
+    from beeagent_module.core.paths import get_storage_dir as _get_storage_dir
 
     resolved_storage = storage_dir or _get_storage_dir()
     beeui_settings = build_beeui_settings(settings)
@@ -208,8 +201,8 @@ def _register_rop_html_polish(app: FastAPI) -> None:
 _PERIOD_BUTTON_RE = re.compile(
     r'\s*<a href="(?P<href>/rop\?tab=[^"]+?&amp;period=(?P<period>[^"]+))" '
     r'class="btn btn-outline-primary btn-sm me-1">'
-    r'(?P<label>Today|Yesterday|Last 7 days|Last 30 days|Last 3 months|Last year|All time)'
-    r'(?P<current> \(current\))?</a>'
+    r"(?P<label>Today|Yesterday|Last 7 days|Last 30 days|Last 3 months|Last year|All time)"
+    r"(?P<current> \(current\))?</a>"
 )
 
 _ROP_CHART_IDS: dict[str, str] = {
@@ -276,6 +269,7 @@ _ROP_HERO_METRIC_RE = re.compile(
     r'<div class="datagrid-content">(?P<value>.*?)</div>)',
     re.DOTALL,
 )
+
 
 def _polish_rop_overview_cards(html: str) -> str:
     def metric_repl(match: re.Match[str]) -> str:
@@ -393,7 +387,6 @@ def _register_apexcharts_compat(app: FastAPI) -> None:
     app.router.routes.insert(0, route)
 
 
-# Регистрация BeeAgent-specific API маршрутов
 def _register_custom_routes(
     app: FastAPI,
     adapter: BeeAgentUiAdapter,
@@ -428,4 +421,6 @@ def _register_custom_routes(
         data = _result_data(result, {})
         return _ok_json(data)
 
-    logger.info("BeeAgent custom routes registered: /health, /api/modules, /api/rop/dashboard")
+    logger.info(
+        "BeeAgent custom routes registered: /health, /api/modules, /api/rop/dashboard"
+    )

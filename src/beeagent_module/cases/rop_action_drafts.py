@@ -10,7 +10,6 @@ from typing import Any
 ACTION_DRAFTS_ARTIFACT = "rop_action_drafts.json"
 
 
-# Build action draft artifact from reconciliation and classified events
 def build_action_drafts(
     storage_dir: Path,
     run_id: str,
@@ -96,7 +95,6 @@ def build_action_drafts(
     return artifact
 
 
-# Build action draft for a single reconciliation item v0
 def _build_action_draft_item(
     item: dict[str, Any],
     run_id: str,
@@ -139,7 +137,6 @@ def _build_action_draft_item(
     }
 
 
-# Map bot_case_type + match_status to action v0
 def _map_action_v0(
     case_type: str,
     match_status: str,

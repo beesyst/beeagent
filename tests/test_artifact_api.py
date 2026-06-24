@@ -13,7 +13,6 @@ from beeagent_module.core.runtime_context import (
 )
 
 
-# Тесты для ArtifactAPI: проверка создания, валидации, записи и чтения артефактов, а также изоляции путей
 def _create_test_context(
     run_id: str | None = None,
     module_id: str = "test-module",
@@ -27,13 +26,11 @@ def _create_test_context(
     )
 
 
-# Helper to create a test ArtifactAPI with a logger
 def _create_test_api(context: RuntimeContext, storage_dir: Path) -> ArtifactAPI:
     logger = logging.getLogger("test")
     return ArtifactAPI(context=context, storage_dir=storage_dir, logger=logger)
 
 
-# Тест: проверка, что ArtifactAPI создается с правильным контекстом и директорией
 def test_artifact_api_creation() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -44,7 +41,6 @@ def test_artifact_api_creation() -> None:
         assert api.artifact_dir().parent == storage_dir / "runs" / ctx.run_id
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid context
 def test_artifact_api_invalid_context() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -61,7 +57,6 @@ def test_artifact_api_invalid_context() -> None:
             assert "context" in str(e)
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid storage_dir
 def test_artifact_api_invalid_storage_dir() -> None:
     ctx = _create_test_context()
     logger = logging.getLogger("test")
@@ -73,7 +68,6 @@ def test_artifact_api_invalid_storage_dir() -> None:
         assert "storage_dir" in str(e)
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_write_json_artifact() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -91,7 +85,6 @@ def test_write_json_artifact() -> None:
         assert content == data
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_write_text_artifact() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -105,7 +98,6 @@ def test_write_text_artifact() -> None:
         assert path.read_text(encoding="utf-8") == content
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_read_json_artifact() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -119,7 +111,6 @@ def test_read_json_artifact() -> None:
         assert read_data == original_data
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_read_text_artifact() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -133,7 +124,6 @@ def test_read_text_artifact() -> None:
         assert read_content == original_content
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_read_nonexistent_artifact() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -147,7 +137,6 @@ def test_read_nonexistent_artifact() -> None:
             assert "not found" in str(e).lower()
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with slashes
 def test_invalid_filename_with_slash() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -161,7 +150,6 @@ def test_invalid_filename_with_slash() -> None:
             assert "filename" in str(e).lower()
 
 
-# Тест: проверка, что ArtifactAPI rejects invalid filename with backslashes
 def test_invalid_filename_with_backslash() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -175,7 +163,6 @@ def test_invalid_filename_with_backslash() -> None:
             assert "filename" in str(e).lower()
 
 
-# Тест: проверка, что execute_module_case создает артефакт с результатом модуля
 def test_invalid_empty_filename() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -189,7 +176,6 @@ def test_invalid_empty_filename() -> None:
             assert "filename" in str(e).lower()
 
 
-# Тест: проверка, что execute_module_case создает артефакт с результатом модуля
 def test_artifact_path_isolation() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -224,7 +210,6 @@ def test_artifact_path_isolation() -> None:
         assert data2 == {"module": 2}
 
 
-#
 def test_artifact_dir_path_format() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -246,7 +231,6 @@ def test_artifact_dir_path_format() -> None:
         assert artifact_dir.parent.parent.name == "runs"
 
 
-# Тест: проверка, что ArtifactAPI.list_artifacts возвращает правильные файлы
 def test_list_artifacts() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -266,7 +250,6 @@ def test_list_artifacts() -> None:
         assert artifacts[2].name == "third.json"
 
 
-# Тест: проверка, что ArtifactAPI.list_artifacts возвращает пустой список для несуществующей директории
 def test_list_artifacts_empty_directory() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -288,7 +271,6 @@ def test_list_artifacts_empty_directory() -> None:
         assert api.list_artifacts() == []
 
 
-# Тест: проверка, что ArtifactAPI.write_json и write_text поддерживают unicode символы
 def test_write_json_with_unicode() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -302,7 +284,6 @@ def test_write_json_with_unicode() -> None:
         assert read_data == data
 
 
-# Тест: проверка, что ArtifactAPI.write_json и write_text поддерживают unicode символы
 def test_write_text_with_unicode() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)

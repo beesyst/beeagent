@@ -14,7 +14,6 @@ from beeagent_module.domain.models import (
 from beeagent_module.mock.dataset import load_mock_dataset
 
 
-# Адаптер данных для кейса OOS, который читает данные из сгенерированного mock-датасета
 class MockAdapter:
     def __init__(self, storage_dir: Path, dataset_id: str) -> None:
         self._storage_dir = storage_dir

@@ -7,7 +7,6 @@ from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_storag
 from beeagent_module.core.settings import load_settings
 
 
-# Чек: базовая инициализация настроек, логов и storage.
 def test_smoke_startup_initialization(tmp_path: Path) -> None:
     settings_file = tmp_path / "settings.yml"
     settings_file.write_text(
@@ -127,7 +126,6 @@ rop:
     assert log_path.exists()
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и проверка наличия полей username_env и password_env
 def test_load_settings_accepts_mailbox_readonly_source(tmp_path: Path) -> None:
     settings_file = tmp_path / "settings.yml"
     settings_file.write_text(
@@ -249,7 +247,6 @@ rop:
     assert source["mailbox"]["username_env"] == "ROP_MAILBOX_USERNAME"
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и отсутствием полей username_env и password_env должна вызывать RuntimeError
 def test_load_settings_rejects_mailbox_without_env_names(tmp_path: Path) -> None:
     settings_file = tmp_path / "settings.yml"
     settings_file.write_text(
@@ -371,7 +368,6 @@ rop:
         assert "mailbox.username_env" in str(exc)
 
 
-# Тест: загрузка настроек с источником mailbox_readonly и отсутствием обязательных source profile полей должна вызывать RuntimeError
 @pytest.mark.parametrize(
     ("missing_line", "expected_key"),
     [

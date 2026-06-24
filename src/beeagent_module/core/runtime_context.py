@@ -7,7 +7,6 @@ from uuid import uuid4
 from beeagent_module.core.module_contract import AuthorityLevel
 
 
-# Содержит определение RuntimeContext, который является минимальным контекстом исполнения, передаваемым от ядра BeeAgent в модули
 @dataclass(frozen=True)
 class RuntimeContext:
     run_id: str
@@ -32,11 +31,9 @@ class RuntimeContext:
             raise ValueError("payload must be a dict")
 
 
-# Генерация уникальных идентификаторов run_id и session_id с опциональными префиксами для лучшей читаемости и организации артефактов
 def generate_run_id(prefix: str = "run") -> str:
     return f"{prefix}-{uuid4().hex[:12]}"
 
 
-# Генерация уникальных идентификаторов run_id и session_id с опциональными префиксами для лучшей читаемости и организации артефактов
 def generate_session_id(prefix: str = "session") -> str:
     return f"{prefix}-{uuid4().hex[:12]}"

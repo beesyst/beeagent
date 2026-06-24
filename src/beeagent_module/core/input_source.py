@@ -20,14 +20,12 @@ from beeagent_module.adapters.mailbox import (
 )
 
 
-# Входные источники для ROP batch flow: поддерживаются json_batch (локальный файл) и mailbox_readonly (IMAP с read-only доступом)
 class InputSourceError(RuntimeError):
     def __init__(self, message: str, diagnostics: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics or {}
 
 
-# Загрузка и нормализация входных данных для ROP batch flow из configured источника
 def find_active_rop_source(input_sources: list[dict]) -> dict:
     if not input_sources:
         raise RuntimeError("rop.sources is empty: no input source declared in config")
@@ -50,7 +48,6 @@ def find_active_rop_source(input_sources: list[dict]) -> dict:
     return enabled[0]
 
 
-# Выбор источников для запуска
 def select_rop_sources(
     input_sources: list[dict],
     source_id: str | None = None,
@@ -80,7 +77,6 @@ def select_rop_sources(
     return [find_active_rop_source(input_sources)], "single_active"
 
 
-# Загрузка ROP source: поиск активных источников, загрузка и нормализация события, вернуть (events, metadata, diagnostics)
 def load_rop_source(
     source: dict,
     project_root: Path,
@@ -134,7 +130,6 @@ def load_rop_source(
     )
 
 
-# Безопасное разрешение batch path внутри project_root
 def _resolve_project_file_path(project_root: Path, raw_path: str) -> Path:
     if not raw_path:
         raise RuntimeError("batch.path is empty")
@@ -152,7 +147,6 @@ def _resolve_project_file_path(project_root: Path, raw_path: str) -> Path:
     return candidate
 
 
-# Загрузка batch-файла из источника типа mailbox_readonly, нормализация событий, возврат (events, metadata, diagnostics)
 def load_mailbox_readonly(
     source: dict,
     logger: logging.Logger,
@@ -326,7 +320,6 @@ def load_mailbox_readonly(
     return events, metadata, diagnostics
 
 
-# Фабрика по умолчанию для создания IMAP клиента с read-only доступом на основе конфигурации источника и переменных окружения
 def _default_mailbox_client_factory(source: dict) -> MailboxReadonlyClient:
     mailbox_cfg = source["mailbox"]
     username = os.getenv(str(mailbox_cfg["username_env"]), "").strip()
@@ -341,7 +334,6 @@ def _default_mailbox_client_factory(source: dict) -> MailboxReadonlyClient:
     )
 
 
-# Нормализация одного сообщения из mailbox: извлечь заголовки, тело, вложения, вернуть нормализованный словарь события
 def _normalize_mailbox_message(
     raw_message: bytes,
     source: dict,
@@ -388,7 +380,6 @@ def _normalize_mailbox_message(
     }
 
 
-# Извлечение текстового превью из тела сообщения: объединить все text/plain части, отфильтровать вложения, вернуть первые 1000 символов
 def _extract_body_preview(message: Any) -> str:
     body_parts: list[str] = []
 
@@ -412,7 +403,6 @@ def _extract_body_preview(message: Any) -> str:
     return normalized[:1000]
 
 
-# Извлечение метаданных вложений из сообщения: для каждой части с content_disposition=attachment извлечь filename, content_type, size
 def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
     attachments: list[dict[str, Any]] = []
 
@@ -440,19 +430,17 @@ def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
     return attachments
 
 
-# Извлечение адресов из заголовков типа From/To/Cc: использовать email.utils.getaddresses, вернуть список адресов без имён
 def _extract_addresses(headers: list[str]) -> list[str]:
     return [addr for _name, addr in getaddresses(headers) if addr]
 
 
-# Нормализация даты из заголовка сообщения: попытаться распарсить, привести к UTC ISO-формату, при неудаче вернуть очищенное значение
 def _normalize_message_date(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         return ""
 
     try:
         parsed = parsedate_to_datetime(value)
-    except (TypeError, ValueError, IndexError):
+    except TypeError, ValueError, IndexError:
         return _clean_header_value(value)
 
     if parsed.tzinfo is None:
@@ -461,7 +449,6 @@ def _normalize_message_date(value: Any) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-# Извлечение текстового превью из тела сообщения: объединить все text/plain части, отфильтровать вложения, вернуть первые 1000 символов
 def _derive_mailbox_period(events: list[dict[str, Any]], loaded_at: str) -> str:
     for event in events:
         raw_date = event.get("date")
@@ -481,26 +468,22 @@ def _derive_mailbox_period(events: list[dict[str, Any]], loaded_at: str) -> str:
     return loaded_dt.astimezone(timezone.utc).strftime("%Y-%m")
 
 
-# Фallback генерация event_id для сообщений без Message-ID: использовать source_id, позицию в выборке и хэш от сырого сообщения
 def _build_fallback_event_id(source_id: str, position: int, raw_message: bytes) -> str:
     digest = hashlib.sha256(raw_message).hexdigest()[:16]
     return f"{source_id}-{position}-{digest}"
 
 
-# Очистка и нормализация значения заголовка: привести к строке, удалить лишние пробелы, вернуть результат
 def _clean_header_value(value: Any) -> str:
     if value is None:
         return ""
     return _sanitize_text(str(value))
 
 
-# Сжатие и очистка текста: замена последовательности пробельных символов на один пробел, обрезать по краям, вернуть результат
 def _sanitize_text(value: str) -> str:
     compact = re.sub(r"\s+", " ", value).strip()
     return compact
 
 
-# Чек вложения потенциально опасных email-файлом: если filename заканчивается на .eml или content_type равно message/rfc822, вернуть True
 def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
     normalized_filename = filename.strip().lower()
     normalized_content_type = content_type.strip().lower()
@@ -510,7 +493,6 @@ def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
     )
 
 
-# Сбор диагностической информации по источнику
 def _make_source_diagnostics(
     source: dict,
     status: str,
@@ -548,7 +530,6 @@ def _make_source_diagnostics(
     }
 
 
-# Классификация ошибок json_batch для degraded diagnostics
 def _classify_json_batch_error(exc: RuntimeError) -> str:
     message = str(exc).lower()
     if "not found" in message:
@@ -566,7 +547,6 @@ def _classify_json_batch_error(exc: RuntimeError) -> str:
     return "json_batch_load_error"
 
 
-# Загрузка batch-файла из источника типа json_batch, нормализация событий, возврат (events, metadata)
 def load_json_batch(
     source: dict,
     project_root: Path,
@@ -664,7 +644,6 @@ def load_json_batch(
     return events, metadata
 
 
-# Нормализация batch-элементов: отфильтровать не-dict, применить items_max
 def _normalize_batch_items(
     items: list[Any],
     source_id: str,
@@ -705,7 +684,6 @@ def _normalize_batch_items(
     return truncated
 
 
-# Очистка batch-элемента от потенциально опасных полей: удалить вложенные поля с сырым содержимым, отфильтровать опасные вложения
 def _sanitize_batch_item(item: dict[str, Any]) -> dict[str, Any]:
     blocked_top_level_keys = {
         "raw_eml",

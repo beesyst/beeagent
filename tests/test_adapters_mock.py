@@ -5,7 +5,6 @@ from beeagent_module.adapters.mock_adapter import MockAdapter
 from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
 
 
-# Тест: адаптер MockAdapter для чтения данных из сгенерированного mock-датасета
 def test_get_adapter_returns_mock_adapter(tmp_path: Path) -> None:
     dataset = generate_mock_dataset(
         seed=42,
@@ -28,7 +27,6 @@ def test_get_adapter_returns_mock_adapter(tmp_path: Path) -> None:
     assert isinstance(adapter, MockAdapter)
 
 
-# Тест: адаптер MockAdapter выбрасывает ошибку при отсутствии dataset_id
 def test_mock_adapter_reads_catalog_and_stock(tmp_path: Path) -> None:
     dataset = generate_mock_dataset(
         seed=11,

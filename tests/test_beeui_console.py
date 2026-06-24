@@ -16,7 +16,6 @@ from beeagent_module.interfaces.ui.read_model import (
 )
 
 
-# Тесты для консоли BeeUI, интегрированной с BeeAgent, с фокусом на безопасность и устойчивость к ошибкам
 def _logger() -> logging.Logger:
     logger = logging.getLogger("test_beeui_console")
     logger.addHandler(logging.NullHandler())
@@ -24,7 +23,6 @@ def _logger() -> logging.Logger:
     return logger
 
 
-# Создание временной структуры хранения для тестов, с минимальными артефактами для отображения в UI
 def _make_storage(tmp_path: Path) -> Path:
     storage_dir = tmp_path / "storage"
     (storage_dir / "runs").mkdir(parents=True)
@@ -32,7 +30,6 @@ def _make_storage(tmp_path: Path) -> Path:
     return storage_dir
 
 
-# Запись sample modules.json для тестирования отображения модулей в UI
 def _write_modules_artifact(storage_dir: Path) -> None:
     payload = {
         "registry": [
@@ -50,7 +47,6 @@ def _write_modules_artifact(storage_dir: Path) -> None:
     )
 
 
-# Запись
 def _write_modules_artifact_with_html(storage_dir: Path) -> None:
     payload = {
         "registry": [
@@ -68,7 +64,6 @@ def _write_modules_artifact_with_html(storage_dir: Path) -> None:
     )
 
 
-# Тест: запись и чтение артефактов для отображения в UI
 def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     run_dir = storage_dir / "runs" / run_id
     module_dir = run_dir / "module-beeagent-rop"
@@ -237,7 +232,6 @@ def _write_run_artifacts_with_html(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запись артефакта с чувствительными данными для проверки маскировки в UI
 def _write_malformed_json_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = storage_dir / "runs" / run_id
     run_dir.mkdir(parents=True)
@@ -247,7 +241,6 @@ def _write_malformed_json_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запись скрипта запуска с артефактом, содержащим ключи, обладающие конфиденциальными данными
 def _write_secret_stub_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = storage_dir / "runs" / run_id
     run_dir.mkdir(parents=True)
@@ -264,7 +257,6 @@ def _write_secret_stub_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: создание минимальных настроек BeeAgent для тестирования
 def _build_settings() -> dict:
     return {
         "app": {"name": "BeeAgent", "env": "test"},
@@ -291,7 +283,6 @@ def _build_settings() -> dict:
     }
 
 
-# Тест: создание TestClient с приложением BeeUI для интеграционных тестов
 def _client(storage_dir: Path) -> TestClient:
     from beeagent_module.interfaces.ui.app import build_beeui_app
 
@@ -303,7 +294,6 @@ def _client(storage_dir: Path) -> TestClient:
     return TestClient(app)
 
 
-# Тест: чек, что приложение BeeUI строится без ошибок с минимальными настройками и структурой хранения
 def test_beeui_app_builds(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.app import build_beeui_app
 
@@ -316,7 +306,6 @@ def test_beeui_app_builds(tmp_path: Path) -> None:
     assert app.title == "BeeUI"
 
 
-# Тест: чек, что при запуске приложения с CLI аргументом web вызывается правильная функция и передаются аргументы
 def test_start_web_dispatch_imports() -> None:
     from beeagent_module.cli.web import create_web_parser, run_routes, run_web
 
@@ -325,7 +314,6 @@ def test_start_web_dispatch_imports() -> None:
     assert callable(create_web_parser)
 
 
-# Тест: чек, что при запуске приложения с CLI аргументом rop вызывается правильная функция и передаются аргументы
 def test_cli_defaults_from_config() -> None:
     from beeagent_module.cli.web import create_web_parser
 
@@ -336,7 +324,6 @@ def test_cli_defaults_from_config() -> None:
     assert args.no_open is False
 
 
-# Тест: test CLI --host override
 def test_cli_host_override() -> None:
     from beeagent_module.cli.web import create_web_parser
 
@@ -345,7 +332,6 @@ def test_cli_host_override() -> None:
     assert args.host == "0.0.0.0"
 
 
-# Тест: test CLI --port override
 def test_cli_port_override() -> None:
     from beeagent_module.cli.web import create_web_parser
 
@@ -354,7 +340,6 @@ def test_cli_port_override() -> None:
     assert args.port == 9090
 
 
-# Тест: test CLI --no-open flag
 def test_cli_no_open_flag() -> None:
     from beeagent_module.cli.web import create_web_parser
 
@@ -363,14 +348,12 @@ def test_cli_no_open_flag() -> None:
     assert args.no_open is True
 
 
-# Тест: test GET / returns 200
 def test_home_route(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/")
     assert response.status_code == 200
 
 
-# Тест: тестовый запрос GET /health возвращает ok (маршрут health, предоставляемый BeeUI)
 def test_health_route(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/health")
@@ -379,14 +362,12 @@ def test_health_route(tmp_path: Path) -> None:
     assert data["status"] == "ok"
 
 
-# Тест: GET /runs возвращает 200 и корректно отображает наличие или отсутствие ран-артефактов
 def test_runs_route_empty(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/runs")
     assert response.status_code == 200
 
 
-# Тест: чек команды GET /runs с данными о запуске
 def test_runs_route_with_data(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-test-001")
@@ -397,7 +378,6 @@ def test_runs_route_with_data(tmp_path: Path) -> None:
     assert "No runs available." not in response.text
 
 
-# Тест: GET /runs/{run_id} возвращает 200 для существующего рана и корректно отображает его детали
 def test_run_route(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-valid-001")
@@ -406,7 +386,6 @@ def test_run_route(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-# Тест: GET /runs/{run_id} с несуществующим run_id возвращает 404
 def test_run_route_invalid_run_id(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/runs/../etc/passwd")
@@ -429,7 +408,6 @@ def test_rop_dashboard_read_model_rejects_path_traversal(tmp_path: Path) -> None
     assert data["error"] == "invalid_run_id"
 
 
-# Тест: GET /rop возвращает 200 через BeeUI generic adapter custom page
 def test_rop_route(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-rop-001")
@@ -448,7 +426,6 @@ def test_rop_route_escapes_html(tmp_path: Path) -> None:
     assert "alert(1)" not in response.text
 
 
-# Тест: GET /rop with tab parameter через BeeUI, включая проверку содержимого вкладок
 class TestRopTabs:
     def _setup(self, tmp_path: Path) -> tuple[Path, TestClient]:
         storage_dir = _make_storage(tmp_path)
@@ -521,7 +498,6 @@ class TestRopTabs:
         assert "Bitrix Evidence Board" in response.text
 
 
-# Тест: /rop page содержит subtitle и tabs в BeeUI shell
 class TestRopPageLayout:
     """Проверка корректности вёрстки ROP-страницы: subtitle, tabs, card."""
 
@@ -571,7 +547,6 @@ class TestRopPageLayout:
         )
 
 
-# Тесты: чек layout-структуры Overview tab (customer-facing dashboard)
 class TestRopOverviewLayoutStructure:
     def _mock_data(self) -> dict[str, Any]:
         return {
@@ -845,7 +820,6 @@ def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
     assert all(block.get("title") != "Business metrics" for block in layout)
 
 
-# Тест: чек, что вкладка очереди ROP содержит таблицу данных, когда очереди существуют
 def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
     data = {
         "attention_events": [],
@@ -885,7 +859,6 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
     assert layout[0]["rows"][0]["priority"]["label"] == "high"
 
 
-# Тест: чек, что блок рекомендаций ROP в Overview tab использует rop_recommendations.detail вместо recommendations.message
 def test_rop_overview_uses_rop_recommendations_detail() -> None:
     data = {
         "run_id": "run-rec",
@@ -922,7 +895,6 @@ def test_rop_overview_uses_rop_recommendations_detail() -> None:
     assert action_block["type"] == "chart"
 
 
-# Тест: чек, что блок Bitrix в ROP tab корректно отображает сообщение о необходимости запуска read-only reconcile-bitrix, когда артефакт bitrix_reconciliation_json отсутствует
 def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
     data = {
         "current_state_kpi": {},
@@ -943,7 +915,6 @@ def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
     assert "Run read-only reconcile-bitrix" in item["value"]
 
 
-# Тест: GET /api/rop/dashboard с недопустимым периодом возвращает предупреждение и использует значение по умолчанию
 def test_api_rop_dashboard_invalid_period_degrades_to_default(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-invalid-period")
@@ -967,7 +938,6 @@ def test_api_rop_dashboard_invalid_period_degrades_to_default(tmp_path: Path) ->
     assert any(w.get("code") == "invalid_period" for w in payload["warnings"])
 
 
-# Тест: Dashboard содержит accordion с видимым chevron для technical details
 def test_dashboard_accordion_has_chevron(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-accord")
@@ -984,7 +954,6 @@ def test_dashboard_accordion_has_chevron(tmp_path: Path) -> None:
     assert "accordion-tabs" not in html
 
 
-# Тест: GET /modules возвращает layout с модулями через BeeUI
 def test_modules_route(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_modules_artifact(storage_dir)
@@ -1005,7 +974,6 @@ def test_modules_route_escapes_html(tmp_path: Path) -> None:
     assert "<script>alert" not in response.text
 
 
-# Тест: test GET /api/dashboard
 def test_api_dashboard(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/api/dashboard")
@@ -1015,7 +983,6 @@ def test_api_dashboard(tmp_path: Path) -> None:
     assert data["read_only"] is True
 
 
-# Тест: test GET /api/runs
 def test_api_runs(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-api-001")
@@ -1024,7 +991,6 @@ def test_api_runs(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-# Тест: test GET /api/runs/{run_id} для валидного run_id
 def test_api_run(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-api-detail")
@@ -1033,7 +999,6 @@ def test_api_run(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-# Тест: test GET GET /api/modules
 def test_api_modules(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_modules_artifact(storage_dir)
@@ -1042,7 +1007,6 @@ def test_api_modules(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-# Тест:
 def test_api_rop_dashboard_rejects_invalid_run_id(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-rop-valid")
@@ -1057,7 +1021,6 @@ def test_api_rop_dashboard_rejects_invalid_run_id(tmp_path: Path) -> None:
     assert data["error"]["code"] == "invalid_run_id"
 
 
-# Тест: BeeUI artifact route для несуществующего артефакта деградирует безопасно
 def test_invalid_artifact_id(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-bad-art")
@@ -1066,7 +1029,6 @@ def test_invalid_artifact_id(tmp_path: Path) -> None:
     assert response.status_code in (200, 400, 404)
 
 
-# Тест: чек, что ID артефакта, не включенный в список запрещенных, отклоняется
 def test_non_allowlisted_artifact(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
 
@@ -1076,15 +1038,12 @@ def test_non_allowlisted_artifact(tmp_path: Path) -> None:
     assert is_artifact_id_allowed("some_random_file") is False
 
 
-# Тест: BeeUI artifact route degrades gracefully для неразрешенных артефактов
 def test_non_allowlisted_artifact_error_envelope(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-bad-art")
     client = _client(storage_dir)
-    # BeeUI artifact detail route — allowlist check via adapter
     response = client.get("/runs/run-bad-art/artifacts/raw_eml")
     assert response.status_code in (200, 400, 404)
-    # BeeUI API route returns adapter envelope
     api_response = client.get("/api/runs/run-bad-art/artifacts/raw_eml")
     assert api_response.status_code in (200, 400, 404)
     if api_response.status_code == 400:
@@ -1092,14 +1051,12 @@ def test_non_allowlisted_artifact_error_envelope(tmp_path: Path) -> None:
         assert "error" in data
 
 
-# Тест: чек пути выполнения в run_id заблокирована
 def test_path_traversal(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     response = client.get("/runs/%2E%2E%2Fetc%2Fpasswd")
     assert response.status_code in (400, 404)
 
 
-# Тест: чек пути при разрешении артефактов возвращает None
 def test_path_traversal_artifact(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 
@@ -1108,7 +1065,6 @@ def test_path_traversal_artifact(tmp_path: Path) -> None:
     assert result is None
 
 
-# Тест: чек, что ключ raw_eml скрыт при ограниченном чтении
 def test_no_raw_eml_in_artifacts(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.bounded_read import read_bounded_json
 
@@ -1130,7 +1086,6 @@ def test_no_raw_eml_in_artifacts(tmp_path: Path) -> None:
     assert "[REDACTED]" in text
 
 
-# Тест: чек, что при чтении поврежденного JSON возвращается предупреждение, а не происходит сбой
 def test_malformed_json_warning(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.bounded_read import read_bounded_json
 
@@ -1144,7 +1099,6 @@ def test_malformed_json_warning(tmp_path: Path) -> None:
     assert "Malformed" in warning
 
 
-# Тест: чек, что маршруты GET не изменяют артефакты хранения
 def test_get_routes_do_not_mutate_storage(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_run_artifacts(storage_dir, "run-no-mutate")
@@ -1177,7 +1131,6 @@ def test_get_routes_do_not_mutate_storage(tmp_path: Path) -> None:
     assert after == before
 
 
-# Тест: чек, что параметр read-model в исходной конфигурации ROP не раскрывает секреты
 def test_rop_config_read_model_safety(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.read_model import build_config_read_model
 
@@ -1230,7 +1183,6 @@ def test_rop_config_read_model_safety(tmp_path: Path) -> None:
     assert "password_env" not in mailbox
 
 
-# Тест: чек, что при чтении слишком большого JSON возвращается предупреждение, а не происходит сбой
 def test_oversized_json_bounded(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.bounded_read import (
         MAX_JSON_BYTES,
@@ -1246,7 +1198,6 @@ def test_oversized_json_bounded(tmp_path: Path) -> None:
     assert "too large" in warning
 
 
-# Тест: чек считывания TSV работает в пределах допустимых значений
 def test_tsv_bounded(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.bounded_read import read_bounded_tsv
 
@@ -1259,7 +1210,6 @@ def test_tsv_bounded(tmp_path: Path) -> None:
     assert warning is None
 
 
-# Тест: чек, что все ожидаемые ID артефактов находятся в списке разрешенных
 def test_artifact_allowlist_coverage() -> None:
     from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
 
@@ -1285,7 +1235,6 @@ def test_artifact_allowlist_coverage() -> None:
         assert not is_artifact_id_allowed(aid), f"{aid} should NOT be allowlisted"
 
 
-# Тест: чек наличия только GET-маршрутов (без мутаций)
 def test_no_post_routes(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
 
@@ -1303,7 +1252,6 @@ def test_no_post_routes(tmp_path: Path) -> None:
         assert response.status_code in (405, 404), f"POST {path} should be rejected"
 
 
-# Тест: чек, что venue routes degraded (not intentionally published)
 def test_venue_routes_not_published(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
 
@@ -1312,11 +1260,9 @@ def test_venue_routes_not_published(tmp_path: Path) -> None:
         "/api/venues/test/dashboard",
     ]:
         response = client.get(path)
-        # Route exists but returns unavailable (503) or not found (404)
         assert response.status_code in (404, 503), f"{path} should not be published"
 
 
-# Тест: чек, что при наличии всех артефактов ROP dashboard отображает данные без ошибок
 def _write_rich_rop_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = storage_dir / "runs" / run_id
     module_dir = run_dir / "module-beeagent-rop"
@@ -1549,7 +1495,6 @@ def _write_rich_rop_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запуск с использованием некорректного источника
 def _write_degraded_source_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     sd = {
@@ -1583,7 +1528,6 @@ def _write_degraded_source_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запуск со всеми фоллбек классификациями
 def _write_fallback_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     classified = [
@@ -1612,7 +1556,6 @@ def _write_fallback_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запуск с несколькими высокоприоритетными событиями
 def _write_high_priority_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     classified = [
@@ -1650,14 +1593,12 @@ def _write_high_priority_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запуск с отсутствующим артефактом attachment_extraction.json
 def _write_missing_attachment_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     (run_dir / "attachment_extraction.json").unlink(missing_ok=True)
     return run_dir
 
 
-# Тест: запуск с HTML-подобными значениями в классификациях и диагностике источников
 def _write_html_artifact_values_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     classified = [
@@ -1681,7 +1622,6 @@ def _write_html_artifact_values_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: запуск с поврежденным JSON в classified_events.json
 def _write_malformed_json_artifact_run(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_rich_rop_run(storage_dir, run_id)
     (run_dir / "classified_events.json").write_text(
@@ -1690,7 +1630,6 @@ def _write_malformed_json_artifact_run(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: чек, что при наличии всех артефактов ROP dashboard API возвращает полный полезный нагрузку без ошибок
 def test_rop_dashboard_api_rich_payload(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_rich_rop_run(storage_dir, "run-rich-001")
@@ -1722,7 +1661,6 @@ def test_rop_dashboard_api_rich_payload(tmp_path: Path) -> None:
     assert kpis["review_tsv_available"] is True
 
 
-# Тест: чек, что ROP dashboard API правильно обрабатывает источник с состоянием degraded и возвращает соответствующую рекомендацию
 def test_rop_dashboard_source_health_degraded(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_degraded_source_run(storage_dir, "run-degraded-001")
@@ -1734,12 +1672,10 @@ def test_rop_dashboard_source_health_degraded(tmp_path: Path) -> None:
     assert len(sh) == 1
     assert sh[0]["status"] == "degraded"
     assert sh[0]["reason"] == "connection_timeout"
-    # Check recommendation
     rec_codes = [r["code"] for r in payload["recommendations"]]
     assert "check_degraded_sources" in rec_codes
 
 
-# Тест: чек, что события внимания на ROP dashboard ограничены 50, даже если в classified_events.json более 50 событий, соответствующих критериям внимания
 def test_rop_dashboard_attention_events_are_capped(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rich_rop_run(storage_dir, "run-cap-001")
@@ -1766,7 +1702,6 @@ def test_rop_dashboard_attention_events_are_capped(tmp_path: Path) -> None:
     assert len(events) <= 50
 
 
-# Тест: чек, что ROP dashboard API правильно обрабатывает сводку по вложениям и возвращает правильные счетчики для общего количества вложений, доступных превью и отклоненных вложений
 def test_rop_dashboard_attachment_summary(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_rich_rop_run(storage_dir, "run-att-summary")
@@ -1779,7 +1714,6 @@ def test_rop_dashboard_attachment_summary(tmp_path: Path) -> None:
     assert att["refused_count"] == 2
 
 
-# Тест: чек, что ссылки на доказательства на ROP dashboard ограничены allowlist и только разрешенные артефакты отображаются как ссылки, а остальные игнорируются
 def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_rich_rop_run(storage_dir, "run-evidence-001")
@@ -1866,7 +1800,6 @@ def test_rop_bitrix_layout_with_current_state_queues() -> None:
     )
 
 
-# Тест: чек, что ROP dashboard layout предпочитает данные из current_state_queues перед queues при наличии обеих
 def test_rop_bitrix_layout_prefers_period_queues() -> None:
     data = {
         "business_kpi": {
@@ -2000,7 +1933,6 @@ def test_rop_bitrix_layout_prefers_period_queues() -> None:
     )
 
 
-# Тест: чек, что ROP dashboard API обрабатывает отсутствие артефакта attachment_extraction.json без ошибок и возвращает нулевые счетчики в сводке по вложениям и KPI
 def test_rop_dashboard_handles_missing_artifacts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_missing_attachment_run(storage_dir, "run-missing-att")
@@ -2014,7 +1946,6 @@ def test_rop_dashboard_handles_missing_artifacts(tmp_path: Path) -> None:
     assert payload["kpis"]["attachment_count"] == 0
 
 
-# Тест: чек, что ROP dashboard API обрабатывает поврежденный JSON в classified_events.json без сбоя и возвращает предупреждение
 def test_rop_dashboard_handles_malformed_artifacts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_malformed_json_artifact_run(storage_dir, "run-malformed-json")
@@ -2029,7 +1960,6 @@ def test_rop_dashboard_handles_malformed_artifacts(tmp_path: Path) -> None:
     assert "missing_artifact" in warning_codes
 
 
-# Тест: чек, что ROP dashboard HTML экранирует HTML-подобные значения в классификациях и диагностике источников для предотвращения XSS-атак, при этом API возвращает сырые значения
 def test_rop_dashboard_escapes_html(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_html_artifact_values_run(storage_dir, "run-html-safe")
@@ -2043,7 +1973,6 @@ def test_rop_dashboard_escapes_html(tmp_path: Path) -> None:
     assert "&lt;script&gt;" in html or "&#60;script&#62;" in html
 
 
-# Тест: BeeUI artifact viewer HTML routes возвращают HTML
 def test_beeui_artifact_viewer_html(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-art-view")
@@ -2053,7 +1982,6 @@ def test_beeui_artifact_viewer_html(tmp_path: Path) -> None:
     assert "<!doctype html>" in response.text.lower()
 
 
-# Тест: API-эндпоинт артефактов возвращает JSON
 def test_artifact_viewer_api_still_json(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-api-art")
@@ -2064,7 +1992,6 @@ def test_artifact_viewer_api_still_json(tmp_path: Path) -> None:
     assert "data" in data
 
 
-# Тест: локаль по умолчанию должен быть английским
 def test_locale_default_en(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.locale import get_locale_config, resolve_locale
 
@@ -2074,7 +2001,6 @@ def test_locale_default_en(tmp_path: Path) -> None:
     assert resolve_locale("en", cfg) == "en"
 
 
-# Тест: локаль "ru" должна быть разрешена и возвращать "ru"
 def test_locale_resolve_ru(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.locale import get_locale_config, resolve_locale
 
@@ -2082,7 +2008,6 @@ def test_locale_resolve_ru(tmp_path: Path) -> None:
     assert resolve_locale("ru", cfg) == "ru"
 
 
-# Тест: локаль "de" (немецкий) не поддерживается, поэтому должна возвращаться английская локаль по умолчанию
 def test_locale_fallback_on_invalid(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.locale import get_locale_config, resolve_locale
 
@@ -2091,7 +2016,6 @@ def test_locale_fallback_on_invalid(tmp_path: Path) -> None:
     assert resolve_locale("bad", cfg) == "en"
 
 
-# Тест: функция t() должна возвращать переведенные строки для поддерживаемых локалей и исходную строку для неподдерживаемых
 def test_locale_t_function(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.locale import t
 
@@ -2100,7 +2024,6 @@ def test_locale_t_function(tmp_path: Path) -> None:
     assert t("Nonexistent label") == "Nonexistent label"
 
 
-# Тест: /rop с lang=ru рендерится через BeeUI locale
 def test_rop_lang_ru(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_rich_rop_run(storage_dir, "run-lang-ru")
@@ -2109,7 +2032,6 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-# Тест: /api/rop/dashboard сохраняет обратную совместимость
 def test_api_rop_dashboard_backward_compatible(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-bc-001")
@@ -2135,7 +2057,6 @@ def test_api_rop_dashboard_backward_compatible(tmp_path: Path) -> None:
     assert "evidence_links" in payload
 
 
-# Тест: raw eml остается заблокированным через adapter allowlist
 def test_raw_eml_blocked(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-eml-block")
@@ -2146,7 +2067,6 @@ def test_raw_eml_blocked(tmp_path: Path) -> None:
     assert api_response.status_code in (200, 400, 404)
 
 
-# Тест: POST-запросы должны быть отклонены
 def test_no_post_routes_in_custom_routes(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
     for path in ["/", "/health", "/runs", "/rop", "/modules"]:
@@ -2154,7 +2074,6 @@ def test_no_post_routes_in_custom_routes(tmp_path: Path) -> None:
         assert response.status_code in (405, 404), f"POST {path} should be rejected"
 
 
-# Тест: BeeAgentUiAdapter.get_page должен возвращать корректный layout для страницы rop_dashboard
 def test_get_page_returns_layout(tmp_path: Path) -> None:
 
     from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
@@ -2174,7 +2093,6 @@ def test_get_page_returns_layout(tmp_path: Path) -> None:
     assert isinstance(data["layout"], list)
 
 
-# Тест: все блоки диаграмм на странице обзора ROP должны использовать поддерживаемую схему диаграмм BeeUI и иметь has_data=True
 def _write_run_with_event_dates(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_run_artifacts(storage_dir, run_id)
     now = datetime.now(timezone.utc)
@@ -2197,7 +2115,6 @@ def _write_run_with_event_dates(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Тест: overview renders deterministic chart containers instead of pseudo-chart datagrids
 def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_with_event_dates(storage_dir, "run-chart-schema")
@@ -2222,7 +2139,6 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     assert "Chart render error" not in html
 
 
-# Тест: обзор ROP не должен отображать ID запусков, начинающихся с "SMOKE-"
 def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "SMOKE-IT27-001")
@@ -2232,7 +2148,6 @@ def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
     assert "SMOKE-IT27" not in html or "Run Selector" not in html
 
 
-# Тест: обзор ROP не должен отображать карту "Period Selector"
 def test_rop_overview_no_period_selector_card(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-period-regression")
@@ -2242,7 +2157,6 @@ def test_rop_overview_no_period_selector_card(tmp_path: Path) -> None:
     assert "Period Selector" not in html
 
 
-# Тест: выпадающий список периодов на обзоре ROP должен содержать удобные для клиентов метки периодов
 def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-period-labels")
@@ -2276,7 +2190,6 @@ def test_rop_overview_has_no_unsupported_blocks(tmp_path: Path) -> None:
     assert "attention_list" not in html
 
 
-# Тест: обзор ROP должен содержать панель "Action required"
 def test_rop_overview_has_action_required_panel(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-action-regression")
@@ -2286,7 +2199,6 @@ def test_rop_overview_has_action_required_panel(tmp_path: Path) -> None:
     assert "Action Required" in response.text
 
 
-# Тест: обзор ROP должен использовать бизнес-ориентированные метки для KPI, а не внутренние имена
 def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-labels-regression")
@@ -2305,7 +2217,6 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "high_priority" not in html
 
 
-# Тест: обзор ROP не должен отображать селектор запусков, если в доступных запусках есть ID
 def test_rop_overview_no_run_selector(tmp_path: Path) -> None:
     data = {
         "run_id": "run-test-001",
@@ -2329,7 +2240,6 @@ def test_rop_overview_no_run_selector(tmp_path: Path) -> None:
     assert len(run_selectors) == 0
 
 
-# Тест: обзор ROP не должен отображать сырые имена enum в HTML
 def test_rop_overview_no_raw_enum_labels(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.read_model import _humanize_label
 
@@ -2341,7 +2251,6 @@ def test_rop_overview_no_raw_enum_labels(tmp_path: Path) -> None:
     assert _humanize_label("existing_client") == "Existing clients"
 
 
-# Тест: обзор ROP должен использовать бизнес-ориентированные метки для заголовков диаграмм, а не внутренние имена
 def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_with_event_dates(storage_dir, "run-chart-business")
@@ -2356,7 +2265,6 @@ def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
     assert "Source contribution" in html
 
 
-# Тест: обзор ROP должен отображать CTA Bitrix, когда unreconciled > 0
 def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
     data = {
         "run_id": "run-bitrix-cta",
@@ -2388,7 +2296,6 @@ def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
     assert "2 items need review" in action_card["subtitle"]
 
 
-# Тест: обзор ROP не должен отображать отдельный блок "Detailed Metrics" на верхнем уровне, так как он объединен с "Overview"
 def test_rop_overview_no_detailed_metrics_separate_card() -> None:
     data = {
         "run_id": "run-test",

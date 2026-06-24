@@ -55,7 +55,6 @@ REQUIRED_KEYS = (
 )
 
 
-# Загрузка YAML-настройки и валидация обязательных ключей
 def load_settings(settings_path: Path) -> dict:
     if not settings_path.exists():
         raise RuntimeError(f"Settings file not found: {settings_path}")
@@ -70,7 +69,6 @@ def load_settings(settings_path: Path) -> dict:
     return content
 
 
-# Чек обязательных ключей и типов настроек
 def validate_settings(settings: dict) -> None:
     missing_keys: list[str] = []
 
@@ -386,7 +384,6 @@ def validate_settings(settings: dict) -> None:
     _validate_bitrix_settings(settings)
 
 
-# Валидация rop.dashboard config блока
 _ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(
     {
         "today",
@@ -400,7 +397,6 @@ _ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(
 )
 
 
-# Валидация rop.dashboard блока
 def _validate_rop_dashboard_settings(settings: dict) -> None:
     dash_cfg = _get_nested_value(settings, ("rop", "dashboard"))
     if dash_cfg is None:
@@ -438,11 +434,9 @@ def _validate_rop_dashboard_settings(settings: dict) -> None:
         )
 
 
-# Валидация Bitrix config блока
 def _validate_bitrix_settings(settings: dict) -> None:
     bitrix_cfg = _get_nested_value(settings, ("bitrix",))
     if bitrix_cfg is None:
-        # Bitrix блок опционален.
         return
     if not isinstance(bitrix_cfg, dict):
         raise RuntimeError("Invalid type for bitrix, expected mapping")
@@ -525,7 +519,6 @@ def _validate_bitrix_settings(settings: dict) -> None:
         )
 
 
-# Возврат вложенного значения по пути ключей или None
 def _get_nested_value(settings: dict, key_path: tuple[str, ...]):
     current = settings
     for key in key_path:

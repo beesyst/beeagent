@@ -20,12 +20,10 @@ from beeagent_module.core.paths import get_project_root, get_storage_dir
 REVIEW_BODY_SHORT_MAX_CHARS = 500
 
 
-# CLI handler для ROP
 class RopCliError(Exception):
     pass
 
 
-# Поулчение default period для ROP dashboard из настроек
 def _dashboard_default_period(settings: dict) -> str:
     return settings["rop"]["dashboard"]["default_period"]
 
@@ -34,7 +32,6 @@ def _dashboard_periods(settings: dict) -> list[str]:
     return list(settings["rop"]["dashboard"]["periods"])
 
 
-# Обработчик CLI для ROP: поддерживает команды 'run', 'summary' и 'export-review' с соответствующими аргументами
 def handle_rop_run(
     args: argparse.Namespace,
     settings: dict,
@@ -145,7 +142,6 @@ def handle_rop_run(
         raise RopCliError(f"ROP run failed: {exc}") from exc
 
 
-# Handler для команды 'rop summary': читает operator_summary.json для указанного run_id и выводит читаемый текст в терминал
 def handle_rop_summary(
     args: argparse.Namespace,
     logger: logging.Logger,
@@ -172,7 +168,6 @@ def handle_rop_summary(
     logger.info("ROP CLI: summary displayed for run_id=%s", run_id)
 
 
-# Handler для команды 'rop export-review': читает normalized_events.json и classified_events.json для указанного run_id, строит TSV и сохраняет его для загрузки в таблицу для ручного обзора оператором
 def handle_rop_export_review(
     args: argparse.Namespace,
     logger: logging.Logger,
@@ -189,7 +184,6 @@ def handle_rop_export_review(
     _export_review_tsv_for_run(storage_dir=storage_dir, run_id=run_id, logger=logger)
 
 
-# Handler для команды 'rop reconcile-bitrix': запускает read-only Bitrix reconciliation для указанного run_id
 def handle_rop_reconcile_bitrix(
     args: argparse.Namespace,
     settings: dict,
@@ -300,7 +294,6 @@ def handle_rop_reconcile_bitrix(
         raise RopCliError(f"Bitrix reconciliation failed: {exc}") from exc
 
 
-# Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника
 def _apply_source_overrides(
     settings: dict,
     source_id: str | None,
@@ -371,7 +364,6 @@ def _apply_source_overrides(
     return effective
 
 
-# Экспорт TSV для ручного обзора оператором: читает normalized/classified артефакты конкретного run и сохраняет rop_review_table.tsv
 def _export_review_tsv_for_run(
     storage_dir: Any,
     run_id: str,
@@ -394,7 +386,6 @@ def _export_review_tsv_for_run(
     except json.JSONDecodeError as exc:
         raise RopCliError(f"Failed to parse JSON artifacts: {exc}") from exc
 
-    # Пытаемся прочитать Bitrix reconciliation artifact для обогащения TSV
     reconciliation_path = storage_dir / "runs" / run_id / "bitrix_reconciliation.json"
     reconciliation_data = None
     if reconciliation_path.exists():
@@ -411,7 +402,6 @@ def _export_review_tsv_for_run(
                 "ROP CLI: failed to read bitrix reconciliation artifact: %s", exc
             )
 
-    # Пытаемся прочитать action drafts artifact для обогащения TSV
     action_drafts_path = storage_dir / "runs" / run_id / "rop_action_drafts.json"
     action_drafts_data = None
     if action_drafts_path.exists():
@@ -456,7 +446,6 @@ def _export_review_tsv_for_run(
     return tsv_output_path.as_posix()
 
 
-# Билд читаемого текста для operator_summary.json, включая основные поля и блоки source и classification, а также список артефактов
 def _build_summary_text(summary_data: dict[str, Any]) -> str:
     run_id = summary_data.get("run_id", "?")
     module_id = summary_data.get("module_id", "?")
@@ -543,7 +532,6 @@ def _build_summary_text(summary_data: dict[str, Any]) -> str:
     return text
 
 
-# Возврат списка имен колонок для TSV, соответствующих полям из normalized_events и classified_events, а также дополнительным полям для ручного обзора оператором
 def _safe_tsv_value(value: Any) -> str:
     if value is None or value == "":
         return ""
@@ -554,7 +542,6 @@ def _safe_tsv_value(value: Any) -> str:
     return text
 
 
-# Билд короткого превью текста для TSV, используя body_preview, text_preview или body из normalized_events, обрезая до REVIEW_BODY_SHORT_MAX_CHARS и очищая от табов и новых строк
 def _build_body_short(normalized_evt: dict) -> str:
     preview = normalized_evt.get("body_preview")
     if preview and isinstance(preview, str) and preview.strip():
@@ -571,14 +558,12 @@ def _build_body_short(normalized_evt: dict) -> str:
     return ""
 
 
-# Хелпер: чек вложения потенциально опасных email-файлом
 def _is_blocked_email_attachment(att: dict[str, Any]) -> bool:
     filename = str(att.get("filename") or "").strip().lower()
     content_type = str(att.get("content_type") or "").strip().lower()
     return filename.endswith(".eml") or content_type == "message/rfc822"
 
 
-# Билд компактного текстового описания вложений для TSV, используя filename, content_type и size_bytes из normalized_events.attachments, формируя строки вида "filename (content_type, size_bytes)" и объединяя несколько вложений через "; "
 def _build_attachment_summary(attachments: Any) -> str:
     if not attachments or not isinstance(attachments, list):
         return ""
@@ -618,7 +603,6 @@ def _build_attachment_summary(attachments: Any) -> str:
     return _safe_tsv_value("; ".join(summaries))
 
 
-# Возврат списка имен колонок для TSV, соответствующих полям из normalized_events и classified_event
 def _tsv_columns() -> list[str]:
     return [
         "event_id",
@@ -659,8 +643,6 @@ def _tsv_columns() -> list[str]:
     ]
 
 
-# Билд строк для TSV из normalized_events и classified_events, объединяя данные по event_id и добавляя поля для ручного обзора оператором
-# Если передан reconciliation_data (bitrix_reconciliation.json), заполняет Bitrix columns
 def _build_review_tsv_rows(
     normalized_events: list[dict],
     classified_events: list[dict],
@@ -669,7 +651,6 @@ def _build_review_tsv_rows(
 ) -> list[dict[str, str]]:
     normalized_lookup = {evt.get("event_id"): evt for evt in normalized_events}
 
-    # Строим lookup для Bitrix reconciliation данных по event_id
     bitrix_lookup: dict[str, dict] = {}
     if reconciliation_data and isinstance(reconciliation_data, dict):
         items = reconciliation_data.get("items", [])
@@ -679,7 +660,6 @@ def _build_review_tsv_rows(
                 if eid:
                     bitrix_lookup[eid] = item
 
-    # Строим lookup для action drafts данных по event_id
     action_drafts_lookup: dict[str, dict] = {}
     if action_drafts_data and isinstance(action_drafts_data, dict):
         items = action_drafts_data.get("items", [])
@@ -705,16 +685,13 @@ def _build_review_tsv_rows(
         is_duplicate = classified_evt.get("is_duplicate")
         duplicate_of = classified_evt.get("duplicate_of", "")
 
-        # Bitrix поля из reconciliation artifact
         recon_item = bitrix_lookup.get(event_id, {})
         bitrix_entity_type = recon_item.get("bitrix_entity_type", "")
 
-        # Определяем bitrix_status: use match_status or entity_type
         bitrix_status = recon_item.get("bitrix_match_status", "")
         if not bitrix_status and bitrix_entity_type:
             bitrix_status = bitrix_entity_type
 
-        # Определяем lead_id/deal_id в зависимости от entity_type
         bitrix_lead_id = ""
         bitrix_deal_id = ""
         bitrix_entity_id = recon_item.get("bitrix_entity_id")
@@ -734,7 +711,6 @@ def _build_review_tsv_rows(
         needs_manual_review = recon_item.get("needs_manual_review", "")
         safe_to_use_as_target = recon_item.get("safe_to_use_as_target", "")
 
-        # Action draft fields from action drafts artifact (if loaded)
         action_draft_item = action_drafts_lookup.get(event_id, {})
         action_draft_id = action_draft_item.get("action_draft_id", "")
         recommended_action = action_draft_item.get("recommended_action", "")
@@ -789,7 +765,6 @@ def _build_review_tsv_rows(
     return rows
 
 
-# Handler для команды 'rop current': строит текущий state artifact для указанного run_id
 def handle_rop_current(
     args: argparse.Namespace,
     settings: dict,
@@ -868,7 +843,6 @@ def handle_rop_current(
         raise RopCliError(f"ROP current-state build failed: {exc}") from exc
 
 
-# Handler для команды 'rop dashboard': строит business-facing dashboard read-model с period analytics
 def handle_rop_dashboard(
     args: argparse.Namespace,
     settings: dict,
@@ -950,7 +924,6 @@ def handle_rop_dashboard(
         raise RopCliError(f"ROP dashboard build failed: {exc}") from exc
 
 
-# Handler для команды 'rop mvp-pack': собирает MVP handoff/readiness pack для указанного run_id
 def handle_rop_mvp_pack(
     args: argparse.Namespace,
     settings: dict,
@@ -1052,8 +1025,6 @@ def handle_rop_mvp_pack(
         raise RopCliError(f"ROP MVP pack build failed: {exc}") from exc
 
 
-# Handler для команды 'rop action-drafts': загружает bitrix_reconciliation.json
-# и генерирует rop_action_drafts.json для указанного run_id
 def handle_rop_action_drafts(
     args: argparse.Namespace,
     logger: logging.Logger,
@@ -1113,7 +1084,6 @@ def handle_rop_action_drafts(
     )
 
 
-# Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника, а также items_max и period для ограничения количества обрабатываемых событий и периода для batch-источников
 def create_rop_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="start.py rop",

@@ -28,7 +28,6 @@ from beeagent_module.web.routes import (
 )
 
 
-# Создание FastAPI приложения с маршрутами для отображения данных выполнения и артефактов, а также с защитой от path traversal атак
 def create_web_app(
     settings: dict,
     logger: logging.Logger,
@@ -222,7 +221,6 @@ def create_web_app(
     return app
 
 
-# Запуск веб-интерфейса для операторов, предоставляющего доступ к данным и артефактам выполнения
 def start_web_mode(settings: dict, logger: logging.Logger) -> None:
     web_settings = settings["web"]
     host = web_settings["host"]

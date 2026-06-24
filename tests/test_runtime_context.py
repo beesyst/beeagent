@@ -1,47 +1,42 @@
+from typing import Any, cast
+
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.runtime_context import (
     RuntimeContext,
     generate_run_id,
     generate_session_id,
 )
-from typing import Any, cast
 
 
-# Тест: базовые проверки генерации run_id и session_id, а также создание и валидация RuntimeContext
 def test_generate_run_id() -> None:
     run_id = generate_run_id()
     assert run_id.startswith("run-")
     assert len(run_id) == 16
 
 
-# Тест: генерация session_id с дефолтным префиксом
 def test_generate_run_id_custom_prefix() -> None:
     run_id = generate_run_id(prefix="test")
     assert run_id.startswith("test-")
     assert len(run_id) == 17
 
 
-# Тест: проверка уникальности сгенерированных run_id
 def test_generate_session_id() -> None:
     session_id = generate_session_id()
     assert session_id.startswith("session-")
     assert len(session_id) == 20
 
 
-# Тест: генерация session_id с кастомным префиксом
 def test_generate_session_id_custom_prefix() -> None:
     session_id = generate_session_id(prefix="custom")
     assert session_id.startswith("custom-")
     assert len(session_id) == 19
 
 
-# Тест: проверка уникальности сгенерированных session_id
 def test_run_id_uniqueness() -> None:
     ids = [generate_run_id() for _ in range(10)]
     assert len(set(ids)) == 10
 
 
-# Тест: проверка уникальности сгенерированных session_id
 def test_session_id_uniqueness() -> None:
     ids = [generate_session_id() for _ in range(10)]
     assert len(set(ids)) == 10
@@ -50,7 +45,6 @@ def test_session_id_uniqueness() -> None:
     assert len(set(ids)) == 10
 
 
-# Тест: создание RuntimeContext с валидными данными и проверка полей
 def test_runtime_context_creation() -> None:
     run_id = generate_run_id()
     session_id = generate_session_id()
@@ -72,7 +66,6 @@ def test_runtime_context_creation() -> None:
     assert ctx.payload == {"key": "value"}
 
 
-# Тест: проверка, что RuntimeContext с дефолтным payload устанавливает пустой словарь
 def test_runtime_context_frozen() -> None:
     ctx = RuntimeContext(
         run_id="run-123",
@@ -89,7 +82,6 @@ def test_runtime_context_frozen() -> None:
         pass
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_default_payload() -> None:
     ctx = RuntimeContext(
         run_id="run-123",
@@ -102,7 +94,6 @@ def test_runtime_context_default_payload() -> None:
     assert ctx.payload == {}
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_run_id() -> None:
     try:
         RuntimeContext(
@@ -117,7 +108,6 @@ def test_runtime_context_invalid_run_id() -> None:
         assert "run_id" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_session_id() -> None:
     try:
         RuntimeContext(
@@ -132,7 +122,6 @@ def test_runtime_context_invalid_session_id() -> None:
         assert "session_id" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_case_type() -> None:
     try:
         RuntimeContext(
@@ -147,7 +136,6 @@ def test_runtime_context_invalid_case_type() -> None:
         assert "case_type" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_module_id() -> None:
     try:
         RuntimeContext(
@@ -162,7 +150,6 @@ def test_runtime_context_invalid_module_id() -> None:
         assert "module_id" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_authority() -> None:
     try:
         RuntimeContext(
@@ -177,7 +164,6 @@ def test_runtime_context_invalid_authority() -> None:
         assert "authority" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_invalid_payload() -> None:
     try:
         RuntimeContext(
@@ -193,7 +179,6 @@ def test_runtime_context_invalid_payload() -> None:
         assert "payload" in str(e)
 
 
-# Тест: проверка, что RuntimeContext с None payload устанавливает пустой словарь
 def test_runtime_context_all_authority_levels() -> None:
     for authority in [
         AuthorityLevel.READ_ONLY,

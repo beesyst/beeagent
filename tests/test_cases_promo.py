@@ -5,7 +5,6 @@ from pathlib import Path
 from beeagent_module.cases.promo import run_promo_case
 
 
-# Тестовые настройки для promo кейса
 def _settings(dataset_id: str | None = None) -> dict:
     return {
         "mock": {
@@ -36,7 +35,6 @@ def _settings(dataset_id: str | None = None) -> dict:
     }
 
 
-# Тест: promo кейс создает артефакты и отчет
 def test_run_promo_case_creates_artifacts_and_report(tmp_path: Path) -> None:
     result = run_promo_case(
         settings=_settings(),

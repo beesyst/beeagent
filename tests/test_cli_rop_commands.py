@@ -21,7 +21,6 @@ from beeagent_module.core.cli import (
 from beeagent_module.core.settings import load_settings
 
 
-# Получение пустого логгера, который не выводит сообщения в тестах
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_cli_rop")
     logger.addHandler(logging.NullHandler())
@@ -29,12 +28,10 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Получение корневой директории проекта для загрузки тестовых данных и настроек
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Тесты для ROP CLI команд: проверяют парсинг аргументов, применение переопределений источников, выполнение команд и обработку ошибок
 class TestRopCliArgumentParser:
     def test_create_parser_returns_parser(self) -> None:
         parser = create_rop_parser()
@@ -125,7 +122,6 @@ class TestRopCliArgumentParser:
             handle_rop_mvp_pack(args, settings=settings, logger=_null_logger())
 
 
-# Тесты для функции применения переопределений источников: проверяют, что правильные источники включаются/настраиваются, а ошибки обрабатываются корректно
 class TestSourceOverrides:
     def test_apply_source_overrides_with_source_id(self) -> None:
         settings = load_settings(_project_root() / "config" / "settings.yml")
@@ -197,7 +193,6 @@ class TestSourceOverrides:
         assert "No enabled sources found" in str(exc_info.value)
 
 
-# Тесты для ROP CLI команд: проверяют парсинг аргументов, применение переопределений источников, выполнение команд и обработку ошибок
 class TestRopCliRun:
     def test_rop_run_with_batch_source(self, tmp_path: Path) -> None:
         import argparse
@@ -431,7 +426,6 @@ class TestRopCliRun:
         assert "Source not found" in str(exc_info.value)
 
 
-# Тесты для ROP CLI summary и export-review команд: проверяют, что команды корректно обрабатывают существующие данные, а также обрабатывают ошибки при отсутствии данных или поддерживаемых форматов
 class TestRopCliSummary:
     def test_rop_summary_with_existing_summary(
         self,
@@ -495,7 +489,6 @@ class TestRopCliSummary:
         assert "operator_summary.json not found" in str(exc_info.value)
 
 
-# Тесты для ROP CLI export-review команды: проверяют, что команда корректно экспортирует данные в TSV формат для существующих данных, а также обрабатывает ошибки при отсутствии данных или поддерживаемых форматов
 class TestRopCliExportReview:
     def test_rop_export_review_generates_tsv(
         self,
@@ -680,7 +673,6 @@ class TestRopCliExportReview:
         assert data["source"]["period"] == "2026-05"
 
 
-# Тест: чек колонки и порядок полей в TSV, а также правильное формирование body_short и attachments для различных входных данных
 class TestRopTsvEnriched:
     def test_tsv_columns_order_has_35_fields(self) -> None:
         columns = _tsv_columns()

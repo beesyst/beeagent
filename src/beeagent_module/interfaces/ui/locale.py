@@ -105,7 +105,6 @@ _LABELS_RU: dict[str, str] = {
 }
 
 
-# Загрузка конфигурации локализации из beeui.yml
 def _load_beeui_config_locale(project_root: Path | None = None) -> dict[str, Any]:
     if project_root is None:
         project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
@@ -122,7 +121,6 @@ def _load_beeui_config_locale(project_root: Path | None = None) -> dict[str, Any
         return {"default": "en", "available": ["en"]}
 
 
-# Определение локали на основе параметра ?lang= и доступных локалей
 def resolve_locale(lang_param: str | None, config: dict[str, Any] | None = None) -> str:
     if config is None:
         config = _load_beeui_config_locale()
@@ -131,19 +129,16 @@ def resolve_locale(lang_param: str | None, config: dict[str, Any] | None = None)
     return config.get("default", "en")
 
 
-# Получение конфигурации локали
 def get_locale_config() -> dict[str, Any]:
     return _load_beeui_config_locale()
 
 
-# Перевод меток на заданную локаль
 def t(label: str, locale: str = "en") -> str:
     if locale == "ru":
         return _LABELS_RU.get(label, label)
     return _LABELS_EN.get(label, label)
 
 
-# Возврат словаря всех переведенных меток для заданной локали
 def translate_labels(locale: str) -> dict[str, str]:
     if locale == "ru":
         return dict(_LABELS_RU)

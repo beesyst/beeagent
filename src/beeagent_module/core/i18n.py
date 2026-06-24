@@ -6,7 +6,6 @@ import yaml
 from beeagent_module.core.paths import get_project_root
 
 
-# Загрузка словаря переводов из YAML-файла
 def load_translations(path: str | Path) -> dict[str, Any]:
     file_path = _resolve_config_path(path)
     if not file_path.exists():
@@ -21,7 +20,6 @@ def load_translations(path: str | Path) -> dict[str, Any]:
     return content
 
 
-# Получение перевода по ключу с fail-fast при отсутствии
 def t(translations: dict[str, Any], key: str, **vars: Any) -> str:
     value = _get_nested_value(translations, tuple(key.split(".")))
     if not isinstance(value, str):
@@ -36,7 +34,6 @@ def t(translations: dict[str, Any], key: str, **vars: Any) -> str:
         ) from exc
 
 
-# Резолв относительного пути от корня проекта
 def _resolve_config_path(path: str | Path) -> Path:
     path_value = Path(path)
     if path_value.is_absolute():
@@ -44,7 +41,6 @@ def _resolve_config_path(path: str | Path) -> Path:
     return get_project_root() / path_value
 
 
-# Получение вложенного значения по пути ключей
 def _get_nested_value(payload: dict[str, Any], key_path: tuple[str, ...]) -> Any:
     current: Any = payload
     for key in key_path:

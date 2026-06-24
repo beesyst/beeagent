@@ -9,7 +9,6 @@ from beeagent_module.mock.dataset import (
 )
 
 
-# Чек: генерация набора данных с фиксированным сидом должна быть детерминированной
 def test_generate_mock_dataset_is_deterministic() -> None:
     dataset_a = generate_mock_dataset(
         seed=42,
@@ -29,7 +28,6 @@ def test_generate_mock_dataset_is_deterministic() -> None:
     assert dataset_a == dataset_b
 
 
-# Чек: сохранение и загрузка набора данных должны работать корректно
 def test_save_and_load_mock_dataset(tmp_path: Path) -> None:
     dataset = generate_mock_dataset(
         seed=11,
@@ -59,7 +57,6 @@ def test_save_and_load_mock_dataset(tmp_path: Path) -> None:
     assert isinstance(loaded["shelf_signals"][0], ShelfSignal)
 
 
-# Чек: принудительные аномалии должны существовать в наборе данных
 def test_forced_anomalies_exist() -> None:
     dataset = generate_mock_dataset(
         seed=7,

@@ -10,7 +10,6 @@ from beeagent_module.domain.models import ShelfSignal, StockRow
 from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
 
 
-# Тестирование правил OOS и выполнения LangGraph-скрипта с mock-данными
 def _mock_settings(dataset_id: str | None) -> dict:
     return {
         "data": {
@@ -39,7 +38,6 @@ def _mock_settings(dataset_id: str | None) -> dict:
     }
 
 
-# Вспомогательная функция для выполнения workflow с mock-данными и получения результата
 def _run_workflow(storage_dir: Path, dataset_id: str) -> dict:
     settings = _mock_settings(dataset_id)
     adapter = get_adapter(settings=settings, storage_dir=storage_dir)
@@ -54,9 +52,7 @@ def _run_workflow(storage_dir: Path, dataset_id: str) -> dict:
     )
 
 
-# Тест правил OOS и выполнения LangGraph-скрипта с mock-данными
 class TestOOSRules:
-    # Тест правила A: stock_on_hand > 0 AND seen_on_shelf == false → alert
     def test_rule_a_triggers_on_stock_and_no_shelf(self):
         stock_rows = [
             StockRow(
@@ -89,7 +85,6 @@ class TestOOSRules:
         assert alerts[0].rule_id == "RULE_A"
         assert alerts[0].severity == "high"
 
-    # Правило A не срабатывает, если stock_on_hand <= 0 или seen_on_shelf == true
     def test_rule_a_no_alert_when_stock_zero(self):
         stock_rows = [
             StockRow(
@@ -118,7 +113,6 @@ class TestOOSRules:
 
         assert len(alerts) == 0
 
-    # Правило A не срабатывает, если товар виден на полке (seen_on_shelf == true), даже при наличии stock_on_hand > 0
     def test_rule_a_no_alert_when_shelf_visible(self):
         stock_rows = [
             StockRow(
@@ -148,20 +142,16 @@ class TestOOSRules:
         assert len(alerts) == 0
 
 
-# Тест выполнения LangGraph-скрипта с mock-данными
 class TestOOSGraph:
-    # Чек, что граф компилируется и выполняется без ошибок
     def test_graph_builds(self):
         graph = build_oos_graph()
         assert graph is not None
         assert hasattr(graph, "invoke")
 
-    # Чек, что весь workflow выполняется с mock-данными и возвращает ожидаемый результат
     def test_workflow_with_mock_dataset(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
 
-            # генерация и сохранение mock-данных для OOS-сканирования
             dataset = generate_mock_dataset(
                 seed=42,
                 weeks=2,
@@ -174,27 +164,22 @@ class TestOOSGraph:
 
             result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
 
-            # чек структуры результата
             assert "run_id" in result
             assert "artifacts_dir" in result
             assert "report_text" in result
             assert "alerts_count" in result
             assert "tasks_count" in result
 
-            # чек формата run_id
             assert result["run_id"].startswith("run-")
 
-            # чек содержания отчета
             assert "📊 Отчёт OOS" in result["report_text"]
             assert result["run_id"] in result["report_text"]
             assert dataset_id in result["report_text"]
 
-    # Чек: workflow создает все необходимые артефакты и сохраняет их в storage
     def test_workflow_creates_artifacts(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
 
-            # генерация и сохранение mock-данных для OOS-сканирования
             dataset = generate_mock_dataset(
                 seed=42,
                 weeks=2,
@@ -209,7 +194,6 @@ class TestOOSGraph:
             artifacts_dir = result["artifacts_dir"]
             assert artifacts_dir.exists()
 
-            # чек наличия необходимых файлов
             run_json = artifacts_dir / "run.json"
             alerts_json = artifacts_dir / "alerts.json"
             tasks_json = artifacts_dir / "tasks_draft.json"
@@ -226,7 +210,6 @@ class TestOOSGraph:
             assert report_html.exists()
             assert last_run_json.exists()
 
-    # Чек: количество сгенерированных задач соответствует количеству обнаруженных алертов (1 задача на 1 алерт)
     def test_run_json_structure(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
@@ -257,7 +240,6 @@ class TestOOSGraph:
             assert run_data["adapter"] == "mock"
             assert run_data["trigger"] == "manual"
 
-    # Чек: alerts.json содержит сериализованные объекты Alert
     def test_alerts_json_serialization(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
@@ -284,7 +266,6 @@ class TestOOSGraph:
                 assert "severity" in alert
                 assert "details" in alert
 
-    # Чек: tasks_draft.json содержит сериализованные объекты Task
     def test_tasks_json_serialization(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
@@ -313,7 +294,6 @@ class TestOOSGraph:
                 assert task["status"] == "draft"
                 assert task["action"] == "restock_and_display"
 
-    # Чек: количество сгенерированных задач соответствует количеству обнаруженных алертов (1 задача на 1 алерт)
     def test_alert_task_count_match(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
@@ -331,12 +311,10 @@ class TestOOSGraph:
             result = _run_workflow(storage_dir=storage_dir, dataset_id=dataset_id)
             assert result["tasks_count"] == result["alerts_count"]
 
-    # Чек: workflow produces deterministic results with same seed
     def test_workflow_deterministic_with_fixed_seed(self):
         with TemporaryDirectory() as tmp_dir:
             storage_dir = Path(tmp_dir)
 
-            # первый run
             dataset1 = generate_mock_dataset(
                 seed=99,
                 weeks=1,
@@ -360,7 +338,6 @@ class TestOOSGraph:
                 i18n_cfg=_mock_settings(dataset_id1)["i18n"],
             )
 
-            # второй run с тем же seed
             dataset2 = generate_mock_dataset(
                 seed=99,
                 weeks=1,
@@ -388,6 +365,5 @@ class TestOOSGraph:
                 i18n_cfg=_mock_settings(dataset_id2)["i18n"],
             )
 
-            # чек: одинаковое количество алертов и задач (одинаковый dataset)
             assert result1["alerts_count"] == result2["alerts_count"]
             assert result1["tasks_count"] == result2["tasks_count"]

@@ -24,12 +24,10 @@ MODULE_ARTIFACT_WHITELIST = {
 }
 
 
-# Валидация идентификаторов запусков
 def is_valid_run_id(run_id: str) -> bool:
     return bool(RUN_ID_PATTERN.fullmatch(run_id))
 
 
-# Разрешение пути к данным запуска с защитой от path traversal атак и проверкой валидности идентификатора запуска
 def resolve_run_dir(storage_dir: Path, run_id: str) -> Path | None:
     if not is_valid_run_id(run_id):
         return None
@@ -45,7 +43,6 @@ def resolve_run_dir(storage_dir: Path, run_id: str) -> Path | None:
     return run_dir
 
 
-# Список запусков, доступных в хранилище, с сортировкой по дате создания
 def list_runs(storage_dir: Path) -> list[str]:
     runs_dir = storage_dir / "runs"
     if not runs_dir.exists():
@@ -56,7 +53,6 @@ def list_runs(storage_dir: Path) -> list[str]:
     return [item.name for item in run_dirs]
 
 
-# Чтение артефактов запуска с безопасным доступом к данным, фильтрацией чувствительной информации и формированием структурированных представлений для отображения в веб-интерфейсе
 def read_json_file(path: Path) -> tuple[Any | None, str | None]:
     if not path.exists():
         return None, "missing"
@@ -70,7 +66,6 @@ def read_json_file(path: Path) -> tuple[Any | None, str | None]:
         return None, "unreadable"
 
 
-# Чтение TSV файлов с безопасным доступом к данным, фильтрацией чувствительной информации и формированием структурированных представлений для отображения в веб-интерфейсе
 def read_tsv_file(path: Path) -> tuple[list[dict[str, str]] | None, str | None]:
     if not path.exists():
         return None, "missing"
@@ -86,7 +81,6 @@ def read_tsv_file(path: Path) -> tuple[list[dict[str, str]] | None, str | None]:
         return None, "unreadable"
 
 
-# Чтение артефактов запуска с безопасным доступом к данным
 def safe_read_text(path: Path) -> tuple[str | None, str | None]:
     if not path.exists():
         return None, "missing"
@@ -96,7 +90,6 @@ def safe_read_text(path: Path) -> tuple[str | None, str | None]:
         return None, "unreadable"
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def build_run_overview(run_dir: Path) -> dict[str, Any]:
     summary, summary_error = read_json_file(run_dir / "operator_summary.json")
     source_diagnostics, source_error = read_json_file(
@@ -146,7 +139,6 @@ def build_run_overview(run_dir: Path) -> dict[str, Any]:
     }
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def build_rop_dashboard(
     run_dir: Path,
     source_id_filter: str | None,
@@ -415,7 +407,6 @@ def build_rop_dashboard(
     }
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _matches_filters(
     row: dict[str, Any],
     source_id_filter: str | None,
@@ -453,7 +444,6 @@ def _matches_filters(
     return True
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _body_short(source_event: dict[str, Any]) -> str:
     for key in ("body_preview", "text_preview", "body"):
         value = source_event.get(key)
@@ -462,7 +452,6 @@ def _body_short(source_event: dict[str, Any]) -> str:
     return ""
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _attachments_summary(attachments: Any) -> str:
     if not isinstance(attachments, list):
         return ""
@@ -499,7 +488,6 @@ def _attachments_summary(attachments: Any) -> str:
     return "; ".join(parts)
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _bool_text(value: Any) -> str:
     if isinstance(value, str):
         normalized = value.strip().lower()
@@ -511,21 +499,18 @@ def _bool_text(value: Any) -> str:
     return "true" if bool(value) else "false"
 
 
-# Формирование представлений данных из артефактов запуска для отображения в веб-интерфейсе
 def _as_text(value: Any) -> str:
     if value is None:
         return ""
     return _sanitize(str(value))
 
 
-# Санитизация текстовых данных для безопасного отображения в веб-интерфейсе, удаление лишних пробелов и контрольных символов
 def _sanitize(value: str) -> str:
     return " ".join(
         value.replace("\t", " ").replace("\n", " ").replace("\r", " ").split()
     )
 
 
-# Билд
 def _build_source_rows(
     source_diagnostics: Any,
     intake_metadata: Any,
@@ -594,7 +579,6 @@ def _build_source_rows(
     return rows
 
 
-# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
 def _build_single_source_row(
     source_diagnostics: Any,
     intake_metadata: Any,
@@ -621,7 +605,6 @@ def _build_single_source_row(
     return merged
 
 
-# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
 def _build_source_aggregate(
     source_diagnostics: Any,
     intake_metadata: Any,
@@ -683,7 +666,6 @@ def _build_source_aggregate(
     return aggregate
 
 
-# Билд агрегированных данных по источникам с учетом информации из разных артефактов запуска для отображения в веб-интерфейсе
 def _int_or_zero(value: Any) -> int:
     if isinstance(value, bool):
         return int(value)

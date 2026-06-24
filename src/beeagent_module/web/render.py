@@ -8,7 +8,6 @@ _env = Environment(
 )
 
 
-# Рендеринг HTML шаблонов с помощью Jinja2
 def render_template(template_name: str, **context: object) -> str:
     template = _env.get_template(template_name)
     return template.render(**context)

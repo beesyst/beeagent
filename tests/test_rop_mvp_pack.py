@@ -436,7 +436,6 @@ class TestBuildRopMvpPack:
             settings=_MINIMAL_SETTINGS,
             logger=_null_logger(),
         )
-        # Should not crash, connector_degraded events go to degraded queue
         assert pack["status"] in ("ready", "ready_with_limitations")
 
     def test_missing_current_state(self, run_dir: Path, tmp_path: Path) -> None:
@@ -450,7 +449,6 @@ class TestBuildRopMvpPack:
             logger=_null_logger(),
         )
         assert pack["run_id"] == "mvp-test-run"
-        # Should still have business_summary from dashboard or classified events
         assert pack.get("business_summary", {})
 
     def test_missing_dashboard(self, run_dir: Path, tmp_path: Path) -> None:
@@ -465,7 +463,6 @@ class TestBuildRopMvpPack:
             logger=_null_logger(),
         )
         assert pack["run_id"] == "mvp-test-run"
-        # Business summary should fall back to current_state or classified events
         assert pack.get("business_summary", {})
 
     def test_missing_normalized_events(self, run_dir: Path, tmp_path: Path) -> None:
@@ -533,7 +530,6 @@ class TestBuildRopMvpPack:
         sc = pack["source_coverage"]
         assert sc["configured"] == 2
         assert sc["enabled"] == 2
-        # loaded/degraded should be 0 without diagnostics
         assert sc.get("loaded", 0) >= 0
 
     def test_bitrix_evidence_uses_reconciliation_aggregate_without_current_state(
@@ -607,7 +603,6 @@ class TestMvpReportMarkdown:
         )
         md = build_mvp_report_markdown(pack)
 
-        # No secrets patterns
         secrets_patterns = [
             "https://.*bitrix",
             "/rest/[0-9]",
@@ -751,19 +746,12 @@ class TestWriteMvpPackArtifacts:
         )
         ga = pack.get("generated_at_utc", "")
         assert ga.endswith("Z")
-        # Verify it parses as valid ISO 8601
         datetime.fromisoformat(ga.replace("Z", "+00:00"))
-
-
-# ---------------------------------------------------------------------------
-# Tests: Config source coverage
-# ---------------------------------------------------------------------------
 
 
 class TestSourceCoverage:
     def test_empty_sources(self, run_dir: Path, tmp_path: Path) -> None:
         """Empty rop.sources in config should be handled gracefully."""
-        # Remove source_diagnostics so config-only mode is tested
         (run_dir / "source_diagnostics.json").unlink(missing_ok=True)
         empty_settings = {"rop": {"sources": [], "dashboard": {"default_period": "7d"}}}
         pack = build_rop_mvp_pack(
@@ -794,11 +782,6 @@ class TestSourceCoverage:
         assert "warning" in sc
 
 
-# ---------------------------------------------------------------------------
-# Tests: Evidence links
-# ---------------------------------------------------------------------------
-
-
 class TestEvidenceLinks:
     def test_evidence_links_are_safe(self, run_dir: Path, tmp_path: Path) -> None:
         """Evidence links must not contain secrets or full artifact paths."""
@@ -811,10 +794,7 @@ class TestEvidenceLinks:
         )
         for link in pack.get("evidence_links", []):
             href = link.get("href", "")
-            # Must not contain raw file system paths
             assert "/storage/" not in href
             assert "/logs/" not in href
-            # Must be relative artifact URL
             assert href.startswith("/runs/")
-            # Must not contain secrets
             assert "bitrix" not in href.lower() or "/runs/" in href

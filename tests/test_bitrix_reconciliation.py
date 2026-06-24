@@ -38,7 +38,6 @@ from beeagent_module.core.settings import load_settings
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-# Получение логера
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_bitrix")
     logger.addHandler(logging.NullHandler())
@@ -46,12 +45,10 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Загрузка тестовых настроек
 def _load_test_settings() -> dict:
     return load_settings(_PROJECT_ROOT / "config" / "settings.yml")
 
 
-# Формирование фейкового ответа Bitrix API для тестов
 def _make_fake_bitrix_response(
     items: list[dict[str, Any]] | None = None,
     error: str | None = None,
@@ -80,7 +77,6 @@ class _FakeHttpResponse:
         return self._body
 
 
-# Обработка CLI аргументов для запуска в разных режимах (default, telegram, web, routes, rop)
 @pytest.fixture
 def fake_bitrix_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
@@ -89,7 +85,6 @@ def fake_bitrix_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-# Параметры для тестов: sample normalized/classified events и run директория с артефактами
 @pytest.fixture
 def sample_normalized_events() -> list[dict[str, Any]]:
     return [
@@ -117,7 +112,6 @@ def sample_normalized_events() -> list[dict[str, Any]]:
     ]
 
 
-# Параметры для тестов: sample classified events и run директория с артефактами
 @pytest.fixture
 def sample_classified_events() -> list[dict[str, Any]]:
     return [
@@ -151,7 +145,6 @@ def sample_classified_events() -> list[dict[str, Any]]:
     ]
 
 
-# Создание run директории с normalized/classified артефактами для тестов
 @pytest.fixture
 def run_dir_with_artifacts(
     tmp_path: Path,
@@ -172,7 +165,6 @@ def run_dir_with_artifacts(
     return run_dir
 
 
-# Класс: Bitrix config block присутствует в settings.yml
 class TestBitrixConfigValidation:
     def test_bitrix_config_exists(self) -> None:
         settings = _load_test_settings()
@@ -298,7 +290,6 @@ class TestBitrixConfigValidation:
         assert "not found in env" in str(exc_info.value)
 
 
-# Класс: Client строит URL метода без утечки секрета в лог
 class TestBitrixClient:
     def test_builds_method_url_without_logging_secret(
         self, fake_bitrix_env: None
@@ -492,7 +483,6 @@ class TestBitrixClient:
         assert "rest" not in url
 
 
-# Класс: Reconciliation логика - matched, not_found, degraded, skipped
 class TestBitrixReconciliation:
     def test_irrelevant_event_is_skipped_non_actionable(self) -> None:
         result = _reconcile_event(
@@ -575,7 +565,6 @@ class TestBitrixReconciliation:
             original_call = client.call
 
             def mock_call(method, params=None):
-                # Email search uses crm.lead.list now
                 if method == "crm.lead.list":
                     return {
                         "result": [
@@ -1016,7 +1005,6 @@ class TestBitrixReconciliation:
         assert item["needs_manual_review"] is False
 
 
-# Класс: Reconciliation artifact - создается, содержит нужные поля, не содержит секретов, не портит существующие артефакты
 class TestBitrixArtifact:
     def test_creates_reconciliation_artifact(
         self, tmp_path: Path, fake_bitrix_env: None
@@ -1430,7 +1418,6 @@ class TestBitrixArtifact:
         assert json.loads(norm_path.read_text(encoding="utf-8")) == normalized_original
 
 
-# Класс: CLI enrichment - export-review заполняет Bitrix columns, TSV остаётся валидным без reconciliation artifact
 class TestBitrixTsvEnrichment:
     def test_export_review_fills_bitrix_columns_when_artifact_exists(
         self, tmp_path: Path
@@ -1521,7 +1508,6 @@ class TestBitrixTsvEnrichment:
         assert row["safe_to_use_as_target"] == ""
 
 
-# Класс: Безопасность - в allowlist нет write методов, Bitrix connector не импортирует beeagent_rop, beeagent-rop файлы не менялись
 class TestBitrixSafety:
     def test_no_write_methods_in_allowed(self) -> None:
         for method in ALLOWED_METHODS:
@@ -1569,7 +1555,6 @@ class TestBitrixSafety:
         assert not old_path.exists()
 
 
-# Класс: CLI обработчик - reconcile-bitrix с несуществующим run_id должен падать с понятной ошибкой
 class TestBitrixCliHandler:
     def test_reconcile_bitrix_disabled_config_fails_without_completed(
         self,

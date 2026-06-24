@@ -23,7 +23,6 @@ from beeagent_module.core.cli import (
 )
 
 
-# null logger для тестов
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_current_state")
     logger.addHandler(logging.NullHandler())
@@ -31,7 +30,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Фикстура: настройки для тестов
 def _settings() -> dict:
     return {
         "rop": {
@@ -43,7 +41,6 @@ def _settings() -> dict:
     }
 
 
-# Фикстура: создание минимального каталога запуска ROP с базовыми артефактами
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
     rdir = tmp_path / "runs" / "smoke-it27-current"
@@ -129,7 +126,6 @@ def run_dir(tmp_path: Path) -> Path:
     return rdir
 
 
-# Добавление Bitrix reconciliation артефакта в каталог запуска
 def _add_bitrix_reconciliation(
     run_dir: Path,
     items: list[dict],
@@ -178,7 +174,6 @@ def _add_bitrix_reconciliation(
     )
 
 
-# Класс: тесты для build_rop_current_state и write_current_state
 class TestBuildRopCurrentState:
     def test_normal_run_without_bitrix(self, run_dir: Path, tmp_path: Path) -> None:
         storage_dir = tmp_path
@@ -454,7 +449,6 @@ class TestBuildRopCurrentState:
             build_rop_current_state(tmp_path, "../../etc/passwd", _null_logger())
 
 
-# Класс: тесты для write_current_state и CLI rop current
 class TestWriteCurrentState:
     def test_writes_artifact_and_interfaces(
         self, run_dir: Path, tmp_path: Path
@@ -495,7 +489,6 @@ class TestWriteCurrentState:
             write_current_state(tmp_path, "../../etc/passwd", {}, _null_logger())
 
 
-# Класс: тесты для CLI rop current
 class TestCliRopCurrent:
     def test_cli_rop_current_parser(self) -> None:
         parser = create_rop_parser()
@@ -710,7 +703,6 @@ class TestCliCurrentStatePostHooks:
         assert calls == {"build": False, "write": False}
 
 
-# Класс: тесты для проверки, что артефакт current-state не раскрывает raw content или секреты
 class TestCurrentStateSecrets:
     def test_no_raw_content_in_current_state(
         self, run_dir: Path, tmp_path: Path

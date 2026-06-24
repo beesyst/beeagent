@@ -14,7 +14,6 @@ from beeagent_module.core.module_runtime import execute_module_case
 from beeagent_module.core.settings import load_settings
 
 
-# Эти тесты проверяют интеграцию ROP-модуля в рамках общего механизма исполнения модулей, не зависят от конкретной реализации ROP и не требуют наличия реального ROP-сервиса. Они гарантируют, что ROP-модуль корректно загружается, регистрируется и может исполняться через execute_module_case, а также что артефакты, связанные с исполнением модуля, сохраняются в ожидаемых местах.
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_module_integration_null")
     logger.addHandler(logging.NullHandler())
@@ -22,12 +21,10 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Вспомогательная функция для получения конфигурации ROP-модуля из settings.yml, чтобы убедиться, что он включен и доступен для тестов
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Вспомогательная функция для извлечения конфигурации ROP-модуля из settings.yml, чтобы убедиться, что он включен и доступен для тестов
 def _rop_registry_entry_from_settings() -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     entries = settings["modules"]["registry"]
@@ -40,7 +37,6 @@ def _rop_registry_entry_from_settings() -> dict:
     raise AssertionError("modules.registry must contain enabled beeagent-rop")
 
 
-# Тест: чек, который проверяет, что запись ROP-модуля загружается в реестр и помечается как "loaded", а также что поддерживает ожидаемые case_type
 def test_rop_registry_entry_loaded_and_marked_valid(tmp_path: Path) -> None:
     rop_entry = _rop_registry_entry_from_settings()
     registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
@@ -63,7 +59,6 @@ def test_rop_registry_entry_loaded_and_marked_valid(tmp_path: Path) -> None:
     assert data["registry"][0]["state"] == "loaded"
 
 
-# Тест: чек, что при исполнении модуля через execute_module_case создаются артефакты, связанные с run_id, и сохраняются в правильных местах, а также что возвращаемый ModuleResult содержит ожидаемые данные
 def test_execute_module_case_with_rop_writes_module_linked_artifacts(
     tmp_path: Path,
 ) -> None:
