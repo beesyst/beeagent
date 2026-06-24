@@ -14,7 +14,6 @@ from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.module_runtime import execute_module_case
 
 
-# Эти тесты проверяют, что execute_module_case корректно прокидывает RuntimeContext и ArtifactAPI в модуль, и что модуль может создавать артефакты, которые сохраняются в правильной структуре директорий. Также проверяется, что execute_module_case валидирует поддерживаемые case_type и согласованность возвращаемого ModuleResult.
 class _StubArtifactModule:
     @property
     def module_id(self) -> str:
@@ -55,7 +54,6 @@ class _StubArtifactModule:
         )
 
 
-# Этот модуль возвращает неконсистентный module_id в ModuleResult, что должно быть поймано execute_module_case и вызвать ошибку
 class _StubBadResultModule:
     @property
     def module_id(self) -> str:
@@ -78,7 +76,6 @@ class _StubBadResultModule:
         )
 
 
-# Тест: чек, что execute_module_case корректно прокидывает RuntimeContext и ArtifactAPI в модуль, и что модуль может создавать артефакты, которые сохраняются в правильной структуре директорий
 def _make_fake_package(
     name: str,
     entry_attr: str,
@@ -90,12 +87,10 @@ def _make_fake_package(
     return pkg
 
 
-# Удаление фейкового пакета из sys.modules после теста
 def _remove_fake_package(name: str) -> None:
     sys.modules.pop(name, None)
 
 
-# Тест: чек, что execute_module_case корректно прокидывает RuntimeContext и ArtifactAPI в модуль, и что модуль может создавать артефакты, которые сохраняются в правильной структуре директорий
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_module_runtime_null")
     logger.addHandler(logging.NullHandler())
@@ -103,7 +98,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Тест: чек, что execute_module_case корректно прокидывает RuntimeContext и ArtifactAPI в модуль, и что модуль может создавать артефакты, которые сохраняются в правильной структуре директорий
 def test_execute_module_case_propagates_runtime_context_and_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -160,7 +154,6 @@ def test_execute_module_case_propagates_runtime_context_and_artifacts(
         _remove_fake_package(pkg_name)
 
 
-# Тест: чек, что execute_module_case валидирует поддерживаемые case_type и согласованность возвращаемого ModuleResult
 def test_execute_module_case_rejects_unsupported_case_type(tmp_path: Path) -> None:
     pkg_name = "_test_stub_case_mismatch_pkg"
     entry_name = "StubArtifactModule"
@@ -195,7 +188,6 @@ def test_execute_module_case_rejects_unsupported_case_type(tmp_path: Path) -> No
         _remove_fake_package(pkg_name)
 
 
-# Тест: чек, что execute_module_case валидирует поддерживаемые case_type и согласованность возвращаемого ModuleResult
 def test_execute_module_case_rejects_inconsistent_module_result(tmp_path: Path) -> None:
     pkg_name = "_test_stub_bad_result_pkg"
     entry_name = "StubBadResultModule"

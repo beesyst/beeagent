@@ -16,7 +16,6 @@ from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.settings import load_settings
 
 
-# Тесты для ROP оператора, который запускает модульные кейсы и собирает результаты в едином формате
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_cases_rop_operator")
     logger.addHandler(logging.NullHandler())
@@ -24,12 +23,10 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Тесты ROP оператора
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Тест: создание демо payload для ROP оператора с полями source, sender, subject и body, которые могут использоваться в кейсах классификации лидов
 def _demo_payload() -> dict[str, str]:
     return {
         "source": "email",
@@ -39,7 +36,6 @@ def _demo_payload() -> dict[str, str]:
     }
 
 
-# Тест: загрузка настроек с источником mailbox_readonly и правильными полями username_env и password_env
 def _attachment_settings() -> dict[str, object]:
     return {
         "enabled": True,
@@ -52,7 +48,6 @@ def _attachment_settings() -> dict[str, object]:
     }
 
 
-# Вспомогательная функция для получения конфигурации ROP оператора из settings.yml
 def _rop_registry_entry_from_settings() -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     entries = settings["modules"]["registry"]
@@ -65,7 +60,6 @@ def _rop_registry_entry_from_settings() -> dict:
     raise AssertionError("modules.registry must contain enabled beeagent-rop")
 
 
-# Вспомогательные функции для тестов ROP оператора
 def _make_fake_package(
     name: str,
     entry_attr: str,
@@ -77,12 +71,10 @@ def _make_fake_package(
     return pkg
 
 
-# Вспомогательная функция для удаления фейкового пакета из sys.modules после теста
 def _remove_fake_package(name: str) -> None:
     sys.modules.pop(name, None)
 
 
-# Тест: успешный запуск ROP оператора с установленным модулем и проверка результатов
 def test_rop_operator_flow_success_with_installed_module(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     rop_entry = _rop_registry_entry_from_settings()
@@ -123,7 +115,6 @@ def test_rop_operator_flow_success_with_installed_module(tmp_path: Path) -> None
     )
 
 
-# Тест: запуск ROP оператора без установленного модуля и проверка, что статус оператора становится degraded с ошибкой в summary
 def test_rop_operator_flow_degraded_when_module_missing(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     registry = ModuleRegistry(config=[], logger=_null_logger())
@@ -149,7 +140,6 @@ def test_rop_operator_flow_degraded_when_module_missing(tmp_path: Path) -> None:
     assert operator_summary_path.exists()
 
 
-# Тест: запуск ROP оператора с модулем, который возвращает статус не ok, и проверка, что статус оператора становится degraded
 class _StubNonOkModule:
     @property
     def module_id(self) -> str:
@@ -173,7 +163,6 @@ class _StubNonOkModule:
         )
 
 
-# Тест: запуск ROP оператора с модулем, который возвращает статус не ok, и проверка, что статус оператора становится degraded
 def test_rop_operator_flow_degraded_for_non_ok_module_status(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -220,7 +209,6 @@ def test_rop_operator_flow_degraded_for_non_ok_module_status(tmp_path: Path) -> 
         _remove_fake_package(pkg_name)
 
 
-# Тест: запуск ROP оператора без payload и проверка, что возникает RuntimeError с сообщением о необходимости payload
 def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     registry = ModuleRegistry(config=[], logger=_null_logger())
@@ -240,7 +228,6 @@ def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
         assert str(exc) == "ROP operator payload is required"
 
 
-# Создание минимальных settings с json_batch источником для тестов ROP batch case
 def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
@@ -265,7 +252,6 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
     return settings
 
 
-# Тест: успешный запуск ROP batch case с json_batch источником и проверка результатов
 def _make_mailbox_settings(enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
@@ -294,7 +280,6 @@ def _make_mailbox_settings(enabled: bool = True) -> dict:
     return settings
 
 
-# Тест: degraded run при отсутствии переменных окружения для доступа к почтовому ящику
 class _FakeMailboxClient:
     def __init__(
         self, messages: list[bytes] | None = None, error: Exception | None = None
@@ -310,7 +295,6 @@ class _FakeMailboxClient:
         return self._messages[:items_max]
 
 
-# Сбор референсов на артефакты, созданные модульными кейсами, для включения их в summary оператора
 def _write_sample_batch(directory: Path) -> Path:
     batch = {
         "period": "2026-05",
@@ -334,7 +318,6 @@ def _write_sample_batch(directory: Path) -> Path:
     return path
 
 
-# Тест: успешный batch run с installed beeagent-rop и rop_summary case
 def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     batch_path = _write_sample_batch(tmp_path)
     rop_entry = _rop_registry_entry_from_settings()
@@ -396,7 +379,6 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     assert source["items_max"] == 50
 
 
-# Тест: degraded run при отсутствии enabled источника
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
@@ -423,7 +405,6 @@ def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     ).exists()
 
 
-# Тест: degraded run при отсутствии enabled источника и проверка, что diagnostics содержит информацию об ошибке выбора источника
 def test_rop_batch_case_source_selection_error_writes_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -456,7 +437,6 @@ def test_rop_batch_case_source_selection_error_writes_diagnostics(
     assert diagnostics.get("sources") == []
 
 
-# Тест: degraded run при отсутствии batch файла
 def test_rop_batch_case_degraded_missing_batch_file(tmp_path: Path) -> None:
     settings = _make_batch_settings("storage/mock/nonexistent.json")
 
@@ -503,7 +483,6 @@ def test_rop_batch_case_degraded_missing_batch_file(tmp_path: Path) -> None:
     assert source["reason"] == "batch_file_not_found"
 
 
-# Тест: degraded run при отсутствии модуля в registry
 def test_rop_batch_case_degraded_missing_module(tmp_path: Path) -> None:
     batch_path = _write_sample_batch(tmp_path)
     settings = _make_batch_settings(str(batch_path.relative_to(tmp_path)))
@@ -525,7 +504,6 @@ def test_rop_batch_case_degraded_missing_module(tmp_path: Path) -> None:
     ).exists()
 
 
-# Тесты для ROP оператора с источником mailbox_readonly: проверка обработки ошибок аутентификации, недоступности сервера, пустого ящика и некорректных сообщений
 def test_rop_batch_case_mailbox_missing_credentials_degraded(tmp_path: Path) -> None:
     settings = _make_mailbox_settings()
 
@@ -551,7 +529,6 @@ def test_rop_batch_case_mailbox_missing_credentials_degraded(tmp_path: Path) -> 
     assert diagnostics["reason"] == "missing_credentials"
 
 
-# Тест: degraded run при ошибке аутентификации к почтовому ящику
 def test_rop_batch_case_mailbox_auth_failure_degraded(
     tmp_path: Path,
     monkeypatch,
@@ -587,7 +564,6 @@ def test_rop_batch_case_mailbox_auth_failure_degraded(
     assert diagnostics["reason"] == "auth_failure"
 
 
-# Тест: degraded run при недоступности сервера или папки почтового ящика
 def test_rop_batch_case_mailbox_unavailable_degraded(
     tmp_path: Path,
     monkeypatch,
@@ -623,7 +599,6 @@ def test_rop_batch_case_mailbox_unavailable_degraded(
     assert diagnostics["reason"] == "mailbox_unavailable"
 
 
-# Тест: успешный запуск ROP batch case с источником mailbox_readonly и пустым ящиком
 def test_rop_batch_case_mailbox_empty_inbox_ok(
     tmp_path: Path,
     monkeypatch,
@@ -660,7 +635,6 @@ def test_rop_batch_case_mailbox_empty_inbox_ok(
     assert diagnostics["reason"] == "empty_inbox"
 
 
-# Тест: degraded run при отсутствии переменных окружения для доступа к почтовому ящику
 def test_rop_batch_case_mailbox_malformed_message_skipped(
     tmp_path: Path,
     monkeypatch,
@@ -699,7 +673,6 @@ def test_rop_batch_case_mailbox_malformed_message_skipped(
     assert len(normalized) == 1
 
 
-# Тест: запуск ROP batch case с period_override и проверка, что период из override используется в метаданных intake и source в operator_summary, а также включается в артефакты
 def test_rop_batch_case_period_override_updates_artifacts(tmp_path: Path) -> None:
     batch_path = _write_sample_batch(tmp_path)
     rop_entry = _rop_registry_entry_from_settings()
@@ -730,7 +703,6 @@ def test_rop_batch_case_period_override_updates_artifacts(tmp_path: Path) -> Non
     assert operator["source"]["period"] == "2026-06"
 
 
-# Тест: запуск ROP batch case с несколькими источниками
 def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
     good_batch_path = _write_sample_batch(tmp_path)
     rop_entry = _rop_registry_entry_from_settings()
@@ -815,7 +787,6 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
     assert all(item.get("client_id") == "welding" for item in normalized)
 
 
-# Тест: запуск ROP batch case с несколькими источниками и selection_mode=single_explicit
 def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) -> None:
     primary_batch_path = _write_sample_batch(tmp_path)
     secondary_batch_path = tmp_path / "batch_second.json"
@@ -899,7 +870,6 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
     assert normalized[0]["source_role"] == "sales_mailbox"
 
 
-# Тест: проверка, что чувствительные поля из json_batch источника удаляются из normalized_events и source в operator_summary, а также из attachments, и что в diagnostics сохраняется информация о удаленных полях для отладки
 def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     tmp_path: Path,
 ) -> None:
@@ -996,7 +966,6 @@ def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     assert "content" not in attachments[0]
 
 
-# Тест: чек логики извлечения текста из вложений в ROP batch case, включая ограничения по типу контента и размеру
 def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1103,7 +1072,6 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
     assert len(event["attachment_extraction_refs"]) == 3
 
 
-# Тест: чек извдеения вложений в ROP batch case, сырые поля с контентом не сохраняются в артефактах и normalized_events
 def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
     tmp_path: Path,
 ) -> None:
@@ -1190,7 +1158,6 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
     assert "RAW-EML-SHOULD-NOT-PERSIST" not in serialized
 
 
-# Тест: успешный batch classification handoff - classified_events.json создается, rop_summary получает classified события
 def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1268,7 +1235,6 @@ def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
     )
 
 
-# Тест: pre-classified batch events сохраняют trace fields и default reason_code при отсутствии явных полей
 def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1346,7 +1312,6 @@ def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None
     assert operator_summary["classification"]["classification_failed_count"] == 0
 
 
-# Тест: preview text из normalized event маппится в body для lead_classification
 def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1458,7 +1423,6 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
         _remove_fake_package("test_stub_preview")
 
 
-# Тест: per-event classification failure — один event не классифицируется, но batch продолжается, создается fallback item
 def test_rop_batch_per_event_classification_failure(
     tmp_path: Path,
     monkeypatch,
@@ -1620,7 +1584,6 @@ def test_rop_batch_per_event_classification_failure(
         _remove_fake_package("test_stub_rop")
 
 
-# Тест: attachment metadata sanitation — size переименовывается в size_bytes, unsupported keys удаляются
 def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1742,7 +1705,6 @@ def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
         _remove_fake_package("test_stub_att")
 
 
-# Тест: ValueError не валит batch — per-event exception обрабатывается в fallback
 def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1886,7 +1848,6 @@ def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
         _remove_fake_package("test_stub_valueerr")
 
 
-# Тест: verify no direct beeagent_rop imports in BeeAgent core
 def test_no_direct_beeagent_rop_imports() -> None:
     import subprocess
 

@@ -9,7 +9,6 @@ from beeagent_module.agents.promo.graph import run_promo_workflow
 from beeagent_module.mock.dataset import generate_mock_dataset, save_mock_dataset
 
 
-# Кейс promo: генерация mock-данных и запуск promo workflow
 def run_promo_case(
     settings: dict,
     storage_dir: Path,

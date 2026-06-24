@@ -32,7 +32,6 @@ BUTTON_REJECT_TASKS = "reject_tasks"
 BUTTON_QUIZ_ANSWER_PREFIX = "quiz_answer_"
 
 
-# Запуск Telegram-режим и стартует polling
 def start_telegram_mode(settings: dict, logger: logging.Logger) -> None:
     telegram_cfg = settings["telegram"]
     telegram_enabled = telegram_cfg["enabled"]
@@ -66,7 +65,6 @@ def start_telegram_mode(settings: dict, logger: logging.Logger) -> None:
     application.run_polling(drop_pending_updates=True)
 
 
-# Создание и настройка приложения Telegram
 def _build_application(
     token: str,
     chat_id: int,
@@ -122,17 +120,14 @@ def _build_application(
     return application
 
 
-# Запуск scheduled-run режима: бесконечный цикл с интервалом из настроек и выполнением сценария OOS
 async def _on_application_start(application: Any) -> None:
     await _start_scheduler_if_enabled(application)
 
 
-# Корректная остановка при завершении приложения: остановка цикла scheduled-run
 async def _on_application_shutdown(application: Any) -> None:
     await _stop_scheduler(application)
 
 
-# Цикл для scheduled-run: выполнение сценария OOS и отправка отчета в Telegram по интервалу из настроек
 async def _start_scheduler_if_enabled(application: Any) -> None:
     settings = application.bot_data["settings"]
     logger: logging.Logger = application.bot_data["logger"]
@@ -157,7 +152,6 @@ async def _start_scheduler_if_enabled(application: Any) -> None:
     )
 
 
-# Корректная остановка цикла scheduled-run при завершении приложения
 async def _stop_scheduler(application: Any) -> None:
     logger: logging.Logger = application.bot_data["logger"]
     scheduler_task = application.bot_data.get("scheduler_task")
@@ -174,7 +168,6 @@ async def _stop_scheduler(application: Any) -> None:
             logger.warning("scheduler shutdown timeout, task cancelled")
 
 
-# Цикл для scheduled-run: выполнение сценария OOS и отправка отчета в Telegram по интервалу из настроек
 async def _scheduler_loop(application: Any, stop_event: asyncio.Event) -> None:
     settings = application.bot_data["settings"]
     scheduler_cfg = settings["scheduler"]
@@ -195,7 +188,6 @@ async def _scheduler_loop(application: Any, stop_event: asyncio.Event) -> None:
         await _run_scheduled_oos_tick(application)
 
 
-# Выполнение сценария OOS для scheduled-run и отправка отчета в Telegram, с логированием ошибок
 async def _run_scheduled_oos_tick(application: Any) -> None:
     settings = application.bot_data["settings"]
     logger: logging.Logger = application.bot_data["logger"]
@@ -227,7 +219,6 @@ async def _run_scheduled_oos_tick(application: Any) -> None:
         logger.exception("failed to send scheduled notification")
 
 
-# Обработка команды /start и показывает меню
 async def handle_start(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="start")
 
@@ -244,7 +235,6 @@ async def handle_start(update: Any, context: Any) -> None:
     )
 
 
-# Обработка команды /help и показывает доступные команды
 async def handle_help(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="help")
 
@@ -258,7 +248,6 @@ async def handle_help(update: Any, context: Any) -> None:
     await message.reply_text(_t(context, "telegram.help"))
 
 
-# Обработка команды /run_oos и формирование mock-отчета
 async def handle_run_oos(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="run_oos")
 
@@ -272,7 +261,6 @@ async def handle_run_oos(update: Any, context: Any) -> None:
     await _run_oos_and_reply(message, context)
 
 
-# Обработка команды /run_promo и формирование promo-отчета
 async def handle_run_promo(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="run_promo")
 
@@ -286,7 +274,6 @@ async def handle_run_promo(update: Any, context: Any) -> None:
     await _run_promo_and_reply(message, context)
 
 
-# Обработка команды /run_rop и запуск ROP оператора с demo payload
 async def handle_run_rop(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="run_rop")
 
@@ -317,7 +304,6 @@ async def handle_run_rop(update: Any, context: Any) -> None:
     await message.reply_text(str(result["operator_text"]))
 
 
-# Обработка команды /last и возвращает последний отчет
 async def handle_last(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="last")
 
@@ -337,7 +323,6 @@ async def handle_last(update: Any, context: Any) -> None:
     await message.reply_text(report_text)
 
 
-# Обработка команды /quiz_pharmacy и инициализация квиза
 async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="quiz_pharmacy")
 
@@ -391,7 +376,6 @@ async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
     await message.reply_text(question_text)
 
 
-# Обработка команды /last_quiz и возврат последнего результата
 async def handle_last_quiz(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="last_quiz")
 
@@ -413,7 +397,6 @@ async def handle_last_quiz(update: Any, context: Any) -> None:
     await message.reply_text(result["report_text"])
 
 
-# Обработка нажатий inline-кнопок
 async def handle_menu_button(
     update: Any,
     context: Any,
@@ -470,7 +453,6 @@ async def handle_menu_button(
     await reply(_t(context, "telegram.unknown_action"))
 
 
-# Обработка неизвестных команд без падения
 async def handle_unknown_command(
     update: Any,
     context: Any,
@@ -487,7 +469,6 @@ async def handle_unknown_command(
     await message.reply_text(_t(context, "telegram.unknown"))
 
 
-# Обработка обычного текста как AI-вопроса по последнему OOS run
 async def handle_assistant_question(update: Any, context: Any) -> None:
     await _track_update_event(update, context, event_type="assistant_question")
 
@@ -541,7 +522,6 @@ async def handle_assistant_question(update: Any, context: Any) -> None:
     await message.reply_text(answer)
 
 
-# Сбор главного inline-меню
 def _build_main_menu(translations: dict[str, Any] | None = None):
     try:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -586,7 +566,6 @@ def _build_main_menu(translations: dict[str, Any] | None = None):
     return InlineKeyboardMarkup(keyboard)
 
 
-# Выполнение сценария OOS через LangGraph и сохранение отчета
 async def _run_oos_and_reply(message: Any, context: Any) -> None:
     settings = context.bot_data["settings"]
     logger: logging.Logger = context.bot_data["logger"]
@@ -604,7 +583,6 @@ async def _run_oos_and_reply(message: Any, context: Any) -> None:
     await message.reply_text(report_text)
 
 
-# Выполнение сценария promo через LangGraph и отправка отчета
 async def _run_promo_and_reply(message: Any, context: Any) -> None:
     settings = context.bot_data["settings"]
     logger: logging.Logger = context.bot_data["logger"]
@@ -622,7 +600,6 @@ async def _run_promo_and_reply(message: Any, context: Any) -> None:
     await message.reply_text(report_text)
 
 
-# Обработка одобрения или отклонения задач и сохранение результата
 async def _approve_or_reject_tasks(
     message: Any,
     context: Any,
@@ -634,7 +611,6 @@ async def _approve_or_reject_tasks(
     await message.reply_text(result_text)
 
 
-# Чек allowlist по chat_id и отклонение чухих чатов
 async def _ensure_allowlist(
     update: Any,
     context: Any,
@@ -656,7 +632,6 @@ async def _ensure_allowlist(
     return False
 
 
-# Получение перевода для Telegram контекста.
 def _t(context: Any, key: str, **vars: Any) -> str:
     translations = context.bot_data.get("translations")
     if not isinstance(translations, dict):
@@ -671,13 +646,11 @@ def _t(context: Any, key: str, **vars: Any) -> str:
     return t(translations, key, **vars)
 
 
-# Чтение JSON-файла артефакта с базовой валидацией структуры
 def _read_json_artifact(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
-# Сбор компактного контекста последнего run для Q&A
 def _build_oos_assistant_context(
     storage_dir: Path,
     max_context_items: int,
@@ -766,12 +739,12 @@ def _build_oos_assistant_context(
 
     try:
         alerts_count = int(run_payload.get("alerts_count", 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         alerts_count = 0
 
     try:
         tasks_count = int(run_payload.get("tasks_count", 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         tasks_count = 0
 
     try:
@@ -796,7 +769,6 @@ def _build_oos_assistant_context(
     return context_payload, None
 
 
-# Чек включена ли телеметрия и запись события
 async def _track_update_event(
     update: Any,
     context: Any,
@@ -827,7 +799,6 @@ async def _track_update_event(
         file.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
-# Билд клавиатуры с вариантами ответов для вопроса квиза
 def _build_answer_keyboard(run_id: str, options: list[str]):
     try:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -842,7 +813,6 @@ def _build_answer_keyboard(run_id: str, options: list[str]):
     return InlineKeyboardMarkup(keyboard)
 
 
-# Обработка нажатия кнопки ответа в квизе
 async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) -> None:
     settings = context.bot_data["settings"]
     logger: logging.Logger = context.bot_data["logger"]
@@ -873,7 +843,6 @@ async def _handle_quiz_answer(message: Any, context: Any, callback_data: str) ->
         )
         return
 
-    # ответ на вопрос и показ следующего или результата
     feedback = result.get("feedback", "")
     await message.reply_text(feedback)
 

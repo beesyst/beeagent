@@ -6,7 +6,6 @@ from beeagent_module.adapters.base import DataAdapter
 from beeagent_module.adapters.mock_adapter import MockAdapter
 
 
-# Фабрика адаптеров данных для кейса OOS, которая возвращает экземпляр адаптера в зависимости от настроек
 def get_adapter(
     settings: dict,
     storage_dir: Path,

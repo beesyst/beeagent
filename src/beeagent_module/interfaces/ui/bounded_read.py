@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-MAX_JSON_BYTES = 512 * 1024  # 512 KB
+MAX_JSON_BYTES = 512 * 1024
 MAX_JSONL_LINES = 1000
 MAX_TSV_BYTES = 512 * 1024
 MAX_TEXT_BYTES = 128 * 1024
@@ -29,7 +29,6 @@ SENSITIVE_KEY_PATTERNS = frozenset(
 RAW_CONTENT_KEYS = frozenset({"content", "raw_eml", "content_bytes", "payload_bytes"})
 
 
-# Чек, следует ли удалить ключ словаря
 def _is_sensitive_key(key: str) -> bool:
     lower = key.lower().strip()
     return lower in SENSITIVE_KEY_PATTERNS or any(
@@ -37,7 +36,6 @@ def _is_sensitive_key(key: str) -> bool:
     )
 
 
-# Рекурсивное удаление чувствительных данных из JSON-совместимых структур
 def _redact_sensitive_values(data: Any, depth: int = 0) -> Any:
     if depth > 20:
         return str(data)[:200] if data is not None else None
@@ -57,7 +55,6 @@ def _redact_sensitive_values(data: Any, depth: int = 0) -> Any:
     return data
 
 
-# Чтение JSON-артефакта с ограничением размера, предупреждением о некорректности и редактированием
 def read_bounded_json(path: Path) -> tuple[str | None, str | None, str | None]:
     if not path.exists():
         return None, None, "missing"
@@ -84,7 +81,6 @@ def read_bounded_json(path: Path) -> tuple[str | None, str | None, str | None]:
         return None, None, f"Read error: {exc}"
 
 
-# Чтение JSONL-артефакта с ограничением количества строк, предупреждением о некорректности и редактированием
 def read_bounded_jsonl(path: Path) -> tuple[str | None, str | None, str | None]:
     if not path.exists():
         return None, None, "missing"
@@ -112,7 +108,6 @@ def read_bounded_jsonl(path: Path) -> tuple[str | None, str | None, str | None]:
         return None, None, f"Read error: {exc}"
 
 
-# Чтение TSV-артефакта с ограничением размера и предупреждением о некорректности
 def read_bounded_tsv(path: Path) -> tuple[str | None, str | None, str | None]:
     if not path.exists():
         return None, None, "missing"
@@ -132,7 +127,6 @@ def read_bounded_tsv(path: Path) -> tuple[str | None, str | None, str | None]:
         return None, None, f"Read error: {exc}"
 
 
-# Чтение текстового артефакта с ограничением размера
 def read_bounded_text(path: Path) -> tuple[str | None, str | None, str | None]:
     if not path.exists():
         return None, None, "missing"
@@ -151,7 +145,6 @@ def read_bounded_text(path: Path) -> tuple[str | None, str | None, str | None]:
         return None, None, f"Read error: {exc}"
 
 
-# Диспетчер для чтения артефактов с помощью соответствующего ограниченного ридера на основе ID/типа артефакта
 def read_artifact_preview(artifact_id: str, artifact_path: Path):
     content_type = _infer_content_type(artifact_id)
     if content_type == "application/json":
@@ -166,7 +159,6 @@ def read_artifact_preview(artifact_id: str, artifact_path: Path):
     return text, warning, error
 
 
-# Получение типа содержимого для разрешенного артефакта
 def _infer_content_type(artifact_id: str) -> str:
     if artifact_id.endswith("_json") or artifact_id.endswith("_result_json"):
         return "application/json"

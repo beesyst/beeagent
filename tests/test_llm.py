@@ -6,7 +6,6 @@ from urllib import error
 from beeagent_module.core.llm import explain_recommendations
 
 
-# Тест: LLM отключен, возвращает None
 def test_llm_disabled() -> None:
     llm_cfg = {"enabled": False}
     recommendations = [{"sku": "SKU1", "action": "order"}]
@@ -16,7 +15,6 @@ def test_llm_disabled() -> None:
     assert result is None
 
 
-# Тест: API key отсутствует, возвращает None
 def test_llm_no_api_key() -> None:
     llm_cfg = {
         "enabled": True,
@@ -35,7 +33,6 @@ def test_llm_no_api_key() -> None:
     assert result is None
 
 
-# Тест: неподдерживаемый провайдер, возвращает None
 def test_llm_unsupported_provider() -> None:
     llm_cfg = {
         "enabled": True,
@@ -53,7 +50,6 @@ def test_llm_unsupported_provider() -> None:
     assert result is None
 
 
-# Тест: успешный запрос к API, правильный URL и payload
 def test_llm_successful_request() -> None:
     llm_cfg = {
         "enabled": True,
@@ -88,30 +84,25 @@ def test_llm_successful_request() -> None:
 
                 result = explain_recommendations(llm_cfg, recommendations)
 
-                # чек: Request был создан с правильным URL
                 assert mock_request_cls.called
                 call_args = mock_request_cls.call_args
                 assert call_args[0][0] == "https://api.openai.com/v1/responses"
 
-                # чек payload
                 payload = json.loads(call_args[1]["data"].decode("utf-8"))
                 assert payload["model"] == "gpt-4o-mini"
                 assert len(payload["input"]) == 2
                 assert payload["input"][0]["role"] == "developer"
                 assert payload["input"][1]["role"] == "user"
 
-                # чек headers
                 headers = call_args[1]["headers"]
                 assert headers["Content-Type"] == "application/json"
                 assert headers["Authorization"] == "Bearer test-api-key"
                 assert call_args[1]["method"] == "POST"
                 assert mock_urlopen.call_args[1]["timeout"] == 60
 
-                # чек результат
                 assert result == "Order 50 units of SKU1. Check SKU2 due to low stock."
 
 
-# Тест: API возвращает пустой choices
 def test_llm_empty_choices() -> None:
     llm_cfg = {
         "enabled": True,
@@ -140,7 +131,6 @@ def test_llm_empty_choices() -> None:
     assert result is None
 
 
-# Тест: API request падает с exception
 def test_llm_request_exception() -> None:
     llm_cfg = {
         "enabled": True,
@@ -164,7 +154,6 @@ def test_llm_request_exception() -> None:
     assert result is None
 
 
-# Тест: использование кастомного api_url из конфига
 def test_llm_custom_api_url() -> None:
     llm_cfg = {
         "enabled": True,
@@ -195,7 +184,6 @@ def test_llm_custom_api_url() -> None:
                 assert result == "Custom endpoint response"
 
 
-# Тест: если api_url отсутствует в конфиге - fallback на rules-only
 def test_llm_missing_api_url_returns_none() -> None:
     llm_cfg = {
         "enabled": True,
@@ -214,7 +202,6 @@ def test_llm_missing_api_url_returns_none() -> None:
             assert mock_request_cls.call_args is None
 
 
-# Тест: timeout retry, затем успешный ответ
 def test_llm_timeout_retries_then_success() -> None:
     llm_cfg = {
         "enabled": True,
@@ -244,7 +231,6 @@ def test_llm_timeout_retries_then_success() -> None:
     assert mock_urlopen.call_count == 3
 
 
-# Тест: timeout после ретраев -> WARNING и None
 def test_llm_timeout_after_retries_returns_none(caplog) -> None:
     llm_cfg = {
         "enabled": True,
@@ -272,7 +258,6 @@ def test_llm_timeout_after_retries_returns_none(caplog) -> None:
     assert "llm timeout after retries, fallback to rules-only" in caplog.text
 
 
-# Тест: HTTPError логируется как ERROR и возвращает None
 def test_llm_http_error_returns_none(caplog) -> None:
     llm_cfg = {
         "enabled": True,

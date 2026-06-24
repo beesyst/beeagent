@@ -18,7 +18,6 @@ ALLOWED_PERIODS: tuple[str, ...] = (
 )
 
 
-# Парсинг периода: возвращает dict с period, period_start_utc, period_end_utc, time_basis
 def parse_period(period: str) -> dict[str, Any]:
     period = period.strip().lower()
     now = datetime.now(timezone.utc)
@@ -79,7 +78,6 @@ def parse_period(period: str) -> dict[str, Any]:
     raise ValueError(f"Unsupported period: '{period}'")
 
 
-# Валидация периода: проверяет, что period входит в ALLOWED_PERIODS
 def validate_period(period: str) -> None:
     if period not in ALLOWED_PERIODS:
         raise ValueError(
@@ -87,7 +85,6 @@ def validate_period(period: str) -> None:
         )
 
 
-# Построение ROP dashboard read-model для указанного периода
 def build_rop_dashboard(
     storage_dir: Path,
     period: str,
@@ -236,7 +233,6 @@ def build_rop_dashboard(
     return dashboard
 
 
-# Запись dashboard artifact в storage/interfaces/rop_dashboard.json
 def write_rop_dashboard(
     storage_dir: Path,
     dashboard: dict[str, Any],
@@ -259,7 +255,6 @@ def write_rop_dashboard(
     return artifact_path
 
 
-# Генерация пустого dashboard с указанным периодом и причиной отсутствия данных
 def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
     return {
         "status": "empty",
@@ -276,7 +271,6 @@ def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
     }
 
 
-# Список run_id в runs_dir, отсортированный по mtime, с безопасной проверкой на директорию
 def _list_run_ids(runs_dir: Path) -> list[str]:
     return sorted(
         (d.name for d in runs_dir.iterdir() if d.is_dir()),
@@ -285,7 +279,6 @@ def _list_run_ids(runs_dir: Path) -> list[str]:
     )
 
 
-# Чтение JSON-списка из файла, с обработкой ошибок и возвратом None при проблемах
 def _read_json_list(path: Path) -> list[dict[str, Any]] | None:
     if not path.exists():
         return None
@@ -298,7 +291,6 @@ def _read_json_list(path: Path) -> list[dict[str, Any]] | None:
     return None
 
 
-# Чтение JSON-словаря из файла, с обработкой ошибок и возвратом None при проблемах
 def _read_json_dict(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -311,7 +303,6 @@ def _read_json_dict(path: Path) -> dict[str, Any] | None:
     return None
 
 
-# Разрешение client_id
 def _resolve_client_id(
     source_diag: dict | None,
     intake: dict | None,
@@ -332,7 +323,6 @@ def _resolve_client_id(
     return "unknown"
 
 
-# Разрешение generated_at
 def _resolve_generated_at(
     current_state: dict | None,
     run_dir: Path,
@@ -351,7 +341,6 @@ def _resolve_generated_at(
         return None
 
 
-# Парсинг CLI аргументов для rop команды
 def _parse_iso(iso_str: str | None) -> datetime | None:
     if not iso_str:
         return None
@@ -364,7 +353,6 @@ def _parse_iso(iso_str: str | None) -> datetime | None:
         return None
 
 
-# Фильтрация событий по периоду: возвращает только те события, у которых timestamp в пределах period_start и period_end
 def _filter_by_period(
     events: list[dict[str, Any]],
     period_start: datetime,
@@ -399,7 +387,6 @@ def _resolve_time_basis(stats: dict[str, int]) -> str:
     return "event_timestamp"
 
 
-# Извлечение timestamp из события, пытаясь разные поля и форматы, возвращает datetime или None
 def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     for key in ("event_date", "received_at", "timestamp", "created_at", "date"):
         raw = evt.get(key)
@@ -410,7 +397,6 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     return None
 
 
-# Билд бизнес KPI на основе классифицированных событий, текущего состояния, диагностики источников и извлечения вложений
 def _build_business_kpi(
     classified_list: list[dict[str, Any]],
     normalized_list: list[dict[str, Any]],
@@ -465,6 +451,7 @@ def _build_business_kpi(
         "high_priority": high_priority,
         "needs_review": needs_review,
         "lost_in_bitrix": _int(bitrix_kpi.get("lost_in_bitrix", 0)),
+        "weak_match": _int(bitrix_kpi.get("weak_match", 0)),
         "ambiguous_or_duplicate": _int(bitrix_kpi.get("ambiguous_or_duplicate", 0)),
         "unreconciled": _int(bitrix_kpi.get("unreconciled", 0)),
         "matched_in_bitrix": _int(bitrix_kpi.get("matched_in_bitrix", 0)),
@@ -516,7 +503,6 @@ def _count_period_attachment_refused(
     return 0
 
 
-# Билд series для графиков на основе классифицированных событий и текущего состояния
 def _build_series(
     classified_list: list[dict[str, Any]],
     bitrix_state: dict[str, Any],
@@ -566,12 +552,13 @@ def _build_series(
         bitrix_kpi = {}
     b_matched = _int(bitrix_kpi.get("matched_in_bitrix", 0))
     b_lost = _int(bitrix_kpi.get("lost_in_bitrix", 0))
+    b_weak = _int(bitrix_kpi.get("weak_match", 0))
     b_ambiguous = _int(bitrix_kpi.get("ambiguous_or_duplicate", 0))
     b_unreconciled = _int(bitrix_kpi.get("unreconciled", 0))
     if classified_list:
         series["bitrix_distribution"] = {
-            "labels": ["matched", "lost", "ambiguous", "unreconciled"],
-            "series": [b_matched, b_lost, b_ambiguous, b_unreconciled],
+            "labels": ["matched", "lost", "weak", "ambiguous", "unreconciled"],
+            "series": [b_matched, b_lost, b_weak, b_ambiguous, b_unreconciled],
         }
 
     source_dist: dict[str, int] = {}
@@ -588,7 +575,6 @@ def _build_series(
     return series
 
 
-# Билд очередей для операторов на основе классифицированных событий и текущего состояния
 def _build_queues(
     classified_list: list[dict[str, Any]],
     bitrix_state: dict[str, Any],
@@ -597,31 +583,57 @@ def _build_queues(
     high_priority: list[dict[str, Any]] = []
     needs_review: list[dict[str, Any]] = []
 
+    bitrix_queues = bitrix_state.get("queues", {})
+    if not isinstance(bitrix_queues, dict):
+        bitrix_queues = {}
+
+    bitrix_status_by_event: dict[str, str] = {}
+    for queue_items in bitrix_queues.values():
+        if not isinstance(queue_items, list):
+            continue
+        for item in queue_items:
+            if not isinstance(item, dict):
+                continue
+            event_id = item.get("event_id")
+            bitrix_status = item.get("bitrix_status")
+            if (
+                isinstance(event_id, str)
+                and event_id
+                and isinstance(bitrix_status, str)
+                and bitrix_status
+            ):
+                bitrix_status_by_event[event_id] = bitrix_status
+
     seen_review: set[str] = set()
 
     for evt in classified_list:
         if not isinstance(evt, dict):
             continue
-        eid = evt.get("event_id", "")
-        entry = _operator_queue_entry(evt, "", run_id, "manual_review")
+
+        raw_event_id = evt.get("event_id")
+        event_id = raw_event_id if isinstance(raw_event_id, str) else ""
+        bitrix_status = bitrix_status_by_event.get(event_id, "")
+        entry = _operator_queue_entry(
+            evt,
+            bitrix_status,
+            run_id,
+            "manual_review",
+        )
 
         if evt.get("priority") == "high":
             high_priority.append(entry)
 
         if evt.get("is_fallback") or evt.get("priority") == "high":
-            if eid not in seen_review:
+            if event_id not in seen_review:
                 needs_review.append(entry)
-                seen_review.add(eid)
-
-    bitrix_queues = bitrix_state.get("queues", {})
-    if not isinstance(bitrix_queues, dict):
-        bitrix_queues = {}
+                seen_review.add(event_id)
 
     return {
         "high_priority": high_priority,
         "needs_review": needs_review,
         "matched": list(bitrix_queues.get("matched", [])),
         "lost_in_bitrix": list(bitrix_queues.get("lost_in_bitrix", [])),
+        "weak_match": list(bitrix_queues.get("weak_match", [])),
         "ambiguous": list(bitrix_queues.get("ambiguous", [])),
         "degraded": list(bitrix_queues.get("degraded", [])),
         "unreconciled": list(bitrix_queues.get("unreconciled", [])),
@@ -636,6 +648,7 @@ def _build_bitrix_period_state(
     kpi = {
         "matched_in_bitrix": 0,
         "lost_in_bitrix": 0,
+        "weak_match": 0,
         "ambiguous_or_duplicate": 0,
         "bitrix_errors": 0,
         "connector_degraded": 0,
@@ -644,6 +657,7 @@ def _build_bitrix_period_state(
     queues: dict[str, list[dict[str, Any]]] = {
         "matched": [],
         "lost_in_bitrix": [],
+        "weak_match": [],
         "ambiguous": [],
         "degraded": [],
         "unreconciled": [],
@@ -684,6 +698,12 @@ def _build_bitrix_period_state(
             queues["lost_in_bitrix"].append(
                 _bitrix_queue_entry(evt, status, run_id, "lost_in_bitrix")
             )
+        elif status == "weak_match":
+            kpi["weak_match"] += 1
+            kpi["ambiguous_or_duplicate"] += 1
+            queues["weak_match"].append(
+                _bitrix_queue_entry(evt, status, run_id, "ambiguous")
+            )
         elif status in ("ambiguous", "duplicate_candidate"):
             kpi["ambiguous_or_duplicate"] += 1
             queues["ambiguous"].append(
@@ -696,10 +716,7 @@ def _build_bitrix_period_state(
                 _bitrix_queue_entry(evt, status, run_id, "degraded")
             )
         elif status == "skipped":
-            kpi["unreconciled"] += 1
-            queues["unreconciled"].append(
-                _bitrix_queue_entry(evt, status, run_id, "unreconciled")
-            )
+            continue
         else:
             kpi["unreconciled"] += 1
             queues["unreconciled"].append(
@@ -760,7 +777,6 @@ def _recommended_next_step(priority: object, status: str, queue_kind: str) -> st
     return ""
 
 
-# Билд рекомендаций для операторов на основе бизнес KPI, классифицированных событий и текущего состояния
 def _build_recommendations(
     business_kpi: dict[str, Any],
     classified_list: list[dict[str, Any]],
@@ -876,7 +892,6 @@ def _build_recommendations(
     return recs
 
 
-# Билд evidence links для dashboard на основе наличия артефактов в storage и run_id
 def _build_evidence_links(
     storage_dir: Path,
     run_id: str,
@@ -892,6 +907,7 @@ def _build_evidence_links(
         "rop_review_table_tsv",
         "rop_current_state_json",
         "bitrix_reconciliation_json",
+        "rop_action_drafts_json",
         "module_result_json",
         "rop_summary_result_json",
     )
@@ -905,7 +921,6 @@ def _build_evidence_links(
     return links
 
 
-# Преобразование значения в int, возвращает 0 при невозможности конвертации
 def _int(value: object) -> int:
     if isinstance(value, int):
         return value

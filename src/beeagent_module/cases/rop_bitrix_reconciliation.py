@@ -8,22 +8,24 @@ from typing import Any
 
 from beeagent_module.adapters.bitrix_client import (
     ALLOWED_METHODS,
+    ENTITY_TYPE_NAMES,
     BitrixConnectorError,
     BitrixReadonlyClient,
-    ENTITY_TYPE_NAMES,
     build_bitrix_client,
 )
 
 RECONCILIATION_ARTIFACT = "bitrix_reconciliation.json"
-SKIPPED_CASE_TYPES: frozenset[str] = frozenset({
-    "spam",
-    "newsletter",
-    "auto_reply",
-    "out_of_office",
-})
+SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
+    {
+        "spam",
+        "newsletter",
+        "auto_reply",
+        "out_of_office",
+        "irrelevant",
+    }
+)
 
 
-# Чек, что Bitrix reconciliation preconditions выполнены: bitrix.enabled must be true
 def _validate_bitrix_reconciliation_preconditions(settings: dict) -> None:
     bitrix_cfg = settings.get("bitrix", {})
     if not bitrix_cfg.get("enabled", False):
@@ -33,7 +35,6 @@ def _validate_bitrix_reconciliation_preconditions(settings: dict) -> None:
         )
 
 
-# Запуск Bitrix reconciliation для существующего ROP run
 def run_reconciliation(
     storage_dir: Path,
     run_id: str,
@@ -45,8 +46,7 @@ def run_reconciliation(
 
     if not run_dir.is_relative_to(runs_root):
         raise RuntimeError(
-            "Invalid run_id for Bitrix reconciliation: "
-            "path traversal is not allowed."
+            "Invalid run_id for Bitrix reconciliation: path traversal is not allowed."
         )
 
     if not run_dir.exists():
@@ -70,12 +70,16 @@ def run_reconciliation(
     items: list[dict[str, Any]] = []
     aggregate = {
         "event_count": len(events_to_reconcile),
+        "safe_matched_count": 0,
         "matched_count": 0,
+        "weak_match_count": 0,
         "not_found_count": 0,
         "duplicate_candidate_count": 0,
         "ambiguous_count": 0,
         "skipped_count": 0,
-        "connector_error_count": 0,
+        "connector_degraded_count": 0,
+        "error_count": 0,
+        "manual_review_count": 0,
     }
     warnings: list[str] = []
 
@@ -110,6 +114,10 @@ def run_reconciliation(
         status = item.get("bitrix_match_status", "error")
         if status.startswith("matched_"):
             aggregate["matched_count"] += 1
+            if item.get("bitrix_match_quality") == "strong":
+                aggregate["safe_matched_count"] += 1
+        elif status == "weak_match":
+            aggregate["weak_match_count"] += 1
         elif status == "not_found":
             aggregate["not_found_count"] += 1
         elif status == "duplicate_candidate":
@@ -118,12 +126,19 @@ def run_reconciliation(
             aggregate["ambiguous_count"] += 1
         elif status == "skipped":
             aggregate["skipped_count"] += 1
-        elif status in ("connector_degraded", "error"):
-            aggregate["connector_error_count"] += 1
+        elif status == "connector_degraded":
+            aggregate["connector_degraded_count"] += 1
+        elif status == "error":
+            aggregate["error_count"] += 1
+
+        if item.get("needs_manual_review"):
+            aggregate["manual_review_count"] += 1
 
     artifact = {
         "run_id": run_id,
-        "status": "ok" if aggregate["connector_error_count"] == 0 else "degraded",
+        "status": "ok"
+        if aggregate["connector_degraded_count"] == 0 and aggregate["error_count"] == 0
+        else "degraded",
         "read_only": True,
         "connector": {
             "system": "bitrix",
@@ -146,19 +161,19 @@ def run_reconciliation(
 
     logger.info(
         "bitrix reconciliation artifact written: run_id=%s path=%s "
-        "event_count=%d matched=%d not_found=%d errors=%d",
+        "event_count=%d matched=%d weak=%d not_found=%d errors=%d",
         run_id,
         artifact_path.relative_to(storage_dir),
         aggregate["event_count"],
         aggregate["matched_count"],
+        aggregate["weak_match_count"],
         aggregate["not_found_count"],
-        aggregate["connector_error_count"],
+        aggregate["connector_degraded_count"] + aggregate["error_count"],
     )
 
     return artifact
 
 
-# Рид обязательного JSON artifact из run директории
 def _read_required_artifact(
     run_dir: Path,
     filename: str,
@@ -178,8 +193,7 @@ def _read_required_artifact(
         ) from exc
     except OSError as exc:
         raise RuntimeError(
-            f"Failed to read required Bitrix reconciliation artifact "
-            f"{filename}: {exc}"
+            f"Failed to read required Bitrix reconciliation artifact {filename}: {exc}"
         ) from exc
     if not isinstance(data, list):
         raise RuntimeError(
@@ -189,7 +203,6 @@ def _read_required_artifact(
     return data
 
 
-# Объединение normalized и classified events по event_id
 def _merge_events(
     normalized: list[dict[str, Any]],
     classified: list[dict[str, Any]],
@@ -227,7 +240,6 @@ def _merge_events(
     return merged
 
 
-# Выполнение reconciliation для одного события
 def _reconcile_event(
     event: dict[str, Any],
     client: BitrixReadonlyClient,
@@ -258,8 +270,7 @@ def _reconcile_event(
             logger=logger,
         )
         all_candidates.extend(
-            {"entity": c, "entity_type_id": entity_type_id}
-            for c in candidates
+            {"entity": c, "entity_type_id": entity_type_id} for c in candidates
         )
 
     if not all_candidates:
@@ -272,7 +283,6 @@ def _reconcile_event(
     )
 
 
-# Поиск кандидатов по entity type
 def _search_entity(
     client: BitrixReadonlyClient,
     entity_type_id: int,
@@ -287,10 +297,15 @@ def _search_entity(
 
     def _normalize(item: dict[str, Any]) -> dict[str, Any]:
         mapping = {
-            "id": "ID", "title": "TITLE", "stageId": "STAGE_ID",
-            "statusId": "STATUS_ID", "assignedById": "ASSIGNED_BY_ID",
-            "contactId": "CONTACT_ID", "companyId": "COMPANY_ID",
-            "createdTime": "DATE_CREATE", "dateCreate": "DATE_CREATE",
+            "id": "ID",
+            "title": "TITLE",
+            "stageId": "STAGE_ID",
+            "statusId": "STATUS_ID",
+            "assignedById": "ASSIGNED_BY_ID",
+            "contactId": "CONTACT_ID",
+            "companyId": "COMPANY_ID",
+            "createdTime": "DATE_CREATE",
+            "dateCreate": "DATE_CREATE",
         }
         normalized = dict(item)
         for camel, upper in mapping.items():
@@ -328,7 +343,6 @@ def _search_entity(
         )
         _add_candidates(results)
 
-    # 3. Поиск по subject/title (если есть)
     if subject and not candidates:
         search_title = " ".join(subject.split()[:5])
         logger.debug("bitrix search by title for entity_type=%s", entity_type_id)
@@ -363,14 +377,32 @@ def _extract_event_datetime(event: dict[str, Any]) -> datetime | None:
     return None
 
 
-# Классификация кандидатов
+def _extract_multifield_values(item: dict[str, Any], field_name: str) -> list[str]:
+    field = item.get(field_name, [])
+    if isinstance(field, list):
+        return [
+            entry.get("VALUE", "")
+            for entry in field
+            if isinstance(entry, dict) and isinstance(entry.get("VALUE"), str)
+        ]
+    if isinstance(field, str):
+        return [field]
+    return []
+
+
+def _normalize_phone(value: str) -> str:
+    return "".join(char for char in value if char.isdigit())
+
+
 def _classify_candidates(
     event: dict[str, Any],
     candidates: list[dict[str, Any]],
     candidate_limit: int,
 ) -> dict[str, Any]:
     sender = event.get("sender", "")
+    phone = event.get("phone", "")
     subject = event.get("subject", "")
+    normalized_phone = _normalize_phone(phone) if isinstance(phone, str) else ""
 
     by_type: dict[int, list[dict[str, Any]]] = {}
     for c in candidates[:candidate_limit]:
@@ -379,75 +411,90 @@ def _classify_candidates(
             by_type[et] = []
         by_type[et].append(c["entity"])
 
-    exact_email_matches: list[tuple[int, dict[str, Any]]] = []
+    exact_matches: list[tuple[int, dict[str, Any], str]] = []
     weak_matches: list[tuple[int, dict[str, Any]]] = []
 
     for et, items in by_type.items():
         for item in items:
             title = item.get("TITLE", "")
-            item_id = item.get("ID", "")
 
             if sender and "@" in sender:
-                email_field = item.get("EMAIL", [])
-                if isinstance(email_field, list):
-                    emails = [
-                        e.get("VALUE", "")
-                        for e in email_field
-                        if isinstance(e, dict)
-                    ]
-                elif isinstance(email_field, str):
-                    emails = [email_field]
-                else:
-                    emails = []
-
+                emails = _extract_multifield_values(item, "EMAIL")
                 if sender.lower() in [e.lower() for e in emails if e]:
-                    exact_email_matches.append((et, item))
+                    exact_matches.append((et, item, "sender_email_exact"))
+                    continue
+
+            if normalized_phone:
+                phones = _extract_multifield_values(item, "PHONE")
+                normalized_phones = [
+                    _normalize_phone(value) for value in phones if value
+                ]
+                if normalized_phone in normalized_phones:
+                    exact_matches.append((et, item, "phone_exact"))
                     continue
 
             if subject and title:
-                if (subject.lower() in title.lower() or
-                        title.lower() in subject.lower()):
+                if subject.lower() in title.lower() or title.lower() in subject.lower():
                     weak_matches.append((et, item))
                     continue
 
             weak_matches.append((et, item))
 
-    if exact_email_matches:
-        if len(exact_email_matches) == 1:
-            et, item = exact_email_matches[0]
-            return _make_matched_item(event, et, item, "sender_email_exact", 0.95)
+    candidate_count = len(exact_matches) + len(weak_matches)
+
+    if exact_matches:
+        if len(exact_matches) == 1:
+            et, item, match_reason = exact_matches[0]
+            return _make_matched_item(
+                event,
+                et,
+                item,
+                match_reason,
+                0.95,
+                "strong",
+                candidate_count,
+            )
         else:
             return _make_duplicate_item(
-                event, exact_email_matches,
-                "multiple_exact_email_matches"
+                event,
+                [(et, item) for et, item, _reason in exact_matches],
+                "multiple_exact_matches",
+                candidate_count,
             )
 
     if weak_matches:
         if len(weak_matches) == 1:
             et, item = weak_matches[0]
-            return _make_matched_item(event, et, item, "title_subject_match", 0.6)
-        elif len(weak_matches) <= 3:
-            return _make_duplicate_item(
-                event, weak_matches, "multiple_weak_candidates"
+            return _make_weak_match_item(
+                event,
+                et,
+                item,
+                "title_subject_only",
+                candidate_count,
             )
         else:
             return _make_ambiguous_item(
-                event, weak_matches, "too_many_weak_candidates"
+                event,
+                weak_matches,
+                "multiple_weak_candidates",
+                candidate_count,
             )
 
-    return _make_not_found_item(event, "no_candidate_found")
+    return _make_not_found_item(event, "no_candidate_found", 0)
 
 
-# Создание reconciliation item для статуса matched
 def _make_matched_item(
     event: dict[str, Any],
     entity_type_id: int,
     entity: dict[str, Any],
     match_reason: str,
     confidence: float,
+    match_quality: str = "strong",
+    candidate_count: int = 1,
 ) -> dict[str, Any]:
     entity_type_name = ENTITY_TYPE_NAMES.get(entity_type_id, "")
-    needs_manual = confidence < 0.8
+    quality_is_strong = match_quality == "strong"
+    needs_manual = not quality_is_strong or confidence < 0.8
 
     return {
         "event_id": event.get("event_id", ""),
@@ -456,6 +503,7 @@ def _make_matched_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": f"matched_{entity_type_name}",
+        "bitrix_match_quality": match_quality,
         "bitrix_entity_type": entity_type_name,
         "bitrix_entity_type_id": entity_type_id,
         "bitrix_entity_id": _int_or_none(entity.get("ID")),
@@ -467,6 +515,12 @@ def _make_matched_item(
         "bitrix_match_reason": match_reason,
         "bitrix_confidence": confidence,
         "needs_manual_review": needs_manual,
+        "safe_to_use_as_target": quality_is_strong,
+        "candidate_count": candidate_count,
+        "candidate_summary": (
+            f"{candidate_count} candidate(s), quality={match_quality}, "
+            f"best={entity.get('TITLE', '')} (ID={entity.get('ID', '?')})"
+        ),
         "reconciliation_reason": (
             f"Bitrix {entity_type_name} found: "
             f"{entity.get('TITLE', '')} (ID={entity.get('ID', '?')})"
@@ -474,10 +528,10 @@ def _make_matched_item(
     }
 
 
-# Создание reconciliation item для статуса not_found
 def _make_not_found_item(
     event: dict[str, Any],
     reason: str,
+    candidate_count: int = 0,
 ) -> dict[str, Any]:
     return {
         "event_id": event.get("event_id", ""),
@@ -486,6 +540,7 @@ def _make_not_found_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "not_found",
+        "bitrix_match_quality": "not_found",
         "bitrix_entity_type": "",
         "bitrix_entity_type_id": None,
         "bitrix_entity_id": None,
@@ -497,13 +552,15 @@ def _make_not_found_item(
         "bitrix_match_reason": reason,
         "bitrix_confidence": 0.0,
         "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": candidate_count,
+        "candidate_summary": "No Bitrix candidate found; connector healthy.",
         "reconciliation_reason": (
             "No Bitrix candidate was found for this classified event."
         ),
     }
 
 
-# Создание reconciliation item для статуса skipped
 def _make_skipped_item(
     event: dict[str, Any],
     reason: str,
@@ -515,6 +572,7 @@ def _make_skipped_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "skipped",
+        "bitrix_match_quality": "skipped",
         "bitrix_entity_type": "",
         "bitrix_entity_type_id": None,
         "bitrix_entity_id": None,
@@ -526,15 +584,18 @@ def _make_skipped_item(
         "bitrix_match_reason": reason,
         "bitrix_confidence": 0.0,
         "needs_manual_review": False,
+        "safe_to_use_as_target": False,
+        "candidate_count": 0,
+        "candidate_summary": "Event skipped; no reconciliation attempted.",
         "reconciliation_reason": f"Event skipped: {reason}.",
     }
 
 
-# Создание reconciliation item для статуса duplicate_candidate
 def _make_duplicate_item(
     event: dict[str, Any],
     candidates: list[tuple[int, dict[str, Any]]],
     reason: str,
+    candidate_count: int = 0,
 ) -> dict[str, Any]:
     best = candidates[0]
     et, entity = best
@@ -547,6 +608,7 @@ def _make_duplicate_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "duplicate_candidate",
+        "bitrix_match_quality": "duplicate",
         "bitrix_entity_type": entity_type_name,
         "bitrix_entity_type_id": et,
         "bitrix_entity_id": _int_or_none(entity.get("ID")),
@@ -558,6 +620,12 @@ def _make_duplicate_item(
         "bitrix_match_reason": reason,
         "bitrix_confidence": 0.5,
         "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": candidate_count or len(candidates),
+        "candidate_summary": (
+            f"{len(candidates)} candidate(s), duplicate, "
+            f"best={entity.get('TITLE', '')} (ID={entity.get('ID', '?')})"
+        ),
         "reconciliation_reason": (
             f"Multiple Bitrix candidates found ({len(candidates)}). "
             f"Best: {entity.get('TITLE', '')} (ID={entity.get('ID', '?')})."
@@ -565,11 +633,11 @@ def _make_duplicate_item(
     }
 
 
-# Создание reconciliation item для статуса ambiguous
 def _make_ambiguous_item(
     event: dict[str, Any],
     candidates: list[tuple[int, dict[str, Any]]],
     reason: str,
+    candidate_count: int = 0,
 ) -> dict[str, Any]:
     return {
         "event_id": event.get("event_id", ""),
@@ -578,6 +646,7 @@ def _make_ambiguous_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "ambiguous",
+        "bitrix_match_quality": "ambiguous",
         "bitrix_entity_type": "",
         "bitrix_entity_type_id": None,
         "bitrix_entity_id": None,
@@ -589,6 +658,11 @@ def _make_ambiguous_item(
         "bitrix_match_reason": reason,
         "bitrix_confidence": 0.0,
         "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": candidate_count or len(candidates),
+        "candidate_summary": (
+            f"{len(candidates)} candidate(s), ambiguous, manual review required"
+        ),
         "reconciliation_reason": (
             f"Too many ambiguous Bitrix candidates ({len(candidates)}). "
             "Manual review required."
@@ -596,7 +670,47 @@ def _make_ambiguous_item(
     }
 
 
-# Создание reconciliation item для статуса connector_degraded
+def _make_weak_match_item(
+    event: dict[str, Any],
+    entity_type_id: int,
+    entity: dict[str, Any],
+    match_reason: str,
+    candidate_count: int = 1,
+) -> dict[str, Any]:
+    entity_type_name = ENTITY_TYPE_NAMES.get(entity_type_id, "")
+    return {
+        "event_id": event.get("event_id", ""),
+        "source_id": event.get("source_id", ""),
+        "sender": event.get("sender", ""),
+        "subject": event.get("subject", ""),
+        "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
+        "bitrix_match_status": "weak_match",
+        "bitrix_match_quality": "weak",
+        "bitrix_entity_type": entity_type_name,
+        "bitrix_entity_type_id": entity_type_id,
+        "bitrix_entity_id": _int_or_none(entity.get("ID")),
+        "bitrix_title": entity.get("TITLE", ""),
+        "bitrix_stage": entity.get("STAGE_ID", ""),
+        "bitrix_responsible_id": _int_or_none(entity.get("ASSIGNED_BY_ID")),
+        "bitrix_contact_id": _int_or_none(entity.get("CONTACT_ID")),
+        "bitrix_company_id": _int_or_none(entity.get("COMPANY_ID")),
+        "bitrix_match_reason": match_reason,
+        "bitrix_confidence": 0.3,
+        "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": candidate_count,
+        "candidate_summary": (
+            f"{candidate_count} candidate(s), weak match (title/subject only), "
+            f"best={entity.get('TITLE', '')} (ID={entity.get('ID', '?')})"
+        ),
+        "reconciliation_reason": (
+            f"Weak Bitrix match: {entity_type_name} "
+            f"{entity.get('TITLE', '')} (ID={entity.get('ID', '?')}) "
+            "based on title/subject only. Manual verification required."
+        ),
+    }
+
+
 def _make_connector_error_item(
     event: dict[str, Any],
     error: str,
@@ -609,6 +723,7 @@ def _make_connector_error_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "connector_degraded",
+        "bitrix_match_quality": "connector_degraded",
         "bitrix_entity_type": "",
         "bitrix_entity_type_id": None,
         "bitrix_entity_id": None,
@@ -620,11 +735,13 @@ def _make_connector_error_item(
         "bitrix_match_reason": "connector_error",
         "bitrix_confidence": 0.0,
         "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": 0,
+        "candidate_summary": "Connector degraded; reconciliation not attempted.",
         "reconciliation_reason": f"Bitrix connector error: {error}",
     }
 
 
-# Создание reconciliation item для неожиданной ошибки application layer
 def _make_error_item(
     event: dict[str, Any],
     error_type: str,
@@ -636,6 +753,7 @@ def _make_error_item(
         "subject": event.get("subject", ""),
         "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
         "bitrix_match_status": "error",
+        "bitrix_match_quality": "error",
         "bitrix_entity_type": "",
         "bitrix_entity_type_id": None,
         "bitrix_entity_id": None,
@@ -647,18 +765,19 @@ def _make_error_item(
         "bitrix_match_reason": "reconciliation_error",
         "bitrix_confidence": 0.0,
         "needs_manual_review": True,
+        "safe_to_use_as_target": False,
+        "candidate_count": 0,
+        "candidate_summary": "Reconciliation error; no match data available.",
         "reconciliation_reason": (
-            f"Unexpected reconciliation error: {error_type}. "
-            "Manual review required."
+            f"Unexpected reconciliation error: {error_type}. Manual review required."
         ),
     }
 
 
-# Безопасное приведение к int или None
 def _int_or_none(value: Any) -> int | None:
     if value is None:
         return None
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None

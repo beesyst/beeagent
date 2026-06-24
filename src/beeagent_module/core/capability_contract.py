@@ -7,7 +7,6 @@ from typing import Any
 from beeagent_module.core.module_contract import AuthorityLevel
 
 
-# Контракты для описания запроса и результата при вызове capability
 class CapabilityStatus(str, Enum):
     OK = "ok"
     REFUSED = "refused"
@@ -15,7 +14,6 @@ class CapabilityStatus(str, Enum):
     ERROR = "error"
 
 
-# Контракты для описания запроса и результата при вызове capability
 @dataclass(frozen=True)
 class CapabilityRequest:
     capability_name: str
@@ -35,7 +33,6 @@ class CapabilityRequest:
             raise ValueError("payload must be a dict")
 
 
-# Контракты для описания запроса и результата при вызове capability
 @dataclass(frozen=True)
 class CapabilityResult:
     capability_name: str

@@ -12,7 +12,6 @@ from beeagent_module.core.runtime_context import (
 )
 
 
-# Тест: базовая проверка, что RuntimeContext и ArtifactAPI работают вместе в типичном сценарии исполнения модуля
 def test_smoke_context_and_artifact_together() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -80,7 +79,6 @@ def test_smoke_context_and_artifact_together() -> None:
         assert run_id in report
 
 
-# Тест: проверка, что при исполнении нескольких модулей в одном запуске их артефакты изолированы и корректно связаны с контекстом
 def test_smoke_multiple_modules_same_run() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -124,7 +122,6 @@ def test_smoke_multiple_modules_same_run() -> None:
         assert (run_dir / "module-beescan").exists()
 
 
-# Тест: проверка, что все уровни authority корректно работают с ArtifactAPI и сохраняют данные без ошибок
 def test_smoke_context_authority_levels() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -156,7 +153,6 @@ def test_smoke_context_authority_levels() -> None:
             assert data["authority"] == authority.value
 
 
-# Тест: проверка, что ArtifactAPI логирует операции с достаточной информацией для отладки
 def test_smoke_artifact_api_logging() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)
@@ -199,7 +195,6 @@ def test_smoke_artifact_api_logging() -> None:
         assert "test.json" in log_msg
 
 
-# Тест: полная проверка рабочего процесса от создания контекста до записи и чтения артефактов, включая проверку структуры путей и содержимого
 def test_smoke_full_artifact_workflow() -> None:
     with TemporaryDirectory() as tmp_dir:
         storage_dir = Path(tmp_dir)

@@ -11,7 +11,6 @@ from typing import Any
 from beeagent_module.core.module_contract import ModuleContract
 
 
-# Состояния модуля в registry: loaded (успешно загружен и валиден), disabled (отключен в конфиге), missing (пакет не найден), invalid (пакет найден, но entry не соответствует контракту или не может быть инстанцирован)
 class ModuleState(str, Enum):
     LOADED = "loaded"
     DISABLED = "disabled"
@@ -19,7 +18,6 @@ class ModuleState(str, Enum):
     INVALID = "invalid"
 
 
-# Запись в registry для каждого модуля: id, package, entry, enabled, state, instance (если loaded), error (если не loaded)
 @dataclass
 class ModuleEntry:
     id: str
@@ -31,7 +29,6 @@ class ModuleEntry:
     error: str | None = None
 
 
-# Минимальный локальный registry установленных модулей
 class ModuleRegistry:
     def __init__(self, config: list[dict], logger: logging.Logger) -> None:
         self._logger = logger
@@ -58,7 +55,6 @@ class ModuleRegistry:
                 self._logger.info("module disabled: id=%s package=%s", mod_id, package)
                 continue
 
-            # Попытка импорта пакета
             try:
                 pkg = importlib.import_module(package)
             except ImportError as exc:
@@ -201,7 +197,6 @@ class ModuleRegistry:
         )
 
 
-# Функция для построения registry при старте приложения
 def build_registry(settings: dict, logger: logging.Logger) -> ModuleRegistry:
     from beeagent_module.core.paths import (
         get_storage_dir,

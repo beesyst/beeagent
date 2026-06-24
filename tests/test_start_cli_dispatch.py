@@ -6,12 +6,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
 import config.start as start_module
 from config.start import _with_run_mode
 
 
-# Тесты entrypoint helper: explicit CLI mode override не должен менять исходный settings.
 class TestStartCliModeOverrides:
     def test_with_run_mode_overrides_mode_without_mutating_original(self) -> None:
         settings = {
@@ -35,7 +33,6 @@ class TestStartCliModeOverrides:
         assert settings["run"]["mode"] == "telegram"
 
 
-# Тест: при передаче CLI аргумента вызывается run_app с правильным mode
 def _base_settings() -> dict[str, Any]:
     return {
         "run": {"mode": "telegram"},
@@ -43,7 +40,6 @@ def _base_settings() -> dict[str, Any]:
     }
 
 
-# Тест: при передаче CLI аргумента web вызывается run_web из cli/web.py
 def test_main_dispatches_web_mode(monkeypatch) -> None:
     called: dict[str, Any] = {}
 
@@ -71,9 +67,7 @@ def test_main_dispatches_web_mode(monkeypatch) -> None:
         called["argv"] = argv
         return 0
 
-    monkeypatch.setattr(
-        "beeagent_module.cli.web.run_web", _fake_run_web
-    )
+    monkeypatch.setattr("beeagent_module.cli.web.run_web", _fake_run_web)
     monkeypatch.setattr(start_module, "_handle_rop_cli", lambda *args, **kwargs: None)
 
     monkeypatch.setattr(start_module.sys, "argv", ["start.py", "web"])
@@ -86,7 +80,6 @@ def test_main_dispatches_web_mode(monkeypatch) -> None:
     assert called.get("web_called") is True
 
 
-# Тест: при передаче неизвестного CLI аргумента происходит выход с кодом 2
 def test_main_unknown_command_exits_with_code_2(monkeypatch) -> None:
     monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(

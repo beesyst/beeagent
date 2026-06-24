@@ -23,7 +23,6 @@ from beeagent_module.core.cli import (
 )
 
 
-# null logger для тестов
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_current_state")
     logger.addHandler(logging.NullHandler())
@@ -31,7 +30,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Фикстура: настройки для тестов
 def _settings() -> dict:
     return {
         "rop": {
@@ -43,7 +41,6 @@ def _settings() -> dict:
     }
 
 
-# Фикстура: создание минимального каталога запуска ROP с базовыми артефактами
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
     rdir = tmp_path / "runs" / "smoke-it27-current"
@@ -129,7 +126,6 @@ def run_dir(tmp_path: Path) -> Path:
     return rdir
 
 
-# Добавление Bitrix reconciliation артефакта в каталог запуска
 def _add_bitrix_reconciliation(
     run_dir: Path,
     items: list[dict],
@@ -168,15 +164,16 @@ def _add_bitrix_reconciliation(
             )
         elif ms == "ambiguous":
             agg["ambiguous_count"] = agg.get("ambiguous_count", 0) + 1
+        elif ms == "skipped":
+            agg["skipped_count"] = agg.get("skipped_count", 0) + 1
         elif ms in ("connector_degraded", "error"):
-            agg["connector_error_count"] = agg.get("connector_error_count", 0) + 1
+            agg["connector_degraded_count"] = agg.get("connector_degraded_count", 0) + 1
 
     (run_dir / BITRIX_RECONCILIATION_FILENAME).write_text(
         json.dumps(artifact, indent=2), encoding="utf-8"
     )
 
 
-# Класс: тесты для build_rop_current_state и write_current_state
 class TestBuildRopCurrentState:
     def test_normal_run_without_bitrix(self, run_dir: Path, tmp_path: Path) -> None:
         storage_dir = tmp_path
@@ -308,7 +305,7 @@ class TestBuildRopCurrentState:
 
         state = build_rop_current_state(storage_dir, run_id, _null_logger())
         kpi = state["kpi"]
-        assert kpi["ambiguous_in_bitrix"] == 1
+        assert kpi["duplicate_candidate_count"] == 1
 
         queues = state["queues"]
         assert len(queues["ambiguous"]) == 1
@@ -336,6 +333,30 @@ class TestBuildRopCurrentState:
 
         queues = state["queues"]
         assert len(queues["degraded"]) == 1
+
+    def test_skipped_count_does_not_inflate_unreconciled(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        storage_dir = tmp_path
+        run_id = run_dir.name
+        _add_bitrix_reconciliation(
+            run_dir,
+            items=[
+                {
+                    "event_id": "evt-001",
+                    "bitrix_match_status": "skipped",
+                    "needs_manual_review": False,
+                }
+            ],
+        )
+
+        state = build_rop_current_state(storage_dir, run_id, _null_logger())
+
+        assert state["kpi"]["skipped_count"] == 1
+        assert state["kpi"]["unreconciled"] == 1
+        assert [item["event_id"] for item in state["queues"]["unreconciled"]] == [
+            "evt-002"
+        ]
 
     def test_malformed_bitrix_artifact_warning(
         self, run_dir: Path, tmp_path: Path
@@ -428,7 +449,6 @@ class TestBuildRopCurrentState:
             build_rop_current_state(tmp_path, "../../etc/passwd", _null_logger())
 
 
-# Класс: тесты для write_current_state и CLI rop current
 class TestWriteCurrentState:
     def test_writes_artifact_and_interfaces(
         self, run_dir: Path, tmp_path: Path
@@ -469,7 +489,6 @@ class TestWriteCurrentState:
             write_current_state(tmp_path, "../../etc/passwd", {}, _null_logger())
 
 
-# Класс: тесты для CLI rop current
 class TestCliRopCurrent:
     def test_cli_rop_current_parser(self) -> None:
         parser = create_rop_parser()
@@ -684,7 +703,6 @@ class TestCliCurrentStatePostHooks:
         assert calls == {"build": False, "write": False}
 
 
-# Класс: тесты для проверки, что артефакт current-state не раскрывает raw content или секреты
 class TestCurrentStateSecrets:
     def test_no_raw_content_in_current_state(
         self, run_dir: Path, tmp_path: Path

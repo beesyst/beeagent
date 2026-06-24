@@ -17,7 +17,6 @@ from beeagent_module.domain.models import Alert, Recommendation, RunMeta, Task
 from beeagent_module.domain.serialization import model_to_dict
 
 
-# Схема состояний для workflow (type hints)
 class OOSState(TypedDict, total=False):
     storage_dir: Path
     logger: logging.Logger
@@ -46,7 +45,6 @@ class OOSState(TypedDict, total=False):
     steps: list[dict[str, Any]]
 
 
-# Добавление шага observability в state + логирование длительности
 def _record_step(state: OOSState, step: str, duration_ms: int) -> None:
     steps: list[dict[str, Any]] = state.setdefault("steps", [])
     steps.append({"step": step, "duration_ms": duration_ms})
@@ -56,7 +54,6 @@ def _record_step(state: OOSState, step: str, duration_ms: int) -> None:
         logger.info("step=%s duration_ms=%d", step, duration_ms)
 
 
-# Node 1: сбор пользовательских данных и инициализация состояния рабочего процесса
 def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -68,7 +65,6 @@ def collect_input(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     return state
 
 
-# Node 2: загрузка данных из storage и десериализация в объекты доменной модели
 def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -114,7 +110,6 @@ def load_data(state: OOSState, config: RunnableConfig | None = None) -> OOSState
     return state
 
 
-# Node 3: применение правил OOS-детекции и генерация алертов
 def detect_oos(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -140,7 +135,6 @@ def detect_oos(state: OOSState, config: RunnableConfig | None = None) -> OOSStat
     return state
 
 
-# Node 4: генерация задач на основе алертов
 def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -167,7 +161,6 @@ def draft_tasks(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     return state
 
 
-# Вспомогательные функции для формирования отчета и сохранения артефактов
 def _get_latest_stock(stock_rows: list[Any], store_id: str, sku_id: str) -> int:
     latest_date = None
     latest_stock = 0
@@ -182,7 +175,6 @@ def _get_latest_stock(stock_rows: list[Any], store_id: str, sku_id: str) -> int:
     return int(latest_stock)
 
 
-# Вспомогательная функция для получения stock_on_hand на конкретную дату, с поддержкой возможных проблем с датами
 def _get_stock_on_date(
     stock_rows: list[Any],
     store_id: str,
@@ -195,7 +187,6 @@ def _get_stock_on_date(
     return None
 
 
-# Вспомогательная функция для суммирования units за последние 7 дней с учетом возможных проблем с датами
 def _sum_units_last_7d(sales_rows: list[Any], store_id: str, sku_id: str) -> int:
     matched: list[tuple[datetime, int]] = []
 
@@ -222,7 +213,6 @@ def _sum_units_last_7d(sales_rows: list[Any], store_id: str, sku_id: str) -> int
     return int(sum(units for dt, units in matched if dt >= cutoff))
 
 
-# Вспомогательная функция для извлечения даты из текста алерта, с поддержкой возможных проблем с форматом
 def _extract_alert_date(details: str) -> str:
     marker = "date:"
     if marker not in details:
@@ -230,12 +220,10 @@ def _extract_alert_date(details: str) -> str:
     return details.split(marker, maxsplit=1)[-1].strip(" )")
 
 
-# Вспомогательная функция для получения текста объяснения от LLM с поддержкой разных форматов ответа и фоллбеков
 def _as_yyyymmdd_float(dt: datetime) -> float:
     return float(dt.strftime("%Y%m%d"))
 
 
-# Node 5: построение рекомендаций на основе алертов и метрик, с поддержкой конфигурации и ограничений
 def build_recommendations(
     state: OOSState, config: RunnableConfig | None = None
 ) -> OOSState:
@@ -304,7 +292,6 @@ def build_recommendations(
     return state
 
 
-# Node 6: генерация текстового объяснения рекомендаций с помощью LLM, если включено в конфигурации
 def llm_explain(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
 
@@ -360,7 +347,6 @@ def llm_explain(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     return state
 
 
-# Node 7: форматирование алертов и задач в текст отчета для пользователя
 def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -460,7 +446,6 @@ def render_report(state: OOSState, config: RunnableConfig | None = None) -> OOSS
     return state
 
 
-# Node 8: чек статуса задач по run_id
 def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
     counts = {
         "draft": 0,
@@ -482,7 +467,6 @@ def _build_task_status_summary(tasks: list[Task]) -> tuple[str, str | None]:
     return summary, None
 
 
-# Чек формирования отчета в формате Markdown
 def _build_report_md(report_text: str, summary: str, reject_reason: str | None) -> str:
     report_md = f"{report_text}\n\n{summary}"
     if reject_reason:
@@ -490,7 +474,6 @@ def _build_report_md(report_text: str, summary: str, reject_reason: str | None) 
     return report_md
 
 
-# Чек формирования отчета в формате HTML
 def _build_report_html(report_md: str) -> str:
     return (
         "<!doctype html>\n"
@@ -509,7 +492,6 @@ def _build_report_html(report_md: str) -> str:
     )
 
 
-# Node 9: запись последнего run_id
 def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
     reports_dir = storage_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -522,7 +504,6 @@ def _write_last_run_marker(storage_dir: Path, run_id: str) -> Path:
     return last_run_path
 
 
-# Node 10: сохранение результатов выполнения в storage для последующего доступа и аудита
 def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSState:
     _ = config
     start_time = time.perf_counter()
@@ -599,7 +580,6 @@ def persist_run(state: OOSState, config: RunnableConfig | None = None) -> OOSSta
     return state
 
 
-# Построение графа рабочего процесса OOS-детекции с 6 узлами
 def build_oos_graph():
     workflow = StateGraph(OOSState)
     workflow.add_node("collect_input", collect_input)
@@ -622,7 +602,6 @@ def build_oos_graph():
     return workflow.compile()
 
 
-# Функция для запуска всего workflow OOS-детекции с заданным dataset_id и storage_dir
 def run_oos_workflow(
     storage_dir: Path,
     adapter: DataAdapter,

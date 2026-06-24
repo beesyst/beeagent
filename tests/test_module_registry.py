@@ -13,7 +13,6 @@ from beeagent_module.core.module_contract import (
 from beeagent_module.core.module_registry import ModuleRegistry, ModuleState
 
 
-# Тесты для ModuleRegistry: проверка загрузки модулей в разных состояниях и диагностики
 class _StubValidModule:
     @property
     def module_id(self) -> str:
@@ -36,7 +35,6 @@ class _StubValidModule:
         )
 
 
-# Нет свойства authority — не проходит isinstance(ModuleContract)
 class _StubInvalidModule:
     @property
     def module_id(self) -> str:
@@ -49,7 +47,6 @@ class _StubInvalidModule:
         pass
 
 
-# Вспомогательные функции для создания и удаления in-memory пакетов для тестов
 def _make_fake_package(
     name: str, entry_attr: str, entry_value: object
 ) -> types.ModuleType:
@@ -59,12 +56,10 @@ def _make_fake_package(
     return pkg
 
 
-# Удаляет пакет из sys.modules, если он там есть
 def _remove_fake_package(name: str) -> None:
     sys.modules.pop(name, None)
 
 
-# Создает логгер, который игнорирует все сообщения (для тестов, чтобы не засорять вывод)
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_registry_null")
     logger.addHandler(logging.NullHandler())
@@ -72,7 +67,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Тест: пакет установлен, класс есть, реализует контракт → loaded, доступен через get(), diagnostics без ошибок
 def test_registry_registered_module() -> None:
     pkg_name = "_test_stub_valid_pkg"
     entry_name = "ValidModule"
@@ -104,7 +98,6 @@ def test_registry_registered_module() -> None:
         _remove_fake_package(pkg_name)
 
 
-# Тест: пакет не найден -> missing, get() возвращает None, diagnostics содержит ошибку
 def test_registry_missing_module() -> None:
     config = [
         {
@@ -125,7 +118,6 @@ def test_registry_missing_module() -> None:
     assert "error" in diag[0]
 
 
-# Тест: модуль отключен в конфиге -> disabled, get() возвращает None, diagnostics без ошибок
 def test_registry_disabled_module() -> None:
     config = [
         {
@@ -146,7 +138,6 @@ def test_registry_disabled_module() -> None:
     assert "error" not in diag[0]
 
 
-# Тест: пакет найден, но entry не соответствует контракту -> invalid, get() возвращает None, diagnostics содержит ошибку
 def test_registry_invalid_contract() -> None:
     pkg_name = "_test_stub_invalid_pkg"
     entry_name = "InvalidModule"
@@ -174,10 +165,8 @@ def test_registry_invalid_contract() -> None:
         _remove_fake_package(pkg_name)
 
 
-# Тест: пакет найден, но entry не найден в пакете -> invalid, get() возвращает None, diagnostics содержит ошибку
 def test_registry_missing_entry_attribute() -> None:
     pkg_name = "_test_stub_no_entry_pkg"
-    # пакет без нужного атрибута
     _make_fake_package(pkg_name, "other_attr", object())
 
     try:
@@ -198,7 +187,6 @@ def test_registry_missing_entry_attribute() -> None:
         _remove_fake_package(pkg_name)
 
 
-# Тест: генерация диагностического артефакта для модулей в разных состояниях
 def test_registry_diagnostics_artifact(tmp_path: Path) -> None:
     pkg_name = "_test_stub_artifact_pkg"
     _make_fake_package(pkg_name, "ValidModule", _StubValidModule)
@@ -237,7 +225,6 @@ def test_registry_diagnostics_artifact(tmp_path: Path) -> None:
         _remove_fake_package(pkg_name)
 
 
-# Тест: смешанные состояния модулей — один загружается, другой отключен, третий отсутствует
 def test_registry_mixed_states() -> None:
     pkg_name = "_test_stub_mixed_valid"
     _make_fake_package(pkg_name, "ValidModule", _StubValidModule)

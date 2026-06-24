@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
+    handle_rop_action_drafts,
     handle_rop_current,
     handle_rop_dashboard,
     handle_rop_export_review,
@@ -20,7 +21,6 @@ from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_projec
 from beeagent_module.core.settings import load_settings
 
 
-# Главная точка входа: загрузка настроек, инициализация логов и директорий, запуск приложения
 def main() -> None:
     project_root = get_project_root()
 
@@ -84,14 +84,12 @@ def main() -> None:
     sys.exit(2)
 
 
-# Создание in-memory settings override для явного CLI runtime mode без изменения config/settings.yml
 def _with_run_mode(settings: dict, mode: str) -> dict:
     effective_settings = deepcopy(settings)
     effective_settings["run"]["mode"] = mode
     return effective_settings
 
 
-# Обработка ROP CLI команд: парсит аргументы, вызывает соответствующие обработчики и обрабатывает ошибки, логируя их и выводя сообщения в stderr
 def _handle_rop_cli(
     cli_args: list[str],
     settings: dict,
@@ -115,6 +113,8 @@ def _handle_rop_cli(
             handle_rop_dashboard(args, settings=settings, logger=logger)
         elif args.rop_command == "mvp-pack":
             handle_rop_mvp_pack(args, settings=settings, logger=logger)
+        elif args.rop_command == "action-drafts":
+            handle_rop_action_drafts(args, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)

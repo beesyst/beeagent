@@ -11,7 +11,6 @@ from beeagent_module.agents.quiz.graph import run_quiz_workflow
 from beeagent_module.core.paths import get_project_root
 
 
-# Загрузка quiz spec из JSON по пути относительно корня проекта
 def _load_quiz_spec(quiz_spec_path: str) -> dict[str, Any]:
     project_root = get_project_root()
     full_path = project_root / quiz_spec_path
@@ -28,22 +27,18 @@ def _load_quiz_spec(quiz_spec_path: str) -> dict[str, Any]:
     return data
 
 
-# Путь к директории runs
 def _runs_dir(storage_dir: Path) -> Path:
     return storage_dir / "runs"
 
 
-# Путь к директории sessions
 def _sessions_dir(storage_dir: Path) -> Path:
     return storage_dir / "sessions"
 
 
-# Путь к директории artifacts
 def _artifacts_dir(storage_dir: Path) -> Path:
     return storage_dir / "artifacts"
 
 
-# Запись JSON файла с созданием родителя
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -52,12 +47,10 @@ def _write_json(path: Path, payload: Any) -> None:
     )
 
 
-# Чтение JSON файла
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# Получить chat_id по run_id через session_ref.json (KISS-мост)
 def _load_chat_id_by_run_id(storage_dir: Path, run_id: str) -> int | None:
     ref_path = _runs_dir(storage_dir) / run_id / "session_ref.json"
     if not ref_path.exists():
@@ -70,7 +63,6 @@ def _load_chat_id_by_run_id(storage_dir: Path, run_id: str) -> int | None:
     return None
 
 
-# Загрузка сессии по run_id (через session_ref → sessions/<chat_id>.json)
 def _load_quiz_session(storage_dir: Path, run_id: str) -> dict[str, Any] | None:
     chat_id = _load_chat_id_by_run_id(storage_dir, run_id)
     if chat_id is None:
@@ -82,14 +74,12 @@ def _load_quiz_session(storage_dir: Path, run_id: str) -> dict[str, Any] | None:
 
     session = _read_json(session_path)
 
-    # Минимальная защита от "чужого" run_id в сессии
     if session.get("run_id") != run_id:
         return None
 
     return session
 
 
-# Сохранение сессии по run_id (через session_ref → sessions/<chat_id>.json)
 def _save_quiz_session(storage_dir: Path, run_id: str, session: dict[str, Any]) -> None:
     chat_id = _load_chat_id_by_run_id(storage_dir, run_id)
     if chat_id is None:
@@ -99,7 +89,6 @@ def _save_quiz_session(storage_dir: Path, run_id: str, session: dict[str, Any]) 
     _write_json(session_path, session)
 
 
-# Старт квиза: создаём run, пишем run.json, steps.json, session, session_ref
 def start_quiz_case(
     settings: dict,
     storage_dir: Path,
@@ -129,7 +118,6 @@ def start_quiz_case(
     run_dir = _runs_dir(storage_dir) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # run.json (единый стандарт)
     run_meta = {
         "run_id": run_id,
         "agent": "quiz",
@@ -139,16 +127,13 @@ def start_quiz_case(
     }
     _write_json(run_dir / "run.json", run_meta)
 
-    # steps.json (observability стандарт)
     steps = result.get("steps", [])
     if not isinstance(steps, list):
         steps = []
     _write_json(run_dir / "steps.json", steps)
 
-    # session_ref.json (KISS-мост: run_id -> chat_id)
     _write_json(run_dir / "session_ref.json", {"chat_id": chat_id})
 
-    # session в sessions/<chat_id>.json
     questions = quiz_spec.get("questions", [])
     options: list[str] = []
     if isinstance(questions, list) and questions:
@@ -178,7 +163,6 @@ def start_quiz_case(
     }
 
 
-# Обработка ответа: обновляем session, пишем quiz_answers/quiz_result/report в стандарте
 def process_quiz_answer_case(
     settings: dict,
     storage_dir: Path,
@@ -269,7 +253,6 @@ def process_quiz_answer_case(
         "step=quiz_answer duration_ms=%d run_id=%s q_idx=%d", duration_ms, run_id, q_idx
     )
 
-    # если квиз завершен - финализируем
     if next_q_idx >= len(questions):
         session["is_finished"] = True
         _save_quiz_session(storage_dir, run_id, session)
@@ -307,7 +290,6 @@ def process_quiz_answer_case(
         )
 
         (artifacts_dir / "report.md").write_text(report_text, encoding="utf-8")
-        # HTML: простой wrapper, без шаблонов
         (artifacts_dir / "report.html").write_text(
             "<pre>" + report_text + "</pre>",
             encoding="utf-8",
@@ -322,7 +304,6 @@ def process_quiz_answer_case(
             "report_text": report_text,
         }
 
-    # иначе - следующий вопрос
     _save_quiz_session(storage_dir, run_id, session)
 
     next_q = questions[next_q_idx]
@@ -350,7 +331,6 @@ def process_quiz_answer_case(
     }
 
 
-# Последний результат по chat_id: читаем quiz_result.json (стандарт) и фильтруем agent=quiz
 def get_last_quiz_case(storage_dir: Path, chat_id: int) -> dict[str, Any] | None:
     runs_dir = _runs_dir(storage_dir)
     if not runs_dir.exists():

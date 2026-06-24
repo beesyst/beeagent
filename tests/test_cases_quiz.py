@@ -8,7 +8,6 @@ from beeagent_module.cases.quiz import (
 from beeagent_module.core.log import get_logger, setup_logging
 
 
-# Тест кейса для полного workflow квиза: старт, ответы на вопросы, финализация и получение результата
 def test_quiz_case_workflow(tmp_path: Path) -> None:
     settings = {
         "quiz": {
@@ -39,7 +38,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
     session_path = storage_dir / "sessions" / "123.json"
     assert session_path.exists()
 
-    # Q1: correct_answer_idx = 0, мы отвечаем 0
     result2 = process_quiz_answer_case(
         settings=settings,
         storage_dir=storage_dir,
@@ -51,7 +49,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
     assert result2.get("is_finished") is False
     assert "Question 2" in result2["next_question"]
 
-    # Q2: correct_answer_idx = 2, мы отвечаем 2
     result3 = process_quiz_answer_case(
         settings=settings,
         storage_dir=storage_dir,
@@ -62,7 +59,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
 
     assert result3.get("is_finished") is False
 
-    # Q3: correct_answer_idx = 1, мы отвечаем 1
     result4 = process_quiz_answer_case(
         settings=settings,
         storage_dir=storage_dir,
@@ -73,7 +69,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
 
     assert result4.get("is_finished") is False
 
-    # Q4: correct_answer_idx = 1, мы отвечаем 0 (неправильно)
     result5 = process_quiz_answer_case(
         settings=settings,
         storage_dir=storage_dir,
@@ -88,7 +83,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
     assert result_data["total_questions"] == 4
     assert result_data["score_percent"] == 75.0
 
-    # чек: финальные артефакты были сохранены
     answers_path = storage_dir / "runs" / run_id / "quiz_answers.json"
     result_path = storage_dir / "runs" / run_id / "quiz_result.json"
     report_path = storage_dir / "artifacts" / run_id / "report.md"
@@ -96,7 +90,6 @@ def test_quiz_case_workflow(tmp_path: Path) -> None:
     assert result_path.exists()
     assert report_path.exists()
 
-    # чек: получение последнего квиза
     last = get_last_quiz_case(storage_dir, chat_id=123)
     assert last is not None
     assert last["run_id"] == run_id

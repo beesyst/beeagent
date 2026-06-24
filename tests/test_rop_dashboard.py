@@ -18,7 +18,6 @@ from beeagent_module.cases.rop_dashboard import (
 from beeagent_module.core.settings import load_settings
 
 
-# Логгер
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_dashboard")
     logger.addHandler(logging.NullHandler())
@@ -26,12 +25,10 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Получение корневой директории проекта для загрузки настроек
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Фикстура: создание временной директории с артефактами ран для тестирования ROP dashboard
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
     """Create a minimal run directory with artifacts for dashboard testing."""
@@ -233,7 +230,7 @@ def run_dir(tmp_path: Path) -> Path:
             "not_found_count": 1,
             "ambiguous_count": 0,
             "duplicate_candidate_count": 0,
-            "connector_error_count": 0,
+            "connector_degraded_count": 0,
         },
         "items": [
             {"event_id": "evt-001", "bitrix_match_status": "matched_lead"},
@@ -247,7 +244,6 @@ def run_dir(tmp_path: Path) -> Path:
     return rdir
 
 
-# Класс: тесты для функции построения ROP dashboard из артефактов ран
 class TestPeriodParsing:
     def test_rop_dashboard_module_exports_builder_contract(self) -> None:
         for name in (
@@ -318,7 +314,7 @@ class TestPeriodParsing:
 
     def test_validate_allowed(self) -> None:
         for p in ALLOWED_PERIODS:
-            validate_period(p)  # must not raise
+            validate_period(p)
 
     def test_validate_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid period"):
@@ -327,7 +323,6 @@ class TestPeriodParsing:
             validate_period("")
 
 
-# Класс: тесты для функции построения ROP dashboard из артефактов ран
 class TestBuildRopDashboard:
     def test_dashboard_basic_structure(self, run_dir: Path, tmp_path: Path) -> None:
         dashboard = build_rop_dashboard(
@@ -622,6 +617,23 @@ class TestBuildRopDashboard:
         assert [item["event_id"] for item in queues["unreconciled"]] == ["evt-003"]
         assert dashboard["business_kpi"]["bitrix_errors"] > 0
 
+    def test_skipped_events_do_not_appear_in_unreconciled_queue(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        bitrix_path = run_dir / "bitrix_reconciliation.json"
+        bitrix = json.loads(bitrix_path.read_text(encoding="utf-8"))
+        bitrix["items"].append(
+            {"event_id": "evt-001", "bitrix_match_status": "skipped"}
+        )
+        bitrix_path.write_text(json.dumps(bitrix), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+
+        assert dashboard["business_kpi"]["unreconciled"] == 1
+        assert [item["event_id"] for item in dashboard["queues"]["unreconciled"]] == [
+            "evt-003"
+        ]
+
     def test_queue_entries_include_operator_contract_fields(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
@@ -671,7 +683,6 @@ class TestBuildRopDashboard:
         assert "evt-001" in high_priority_ids
 
 
-# Класс: тесты для функции записи ROP dashboard в виде артефакта
 class TestWriteRopDashboard:
     def test_writes_artifact(self, run_dir: Path, tmp_path: Path) -> None:
         dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
@@ -693,7 +704,6 @@ class TestWriteRopDashboard:
         assert loaded["read_only"] is True
 
 
-# Класс: тесты для валидации настроек, связанных с ROP dashboard
 class TestSettingsValidation:
     def test_settings_has_rop_dashboard(self) -> None:
         settings = load_settings(_project_root() / "config" / "settings.yml")

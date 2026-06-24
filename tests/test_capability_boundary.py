@@ -5,7 +5,6 @@ from beeagent_module.core.capability_runtime import LocalCapabilityRuntime
 from beeagent_module.core.module_contract import AuthorityLevel
 
 
-# Тест: чек, что при вызове capability не происходит скрытого фоллбек пути к другому capability с более широкими правами
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_capability_boundary")
     logger.addHandler(logging.NullHandler())
@@ -13,7 +12,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Тест: чек, что при вызове capability не происходит скрытого фоллбек пути к другому capability с более широкими правами
 def test_capability_success_with_rop_like_name() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
 
@@ -40,7 +38,6 @@ def test_capability_success_with_rop_like_name() -> None:
     assert result.data == {"items": [{"id": "mail-1"}]}
 
 
-# Тест: чек, что при вызове capability с недостаточными правами возвращается отказ без фоллбеков
 def test_capability_refused_for_insufficient_authority() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
 
@@ -62,7 +59,6 @@ def test_capability_refused_for_insufficient_authority() -> None:
     assert result.diagnostics["reason"] == "insufficient_authority"
 
 
-# Тест: чек, что при вызове capability, который выбрасывает исключение TimeoutError, возвращается статус TIMEOUT
 def test_capability_timeout_state() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
 
@@ -83,7 +79,6 @@ def test_capability_timeout_state() -> None:
     assert result.diagnostics["reason"] == "timeout"
 
 
-# Тест: чек, что при вызове неизвестного capability возвращается отказ с правильной причиной
 def test_capability_refused_unknown_name() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
 
@@ -99,7 +94,6 @@ def test_capability_refused_unknown_name() -> None:
     assert result.diagnostics["reason"] == "unknown_capability"
 
 
-# Тест: чек, что при вызове отключенного capability возвращается отказ с правильной причиной
 def test_capability_refused_when_disabled() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
 
@@ -121,7 +115,6 @@ def test_capability_refused_when_disabled() -> None:
     assert result.diagnostics["reason"] == "capability_disabled"
 
 
-# Тест: чек, что при вызове capability не происходит скрытого фоллбек пути к другому capability с более широкими правами
 def test_no_hidden_fallback_path() -> None:
     runtime = LocalCapabilityRuntime(logger=_null_logger())
     called = {"email_search": 0}

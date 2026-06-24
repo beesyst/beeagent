@@ -22,7 +22,6 @@ from beeagent_module.web.render import render_template
 _DROP = object()
 
 
-# Результат обработки веб-запроса
 @dataclass
 class WebResponse:
     status: int
@@ -40,7 +39,6 @@ def render_error_page(title: str, heading: str, message: str) -> str:
     )
 
 
-# Рендер страницы домашнего экрана с общим количеством выполнений для навигации и доступа к деталям каждого выполнения и их результатам
 def render_home_page(storage_dir: Path) -> str:
     return render_template(
         "home.html",
@@ -49,7 +47,6 @@ def render_home_page(storage_dir: Path) -> str:
     )
 
 
-# Рендер страницы со списком выполнений с навигацией к деталям каждого выполнения, их результатам и ROP дашборду для анализа классификации кейсов
 def render_runs_page(storage_dir: Path) -> str:
     return render_template(
         "runs.html",
@@ -58,7 +55,6 @@ def render_runs_page(storage_dir: Path) -> str:
     )
 
 
-# Пэйлоад для API эндпоинта со списком выполнений с общей информацией для каждого выполнения и ссылками на детали, ROP дашборд и артефакты для анализа результатов обработки кейсов
 def get_runs_payload(storage_dir: Path) -> dict[str, Any]:
     runs = list_runs(storage_dir)
     return {
@@ -75,7 +71,6 @@ def get_runs_payload(storage_dir: Path) -> dict[str, Any]:
     }
 
 
-# Рендер страницы со списком модулей, их состоянием и ошибками для диагностики проблем с загрузкой и выполнением модулей в рамках обработки кейсов
 def render_modules_page(storage_dir: Path) -> str:
     payload = get_modules_payload(storage_dir)
     return render_template(
@@ -86,7 +81,6 @@ def render_modules_page(storage_dir: Path) -> str:
     )
 
 
-# Пэйлоад для API эндпоинта со списком модулей, их состоянием и ошибками для диагностики проблем с загрузкой и выполнением модулей в рамках обработки кейсов
 def get_modules_payload(storage_dir: Path) -> dict[str, Any]:
     modules_path = storage_dir / "interfaces" / "modules.json"
     data, error = read_json_file(modules_path)
@@ -113,7 +107,6 @@ def get_modules_payload(storage_dir: Path) -> dict[str, Any]:
     }
 
 
-# Рендер страницы обзора выполнения с диагностикой, метаданными и списком артефактов для навигации к деталям каждого выполнения, их результатам и ROP дашборду для анализа классификации кейсов
 def render_run_overview_page(run_id: str, storage_dir: Path) -> tuple[int, str]:
     status, payload = get_run_overview_payload(run_id=run_id, storage_dir=storage_dir)
     if status != 200:
@@ -138,7 +131,6 @@ def render_run_overview_page(run_id: str, storage_dir: Path) -> tuple[int, str]:
     )
 
 
-# Пэйлоад для API эндпоинта с обзором выполнения, диагностикой, метаданными и списком артефактов для навигации к деталям каждого выполнения, их результатам и ROP дашборду для анализа классификации кейсов
 def get_run_overview_payload(
     run_id: str,
     storage_dir: Path,
@@ -184,7 +176,6 @@ def get_run_overview_payload(
     return 200, payload
 
 
-# Рендер страницы с ROP дашбордом, метриками и фильтрами для анализа результатов классификации кейсов, диагностики ошибок и принятия решений по кейсам на основе данных выполнений
 def render_rop_dashboard_page(
     run_id: str,
     storage_dir: Path,
@@ -222,7 +213,6 @@ def render_rop_dashboard_page(
     )
 
 
-# Пэйлоад для API эндпоинта с ROP дашбордом, метриками и фильтрами для анализа результатов классификации кейсов, диагностики ошибок и принятия решений по кейсам на основе данных выполнений
 def get_rop_dashboard_payload(
     run_id: str,
     storage_dir: Path,
@@ -267,7 +257,6 @@ def get_rop_dashboard_payload(
     return 200, payload
 
 
-# Рендеринг страницы с ROP дашбордом, метриками и фильтрами для анализа результатов классификации кейсов, диагностики ошибок и принятия решений по кейсам на основе данных выполнений
 def get_tsv_response(run_id: str, storage_dir: Path) -> tuple[int, str, str]:
     run_dir = resolve_run_dir(storage_dir, run_id)
     if run_dir is None:
@@ -275,7 +264,6 @@ def get_tsv_response(run_id: str, storage_dir: Path) -> tuple[int, str, str]:
     return _serve_tsv(run_dir=run_dir)
 
 
-# Доступ к артефактам выполнения с фильтрацией по белому списку для безопасного отображения в веб-интерфейсе и предоставления доступа к данным выполнений без риска раскрытия конфиденциальной информации
 def get_run_artifact_response(
     run_id: str,
     artifact_name: str,
@@ -291,7 +279,6 @@ def get_run_artifact_response(
     return _serve_run_artifact(run_dir=run_dir, artifact_name=artifact_name)
 
 
-# Обработка входящего HTTP запроса и маршрутизация его к соответствующим обработчикам
 def handle_request(
     method: str,
     raw_path: str,
@@ -385,7 +372,6 @@ def handle_request(
     )
 
 
-# Формирование ответов, рендеринг шаблонов и безопасный доступ к данным с фильтрацией чувствительной информации
 def _json_response(status: int, value: Any) -> WebResponse:
     return WebResponse(
         status=status,
@@ -394,7 +380,6 @@ def _json_response(status: int, value: Any) -> WebResponse:
     )
 
 
-# Рендеринг ROP дашборда с фильтрацией, метриками и доступом к артефактам для анализа результатов классификации и принятия решений по кейсам
 def _serve_tsv(run_dir: Path) -> tuple[int, str, str]:
     content, error = safe_read_text(run_dir / "rop_review_table.tsv")
     if error:
@@ -403,7 +388,6 @@ def _serve_tsv(run_dir: Path) -> tuple[int, str, str]:
     return 200, content or "", "text/tab-separated-values; charset=utf-8"
 
 
-# Рендеринг страницы обзора выполнения с диагностикой, метаданными и списком артефактов
 def _serve_run_artifact(run_dir: Path, artifact_name: str) -> tuple[int, str, str]:
     if artifact_name not in RUN_ARTIFACT_WHITELIST:
         return 404, "Artifact not found", "text/plain; charset=utf-8"
@@ -424,7 +408,6 @@ def _serve_run_artifact(run_dir: Path, artifact_name: str) -> tuple[int, str, st
     return 200, content or "", content_type
 
 
-# Рендеринг страницы со списком модулей, их состоянием и ошибками для диагностики проблем с загрузкой и выполнением модулей в рамках обработки кейсов
 def _serve_module_artifact(
     run_dir: Path,
     artifact_name: str,
@@ -444,7 +427,6 @@ def _serve_module_artifact(
     return 200, content or "", "application/json; charset=utf-8"
 
 
-# Доступ к данным, фильтрация чувствительной информации и формирование ответов для рендеринга шаблонов и предоставления доступа к артефактам
 def _single_query_value(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
     if not values:
@@ -454,7 +436,6 @@ def _single_query_value(query: dict[str, list[str]], key: str) -> str | None:
     return value or None
 
 
-# Формирование ответов, рендеринг шаблонов и безопасный доступ к данным с фильтрацией чувствительной информации
 def _html_response(status: int, html: str) -> WebResponse:
     return WebResponse(
         status=status,
@@ -463,7 +444,6 @@ def _html_response(status: int, html: str) -> WebResponse:
     )
 
 
-# Формирование ответов, рендеринг шаблонов и безопасный доступ к данным с фильтрацией чувствительной информации
 def _text_response(status: int, text: str, content_type: str) -> WebResponse:
     return WebResponse(
         status=status,
@@ -472,7 +452,6 @@ def _text_response(status: int, text: str, content_type: str) -> WebResponse:
     )
 
 
-# Фильтрация чувствительной информации из JSON данных для безопасного отображения в веб-интерфейсе и предоставления доступа к артефактам без риска раскрытия конфиденциальных данных
 def _strip_sensitive_json(value: Any) -> Any:
     blocked_keys = {
         "raw_eml",
@@ -507,7 +486,6 @@ def _strip_sensitive_json(value: Any) -> Any:
     return value
 
 
-# Идентификация JSON объектов, представляющих вложения с потенциально чувствительным содержимым
 def _is_blocked_attachment_entry(value: dict[str, Any]) -> bool:
     attachment_like = any(
         key in value for key in ("filename", "content_type", "size", "size_bytes")
@@ -529,6 +507,5 @@ def _is_blocked_attachment_entry(value: dict[str, Any]) -> bool:
     return False
 
 
-# Формирование ответов, рендеринг шаблонов и безопасный доступ к данным с фильтрацией чувствительной информации
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)

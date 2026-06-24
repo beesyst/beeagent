@@ -35,7 +35,6 @@ from beeagent_module.interfaces.ui.read_model import (
 )
 
 
-# Версия продукта для UI metadata без хардкода pyproject version
 def _product_version() -> str:
     try:
         return version("beeagent")
@@ -43,7 +42,6 @@ def _product_version() -> str:
         return "unknown"
 
 
-# Класс: адаптер продукта BeeAgent для интеграции с BeeUI
 class BeeAgentUiAdapter:
     def __init__(
         self,
@@ -269,7 +267,6 @@ class BeeAgentUiAdapter:
             return error_result_from_exception(exc)
 
 
-# Определение типа MIME по идентификатору артефакта
 def _infer_mime(artifact_id: str) -> str:
     from beeagent_module.interfaces.ui.artifacts import get_artifact_content_type
 

@@ -5,7 +5,6 @@ from typing import Any, Protocol
 from beeagent_module.domain.models import SKU, SalesRow, ShelfSignal, StockRow, Store
 
 
-# Базовый интерфейс адаптера данных для кейса OOS
 class DataAdapter(Protocol):
     def get_catalog(self) -> tuple[list[Store], list[SKU]]: ...
 

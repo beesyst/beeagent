@@ -1,7 +1,6 @@
 from pathlib import Path
 
 
-# Поиск корня проекта по якорю pyproject.toml
 def find_project_root(start_path: Path | None = None) -> Path:
     start = (
         Path(start_path).resolve()
@@ -9,7 +8,6 @@ def find_project_root(start_path: Path | None = None) -> Path:
         else Path(__file__).resolve()
     )
 
-    # если передали файл - начинаем от директории
     cur_dir = start if start.is_dir() else start.parent
 
     for directory in (cur_dir, *cur_dir.parents):
@@ -22,7 +20,6 @@ def find_project_root(start_path: Path | None = None) -> Path:
     )
 
 
-# Корневые пути
 ROOT_DIR = find_project_root()
 CONFIG_DIR = ROOT_DIR / "config"
 LOGS_DIR = ROOT_DIR / "logs"
@@ -47,7 +44,6 @@ def get_app_log_path(project_root: Path | None = None) -> Path:
     return get_logs_dir(project_root) / "app.log"
 
 
-# Создание обязательных директорий и .gitkeep
 def ensure_dirs(project_root: Path | None = None) -> None:
     logs_dir = get_logs_dir(project_root)
     storage_dir = get_storage_dir(project_root)

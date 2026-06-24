@@ -13,6 +13,7 @@ ARTIFACT_ALLOWLIST: dict[str, str] = {
     "rop_review_table_tsv": "rop_review_table.tsv",
     "rop_current_state_json": "rop_current_state.json",
     "bitrix_reconciliation_json": "bitrix_reconciliation.json",
+    "rop_action_drafts_json": "rop_action_drafts.json",
     "module_result_json": "module-beeagent-rop/module_result.json",
     "rop_summary_result_json": "module-beeagent-rop/rop_summary_result.json",
     "lead_classification_result_json": (
@@ -40,6 +41,7 @@ CONTENT_TYPE_MAP: dict[str, str] = {
     "rop_review_table_tsv": "text/tab-separated-values",
     "rop_current_state_json": "application/json",
     "bitrix_reconciliation_json": "application/json",
+    "rop_action_drafts_json": "application/json",
     "module_result_json": "application/json",
     "rop_summary_result_json": "application/json",
     "lead_classification_result_json": "application/json",
@@ -49,7 +51,6 @@ CONTENT_TYPE_MAP: dict[str, str] = {
 }
 
 
-# Разрешение allowlisted артефакта для ран-уровня, с защитой от path traversal и проверкой существования
 def resolve_artifact_path(
     storage_dir: Path, run_id: str, artifact_id: str
 ) -> Path | None:
@@ -78,12 +79,10 @@ def resolve_artifact_path(
     return artifact_path
 
 
-# Получение типа содержимого для разрешенного артефакта
 def get_artifact_content_type(artifact_id: str) -> str:
     return CONTENT_TYPE_MAP.get(artifact_id, "application/octet-stream")
 
 
-# Список разрешенных артефактов для ран-уровня, с защитой от path traversal и проверкой существования
 def list_available_artifact_ids(storage_dir: Path, run_id: str) -> list[dict[str, str]]:
     runs_dir = (storage_dir / "runs").resolve()
     run_dir = (runs_dir / run_id).resolve()
@@ -114,6 +113,5 @@ def list_available_artifact_ids(storage_dir: Path, run_id: str) -> list[dict[str
     return available
 
 
-# Чек, что артефакт в allowlist и его путь корректный, с защитой от path traversal
 def is_artifact_id_allowed(artifact_id: str) -> bool:
     return artifact_id in ARTIFACT_ALLOWLIST

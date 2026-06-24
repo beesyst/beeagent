@@ -7,16 +7,17 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-# Legacy communication lookup используется только для lead/contact/company
-ALLOWED_METHODS: frozenset[str] = frozenset({
-    "crm.item.list",
-    "crm.item.fields",
-    "crm.status.list",
-    "crm.category.list",
-    "crm.lead.list",
-    "crm.contact.list",
-    "crm.company.list",
-})
+ALLOWED_METHODS: frozenset[str] = frozenset(
+    {
+        "crm.item.list",
+        "crm.item.fields",
+        "crm.status.list",
+        "crm.category.list",
+        "crm.lead.list",
+        "crm.contact.list",
+        "crm.company.list",
+    }
+)
 ENTITY_TYPE_NAMES: dict[int, str] = {
     1: "lead",
     2: "deal",
@@ -27,42 +28,34 @@ ENTITY_TYPE_IDS: dict[str, int] = {v: k for k, v in ENTITY_TYPE_NAMES.items()}
 COMMUNICATION_ENTITY_TYPE_IDS: frozenset[int] = frozenset({1, 3, 4})
 
 
-# Базовое исключение Bitrix connector
 class BitrixConnectorError(RuntimeError):
     pass
 
 
-# Ошибка аутентификации/доступа
 class BitrixAuthError(BitrixConnectorError):
     pass
 
 
-# Ошибка Bitrix REST API (envelope error)
 class BitrixApiError(BitrixConnectorError):
     pass
 
 
-# Ошибка таймаута при подключении к Bitrix
 class BitrixTimeoutError(BitrixConnectorError):
     pass
 
 
-# Транспортная ошибка (DNS, соединение, HTTP)
 class BitrixTransportError(BitrixConnectorError):
     pass
 
 
-# Ошибка при вызове метода, не входящего в allowlist
 class BitrixMethodNotAllowed(ValueError):
     pass
 
 
-# Невалидный JSON ответ от Bitrix
 class BitrixMalformedResponse(BitrixConnectorError):
     pass
 
 
-# Read-only Bitrix REST client
 class BitrixReadonlyClient:
     def __init__(
         self,
@@ -73,9 +66,7 @@ class BitrixReadonlyClient:
         logger: logging.Logger | None = None,
     ) -> None:
         if not webhook_url or not webhook_url.startswith("https://"):
-            raise BitrixConnectorError(
-                "Bitrix webhook URL must be a valid HTTPS URL"
-            )
+            raise BitrixConnectorError("Bitrix webhook URL must be a valid HTTPS URL")
         self._webhook_url = webhook_url.rstrip("/")
         self._timeout = timeout
         self._page_size = page_size
@@ -117,21 +108,15 @@ class BitrixReadonlyClient:
                 raise BitrixAuthError(
                     f"Bitrix auth/permission error: HTTP {exc.code}"
                 ) from exc
-            raise BitrixTransportError(
-                f"Bitrix HTTP error: {exc.code}"
-            ) from exc
+            raise BitrixTransportError(f"Bitrix HTTP error: {exc.code}") from exc
         except URLError as exc:
             if "timed out" in str(exc).lower():
                 raise BitrixTimeoutError(
                     f"Bitrix request timed out after {self._timeout}s"
                 ) from exc
-            raise BitrixTransportError(
-                f"Bitrix transport error: {exc.reason}"
-            ) from exc
+            raise BitrixTransportError(f"Bitrix transport error: {exc.reason}") from exc
         except OSError as exc:
-            raise BitrixTransportError(
-                f"Bitrix connection error: {exc}"
-            ) from exc
+            raise BitrixTransportError(f"Bitrix connection error: {exc}") from exc
 
         try:
             data: dict[str, Any] = json.loads(raw.decode("utf-8"))
@@ -142,9 +127,7 @@ class BitrixReadonlyClient:
 
         if "error" in data:
             error_desc = data.get("error_description", data.get("error", "unknown"))
-            raise BitrixApiError(
-                f"Bitrix API error: {error_desc}"
-            )
+            raise BitrixApiError(f"Bitrix API error: {error_desc}")
 
         return data
 
@@ -202,9 +185,7 @@ class BitrixReadonlyClient:
         ]
 
         is_email = "@" in query
-        normalized_phone = (
-            query.replace(" ", "").replace("+", "").replace("-", "")
-        )
+        normalized_phone = query.replace(" ", "").replace("+", "").replace("-", "")
         is_phone = normalized_phone.isdigit() and len(query.strip()) >= 5
 
         if is_email or is_phone:
@@ -330,7 +311,6 @@ class BitrixReadonlyClient:
         return ""
 
 
-# Маппинг entityTypeId -> legacy метод списка
 def _entity_type_to_legacy_method(entity_type_id: int) -> str | None:
     mapping = {
         1: "crm.lead.list",
@@ -340,7 +320,6 @@ def _entity_type_to_legacy_method(entity_type_id: int) -> str | None:
     return mapping.get(entity_type_id)
 
 
-# Конвертация UPPER_CASE полей в camelCase
 def _convert_select_to_camel(fields: list[str]) -> list[str]:
     camel_map: dict[str, str] = {
         "ID": "id",
@@ -355,7 +334,6 @@ def _convert_select_to_camel(fields: list[str]) -> list[str]:
     return [camel_map.get(f, f.lower()) for f in fields]
 
 
-# Разрешить URL вебхука из env по имени из settings
 def resolve_bitrix_webhook_url(
     settings: dict,
     logger: logging.Logger | None = None,
@@ -370,14 +348,11 @@ def resolve_bitrix_webhook_url(
         )
 
     if not url.startswith("https://"):
-        raise BitrixConnectorError(
-            "Bitrix webhook URL must be an HTTPS URL"
-        )
+        raise BitrixConnectorError("Bitrix webhook URL must be an HTTPS URL")
 
     return url
 
 
-# Фабрика BitrixReadonlyClient из settings
 def build_bitrix_client(
     settings: dict,
     logger: logging.Logger | None = None,

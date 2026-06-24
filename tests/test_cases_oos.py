@@ -9,7 +9,6 @@ from beeagent_module.cases.oos import (
 )
 
 
-# Тест кейса OOS: запуск, получение отчета и утверждение/отклонение задач
 def _settings(dataset_id: str | None = None) -> dict:
     return {
         "mock": {
@@ -57,7 +56,6 @@ def _settings(dataset_id: str | None = None) -> dict:
     }
 
 
-# Тест: кейс OOS создает артефакты и отчет
 def test_run_oos_case_creates_artifacts_and_report(
     tmp_path: Path,
     monkeypatch,
@@ -97,7 +95,6 @@ def test_run_oos_case_creates_artifacts_and_report(
     assert isinstance(recommendations, list)
 
 
-# Тест: получение последнего отчета OOS с добавлением статуса задач и причины отклонения
 def test_last_report_case_contains_status_and_reject_reason(tmp_path: Path) -> None:
     result = run_oos_case(
         settings=_settings(),
@@ -119,7 +116,6 @@ def test_last_report_case_contains_status_and_reject_reason(tmp_path: Path) -> N
     assert "Reject reason: Rejected by operator" in report_text
 
 
-# Тест: утверждение последнего запуска кейса OOS
 def test_approve_last_run_case_approved(tmp_path: Path) -> None:
     run_oos_case(
         settings=_settings(),
@@ -137,7 +133,6 @@ def test_approve_last_run_case_approved(tmp_path: Path) -> None:
     assert response.startswith("Tasks approved for run")
 
 
-# Тест: отклонение последнего запуска кейса OOS с указанием причины
 def test_run_oos_case_scheduled_sets_trigger(tmp_path: Path) -> None:
     result = run_oos_case(
         settings=_settings(),
@@ -152,7 +147,6 @@ def test_run_oos_case_scheduled_sets_trigger(tmp_path: Path) -> None:
     assert run_data["trigger"] == "scheduled"
 
 
-# Тест: проверка наличия steps.json в артефактах с временами выполнения узлов
 def test_run_oos_case_creates_steps_artifact(tmp_path: Path) -> None:
     result = run_oos_case(
         settings=_settings(),

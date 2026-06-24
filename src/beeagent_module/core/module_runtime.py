@@ -18,7 +18,6 @@ from beeagent_module.core.runtime_context import (
 )
 
 
-# Явный core-path исполнения модуля: собирает RuntimeContext, прокидывает его в ModuleContext и связывает module outputs с run_id
 def execute_module_case(
     registry: ModuleRegistry,
     module_id: str,
@@ -141,7 +140,6 @@ def execute_module_case(
     return normalized_result
 
 
-# Вспомогательная функция для нормализации и валидации уровня доступа (authority) из разных форматов в AuthorityLevel
 def _normalize_authority(
     value: Any,
     field_name: str,

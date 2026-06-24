@@ -1,7 +1,6 @@
 from beeagent_module.domain.models import Alert, ShelfSignal, StockRow
 
 
-# Правило A: stock_on_hand > 0 И seen_on_shelf == false → OOS алерт
 def detect_rule_a(
     stock_rows: list[StockRow],
     shelf_signals: list[ShelfSignal],
@@ -12,7 +11,6 @@ def detect_rule_a(
 
     alerts = []
 
-    # найти запись о запасах для этой даты/магазина/sku
     stock_record = next(
         (
             s
@@ -22,7 +20,6 @@ def detect_rule_a(
         None,
     )
 
-    # найти сигнал полки для этой даты/магазина/sku
     shelf_record = next(
         (
             s
@@ -32,7 +29,6 @@ def detect_rule_a(
         None,
     )
 
-    # применить правило A: stock_on_hand > 0 И seen_on_shelf == false
     if (
         stock_record
         and shelf_record

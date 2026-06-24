@@ -16,7 +16,6 @@ from beeagent_module.core.module_runtime import execute_module_case
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 
 
-# Реализация ROP оператора для запуска модульных кейсов и сбора результатов в едином формате
 def run_rop_operator_case(
     settings: dict,
     storage_dir: Path,
@@ -113,7 +112,6 @@ def run_rop_operator_case(
     }
 
 
-# Вспомогательные функции для ROP оператора
 def _collect_artifact_refs(
     storage_dir: Path,
     module_dir: Path,
@@ -130,7 +128,6 @@ def _collect_artifact_refs(
     return refs
 
 
-# Генерация текстового отчета для ROP оператора
 def _build_operator_text(
     run_id: str,
     module_id: str,
@@ -153,7 +150,6 @@ def _build_operator_text(
     )
 
 
-# Генерация текстового отчета для ROP batch оператора с метаданными источника
 def _build_batch_operator_text(
     run_id: str,
     module_id: str,
@@ -206,7 +202,6 @@ def _build_batch_operator_text(
     )
 
 
-# Классифицировать нормализованные события через lead_classification модульного кейса
 def _classify_normalized_events(
     events: list[dict[str, Any]],
     registry: ModuleRegistry,
@@ -247,7 +242,6 @@ def _classify_normalized_events(
                 event.get("event_id", "?"),
             )
 
-            # Filter event to include only fields expected by lead_classification
             filtered_event = _filter_event_for_module(event)
 
             result = execute_module_case(
@@ -315,7 +309,6 @@ def _classify_normalized_events(
     return classified_events, classification_diagnostics
 
 
-# Существующая классификация к событию, если оно уже было классифицировано на этапе нормализации, чтобы сохранить контекст и избежать повторной классификации
 def _attach_existing_classification_trace(
     classified_event: dict[str, Any],
     source_id: str | None,
@@ -346,7 +339,6 @@ def _attach_existing_classification_trace(
     return enriched
 
 
-# Создать fallback item для события, которое не удалось классифицировать
 def _make_fallback_event(
     event: dict[str, Any],
     source_id: str | None,
@@ -373,14 +365,12 @@ def _make_fallback_event(
     }
 
 
-# Хелпер: определение blocked email attachment
 def _is_blocked_email_attachment(att: dict[str, Any]) -> bool:
     filename = str(att.get("filename") or "").strip().lower()
     content_type = str(att.get("content_type") or "").strip().lower()
     return filename.endswith(".eml") or content_type == "message/rfc822"
 
 
-# Фильтровать событие до полей, поддерживаемых модулем
 def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "attachments",
@@ -440,7 +430,6 @@ def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
-# Трассировка классификации к исходному событию для сохранения контекста и связи между этапами обработки
 def _attach_classification_trace(
     classified_event: dict[str, Any],
     source_event: dict[str, Any],
@@ -471,7 +460,6 @@ def _attach_classification_trace(
     return enriched
 
 
-# Сбор source metadata для operator_summary из degraded diagnostics
 def _build_source_meta_from_diagnostics(
     source_diagnostics: dict[str, Any],
 ) -> dict[str, Any]:
@@ -492,7 +480,6 @@ def _build_source_meta_from_diagnostics(
     }
 
 
-# Сбор source metadata для operator_summary из intake metadata и diagnostics для более полной информации о источнике
 def _build_source_meta_from_intake(
     intake_metadata: dict[str, Any],
     source_diagnostics: dict[str, Any],
@@ -517,7 +504,6 @@ def _build_source_meta_from_intake(
     }
 
 
-# Метаданные источника к каждому событию для сохранения контекста и возможности анализа по источникам на этапе классификации и в модульных кейсах
 def _attach_source_metadata_to_event(
     event: dict[str, Any],
     source_meta: dict[str, Any],
@@ -531,7 +517,6 @@ def _attach_source_metadata_to_event(
     return enriched
 
 
-# Суммирование числовых полей с безопасной обработкой нечисловых значений для агрегации статистики по источникам
 def _sum_int(values: list[Any]) -> int:
     total = 0
     for value in values:
@@ -540,7 +525,6 @@ def _sum_int(values: list[Any]) -> int:
     return total
 
 
-# Запуск ROP source handoff: загрузка configured source, нормализация событий и dispatch в модуль
 def run_rop_batch_case(
     settings: dict,
     storage_dir: Path,
@@ -820,7 +804,6 @@ def run_rop_batch_case(
             len(normalized_events),
         )
 
-        # Classify each normalized event through lead_classification case
         if registry is None:
             registry = build_registry(settings=settings, logger=logger)
 

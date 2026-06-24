@@ -5,7 +5,6 @@ from typing import Any
 _BLOCKED_EMAIL_CONTENT_TYPE = "message/rfc822"
 
 
-# Извлечение текста из вложений событий
 def build_attachment_extraction(
     run_id: str,
     events: list[dict[str, Any]],
@@ -79,7 +78,6 @@ def build_attachment_extraction(
     return artifact, enriched_events
 
 
-# Чек извлечения вложений из событий
 def _extract_event_attachments(
     event: dict[str, Any],
     preview_chars_max: int,
@@ -145,7 +143,6 @@ def _extract_event_attachments(
     return enriched, event_items
 
 
-# Чек извлечения текста из одного вложения с учетом ограничений и формирование результата с метаданными и статусами
 def _extract_attachment_item(
     event: dict[str, Any],
     attachment: Any,
@@ -253,7 +250,6 @@ def _extract_attachment_item(
     return base
 
 
-# Чек извлечения текста из вложений, безопасная обработка и формирование превью с учетом ограничений
 def _extract_safe_preview(attachment: dict[str, Any]) -> str:
     for key in ("text_preview", "text", "body_preview", "attachment_text"):
         value = attachment.get(key)
@@ -262,7 +258,6 @@ def _extract_safe_preview(attachment: dict[str, Any]) -> str:
     return ""
 
 
-# Чек определения итогового статуса извлечения вложений для события на основе статусов отдельных вложений
 def _resolve_event_status(event_items: list[dict[str, Any]]) -> str:
     if not event_items:
         return "none"
@@ -280,7 +275,6 @@ def _resolve_event_status(event_items: list[dict[str, Any]]) -> str:
     return "none"
 
 
-# Чек: определение, является ли вложение заблокированным email вложением на основе имени файла и типа контента
 def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
     normalized_filename = filename.strip().lower()
     normalized_content_type = content_type.strip().lower()
@@ -290,7 +284,6 @@ def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
     )
 
 
-# Преобразование значения в int, возвращает None для неподходящих типов и значений
 def _to_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -303,14 +296,12 @@ def _to_int(value: Any) -> int | None:
     return None
 
 
-# Преобразование значения в текст, безопасная обработка и очистка от лишних пробелов и символов
 def _as_text(value: Any) -> str:
     if value is None:
         return ""
     return _sanitize_text(str(value))
 
 
-# Чек: очистка текста от лишних пробелов, табуляций и символов новой строки, замена их на одиночные пробелы и удаление лишних пробелов
 def _sanitize_text(value: str) -> str:
     return " ".join(
         value.replace("\t", " ").replace("\n", " ").replace("\r", " ").split()

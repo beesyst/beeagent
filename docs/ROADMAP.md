@@ -4792,6 +4792,633 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 29 — ROP Bitrix match quality gate and action drafts v0
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать Bitrix reconciliation безопасным для MVP: weak/ambiguous Bitrix candidates не должны считаться успешным match, `not_found` должен быть отделён от connector failure, а BeeAgent должен формировать read-only action drafts для РОПа поверх existing classification + Bitrix evidence.
+
+#### Почему это нужно
+
+После It26–It28 BeeAgent уже умеет строить полный ROP evidence chain:
+
+```text
+mailbox/json_batch
+→ normalized_events.json
+→ attachment_extraction.json
+→ beeagent-rop classification
+→ classified_events.json
+→ Bitrix read-only reconciliation
+→ current-state/dashboard/MVP pack
+```
+
+Ручная проверка live batch показала, что classification path уже достаточно полезен для MVP, но Bitrix evidence остаётся рискованной зоной:
+
+```text
+weak/wrong Bitrix candidate
+→ выглядит как found/matched
+→ РОП может уйти в неправильный lead/deal
+```
+
+Для MVP это хуже, чем `not_found`:
+
+```text
+not_found = честный CRM gap
+wrong/weak match = опасная ложная уверенность
+```
+
+Поэтому перед AI assist и перед любым Bitrix write-back нужно ввести explicit match quality gate:
+
+```text
+strong evidence only → matched_*
+weak evidence → weak_match / ambiguous / manual_review
+connector failure → connector_degraded / error
+no candidate → not_found
+```
+
+Эта итерация остаётся в `beeagent`, потому что Bitrix connector, reconciliation artifacts, dashboard/current-state/MVP pack и action drafts принадлежат BeeAgent orchestration layer. `beeagent-rop` продолжает отвечать за доменную classification semantics.
+
+#### Scope
+
+**Включено:**
+
+- усилить BeeAgent-owned Bitrix reconciliation quality gate;
+- сохранить read-only Bitrix boundary;
+- не считать weak/subject-only/random candidate успешным match;
+- добавить/уточнить reconciliation status:
+
+```text
+matched_lead
+matched_deal
+matched_contact
+matched_company
+not_found
+ambiguous
+duplicate_candidate
+weak_match
+skipped
+connector_degraded
+error
+```
+
+- добавить explicit match quality fields в `bitrix_reconciliation.json`:
+
+```text
+bitrix_match_status
+bitrix_match_quality
+bitrix_confidence
+needs_manual_review
+safe_to_use_as_target
+bitrix_match_reason
+reconciliation_reason
+candidate_count
+candidate_summary
+```
+
+- правило:
+
+```text
+weak subject/title-only match
+or random low-evidence phone/title candidate
+or multiple weak candidates
+→ weak_match or ambiguous
+→ needs_manual_review=true
+→ safe_to_use_as_target=false
+→ not counted as successful matched
+```
+
+- сохранить invariant:
+
+```text
+not_found != connector failure
+missing Bitrix artifact != not_found
+weak_match != matched
+ambiguous != matched
+```
+
+- добавить aggregate counts в `bitrix_reconciliation.json`:
+
+```text
+event_count
+safe_matched_count
+matched_count
+weak_match_count
+not_found_count
+ambiguous_count
+duplicate_candidate_count
+skipped_count
+connector_degraded_count
+error_count
+manual_review_count
+```
+
+- добавить BeeAgent-owned action draft artifact:
+
+```text
+storage/runs/<run_id>/rop_action_drafts.json
+```
+
+- action drafts строятся только из existing artifacts:
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `bitrix_reconciliation.json`;
+  - optional `attachment_extraction.json`;
+  - optional `rop_current_state.json`;
+
+- action draft должен быть read-only/draft-only и не выполнять CRM write-back;
+
+- action draft item должен содержать:
+
+```text
+action_draft_id
+event_id
+run_id
+source_id
+bot_case_type
+bitrix_match_status
+queue
+recommended_action
+recommended_next_step
+priority
+reason_code
+needs_manual_review
+safe_to_use_as_target
+target_entity_type
+target_entity_id
+evidence_refs
+read_only
+```
+
+- recommended action mapping v0:
+
+```text
+new_lead + not_found
+→ lost_in_bitrix / check CRM gap / create lead manually
+
+new_lead + matched_lead
+→ review existing lead / update manually if needed
+
+existing_deal + matched_deal
+→ review deal / add comment or document manually
+
+existing_deal + weak_match|ambiguous
+→ choose correct Bitrix entity manually
+
+ambiguous|duplicate_candidate
+→ resolve candidate manually
+
+irrelevant
+→ ignore
+
+connector_degraded|error
+→ check Bitrix connector
+
+missing Bitrix evidence
+→ run read-only reconciliation
+```
+
+- добавить CLI command:
+
+```bash
+./start.sh rop action-drafts --run-id <run_id>
+```
+
+- автоматически обновлять `rop_action_drafts.json` после successful `reconcile-bitrix`;
+- не создавать ложный success state после failed `reconcile-bitrix`;
+- `rop export-review` должен обогащать TSV, если существуют `bitrix_reconciliation.json` и/или `rop_action_drafts.json`;
+- сохранить backward compatibility старых TSV колонок;
+- добавить новые TSV columns, если они ещё отсутствуют:
+
+```text
+bitrix_match_status
+bitrix_match_quality
+bitrix_confidence
+needs_manual_review
+safe_to_use_as_target
+recommended_action
+recommended_next_step
+action_queue
+action_draft_id
+```
+
+- обновить current-state/dashboard/MVP pack read-model минимально:
+  - `weak_match` виден как manual-review/ambiguous risk;
+  - `safe_matched_count` отделён от просто `matched_count`;
+  - action drafts доступны в Evidence / First actions;
+  - `lost_in_bitrix` считается только по valid `not_found`, не по missing/degraded Bitrix evidence;
+
+- добавить artifact allowlist entry, если UI/Evidence links начинают ссылаться на новый artifact:
+
+```text
+rop_action_drafts_json
+```
+
+- graceful degraded behavior:
+  - missing Bitrix artifact;
+  - malformed Bitrix artifact;
+  - stale/mismatched run_id;
+  - missing classified events;
+  - empty candidates;
+  - connector degraded/error;
+  - path traversal attempt through run_id;
+
+- tests for reconciliation quality gate, action drafts, TSV enrichment, current/dashboard/MVP pack read-model impact and security boundaries;
+
+- docs update:
+  - `docs/ROADMAP.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/WEB_UI.md`, если UI/API artifact links меняются.
+
+**Не включено:**
+
+- Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- `crm.item.delete`;
+- task creation;
+- timeline comments;
+- lead creation;
+- deal update;
+- auto-assign responsible;
+- automatic CRM actions;
+- AI classification;
+- AI recommendation generation;
+- changes to `beeagent-rop`;
+- ROP classification/business rules in BeeAgent core;
+- OCR;
+- PDF/DOCX/XLSX deep parsing;
+- 1C integration;
+- manager scoring;
+- mailbox listener/polling;
+- web-triggered ROP run;
+- POST/operator action routes;
+- auth/RBAC;
+- Control Panel.
+
+#### Deliverable
+
+BeeAgent can run safer Bitrix reconciliation and produce explicit ROP action drafts:
+
+```bash
+./start.sh rop reconcile-bitrix --run-id <run_id>
+
+./start.sh rop action-drafts --run-id <run_id>
+
+./start.sh rop export-review --run-id <run_id> --format tsv
+```
+
+Expected artifacts:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/rop_action_drafts.json
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+The dashboard/current-state/MVP pack can distinguish:
+
+```text
+safe matched
+weak match
+ambiguous
+duplicate candidate
+not found
+connector degraded
+missing Bitrix evidence
+```
+
+#### Expected `bitrix_reconciliation.json` behavior
+
+Strong exact evidence:
+
+```json
+{
+  "event_id": "evt-001",
+  "bitrix_match_status": "matched_lead",
+  "bitrix_match_quality": "strong",
+  "bitrix_confidence": 0.95,
+  "needs_manual_review": false,
+  "safe_to_use_as_target": true,
+  "bitrix_match_reason": "sender_email_exact",
+  "reconciliation_reason": "Exact sender email candidate found in Bitrix lead list."
+}
+```
+
+Weak title/subject-only candidate:
+
+```json
+{
+  "event_id": "evt-002",
+  "bitrix_match_status": "weak_match",
+  "bitrix_match_quality": "weak",
+  "bitrix_confidence": 0.45,
+  "needs_manual_review": true,
+  "safe_to_use_as_target": false,
+  "bitrix_match_reason": "subject_title_weak",
+  "reconciliation_reason": "Only weak title/subject candidate was found; candidate is not safe for automatic targeting."
+}
+```
+
+No candidate while connector is healthy:
+
+```json
+{
+  "event_id": "evt-003",
+  "bitrix_match_status": "not_found",
+  "bitrix_match_quality": "none",
+  "bitrix_confidence": 0.0,
+  "needs_manual_review": true,
+  "safe_to_use_as_target": false,
+  "bitrix_match_reason": "no_candidate_found",
+  "reconciliation_reason": "Bitrix was reachable, but no candidate was found."
+}
+```
+
+Connector failure:
+
+```json
+{
+  "event_id": "evt-004",
+  "bitrix_match_status": "connector_degraded",
+  "bitrix_match_quality": "degraded",
+  "bitrix_confidence": 0.0,
+  "needs_manual_review": true,
+  "safe_to_use_as_target": false,
+  "bitrix_match_reason": "connector_error",
+  "reconciliation_reason": "Bitrix connector failed; result must not be treated as not_found."
+}
+```
+
+#### Expected `rop_action_drafts.json`
+
+```json
+{
+  "run_id": "mvp-welding-live-hardening-20260624-0735",
+  "status": "ok",
+  "read_only": true,
+  "draft_only": true,
+  "generated_at_utc": "2026-06-24T00:00:00Z",
+  "aggregate": {
+    "action_count": 20,
+    "manual_review_count": 8,
+    "safe_target_count": 5,
+    "lost_in_bitrix_count": 3,
+    "ambiguous_count": 2,
+    "connector_degraded_count": 0
+  },
+  "items": [
+    {
+      "action_draft_id": "evt-001-action",
+      "event_id": "evt-001",
+      "run_id": "mvp-welding-live-hardening-20260624-0735",
+      "source_id": "hotline_mailbox",
+      "bot_case_type": "new_lead",
+      "bitrix_match_status": "not_found",
+      "queue": "lost_in_bitrix",
+      "recommended_action": "check_crm_gap",
+      "recommended_next_step": "Review as a possible lost lead in Bitrix and create/update CRM manually if confirmed.",
+      "priority": "high",
+      "reason_code": "new_lead_not_found_in_bitrix",
+      "needs_manual_review": true,
+      "safe_to_use_as_target": false,
+      "target_entity_type": "",
+      "target_entity_id": null,
+      "evidence_refs": [
+        "classified_events_json",
+        "bitrix_reconciliation_json",
+        "rop_review_table_tsv"
+      ],
+      "read_only": true
+    }
+  ],
+  "warnings": []
+}
+```
+
+#### Current-state / dashboard / MVP pack behavior
+
+Rules:
+
+```text
+matched_in_bitrix / safe matched
+→ count only safe_to_use_as_target=true or strong matched_* according to v0 rules
+
+weak_match
+→ not successful matched
+→ needs_review / ambiguous queue
+
+ambiguous / duplicate_candidate
+→ ambiguous_or_duplicate queue
+
+not_found
+→ lost_in_bitrix only when Bitrix evidence is valid and connector is healthy
+
+connector_degraded / error
+→ bitrix_errors / degraded
+→ not lost_in_bitrix
+
+missing Bitrix artifact
+→ unreconciled
+→ not lost_in_bitrix
+
+missing action drafts
+→ dashboard remains valid and shows no action draft artifact
+```
+
+#### Artifacts
+
+New:
+
+```text
+storage/runs/<run_id>/rop_action_drafts.json
+```
+
+Updated:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_current.json
+storage/interfaces/rop_latest.json
+storage/interfaces/rop_index.json
+storage/interfaces/rop_dashboard.json
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+storage/interfaces/rop_mvp_latest.json
+```
+
+Existing read:
+
+```text
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+#### Config / contract impact
+
+Expected:
+
+```text
+No new required config key unless implementation proves it is needed.
+```
+
+Source of truth remains:
+
+```text
+config/settings.yml -> bitrix.*
+config/settings.yml -> rop.sources[]
+existing ROP run artifacts in storage/runs/<run_id>/
+```
+
+If a new config key is proposed, it must be justified first and validated fail-fast in:
+
+```text
+src/beeagent_module/core/settings.py
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- external connector reconciliation logic;
+- CRM evidence quality gate;
+- artifact restore/parsing;
+- file/path handling;
+- serialization of customer operational data;
+- UI/API exposure of match/action evidence;
+- future write-back safety boundary.
+
+No dependency change is expected.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or bitrix or web or ui"
+```
+
+Targeted tests:
+
+```text
+Bitrix strong exact email/phone match stays matched_*
+weak subject/title-only candidate becomes weak_match
+multiple weak candidates become ambiguous
+multiple strong candidates become duplicate_candidate
+not_found is emitted only when connector is healthy and no candidate exists
+connector_degraded/error is not counted as not_found
+weak_match is not counted as successful safe match
+safe_to_use_as_target=false for weak_match/ambiguous/duplicate/not_found/degraded
+safe_to_use_as_target=true only for strong safe matched target
+action drafts generated from classified events + Bitrix reconciliation
+new_lead + not_found creates lost_in_bitrix action draft
+existing_deal + matched_deal creates review_deal action draft
+weak_match/ambiguous creates choose_correct_entity action draft
+irrelevant creates ignore action draft
+connector_degraded creates connector_check action draft
+TSV enrichment includes bitrix_match_status and recommended_action fields
+current-state uses valid not_found only for lost_in_bitrix
+dashboard exposes weak/ambiguous/safe matched counts
+MVP pack includes first actions/action draft evidence when available
+missing Bitrix artifact remains unreconciled, not lost_in_bitrix
+malformed Bitrix/action artifact degrades safely
+invalid/path-traversal run_id is rejected/degraded
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it29-bitrix-quality
+
+uv run python config/start.py rop reconcile-bitrix \
+  --run-id smoke-it29-bitrix-quality
+
+uv run python config/start.py rop action-drafts \
+  --run-id smoke-it29-bitrix-quality
+
+uv run python config/start.py rop export-review \
+  --run-id smoke-it29-bitrix-quality \
+  --format tsv
+
+uv run python config/start.py rop current \
+  --run-id smoke-it29-bitrix-quality
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it29-bitrix-quality
+
+uv run python config/start.py rop mvp-pack \
+  --period 7d \
+  --run-id smoke-it29-bitrix-quality
+```
+
+Optional live smoke only with explicit approval and available credentials:
+
+```bash
+RUN_ID="mvp-welding-live-hardening-20260624-0735"
+
+uv run python config/start.py rop reconcile-bitrix --run-id "$RUN_ID"
+uv run python config/start.py rop action-drafts --run-id "$RUN_ID"
+uv run python config/start.py rop export-review --run-id "$RUN_ID" --format tsv
+uv run python config/start.py rop current --run-id "$RUN_ID"
+uv run python config/start.py rop dashboard --period 7d --run-id "$RUN_ID"
+uv run python config/start.py rop mvp-pack --period 7d --run-id "$RUN_ID"
+```
+
+Security checks:
+
+```text
+SAST required
+SCA only if dependencies change
+lightweight DAST-style route/API misuse checks required if /rop, /api/rop/dashboard or artifact links change
+IAST not required
+fuzzing optional only for malformed artifact restore tests
+```
+
+Secret/content grep:
+
+```bash
+grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+  logs storage/runs/smoke-it29-bitrix-quality storage/interfaces -n || true
+```
+
+#### DoD
+
+- weak Bitrix candidates are not treated as successful matched results;
+- `weak_match` status exists and is visible in artifacts;
+- `safe_to_use_as_target` is false for weak/ambiguous/duplicate/not_found/degraded results;
+- `not_found` is emitted only when Bitrix connector is healthy and no candidate exists;
+- connector failure is represented separately from `not_found`;
+- `rop_action_drafts.json` is created for a valid ROP run with Bitrix evidence;
+- action drafts are read-only/draft-only and do not execute CRM changes;
+- `rop export-review` enriches TSV with Bitrix match quality and recommended action fields when artifacts exist;
+- current-state/dashboard/MVP pack distinguish safe matched, weak match, ambiguous, not found, connector degraded and missing evidence;
+- no Bitrix write-back exists;
+- no POST/write/action route is added;
+- no `beeagent-rop` code is changed;
+- BeeAgent core does not contain ROP classification/business rules;
+- artifact access remains allowlisted;
+- path traversal is blocked;
+- secrets/raw `.eml`/raw attachment content are not exposed;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

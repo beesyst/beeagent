@@ -11,7 +11,6 @@ from beeagent_module.core.paths import get_project_root, get_storage_dir
 from beeagent_module.core.settings import load_settings
 
 
-# Создание парсера аргументов для web CLI
 def create_web_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="beeagent web", description="BeeAgent web console"
@@ -33,7 +32,6 @@ def create_web_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# Разрешение параметров веб-конфигурации с помощью переопределения через командную строку -> настройки -> значения по умолчанию
 def resolve_web_config(
     cli_args: argparse.Namespace,
     settings: dict,
@@ -54,7 +52,6 @@ def resolve_web_config(
     return web_cfg
 
 
-# Запуск веб-консоли BeeUI
 def run_web(argv: list[str] | None = None) -> int:
     project_root = get_project_root()
     settings_path = project_root / "config" / "settings.yml"
@@ -100,7 +97,6 @@ def run_web(argv: list[str] | None = None) -> int:
     return 0
 
 
-# Перечисление всех зарегистрированных маршрутов веб-приложения BeeUI для отладки и верификации
 def run_routes(argv: list[str] | None = None) -> int:
     project_root = get_project_root()
     settings_path = project_root / "config" / "settings.yml"

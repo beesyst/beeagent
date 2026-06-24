@@ -55,3 +55,4 @@ storage/mock/*
 !storage/mock/rop_batch_sample.json
 
 scripts/*
+note.txt

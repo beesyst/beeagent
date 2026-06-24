@@ -44,7 +44,6 @@ EVIDENCE_LABELS: dict[str, str] = {
 }
 
 
-# Безопасное чтение JSON-файла, в случае ошибки возвращается None
 def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
     try:
         if path.exists():
@@ -55,7 +54,6 @@ def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
     return None
 
 
-# Безопасное преобразование в int, при ошибке возвращается 0
 def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
     runs_dir = (storage_dir / "runs").resolve()
     run_dir = (runs_dir / run_id).resolve()
@@ -71,7 +69,6 @@ def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
     return run_dir, ""
 
 
-# Билд read-model для дашборда, списка ран, деталей рана, конфигурации и т.д. на основе файловой структуры и артефактов
 def build_dashboard(storage_dir: Path) -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     run_ids: list[str] = []
@@ -156,7 +153,6 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
     }
 
 
-# Список выполнений сборки read-model
 def build_runs_list(storage_dir: Path) -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     run_ids: list[str] = []
@@ -197,7 +193,6 @@ def build_runs_list(storage_dir: Path) -> dict[str, Any]:
     }
 
 
-# Сборка запуска, детальное чтение модели
 def build_run_detail(storage_dir: Path, run_id: str) -> dict[str, Any]:
     run_dir, error = _resolve_run_dir(storage_dir, run_id)
     if run_dir is None:
@@ -222,7 +217,6 @@ def build_run_detail(storage_dir: Path, run_id: str) -> dict[str, Any]:
     }
 
 
-# Билд модулей для отображения в UI на основе артефакта интерфейса
 def build_modules_list(storage_dir: Path) -> dict[str, Any]:
     modules_path = storage_dir / "interfaces" / "modules.json"
     data = _read_json(modules_path)
@@ -246,7 +240,6 @@ def build_modules_list(storage_dir: Path) -> dict[str, Any]:
     return {"modules": rows, "total_modules": len(rows)}
 
 
-# Сборка layout[] для страницы Modules на основе read-model данных
 def build_modules_page_layout(
     data: dict[str, Any],
     locale: str = "en",
@@ -291,7 +284,6 @@ def build_modules_page_layout(
     ]
 
 
-# Листинг разрешенных параметров командной строки для веб-конфигурации
 def _list_run_ids(runs_dir: Path) -> list[str]:
     if not runs_dir.is_dir():
         return []
@@ -302,7 +294,6 @@ def _list_run_ids(runs_dir: Path) -> list[str]:
     )
 
 
-# Билд множества паттернов ключей, указывающих на чувствительные данные, которые следует редактировать
 def _build_kpis(
     run_id: str,
     run_ids: list[str],
@@ -397,7 +388,6 @@ def _build_kpis(
     return kpis
 
 
-# Импорт функций для чтения модели и разрешения артефактов
 def _build_funnel(
     source_diag: dict | None,
     intake: dict | None,
@@ -453,7 +443,6 @@ def _build_funnel(
     return funnel
 
 
-# Билд рекомендаций на основе KPI и артефактов для отображения в UI
 def _build_source_health(
     source_diag: dict | None,
     intake: dict | None,
@@ -529,7 +518,6 @@ def _build_source_health(
     return health
 
 
-# Билд распределения классификаций для отображения в UI
 def _build_classification_distribution(classified: list | None) -> dict[str, Any]:
     dist: dict[str, Any] = {
         "case_type_counts": {},
@@ -558,7 +546,6 @@ def _build_classification_distribution(classified: list | None) -> dict[str, Any
     return dist
 
 
-# Импорт функций для чтения модели и разрешения артефактов
 def _build_attachment_summary(attachment_extraction: dict | None) -> dict[str, Any]:
     default: dict[str, Any] = {
         "total_attachments": 0,
@@ -600,7 +587,6 @@ def _build_attachment_summary(attachment_extraction: dict | None) -> dict[str, A
     return default
 
 
-# Импорт функций для чтения модели и разрешения артефактов
 def _build_recommendations(kpis: dict[str, Any]) -> list[dict[str, Any]]:
     recs: list[dict[str, Any]] = []
 
@@ -693,7 +679,6 @@ def _build_recommendations(kpis: dict[str, Any]) -> list[dict[str, Any]]:
     return recs
 
 
-# Импорт функций для чтения модели и разрешения артефактов
 def _build_attention_events(
     classified: list | None,
     normalized: list | None,
@@ -770,7 +755,6 @@ def _build_attention_events(
     return events
 
 
-# Импорт функций для чтения модели и разрешения артефактов
 def _build_evidence_links(run_id: str) -> list[dict[str, Any]]:
     links: list[dict[str, Any]] = []
     for aid in ALLOWED_EVIDENCE_IDS:
@@ -785,7 +769,6 @@ def _build_evidence_links(run_id: str) -> list[dict[str, Any]]:
     return links
 
 
-# Извлечение timestamp из события
 def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     for key in ("event_date", "received_at", "timestamp", "created_at", "date"):
         raw = evt.get(key)
@@ -797,7 +780,6 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     return None
 
 
-# Безопасное преобразование в int, возвращает 0 при ошибке или неподходящем типе
 def _int(value: Any) -> int:
     if isinstance(value, int):
         return value
@@ -806,7 +788,6 @@ def _int(value: Any) -> int:
     return 0
 
 
-# Билд полной read-model для ROP Dashboard на основе всех доступных артефактов и данных, с обработкой ошибок и отсутствующих данных
 def build_rop_dashboard_read_model(
     storage_dir: Path,
     run_id: str | None = None,
@@ -1038,12 +1019,10 @@ def build_rop_dashboard_read_model(
         else "unknown",
     }
 
-    # Preserve backward-compatible fields
     result["summary"] = summary if isinstance(summary, dict) else {}
     result["source_diagnostics"] = source_diag if isinstance(source_diag, dict) else {}
     result["intake_metadata"] = intake if isinstance(intake, dict) else {}
 
-    # sources (legacy format)
     sources: list[dict[str, Any]] = []
     if isinstance(source_diag, dict):
         diag_sources = source_diag.get("sources", [])
@@ -1089,7 +1068,6 @@ def build_rop_dashboard_read_model(
     return result
 
 
-# Билд read-model для конфигурации ROP source, с поддержкой маскировки чувствительных данных
 def build_config_read_model(settings: dict[str, Any]) -> dict[str, Any]:
     raw_sources = settings.get("rop", {}).get("sources", [])
     if not isinstance(raw_sources, list):
@@ -1125,7 +1103,6 @@ def build_config_read_model(settings: dict[str, Any]) -> dict[str, Any]:
     return {"sources": safe_sources}
 
 
-# Безопасное получение значения вложенного словаря
 def _nested_get(d: dict, path: tuple[str, ...], default: Any = None) -> Any:
     for key in path:
         if not isinstance(d, dict):
@@ -1134,7 +1111,6 @@ def _nested_get(d: dict, path: tuple[str, ...], default: Any = None) -> Any:
     return d if d != {} else default
 
 
-# Сборка layout[] для ROP dashboard по tab
 def build_rop_page_layout(
     data: dict[str, Any],
     tab: str,
@@ -1153,7 +1129,6 @@ def build_rop_page_layout(
     return _build_rop_overview_layout(data, locale=locale)
 
 
-# Пользовательские метки для периодов, отображаемые в UI
 _PERIOD_LABELS: dict[str, str] = {
     "today": "Today",
     "yesterday": "Yesterday",
@@ -1174,7 +1149,6 @@ _OVERVIEW_PERIODS: tuple[str, ...] = (
 )
 
 
-# Получение пользовательской метки для периода, с fallback на исходное значение
 def _period_label(period: str) -> str:
     return _PERIOD_LABELS.get(period, period)
 
@@ -1259,7 +1233,6 @@ def _chart_block(
     return block
 
 
-# Chart label humanization map
 _CHART_LABEL_MAP: dict[str, str] = {
     "new_lead": "New leads",
     "existing_client": "Existing clients",
@@ -1279,7 +1252,6 @@ _CHART_LABEL_MAP: dict[str, str] = {
 }
 
 
-# Нормализация меток для графиков, с поддержкой пользовательских меток
 def _humanize_label(raw: str) -> str:
     return _CHART_LABEL_MAP.get(raw, raw.replace("_", " ").title())
 
@@ -1505,7 +1477,6 @@ def _collect_priority_queue_preview(
     return rows
 
 
-# Сборка layout[] для вкладки Overview
 def _build_rop_overview_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
@@ -1578,8 +1549,8 @@ def _build_rop_overview_layout(
     action_required_ratio = int(
         min(100, round((action_required_count / max(_int(total_leads), 1)) * 100))
     )
-    bitrix_gap_count = _int(unreconciled) + _int(lost_in_bitrix) + _int(
-        ambiguous_or_duplicate
+    bitrix_gap_count = (
+        _int(unreconciled) + _int(lost_in_bitrix) + _int(ambiguous_or_duplicate)
     )
     data_quality_count = (
         _int(business_kpi.get("source_degraded", degraded_sources))
@@ -1637,9 +1608,7 @@ def _build_rop_overview_layout(
             "type": "chart",
             "width": 3,
             "title": "Email Workload",
-            "subtitle": (
-                f"{period_emails} processed inbound items in selected period"
-            ),
+            "subtitle": (f"{period_emails} processed inbound items in selected period"),
             "kind": "area",
             "series": workload_series
             or [{"name": "Processed", "data": [period_emails]}],
@@ -1776,7 +1745,9 @@ def _build_rop_overview_layout(
 
     source_data = series.get("source_contribution", {})
     source_labels = _as_chart_labels(source_data)
-    source_values = source_data.get("series", []) if isinstance(source_data, dict) else []
+    source_values = (
+        source_data.get("series", []) if isinstance(source_data, dict) else []
+    )
     source_categories = [
         source_label_map.get(str(label), _humanize_label(str(label)))
         for label in source_labels
@@ -1824,7 +1795,6 @@ def _build_rop_overview_layout(
     return layout
 
 
-# Сборка layout[] для вкладки Queue
 def _build_rop_queue_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
@@ -1910,7 +1880,6 @@ def _build_rop_queue_layout(
     ]
 
 
-# Сборка таблицы для вкладки Queue
 def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any]:
     rows = []
     for item in rows_source[:50]:
@@ -1971,7 +1940,6 @@ def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-# Layout: Sources tab
 def _build_rop_sources_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
@@ -2029,7 +1997,6 @@ def _build_rop_sources_layout(
     ]
 
 
-# Layout: Attachments tab
 def _build_rop_attachments_layout(
     data: dict[str, Any],
     locale: str = "en",
@@ -2080,7 +2047,6 @@ def _build_rop_attachments_layout(
     ]
 
 
-# Layout: Evidence tab
 def _build_rop_evidence_layout(
     data: dict[str, Any],
     locale: str = "en",

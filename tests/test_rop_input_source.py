@@ -15,7 +15,6 @@ from beeagent_module.core.input_source import (
 )
 
 
-# Тесты для core.input_source: проверка логики выбора активного источника и загрузки batch-файла из json_batch источника
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_input_source_null")
     logger.addHandler(logging.NullHandler())
@@ -23,7 +22,6 @@ def _null_logger() -> logging.Logger:
     return logger
 
 
-# Тест: find_active_rop_source: проверка выбора единственного enabled источника, ошибки при отсутствии источников, отсутствии enabled, множестве enabled
 def test_find_active_source_returns_single_enabled() -> None:
     sources = [
         {"source_id": "s1", "enabled": False},
@@ -33,13 +31,11 @@ def test_find_active_source_returns_single_enabled() -> None:
     assert result["source_id"] == "s2"
 
 
-# Тест: find_active_rop_source: проверка ошибок при отсутствии источников, отсутствии enabled, множестве enabled
 def test_find_active_source_raises_when_no_sources() -> None:
     with pytest.raises(RuntimeError, match="no input source declared"):
         find_active_rop_source([])
 
 
-# Тест: find_active_rop_source: проверка ошибок при отсутствии enabled, множестве enabled
 def test_find_active_source_raises_when_no_enabled_source() -> None:
     sources = [
         {"source_id": "s1", "enabled": False},
@@ -49,7 +45,6 @@ def test_find_active_source_raises_when_no_enabled_source() -> None:
         find_active_rop_source(sources)
 
 
-# Тест: find_active_rop_source: проверка ошибок при множестве enabled
 def test_find_active_source_raises_when_multiple_enabled() -> None:
     sources = [
         {"source_id": "s1", "enabled": True},
@@ -59,7 +54,6 @@ def test_find_active_source_raises_when_multiple_enabled() -> None:
         find_active_rop_source(sources)
 
 
-# Тест: чек выбора всех enabled источников при all_sources=True
 def test_select_rop_sources_all_enabled_returns_all_sources() -> None:
     sources = [
         {"source_id": "s1", "enabled": True},
@@ -73,7 +67,6 @@ def test_select_rop_sources_all_enabled_returns_all_sources() -> None:
     assert [item["source_id"] for item in selected] == ["s1", "s3"]
 
 
-# Тест: чек выбора единственного enabled источника при all_sources=False и source_id=None
 def test_select_rop_sources_explicit_source_id() -> None:
     sources = [
         {"source_id": "s1", "enabled": True},
@@ -87,7 +80,6 @@ def test_select_rop_sources_explicit_source_id() -> None:
     assert selected[0]["source_id"] == "s2"
 
 
-# Тест: чек выбора единственного enabled источника при all_sources=False и source_id=None
 def test_select_rop_sources_explicit_disabled_raises() -> None:
     sources = [
         {"source_id": "s1", "enabled": False},
@@ -97,7 +89,6 @@ def test_select_rop_sources_explicit_disabled_raises() -> None:
         select_rop_sources(sources, source_id="s1")
 
 
-# Тест: load_json_batch: проверка успешной загрузки, приоритета period из файла над config, ошибок при отсутствии файла, невалидном JSON, невалидной форме, применении max_items, фильтрации не-dict элементов
 def _make_source(path: str, period: str = "2026-05", items_max: int = 100) -> dict:
     return {
         "source_id": "test-source",
@@ -115,7 +106,6 @@ def _make_source(path: str, period: str = "2026-05", items_max: int = 100) -> di
     }
 
 
-# Тест: load_json_batch: проверка успешной загрузки, приоритета period из файла над config
 def test_load_json_batch_success(tmp_path: Path) -> None:
     batch = {
         "period": "2026-04",
@@ -143,7 +133,6 @@ def test_load_json_batch_success(tmp_path: Path) -> None:
     assert metadata["loaded_item_count"] == 2
 
 
-# Тест: load_json_batch: проверка приоритета period из файла над config
 def test_load_json_batch_uses_config_period_when_file_has_none(tmp_path: Path) -> None:
     batch = {"items": [{"event_id": "e1", "case_type": "new_lead"}]}
     batch_file = tmp_path / "batch.json"
@@ -156,14 +145,12 @@ def test_load_json_batch_uses_config_period_when_file_has_none(tmp_path: Path) -
     assert metadata["period"] == "2026-05"
 
 
-# Тест: load_json_batch: проверка ошибок при отсутствии файла, невалидном JSON, невалидной форме, применении max_items, фильтрации не-dict элементов
 def test_load_json_batch_missing_file(tmp_path: Path) -> None:
     source = _make_source("storage/mock/nonexistent.json")
     with pytest.raises(RuntimeError, match="batch file not found"):
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: проверка ошибок при невалидном JSON
 def test_load_json_batch_invalid_json(tmp_path: Path) -> None:
     bad_file = tmp_path / "bad.json"
     bad_file.write_text("not valid json {{", encoding="utf-8")
@@ -173,7 +160,6 @@ def test_load_json_batch_invalid_json(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: проверка ошибок при невалидной форме (не dict), отсутствии 'items' как списка
 def test_load_json_batch_invalid_shape_not_dict(tmp_path: Path) -> None:
     list_file = tmp_path / "list.json"
     list_file.write_text(json.dumps([{"event_id": "e1"}]), encoding="utf-8")
@@ -183,7 +169,6 @@ def test_load_json_batch_invalid_shape_not_dict(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: проверка ошибок при невалидной форме (отсутствие 'items' как списка)
 def test_load_json_batch_missing_items_key(tmp_path: Path) -> None:
     batch_file = tmp_path / "no_items.json"
     batch_file.write_text(json.dumps({"period": "2026-05"}), encoding="utf-8")
@@ -193,7 +178,6 @@ def test_load_json_batch_missing_items_key(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: проверка применения max_items
 def test_load_json_batch_respects_max_items(tmp_path: Path) -> None:
     batch = {
         "period": "2026-05",
@@ -213,7 +197,6 @@ def test_load_json_batch_respects_max_items(tmp_path: Path) -> None:
     assert metadata["items_max"] == 3
 
 
-# Тест: load_json_batch: проверка фильтрации не-dict элементов
 def test_load_json_batch_skips_non_dict_items(tmp_path: Path) -> None:
     batch = {
         "period": "2026-05",
@@ -231,7 +214,6 @@ def test_load_json_batch_skips_non_dict_items(tmp_path: Path) -> None:
     assert metadata["loaded_item_count"] == 2
 
 
-# Тест: load_json_batch с пустым batch.path - проверка ошибки при отсутствии пути
 def test_load_json_batch_empty_path_raises(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
@@ -248,7 +230,6 @@ def test_load_json_batch_empty_path_raises(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: ошибка при отсутствии items_max (required contract)
 def test_load_json_batch_raises_when_items_max_missing(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
@@ -264,7 +245,6 @@ def test_load_json_batch_raises_when_items_max_missing(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: ошибка при отсутствии batch mapping (required contract)
 def test_load_json_batch_raises_when_batch_missing(tmp_path: Path) -> None:
     source = {
         "source_id": "test",
@@ -280,7 +260,6 @@ def test_load_json_batch_raises_when_batch_missing(tmp_path: Path) -> None:
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Тест: load_json_batch: ошибка при пустом batch.period (required contract)
 def test_load_json_batch_raises_when_batch_period_missing(tmp_path: Path) -> None:
     batch_file = tmp_path / "batch.json"
     batch_file.write_text(
@@ -301,7 +280,6 @@ def test_load_json_batch_raises_when_batch_period_missing(tmp_path: Path) -> Non
         load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и проверкой наличия полей username_env и password_env
 class _FakeMailboxClient:
     def __init__(
         self, messages: list[bytes] | None = None, error: Exception | None = None
@@ -317,7 +295,6 @@ class _FakeMailboxClient:
         return self._messages[:items_max]
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и проверкой наличия полей username_env и password_env
 def _mailbox_source(items_max: int = 10) -> dict:
     return {
         "source_id": "hotline",
@@ -339,7 +316,6 @@ def _mailbox_source(items_max: int = 10) -> dict:
     }
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и проверкой наличия полей username_env и password_env
 def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
     monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
@@ -368,7 +344,6 @@ def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert diagnostics["loaded_count"] == 1
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и отсутствием полей username_env и password_env должна вызывать RuntimeError
 def test_load_mailbox_readonly_missing_credentials_degraded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,7 +361,6 @@ def test_load_mailbox_readonly_missing_credentials_degraded(
     assert getattr(exc, "diagnostics")["reason"] == "missing_credentials"
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и отсутствием полей username_env и password_env должна вызывать RuntimeError
 def test_load_mailbox_readonly_skips_malformed_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -408,7 +382,6 @@ def test_load_mailbox_readonly_skips_malformed_message(
     assert diagnostics["skipped_count"] == 1
 
 
-# Чек: загрузка настроек с источником mailbox_readonly и отсутствием полей username_env и password_env должна вызывать RuntimeError
 def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
     monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")

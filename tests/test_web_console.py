@@ -255,7 +255,6 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Написание артефактов для тестового запуска с несколькими источниками
 def _write_multi_source_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     run_dir = storage_dir / "runs" / run_id
     module_dir = run_dir / "module-beeagent-rop"
@@ -475,7 +474,6 @@ def _write_multi_source_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
-# Написание артефактов для тестового запуска с несколькими источниками
 def _client(storage_dir: Path) -> TestClient:
     app = create_web_app(
         settings={
@@ -491,7 +489,6 @@ def _client(storage_dir: Path) -> TestClient:
     return TestClient(app)
 
 
-# Тест: базовая загрузка веб-приложения и доступность директории для хранения данных выполнений и логов
 def test_runs_route_with_empty_storage(tmp_path: Path) -> None:
     client = _client(_make_storage(tmp_path))
 
@@ -501,7 +498,6 @@ def test_runs_route_with_empty_storage(tmp_path: Path) -> None:
     assert "No runs found" in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_html_routes_render_run_pages(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-001")
@@ -520,7 +516,6 @@ def test_html_routes_render_run_pages(tmp_path: Path) -> None:
     assert "Welding Hotline mailbox" in dashboard_response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_rop_dashboard_filter_case_type(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-002")
@@ -533,7 +528,6 @@ def test_rop_dashboard_filter_case_type(tmp_path: Path) -> None:
     assert "evt-1" not in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_runs_api_returns_index(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-003")
@@ -547,7 +541,6 @@ def test_runs_api_returns_index(tmp_path: Path) -> None:
     assert payload["runs"][0]["run_id"] == "run-003"
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_run_overview_api_returns_artifacts_and_counts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-004")
@@ -565,7 +558,6 @@ def test_run_overview_api_returns_artifacts_and_counts(tmp_path: Path) -> None:
     )
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_rop_dashboard_api_is_sanitized_and_filterable(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-005")
@@ -585,7 +577,6 @@ def test_rop_dashboard_api_is_sanitized_and_filterable(tmp_path: Path) -> None:
     assert "original.eml" not in json.dumps(payload)
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_rop_dashboard_multisource_html_shows_source_rows(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-001")
@@ -599,7 +590,6 @@ def test_rop_dashboard_multisource_html_shows_source_rows(tmp_path: Path) -> Non
     assert "source_status" in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_rop_dashboard_multisource_api_shape_and_source_filters(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-002")
@@ -625,7 +615,6 @@ def test_rop_dashboard_multisource_api_shape_and_source_filters(tmp_path: Path) 
     assert filtered_payload["metrics"]["shown_rows"] == 0
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_rop_dashboard_multisource_html_source_status_filter(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_multi_source_run_artifacts(storage_dir=storage_dir, run_id="run-ms-003")
@@ -641,7 +630,6 @@ def test_rop_dashboard_multisource_html_source_status_filter(tmp_path: Path) -> 
     assert "evt-ms-2" in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_modules_html_and_api_read_existing_artifact(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_modules_artifact(storage_dir)
@@ -656,7 +644,6 @@ def test_modules_html_and_api_read_existing_artifact(tmp_path: Path) -> None:
     assert api_response.json()["modules"][0]["id"] == "beeagent-rop"
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_path_traversal_attempt_in_run_id_blocked_for_html_and_api(
     tmp_path: Path,
 ) -> None:
@@ -669,7 +656,6 @@ def test_path_traversal_attempt_in_run_id_blocked_for_html_and_api(
     assert api_response.status_code == 400
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_no_raw_eml_or_attachment_content_in_rendered_html(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-006")
@@ -685,7 +671,6 @@ def test_no_raw_eml_or_attachment_content_in_rendered_html(tmp_path: Path) -> No
     assert "ATTACHMENT_RAW_CONTENT_SHOULD_NOT_BE_RENDERED" not in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_normalized_events_artifact_is_sanitized(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir=storage_dir, run_id="run-007")
@@ -703,7 +688,6 @@ def test_normalized_events_artifact_is_sanitized(tmp_path: Path) -> None:
     assert '"content"' not in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_attachment_extraction_artifact_is_whitelisted_and_sanitized(
     tmp_path: Path,
 ) -> None:
@@ -720,7 +704,6 @@ def test_attachment_extraction_artifact_is_whitelisted_and_sanitized(
     assert "message/rfc822" not in response.text
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_get_routes_do_not_mutate_storage(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_run_artifacts(storage_dir=storage_dir, run_id="run-008")
@@ -748,7 +731,6 @@ def test_get_routes_do_not_mutate_storage(tmp_path: Path) -> None:
     assert after == before
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_start_web_mode_no_browser_open_and_uses_host_port(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -781,7 +763,6 @@ def test_start_web_mode_no_browser_open_and_uses_host_port(monkeypatch) -> None:
     assert open_calls == []
 
 
-# Тест: загрузка настроек, инициализация логов и директорий, запуск веб-приложения и проверка наличия директории для хранения данных выполнений и логов
 def test_start_web_mode_opens_browser_when_enabled(monkeypatch) -> None:
     open_calls: list[str] = []
 

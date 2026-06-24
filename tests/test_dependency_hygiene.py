@@ -4,7 +4,6 @@ import importlib
 import warnings
 
 
-# Соблюдение требований к зависимостям
 def test_langchain_core_pydantic_import_has_no_python314_v1_warning() -> None:
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")

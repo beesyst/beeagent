@@ -8,7 +8,6 @@ from typing import Any
 from beeagent_module.core.runtime_context import RuntimeContext
 
 
-# Сохранение и чтение артефактов модулей в контролируемой структуре директорий, связанной с run_id и module_id
 class ArtifactAPI:
     def __init__(
         self,
