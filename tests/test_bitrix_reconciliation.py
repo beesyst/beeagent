@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from email.message import Message
 import json
 import logging
 import os
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -24,14 +24,16 @@ from beeagent_module.adapters.bitrix_client import (
     build_bitrix_client,
     resolve_bitrix_webhook_url,
 )
-from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
+from beeagent_module.cases.rop_bitrix_reconciliation import (
+    _classify_candidates,
+    _reconcile_event,
+    run_reconciliation,
+)
 from beeagent_module.core.cli import (
     _build_review_tsv_rows,
-    _tsv_columns,
     handle_rop_reconcile_bitrix,
 )
 from beeagent_module.core.settings import load_settings
-
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -306,7 +308,10 @@ class TestBitrixClient:
         settings["bitrix"]["page_size"] = 13
         settings["bitrix"]["pages_max"] = 2
         client = build_bitrix_client(settings, logger=_null_logger())
-        assert client._webhook_url.rstrip("/") == "https://test.bitrix24.kz/rest/1/testtoken123"
+        assert (
+            client._webhook_url.rstrip("/")
+            == "https://test.bitrix24.kz/rest/1/testtoken123"
+        )
         assert client._timeout == 7
         assert client._page_size == 13
         assert client._pages_max == 2
@@ -347,10 +352,12 @@ class TestBitrixClient:
             webhook_url="https://test.bitrix24.kz/rest/1/token/",
             timeout=5,
         )
-        body = json.dumps({
-            "error": "ACCESS_DENIED",
-            "error_description": "Forbidden",
-        }).encode("utf-8")
+        body = json.dumps(
+            {
+                "error": "ACCESS_DENIED",
+                "error_description": "Forbidden",
+            }
+        ).encode("utf-8")
         with patch(
             "beeagent_module.adapters.bitrix_client.urlopen",
             return_value=_FakeHttpResponse(body),
@@ -468,6 +475,7 @@ class TestBitrixClient:
 
     def test_entity_type_names_defined(self) -> None:
         from beeagent_module.adapters.bitrix_client import ENTITY_TYPE_NAMES
+
         assert ENTITY_TYPE_NAMES[1] == "lead"
         assert ENTITY_TYPE_NAMES[2] == "deal"
         assert ENTITY_TYPE_NAMES[3] == "contact"
@@ -486,6 +494,52 @@ class TestBitrixClient:
 
 # Класс: Reconciliation логика - matched, not_found, degraded, skipped
 class TestBitrixReconciliation:
+    def test_irrelevant_event_is_skipped_non_actionable(self) -> None:
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-irrelevant",
+                "case_type": "irrelevant",
+                "sender": "ignore@example.com",
+                "subject": "Ignore me",
+            },
+            client=None,  # type: ignore[arg-type]
+            entity_types=[1],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "skipped"
+        assert result["bitrix_match_reason"] == "bot_case_type_not_actionable"
+        assert result["needs_manual_review"] is False
+        assert result["safe_to_use_as_target"] is False
+
+    def test_phone_exact_match_is_strong_and_safe(self) -> None:
+        result = _classify_candidates(
+            event={
+                "event_id": "evt-phone",
+                "case_type": "new_lead",
+                "phone": "+7 747 321 82 18",
+            },
+            candidates=[
+                {
+                    "entity_type_id": 1,
+                    "entity": {
+                        "ID": "253",
+                        "TITLE": "Lead request",
+                        "PHONE": [{"VALUE": "+7 (747) 321-82-18"}],
+                    },
+                }
+            ],
+            candidate_limit=20,
+        )
+
+        assert result["bitrix_match_status"] == "matched_lead"
+        assert result["bitrix_match_quality"] == "strong"
+        assert result["bitrix_match_reason"] == "phone_exact"
+        assert result["safe_to_use_as_target"] is True
+        assert result["needs_manual_review"] is False
+
     def test_matched_lead(self, tmp_path: Path, fake_bitrix_env: None) -> None:
         settings = _load_test_settings()
         settings["bitrix"]["enabled"] = True
@@ -493,11 +547,23 @@ class TestBitrixReconciliation:
         run_dir = tmp_path / "runs" / "test-recon-lead"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "lead@example.com", "subject": "Lead request"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.95}]
+        normalized = [
+            {
+                "event_id": "evt-001",
+                "sender": "lead@example.com",
+                "subject": "Lead request",
+            }
+        ]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.95}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -507,6 +573,7 @@ class TestBitrixReconciliation:
             client = original_build(settings, logger=logger)
 
             original_call = client.call
+
             def mock_call(method, params=None):
                 # Email search uses crm.lead.list now
                 if method == "crm.lead.list":
@@ -517,6 +584,7 @@ class TestBitrixReconciliation:
                                 "TITLE": "Lead request",
                                 "STAGE_ID": "NEW",
                                 "ASSIGNED_BY_ID": "6",
+                                "EMAIL": [{"VALUE": "lead@example.com"}],
                             }
                         ]
                     }
@@ -529,6 +597,7 @@ class TestBitrixReconciliation:
                 if method == "crm.item.list":
                     return {"result": {"items": []}}
                 return original_call(method, params)
+
             client.call = mock_call
             return client
 
@@ -548,7 +617,9 @@ class TestBitrixReconciliation:
         assert len(artifact["items"]) == 1
         item = artifact["items"][0]
         assert item["bitrix_match_status"] == "matched_lead"
+        assert item["bitrix_match_quality"] == "strong"
         assert item["bitrix_entity_id"] == 253
+        assert item["safe_to_use_as_target"] is True
 
     def test_not_found(self, tmp_path: Path, fake_bitrix_env: None) -> None:
         settings = _load_test_settings()
@@ -557,11 +628,23 @@ class TestBitrixReconciliation:
         run_dir = tmp_path / "runs" / "test-recon-notfound"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "unknown@example.com", "subject": "New request"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.85}]
+        normalized = [
+            {
+                "event_id": "evt-001",
+                "sender": "unknown@example.com",
+                "subject": "New request",
+            }
+        ]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.85}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -582,6 +665,7 @@ class TestBitrixReconciliation:
                 if method == "crm.item.list":
                     return {"result": {"items": []}}
                 return original_call(method, params)
+
             client.call = mock_call
             return client
 
@@ -720,11 +804,19 @@ class TestBitrixReconciliation:
         run_dir = tmp_path / "runs" / "test-recon-degraded"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "test@example.com", "subject": "Test"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}]
+        normalized = [
+            {"event_id": "evt-001", "sender": "test@example.com", "subject": "Test"}
+        ]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -754,7 +846,7 @@ class TestBitrixReconciliation:
             br_mod.build_bitrix_client = original_build
 
         assert artifact["status"] == "degraded"
-        assert artifact["aggregate"]["connector_error_count"] == 1
+        assert artifact["aggregate"]["connector_degraded_count"] == 1
         assert artifact["aggregate"]["not_found_count"] == 0
         assert artifact["items"][0]["bitrix_match_status"] == "connector_degraded"
 
@@ -815,7 +907,7 @@ class TestBitrixReconciliation:
             br_mod.build_bitrix_client = original_build
 
         assert artifact["status"] == "degraded"
-        assert artifact["aggregate"]["connector_error_count"] == 1
+        assert artifact["aggregate"]["connector_degraded_count"] == 1
         assert artifact["aggregate"]["not_found_count"] == 0
         assert artifact["items"][0]["bitrix_match_status"] == "connector_degraded"
 
@@ -831,11 +923,15 @@ class TestBitrixReconciliation:
         run_dir = tmp_path / "runs" / "test-recon-log-no-email"
         run_dir.mkdir(parents=True)
         (run_dir / "normalized_events.json").write_text(
-            json.dumps([{
-                "event_id": "evt-001",
-                "sender": "raw-client@example.com",
-                "subject": "Need welding machine",
-            }]),
+            json.dumps(
+                [
+                    {
+                        "event_id": "evt-001",
+                        "sender": "raw-client@example.com",
+                        "subject": "Need welding machine",
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
         (run_dir / "classified_events.json").write_text(
@@ -882,11 +978,17 @@ class TestBitrixReconciliation:
         run_dir = tmp_path / "runs" / "test-recon-skip"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "spam@example.com", "subject": "Buy now"}]
+        normalized = [
+            {"event_id": "evt-001", "sender": "spam@example.com", "subject": "Buy now"}
+        ]
         classified = [{"event_id": "evt-001", "case_type": "spam", "confidence": 0.99}]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -926,10 +1028,16 @@ class TestBitrixArtifact:
         run_dir.mkdir(parents=True)
 
         normalized = [{"event_id": "evt-001", "sender": "a@b.com", "subject": "Test"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -950,6 +1058,7 @@ class TestBitrixArtifact:
                 if method == "crm.item.list":
                     return {"result": {"items": []}}
                 return original_call(method, params)
+
             client.call = mock_call
             return client
 
@@ -982,10 +1091,16 @@ class TestBitrixArtifact:
         run_dir.mkdir(parents=True)
 
         normalized = [{"event_id": "evt-001", "sender": "a@b.com", "subject": "Test"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -1006,6 +1121,7 @@ class TestBitrixArtifact:
                 if method == "crm.item.list":
                     return {"result": {"items": []}}
                 return original_call(method, params)
+
             client.call = mock_call
             return client
 
@@ -1097,8 +1213,16 @@ class TestBitrixArtifact:
         run_dir.mkdir(parents=True)
 
         normalized = [
-            {"event_id": "evt-001", "sender": "matched@example.com", "subject": "Match"},
-            {"event_id": "evt-002", "sender": "notfound@example.com", "subject": "NotFound"},
+            {
+                "event_id": "evt-001",
+                "sender": "matched@example.com",
+                "subject": "Match",
+            },
+            {
+                "event_id": "evt-002",
+                "sender": "notfound@example.com",
+                "subject": "NotFound",
+            },
             {"event_id": "evt-003", "sender": "spam@example.com", "subject": "Spam"},
         ]
         classified = [
@@ -1107,8 +1231,12 @@ class TestBitrixArtifact:
             {"event_id": "evt-003", "case_type": "spam", "confidence": 0.99},
         ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
 
@@ -1136,7 +1264,12 @@ class TestBitrixArtifact:
                     ):
                         return {
                             "result": [
-                                {"ID": "100", "TITLE": "Matched Lead", "STAGE_ID": "NEW"}
+                                {
+                                    "ID": "100",
+                                    "TITLE": "Matched Lead",
+                                    "STAGE_ID": "NEW",
+                                    "EMAIL": [{"VALUE": "matched@example.com"}],
+                                }
                             ]
                         }
                     return {"result": []}
@@ -1144,6 +1277,7 @@ class TestBitrixArtifact:
                     call_count[0] += 1
                     return {"result": {"items": []}}
                 return original_call(method, params)
+
             client.call = mock_call
             return client
 
@@ -1163,7 +1297,7 @@ class TestBitrixArtifact:
         assert artifact["aggregate"]["matched_count"] == 1
         assert artifact["aggregate"]["skipped_count"] == 1
         assert artifact["aggregate"]["not_found_count"] == 1
-        assert artifact["aggregate"]["connector_error_count"] == 0
+        assert artifact["aggregate"]["connector_degraded_count"] == 0
 
     def test_window_date_is_passed_to_lookup(
         self,
@@ -1177,12 +1311,14 @@ class TestBitrixArtifact:
 
         run_dir = tmp_path / "runs" / "test-recon-date-filter"
         run_dir.mkdir(parents=True)
-        normalized = [{
-            "event_id": "evt-001",
-            "sender": "a@b.com",
-            "subject": "Test",
-            "received_at": "2026-06-10T12:00:00+00:00",
-        }]
+        normalized = [
+            {
+                "event_id": "evt-001",
+                "sender": "a@b.com",
+                "subject": "Test",
+                "received_at": "2026-06-10T12:00:00+00:00",
+            }
+        ]
         classified = [{"event_id": "evt-001", "case_type": "new_lead"}]
         (run_dir / "normalized_events.json").write_text(
             json.dumps(normalized), encoding="utf-8"
@@ -1234,8 +1370,17 @@ class TestBitrixArtifact:
         run_dir = tmp_path / "runs" / "test-recon-nocorrupt"
         run_dir.mkdir(parents=True)
 
-        normalized_original = [{"event_id": "evt-001", "sender": "a@b.com", "subject": "Test", "body": "original"}]
-        classified_original = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}]
+        normalized_original = [
+            {
+                "event_id": "evt-001",
+                "sender": "a@b.com",
+                "subject": "Test",
+                "body": "original",
+            }
+        ]
+        classified_original = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}
+        ]
 
         norm_path = run_dir / "normalized_events.json"
         class_path = run_dir / "classified_events.json"
@@ -1293,11 +1438,19 @@ class TestBitrixTsvEnrichment:
         run_dir = tmp_path / "runs" / "test-tsv-bitrix"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "lead@example.com", "subject": "Lead"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.95}]
+        normalized = [
+            {"event_id": "evt-001", "sender": "lead@example.com", "subject": "Lead"}
+        ]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.95}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         reconciliation_data = {
             "status": "ok",
@@ -1324,16 +1477,18 @@ class TestBitrixTsvEnrichment:
         )
 
         tsv_rows = _build_review_tsv_rows(
-            normalized, classified,
+            normalized,
+            classified,
             reconciliation_data=reconciliation_data,
         )
 
         assert len(tsv_rows) == 1
         row = tsv_rows[0]
-        assert row["bitrix_status"] == "matched_lead"
-        assert row["bitrix_lead_id"] == "253"
-        assert row["bitrix_deal_id"] == ""
-        assert row["bitrix_responsible"] == "6"
+        assert row["bitrix_match_status"] == "matched_lead"
+        assert row["bitrix_match_quality"] == ""
+        assert row["bitrix_confidence"] == "0.95"
+        assert row["needs_manual_review"] == "false"
+        assert row["safe_to_use_as_target"] == ""
 
     def test_tsv_remains_valid_when_reconciliation_missing(
         self, tmp_path: Path
@@ -1341,20 +1496,29 @@ class TestBitrixTsvEnrichment:
         run_dir = tmp_path / "runs" / "test-tsv-norecon"
         run_dir.mkdir(parents=True)
 
-        normalized = [{"event_id": "evt-001", "sender": "test@example.com", "subject": "Test"}]
-        classified = [{"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}]
+        normalized = [
+            {"event_id": "evt-001", "sender": "test@example.com", "subject": "Test"}
+        ]
+        classified = [
+            {"event_id": "evt-001", "case_type": "new_lead", "confidence": 0.9}
+        ]
 
-        (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
-        (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
 
         tsv_rows = _build_review_tsv_rows(normalized, classified)
 
         assert len(tsv_rows) == 1
         row = tsv_rows[0]
-        assert row["bitrix_status"] == ""
-        assert row["bitrix_lead_id"] == ""
-        assert row["bitrix_deal_id"] == ""
-        assert row["bitrix_responsible"] == ""
+        assert row["bitrix_match_status"] == ""
+        assert row["bitrix_match_quality"] == ""
+        assert row["bitrix_confidence"] == ""
+        assert row["needs_manual_review"] == ""
+        assert row["safe_to_use_as_target"] == ""
 
 
 # Класс: Безопасность - в allowlist нет write методов, Bitrix connector не импортирует beeagent_rop, beeagent-rop файлы не менялись
@@ -1369,7 +1533,9 @@ class TestBitrixSafety:
     def test_no_beeagent_rop_imports_in_connector(self) -> None:
         import ast
 
-        connector_path = _PROJECT_ROOT / "src" / "beeagent_module" / "adapters" / "bitrix_client.py"
+        connector_path = (
+            _PROJECT_ROOT / "src" / "beeagent_module" / "adapters" / "bitrix_client.py"
+        )
         reconciliation_path = (
             _PROJECT_ROOT
             / "src"
@@ -1412,6 +1578,7 @@ class TestBitrixCliHandler:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         import argparse
+
         import beeagent_module.core.cli as cli_module
 
         monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
@@ -1423,11 +1590,15 @@ class TestBitrixCliHandler:
         run_dir = tmp_path / "runs" / "disabled-config-run"
         run_dir.mkdir(parents=True)
         (run_dir / "normalized_events.json").write_text(
-            json.dumps([{
-                "event_id": "evt-001",
-                "sender": "a@b.com",
-                "subject": "Test",
-            }]),
+            json.dumps(
+                [
+                    {
+                        "event_id": "evt-001",
+                        "sender": "a@b.com",
+                        "subject": "Test",
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
         (run_dir / "classified_events.json").write_text(
@@ -1457,6 +1628,7 @@ class TestBitrixCliHandler:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         import argparse
+
         import beeagent_module.core.cli as cli_module
 
         monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
@@ -1465,11 +1637,15 @@ class TestBitrixCliHandler:
         run_dir = tmp_path / "runs" / "missing-env-run"
         run_dir.mkdir(parents=True)
         (run_dir / "normalized_events.json").write_text(
-            json.dumps([{
-                "event_id": "evt-001",
-                "sender": "a@b.com",
-                "subject": "Test",
-            }]),
+            json.dumps(
+                [
+                    {
+                        "event_id": "evt-001",
+                        "sender": "a@b.com",
+                        "subject": "Test",
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
         (run_dir / "classified_events.json").write_text(
@@ -1492,6 +1668,7 @@ class TestBitrixCliHandler:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import argparse
+
         import beeagent_module.core.cli as cli_module
 
         monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
@@ -1501,4 +1678,6 @@ class TestBitrixCliHandler:
 
         with pytest.raises(Exception) as exc_info:
             handle_rop_reconcile_bitrix(args, settings=settings, logger=_null_logger())
-        assert any(msg in str(exc_info.value).lower() for msg in ["not found", "failed"])
+        assert any(
+            msg in str(exc_info.value).lower() for msg in ["not found", "failed"]
+        )

@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 _PACK_ARTIFACT = "rop_mvp_pack.json"
 _REPORT_ARTIFACT = "rop_mvp_report.md"
 _LATEST_INTERFACE = "rop_mvp_latest.json"
@@ -25,7 +24,7 @@ def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
         if path.exists():
             with path.open("r", encoding="utf-8") as f:
                 return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         pass
     return None
 
@@ -100,7 +99,9 @@ def _enrich_source_coverage_from_diag(
     source_diag: dict[str, Any] | None,
 ) -> dict[str, Any]:
     if not isinstance(source_diag, dict):
-        coverage["warning"] = "source_diagnostics.json not available; showing config-only coverage"
+        coverage["warning"] = (
+            "source_diagnostics.json not available; showing config-only coverage"
+        )
         return coverage
 
     agg = source_diag.get("aggregate", {})
@@ -131,9 +132,7 @@ def _enrich_source_coverage_from_diag(
                 s["runtime_status"] = "not_loaded"
 
     loaded = sum(
-        1
-        for s in coverage.get("sources", [])
-        if s.get("runtime_status") == "ok"
+        1 for s in coverage.get("sources", []) if s.get("runtime_status") == "ok"
     )
     coverage["loaded"] = max(coverage.get("loaded", 0), loaded)
 
@@ -163,19 +162,32 @@ def _build_business_summary(
     if isinstance(current_state, dict):
         ckpi = current_state.get("kpi", {})
         if isinstance(ckpi, dict):
-            for key in ("events_total", "normalized_count", "classified_count",
-                        "high_priority", "needs_manual_review",
-                        "matched_in_bitrix", "lost_in_bitrix",
-                        "ambiguous_in_bitrix", "unreconciled",
-                        "source_degraded", "attachment_count",
-                        "attachment_refused"):
+            for key in (
+                "events_total",
+                "normalized_count",
+                "classified_count",
+                "high_priority",
+                "needs_manual_review",
+                "safe_matched_count",
+                "matched_in_bitrix",
+                "weak_match_count",
+                "lost_in_bitrix",
+                "ambiguous_in_bitrix",
+                "duplicate_candidate_count",
+                "unreconciled",
+                "source_degraded",
+                "attachment_count",
+                "attachment_refused",
+                "manual_review_count",
+            ):
                 if key not in kpi and key in ckpi:
                     kpi[key] = ckpi[key]
 
     if not kpi and isinstance(classified_events, list):
         kpi["classified_count"] = len(classified_events)
         kpi["high_priority"] = sum(
-            1 for c in classified_events
+            1
+            for c in classified_events
             if isinstance(c, dict) and c.get("priority") == "high"
         )
 
@@ -191,6 +203,7 @@ def _build_queues(
         "high_priority": [],
         "needs_review": [],
         "lost_in_bitrix": [],
+        "weak_match": [],
         "ambiguous_or_duplicate": [],
         "unreconciled": [],
         "matched": [],
@@ -204,6 +217,7 @@ def _build_queues(
                 "high_priority": ("high_priority",),
                 "needs_review": ("needs_review",),
                 "lost_in_bitrix": ("lost_in_bitrix",),
+                "weak_match": ("weak_match", "weak_matches"),
                 "ambiguous_or_duplicate": ("ambiguous_or_duplicate", "ambiguous"),
                 "unreconciled": ("unreconciled",),
                 "matched": ("matched",),
@@ -258,57 +272,81 @@ def _build_attachment_summary(
     return default
 
 
-def _build_first_actions(queues: dict[str, Any],
-                         business_summary: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_first_actions(
+    queues: dict[str, Any], business_summary: dict[str, Any]
+) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     hp = len(queues.get("high_priority", []))
     if hp > 0:
-        actions.append({
-            "priority": "high",
-            "action": f"Review {hp} high-priority classified events",
-            "type": "manual_review",
-        })
+        actions.append(
+            {
+                "priority": "high",
+                "action": f"Review {hp} high-priority classified events",
+                "type": "manual_review",
+            }
+        )
     lost = len(queues.get("lost_in_bitrix", []))
     if lost > 0:
-        actions.append({
-            "priority": "medium",
-            "action": f"Reconcile {lost} events not found in Bitrix",
-            "type": "reconciliation",
-        })
+        actions.append(
+            {
+                "priority": "medium",
+                "action": f"Reconcile {lost} events not found in Bitrix",
+                "type": "reconciliation",
+            }
+        )
+    weak = len(queues.get("weak_match", []))
+    if weak > 0:
+        actions.append(
+            {
+                "priority": "medium",
+                "action": f"Verify {weak} weak Bitrix matches (title/subject only)",
+                "type": "manual_review",
+            }
+        )
     ambiguous = len(queues.get("ambiguous_or_duplicate", []))
     if ambiguous > 0:
-        actions.append({
-            "priority": "medium",
-            "action": f"Resolve {ambiguous} ambiguous/duplicate Bitrix matches",
-            "type": "manual_review",
-        })
+        actions.append(
+            {
+                "priority": "medium",
+                "action": f"Resolve {ambiguous} ambiguous/duplicate Bitrix matches",
+                "type": "manual_review",
+            }
+        )
     unreconciled = len(queues.get("unreconciled", []))
     if unreconciled > 0:
-        actions.append({
-            "priority": "low",
-            "action": f"Run Bitrix reconciliation for {unreconciled} unreconciled events",
-            "type": "reconciliation",
-        })
+        actions.append(
+            {
+                "priority": "low",
+                "action": f"Run Bitrix reconciliation for {unreconciled} unreconciled events",
+                "type": "reconciliation",
+            }
+        )
     refused = business_summary.get("attachment_refused", 0)
     if refused > 0:
-        actions.append({
-            "priority": "low",
-            "action": f"Review {refused} refused/unsupported attachments",
-            "type": "manual_review",
-        })
+        actions.append(
+            {
+                "priority": "low",
+                "action": f"Review {refused} refused/unsupported attachments",
+                "type": "manual_review",
+            }
+        )
     source_degraded = business_summary.get("source_degraded", 0)
     if source_degraded > 0:
-        actions.append({
-            "priority": "medium",
-            "action": f"Investigate {source_degraded} degraded source(s)",
-            "type": "investigation",
-        })
+        actions.append(
+            {
+                "priority": "medium",
+                "action": f"Investigate {source_degraded} degraded source(s)",
+                "type": "investigation",
+            }
+        )
     if not actions:
-        actions.append({
-            "priority": "info",
-            "action": "All indicators nominal; proceed to next ROP cycle",
-            "type": "monitoring",
-        })
+        actions.append(
+            {
+                "priority": "info",
+                "action": "All indicators nominal; proceed to next ROP cycle",
+                "type": "monitoring",
+            }
+        )
     return actions
 
 
@@ -323,6 +361,7 @@ def _build_evidence_links(storage_dir: Path, run_id: str) -> list[dict[str, Any]
         ("rop_review_table_tsv", "rop_review_table.tsv"),
         ("rop_current_state_json", "rop_current_state.json"),
         ("bitrix_reconciliation_json", "bitrix_reconciliation.json"),
+        ("rop_action_drafts_json", "rop_action_drafts.json"),
     )
 
     runs_root = (storage_dir / "runs").resolve()
@@ -374,6 +413,11 @@ def _build_bitrix_evidence(
     else:
         matched = _int(aggregate.get("matched_count", 0))
 
+    if "weak_match" in business_summary:
+        weak = _int(business_summary.get("weak_match"))
+    else:
+        weak = _int(aggregate.get("weak_match_count", 0))
+
     if "lost_in_bitrix" in business_summary:
         lost = _int(business_summary.get("lost_in_bitrix"))
     else:
@@ -399,13 +443,19 @@ def _build_bitrix_evidence(
         bitrix_errors = _int(business_summary.get("connector_error_count"))
     else:
         bitrix_errors = _int(
-            aggregate.get("connector_error_count", aggregate.get("error_count", 0))
+            aggregate.get(
+                "connector_error_count",
+                aggregate.get(
+                    "connector_degraded_count", aggregate.get("error_count", 0)
+                ),
+            )
         )
 
     return {
         "status": evidence_status,
         "matched_in_bitrix": matched,
         "lost_in_bitrix": lost,
+        "weak_match": weak,
         "ambiguous_or_duplicate": ambiguous,
         "unreconciled": unreconciled,
         "bitrix_errors": bitrix_errors,
@@ -475,7 +525,9 @@ def build_rop_mvp_pack(
                 break
 
     business_summary = _build_business_summary(
-        current_state, dashboard, classified_events,
+        current_state,
+        dashboard,
+        classified_events,
     )
 
     queues = _build_queues(current_state, classified_events)
@@ -483,6 +535,8 @@ def build_rop_mvp_pack(
     attachment_summary = _build_attachment_summary(attachment_extraction)
 
     first_actions = _build_first_actions(queues, business_summary)
+
+    action_drafts = _read_json_dict(run_dir / "rop_action_drafts.json")
 
     bitrix_status = "unreconciled"
     if isinstance(bitrix_reconciliation, dict):
@@ -504,6 +558,7 @@ def build_rop_mvp_pack(
     limitations = _build_limitations(
         bitrix_reconciliation=bitrix_reconciliation,
         attachment_extraction=attachment_extraction,
+        action_drafts=action_drafts,
     )
 
     pack: dict[str, Any] = {
@@ -520,6 +575,7 @@ def build_rop_mvp_pack(
             "high_priority_count": len(queues.get("high_priority", [])),
             "needs_review_count": len(queues.get("needs_review", [])),
             "lost_in_bitrix_count": len(queues.get("lost_in_bitrix", [])),
+            "weak_match_count": len(queues.get("weak_match", [])),
             "ambiguous_or_duplicate_count": len(
                 queues.get("ambiguous_or_duplicate", [])
             ),
@@ -598,6 +654,7 @@ def _build_demo_readiness(
 def _build_limitations(
     bitrix_reconciliation: dict[str, Any] | None,
     attachment_extraction: dict[str, Any] | None,
+    action_drafts: dict[str, Any] | None = None,
 ) -> list[str]:
     limitations: list[str] = [
         "Read-only snapshot; no Bitrix write-back",
@@ -613,6 +670,10 @@ def _build_limitations(
         limitations.append("Bitrix reconciliation not yet run")
     if not isinstance(attachment_extraction, dict):
         limitations.append("Attachment extraction not yet run")
+    if not isinstance(action_drafts, dict):
+        limitations.append(
+            "Action drafts not yet generated (run reconcile-bitrix first)"
+        )
 
     return limitations
 
@@ -685,7 +746,9 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         _md(f"- **Processed events:** {processed_events}")
         _md(f"- **High priority:** {bkpi.get('high_priority', 0)}")
         _md(f"- **Needs review:** {needs_review}")
+        _md(f"- **Safe matched:** {bkpi.get('safe_matched_count', 0)}")
         _md(f"- **Matched in Bitrix:** {bkpi.get('matched_in_bitrix', 0)}")
+        _md(f"- **Weak match:** {bkpi.get('weak_match_count', 0)}")
         _md(f"- **Lost in Bitrix:** {bkpi.get('lost_in_bitrix', 0)}")
         _md(f"- **Ambiguous/duplicate:** {ambiguous}")
         _md(f"- **Unreconciled:** {bkpi.get('unreconciled', 0)}")
@@ -702,7 +765,9 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
         for action in actions:
             prio = action.get("priority", "?")
             icon = "🔴" if prio == "high" else "🟡" if prio == "medium" else "🟢"
-            _md(f"- {icon} **[{prio}]** {action.get('action', '')} *(type: {action.get('type', '?')})*")
+            _md(
+                f"- {icon} **[{prio}]** {action.get('action', '')} *(type: {action.get('type', '?')})*"
+            )
     else:
         _md("- No actions identified")
     _md("")
@@ -713,6 +778,7 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     _md(f"- **High-priority queue:** {q.get('high_priority_count', 0)}")
     _md(f"- **Needs review:** {q.get('needs_review_count', 0)}")
     _md(f"- **Lost in Bitrix:** {q.get('lost_in_bitrix_count', 0)}")
+    _md(f"- **Weak match:** {q.get('weak_match_count', 0)}")
     _md(f"- **Ambiguous/duplicate:** {q.get('ambiguous_or_duplicate_count', 0)}")
     _md(f"- **Unreconciled:** {q.get('unreconciled_count', 0)}")
     _md(f"- **Matched:** {q.get('matched_count', 0)}")
@@ -725,17 +791,11 @@ def build_mvp_report_markdown(pack: dict[str, Any]) -> str:
     if not isinstance(bitrix_evidence, dict):
         bitrix_evidence = {}
     _md(f"- **Status:** {bitrix_evidence.get('status', 'unreconciled')}")
+    _md(f"- **Matched in Bitrix:** {bitrix_evidence.get('matched_in_bitrix', 0)}")
+    _md(f"- **Weak match:** {bitrix_evidence.get('weak_match', 0)}")
+    _md(f"- **Lost in Bitrix:** {bitrix_evidence.get('lost_in_bitrix', 0)}")
     _md(
-        f"- **Matched in Bitrix:** "
-        f"{bitrix_evidence.get('matched_in_bitrix', 0)}"
-    )
-    _md(
-        f"- **Lost in Bitrix:** "
-        f"{bitrix_evidence.get('lost_in_bitrix', 0)}"
-    )
-    _md(
-        f"- **Ambiguous/duplicate:** "
-        f"{bitrix_evidence.get('ambiguous_or_duplicate', 0)}"
+        f"- **Ambiguous/duplicate:** {bitrix_evidence.get('ambiguous_or_duplicate', 0)}"
     )
     _md(f"- **Unreconciled:** {bitrix_evidence.get('unreconciled', 0)}")
     _md(f"- **Bitrix errors:** {bitrix_evidence.get('bitrix_errors', 0)}")
@@ -856,15 +916,9 @@ def write_mvp_pack_artifacts(
             "classified_count": pack.get("business_summary", {}).get(
                 "classified_count", 0
             ),
-            "high_priority": pack.get("business_summary", {}).get(
-                "high_priority", 0
-            ),
-            "lost_in_bitrix": pack.get("business_summary", {}).get(
-                "lost_in_bitrix", 0
-            ),
-            "unreconciled": pack.get("business_summary", {}).get(
-                "unreconciled", 0
-            ),
+            "high_priority": pack.get("business_summary", {}).get("high_priority", 0),
+            "lost_in_bitrix": pack.get("business_summary", {}).get("lost_in_bitrix", 0),
+            "unreconciled": pack.get("business_summary", {}).get("unreconciled", 0),
         },
         "demo_readiness": pack.get("demo_readiness", {}),
         "warnings": pack.get("warnings", []),

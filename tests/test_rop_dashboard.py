@@ -233,7 +233,7 @@ def run_dir(tmp_path: Path) -> Path:
             "not_found_count": 1,
             "ambiguous_count": 0,
             "duplicate_candidate_count": 0,
-            "connector_error_count": 0,
+            "connector_degraded_count": 0,
         },
         "items": [
             {"event_id": "evt-001", "bitrix_match_status": "matched_lead"},
@@ -621,6 +621,23 @@ class TestBuildRopDashboard:
         assert [item["event_id"] for item in queues["degraded"]] == ["evt-degraded"]
         assert [item["event_id"] for item in queues["unreconciled"]] == ["evt-003"]
         assert dashboard["business_kpi"]["bitrix_errors"] > 0
+
+    def test_skipped_events_do_not_appear_in_unreconciled_queue(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        bitrix_path = run_dir / "bitrix_reconciliation.json"
+        bitrix = json.loads(bitrix_path.read_text(encoding="utf-8"))
+        bitrix["items"].append(
+            {"event_id": "evt-001", "bitrix_match_status": "skipped"}
+        )
+        bitrix_path.write_text(json.dumps(bitrix), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+
+        assert dashboard["business_kpi"]["unreconciled"] == 1
+        assert [item["event_id"] for item in dashboard["queues"]["unreconciled"]] == [
+            "evt-003"
+        ]
 
     def test_queue_entries_include_operator_contract_fields(
         self, run_dir: Path, tmp_path: Path

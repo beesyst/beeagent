@@ -264,7 +264,7 @@ def write_current_state(
             index = json.loads(index_path.read_text(encoding="utf-8"))
             if not isinstance(index, list):
                 index = []
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             index = []
 
     existing_entry = None
@@ -377,28 +377,43 @@ def _build_kpi(
         if refusal_reasons and isinstance(refusal_reasons, list):
             attachment_refused += len(refusal_reasons)
 
+    safe_matched_count = 0
     matched_in_bitrix = 0
+    weak_match_count = 0
     lost_in_bitrix = 0
     ambiguous_in_bitrix = 0
+    duplicate_candidate_count = 0
     connector_degraded = 0
+    skipped_count = 0
+    manual_review_count = 0
     unreconciled = classified_count
 
-    if bitrix_reconciliation and isinstance(bitrix_reconciliation, dict):
-        agg = bitrix_reconciliation.get("aggregate", {})
-        if isinstance(agg, dict):
-            matched_in_bitrix = _int(agg.get("matched_count", 0))
-            lost_in_bitrix = _int(agg.get("not_found_count", 0))
-            ambiguous_in_bitrix = _int(agg.get("ambiguous_count", 0)) + _int(
-                agg.get("duplicate_candidate_count", 0)
+    if isinstance(bitrix_reconciliation, dict):
+        raw_aggregate = bitrix_reconciliation.get("aggregate", {})
+        if isinstance(raw_aggregate, dict):
+            safe_matched_count = _int(raw_aggregate.get("safe_matched_count", 0))
+            matched_in_bitrix = _int(raw_aggregate.get("matched_count", 0))
+            weak_match_count = _int(raw_aggregate.get("weak_match_count", 0))
+            lost_in_bitrix = _int(raw_aggregate.get("not_found_count", 0))
+            ambiguous_in_bitrix = _int(raw_aggregate.get("ambiguous_count", 0))
+            duplicate_candidate_count = _int(
+                raw_aggregate.get("duplicate_candidate_count", 0)
             )
-            connector_degraded = _int(agg.get("connector_error_count", 0))
+            connector_degraded = _int(
+                raw_aggregate.get("connector_degraded_count", 0)
+            ) + _int(raw_aggregate.get("error_count", 0))
+            skipped_count = _int(raw_aggregate.get("skipped_count", 0))
+            manual_review_count = _int(raw_aggregate.get("manual_review_count", 0))
             unreconciled = max(
                 0,
                 classified_count
                 - matched_in_bitrix
+                - weak_match_count
                 - lost_in_bitrix
                 - ambiguous_in_bitrix
-                - connector_degraded,
+                - duplicate_candidate_count
+                - connector_degraded
+                - skipped_count,
             )
 
     return {
@@ -411,11 +426,16 @@ def _build_kpi(
         "attachment_count": attachment_count,
         "attachment_preview_available": attachment_preview_available,
         "attachment_refused": attachment_refused,
+        "safe_matched_count": safe_matched_count,
         "matched_in_bitrix": matched_in_bitrix,
+        "weak_match_count": weak_match_count,
         "lost_in_bitrix": lost_in_bitrix,
         "ambiguous_in_bitrix": ambiguous_in_bitrix,
+        "duplicate_candidate_count": duplicate_candidate_count,
         "connector_degraded": connector_degraded,
+        "skipped_count": skipped_count,
         "unreconciled": unreconciled,
+        "manual_review_count": manual_review_count,
     }
 
 
@@ -428,6 +448,7 @@ def _build_queues(
     needs_review: list[dict[str, Any]] = []
     high_priority: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
+    weak_matches: list[dict[str, Any]] = []
     matched: list[dict[str, Any]] = []
     unreconciled: list[dict[str, Any]] = []
     degraded: list[dict[str, Any]] = []
@@ -466,6 +487,11 @@ def _build_queues(
                 if eid not in seen_review:
                     needs_review.append(queue_entry)
                     seen_review.add(eid)
+            elif match_status == "weak_match":
+                weak_matches.append({**queue_entry, "bitrix_status": match_status})
+                if eid not in seen_review:
+                    needs_review.append(queue_entry)
+                    seen_review.add(eid)
             elif match_status in ("ambiguous", "duplicate_candidate"):
                 ambiguous.append({**queue_entry, "bitrix_status": match_status})
                 if eid not in seen_review:
@@ -473,6 +499,10 @@ def _build_queues(
                     seen_review.add(eid)
             elif match_status in ("connector_degraded", "error"):
                 degraded.append({**queue_entry, "bitrix_status": match_status})
+            elif match_status == "skipped":
+                pass
+            else:
+                unreconciled.append(queue_entry)
         else:
             unreconciled.append(queue_entry)
 
@@ -489,6 +519,7 @@ def _build_queues(
         "needs_review": needs_review,
         "high_priority": high_priority,
         "ambiguous": ambiguous,
+        "weak_matches": weak_matches,
         "matched": matched,
         "unreconciled": unreconciled,
         "degraded": degraded,

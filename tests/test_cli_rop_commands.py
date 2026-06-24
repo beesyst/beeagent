@@ -682,9 +682,9 @@ class TestRopCliExportReview:
 
 # Тест: чек колонки и порядок полей в TSV, а также правильное формирование body_short и attachments для различных входных данных
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_26_fields(self) -> None:
+    def test_tsv_columns_order_has_35_fields(self) -> None:
         columns = _tsv_columns()
-        assert len(columns) == 26
+        assert len(columns) == 35
         expected_order = [
             "event_id",
             "source_id",
@@ -702,6 +702,15 @@ class TestRopTsvEnriched:
             "bot_confidence",
             "bot_is_fallback",
             "bot_reasoning",
+            "bitrix_match_status",
+            "bitrix_match_quality",
+            "bitrix_confidence",
+            "needs_manual_review",
+            "safe_to_use_as_target",
+            "recommended_action",
+            "recommended_next_step",
+            "action_queue",
+            "action_draft_id",
             "human_case_type",
             "should_rop_see",
             "bitrix_status",

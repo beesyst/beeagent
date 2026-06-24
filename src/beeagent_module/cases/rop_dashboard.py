@@ -465,6 +465,7 @@ def _build_business_kpi(
         "high_priority": high_priority,
         "needs_review": needs_review,
         "lost_in_bitrix": _int(bitrix_kpi.get("lost_in_bitrix", 0)),
+        "weak_match": _int(bitrix_kpi.get("weak_match", 0)),
         "ambiguous_or_duplicate": _int(bitrix_kpi.get("ambiguous_or_duplicate", 0)),
         "unreconciled": _int(bitrix_kpi.get("unreconciled", 0)),
         "matched_in_bitrix": _int(bitrix_kpi.get("matched_in_bitrix", 0)),
@@ -566,12 +567,13 @@ def _build_series(
         bitrix_kpi = {}
     b_matched = _int(bitrix_kpi.get("matched_in_bitrix", 0))
     b_lost = _int(bitrix_kpi.get("lost_in_bitrix", 0))
+    b_weak = _int(bitrix_kpi.get("weak_match", 0))
     b_ambiguous = _int(bitrix_kpi.get("ambiguous_or_duplicate", 0))
     b_unreconciled = _int(bitrix_kpi.get("unreconciled", 0))
     if classified_list:
         series["bitrix_distribution"] = {
-            "labels": ["matched", "lost", "ambiguous", "unreconciled"],
-            "series": [b_matched, b_lost, b_ambiguous, b_unreconciled],
+            "labels": ["matched", "lost", "weak", "ambiguous", "unreconciled"],
+            "series": [b_matched, b_lost, b_weak, b_ambiguous, b_unreconciled],
         }
 
     source_dist: dict[str, int] = {}
@@ -597,31 +599,57 @@ def _build_queues(
     high_priority: list[dict[str, Any]] = []
     needs_review: list[dict[str, Any]] = []
 
+    bitrix_queues = bitrix_state.get("queues", {})
+    if not isinstance(bitrix_queues, dict):
+        bitrix_queues = {}
+
+    bitrix_status_by_event: dict[str, str] = {}
+    for queue_items in bitrix_queues.values():
+        if not isinstance(queue_items, list):
+            continue
+        for item in queue_items:
+            if not isinstance(item, dict):
+                continue
+            event_id = item.get("event_id")
+            bitrix_status = item.get("bitrix_status")
+            if (
+                isinstance(event_id, str)
+                and event_id
+                and isinstance(bitrix_status, str)
+                and bitrix_status
+            ):
+                bitrix_status_by_event[event_id] = bitrix_status
+
     seen_review: set[str] = set()
 
     for evt in classified_list:
         if not isinstance(evt, dict):
             continue
-        eid = evt.get("event_id", "")
-        entry = _operator_queue_entry(evt, "", run_id, "manual_review")
+
+        raw_event_id = evt.get("event_id")
+        event_id = raw_event_id if isinstance(raw_event_id, str) else ""
+        bitrix_status = bitrix_status_by_event.get(event_id, "")
+        entry = _operator_queue_entry(
+            evt,
+            bitrix_status,
+            run_id,
+            "manual_review",
+        )
 
         if evt.get("priority") == "high":
             high_priority.append(entry)
 
         if evt.get("is_fallback") or evt.get("priority") == "high":
-            if eid not in seen_review:
+            if event_id not in seen_review:
                 needs_review.append(entry)
-                seen_review.add(eid)
-
-    bitrix_queues = bitrix_state.get("queues", {})
-    if not isinstance(bitrix_queues, dict):
-        bitrix_queues = {}
+                seen_review.add(event_id)
 
     return {
         "high_priority": high_priority,
         "needs_review": needs_review,
         "matched": list(bitrix_queues.get("matched", [])),
         "lost_in_bitrix": list(bitrix_queues.get("lost_in_bitrix", [])),
+        "weak_match": list(bitrix_queues.get("weak_match", [])),
         "ambiguous": list(bitrix_queues.get("ambiguous", [])),
         "degraded": list(bitrix_queues.get("degraded", [])),
         "unreconciled": list(bitrix_queues.get("unreconciled", [])),
@@ -636,6 +664,7 @@ def _build_bitrix_period_state(
     kpi = {
         "matched_in_bitrix": 0,
         "lost_in_bitrix": 0,
+        "weak_match": 0,
         "ambiguous_or_duplicate": 0,
         "bitrix_errors": 0,
         "connector_degraded": 0,
@@ -644,6 +673,7 @@ def _build_bitrix_period_state(
     queues: dict[str, list[dict[str, Any]]] = {
         "matched": [],
         "lost_in_bitrix": [],
+        "weak_match": [],
         "ambiguous": [],
         "degraded": [],
         "unreconciled": [],
@@ -684,6 +714,12 @@ def _build_bitrix_period_state(
             queues["lost_in_bitrix"].append(
                 _bitrix_queue_entry(evt, status, run_id, "lost_in_bitrix")
             )
+        elif status == "weak_match":
+            kpi["weak_match"] += 1
+            kpi["ambiguous_or_duplicate"] += 1
+            queues["weak_match"].append(
+                _bitrix_queue_entry(evt, status, run_id, "ambiguous")
+            )
         elif status in ("ambiguous", "duplicate_candidate"):
             kpi["ambiguous_or_duplicate"] += 1
             queues["ambiguous"].append(
@@ -696,10 +732,7 @@ def _build_bitrix_period_state(
                 _bitrix_queue_entry(evt, status, run_id, "degraded")
             )
         elif status == "skipped":
-            kpi["unreconciled"] += 1
-            queues["unreconciled"].append(
-                _bitrix_queue_entry(evt, status, run_id, "unreconciled")
-            )
+            continue
         else:
             kpi["unreconciled"] += 1
             queues["unreconciled"].append(
@@ -892,6 +925,7 @@ def _build_evidence_links(
         "rop_review_table_tsv",
         "rop_current_state_json",
         "bitrix_reconciliation_json",
+        "rop_action_drafts_json",
         "module_result_json",
         "rop_summary_result_json",
     )

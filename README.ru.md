@@ -65,6 +65,12 @@
 - писать aggregate/per-source diagnostics для multi-source run;
 - сохранять source metadata в normalized/classified/operator/TSV artifacts;
 - показывать partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
+- строить ROP current-state artifacts и интерфейсный current-state index;
+- строить business-facing `rop_dashboard.json`;
+- выполнять read-only Bitrix reconciliation;
+- применять Bitrix match quality gate для weak/ambiguous/unsafe candidates;
+- формировать read-only/draft-only `rop_action_drafts.json`;
+- формировать ROP MVP handoff/readiness pack.
 
 ## Текущий фокус проекта
 
@@ -130,6 +136,16 @@ BeeAgent уже прошёл этап **module platform v0**:
 - source traceability в `normalized_events.json`, `classified_events.json` и `rop_review_table.tsv`;
 - partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
 
+Итерации 25–29 добавили:
+
+- attachment extraction/preview artifacts без raw content;
+- Bitrix read-only reconciliation artifacts;
+- ROP current-state index;
+- business-facing ROP dashboard read-model;
+- Bitrix match quality gate;
+- action drafts v0 без write-back;
+- MVP handoff/readiness pack.
+
 Текущий фокус:
 
 1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;
@@ -172,10 +188,10 @@ run:
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
 ./start.sh rop reconcile-bitrix --run-id ID
+./start.sh rop action-drafts --run-id ID
 
 # ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
-```
 ```
 
 ### Operator Web Console (UI-5 — Rich ROP dashboard и operator intelligence)
@@ -239,7 +255,7 @@ API artifact маршруты:
 
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
-- HTML tabs на `/rop`: Overview, Queue, Sources, Attachments, Evidence, Bitrix disabled/reserved;
+- HTML tabs на `/rop`: Overview, Queue, Sources, Attachments, Evidence, Bitrix Evidence / Action Drafts. Bitrix/action sections остаются read-only и показывают empty/reserved state, если соответствующих artifacts нет.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
 - dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 50), attachment summary без raw content и evidence links по allowlist;
 - `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload.
@@ -286,6 +302,18 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 
 # Построить current-state index для готового run.
 ./start.sh rop current --run-id live-review-2026-05-15
+
+# Построить dashboard read-model.
+./start.sh rop dashboard --period 7d
+
+# Выполнить read-only Bitrix reconciliation.
+./start.sh rop reconcile-bitrix --run-id live-review-2026-05-15
+
+# Построить action drafts после reconciliation.
+./start.sh rop action-drafts --run-id live-review-2026-05-15
+
+# Собрать MVP handoff/readiness pack.
+./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
 ```
 
 **ROP dashboard (`rop dashboard`):**
@@ -352,24 +380,6 @@ rop:
 Current-state — artifact-level projection поверх существующих run artifacts. Он содержит KPI (events, normalized, classified, Bitrix matching, очереди) и автоматически строится после успешного `rop run` и `reconcile-bitrix`.
 
 В ROP dashboard доступна вкладка Bitrix / Bitrix Evidence Board для просмотра matched/lost/ambiguous/degraded/unreconciled очередей, если есть current-state/Bitrix evidence.
-
-**ROP dashboard (`rop dashboard`):**
-
-`rop dashboard` строит business-facing dashboard read-model с period analytics:
-
-```bash
-./start.sh rop dashboard --period 7d
-./start.sh rop dashboard --period today
-./start.sh rop dashboard --period all --run-id <run_id>
-```
-
-Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
-
-Артефакт:
-
-- `storage/interfaces/rop_dashboard.json` — dashboard read-model с `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.
-
-Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
 
 CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
 `--source-id` и `--all-sources` взаимоисключающие.
@@ -611,8 +621,13 @@ configured source(s)
 → normalized_events.json
 → beeagent-rop lead_classification per event
 → classified_events.json
+→ bitrix_reconciliation.json (optional read-only evidence)
+→ rop_action_drafts.json (optional draft-only artifact)
+→ rop_current_state.json / interfaces current index
+→ rop_dashboard.json
 → beeagent-rop rop_summary
 → operator_summary.json
+→ rop_mvp_pack.json / rop_mvp_report.md
 → rop_review_table.tsv, если flow запущен через ROP CLI
 ```
 
@@ -620,8 +635,8 @@ configured source(s)
 
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
-Production Bitrix / 1C / CRM input path пока не входит в scope.
-Email ingestion сейчас ограничен `mailbox_readonly` smoke: read-only fetch latest N messages без polling/listener, OCR, attachment deep parsing, raw `.eml` persistence и CRM write-back.
+В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts.
+В scope всё ещё не входят production listener/stream, CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing.
 
 ## Запуск
 
@@ -695,6 +710,7 @@ uv run pytest -q
 - `./start.sh rop summary --run-id <run_id>`;
 - `./start.sh rop export-review --run-id <run_id> --format tsv`;
 - `./start.sh rop reconcile-bitrix --run-id <run_id>`;
+- `./start.sh rop action-drafts --run-id <run_id>`;
 - тесты;
 - прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
 
@@ -832,10 +848,23 @@ rop:
 
 - `storage/runs/<run_id>/source_diagnostics.json`
 - `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/attachment_extraction.json`
 - `storage/runs/<run_id>/normalized_events.json`
 - `storage/runs/<run_id>/classified_events.json`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
+- `storage/runs/<run_id>/rop_current_state.json`
+- `storage/runs/<run_id>/bitrix_reconciliation.json`
+- `storage/runs/<run_id>/rop_action_drafts.json`
+- `storage/runs/<run_id>/rop_mvp_pack.json`
+- `storage/runs/<run_id>/rop_mvp_report.md`
+
+Интерфейсные ROP artifacts:
+
+- `storage/interfaces/rop_current.json`
+- `storage/interfaces/rop_latest.json`
+- `storage/interfaces/rop_index.json`
+- `storage/interfaces/rop_dashboard.json`
 
 Для multi-source run:
 
@@ -850,7 +879,9 @@ rop:
 
 **Структура `rop_review_table.tsv` (v1):**
 
-`rop_review_table.tsv` содержит 26 tab-separated колонок для быстрой human review:
+Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` и `rop action-drafts` TSV расширяется Bitrix/action columns. Суммарно актуальный TSV может содержать 35 tab-separated колонок.
+
+**Base columns:**
 
 | Column                | Source            | Description                                                                         |
 | --------------------- | ----------------- | ----------------------------------------------------------------------------------- |
@@ -882,6 +913,18 @@ rop:
 | `correct_action`      | rop_review        | Правильное действие (для корректировки обучения)                                    |
 
 Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
+
+После `rop reconcile-bitrix` и `rop action-drafts` TSV также содержит:
+
+- `bitrix_match_status`
+- `bitrix_match_quality`
+- `bitrix_confidence`
+- `needs_manual_review`
+- `safe_to_use_as_target`
+- `recommended_action`
+- `recommended_next_step`
+- `action_queue`
+- `action_draft_id`
 
 Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
 
@@ -941,7 +984,14 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP multi-source ingestion artifacts** — DONE;
 - **Operator Web Console v0 with ROP dashboard** — DONE;
 - **BeeUI-backed Web Console foundation** — DONE;
-- **Rich ROP dashboard parity + operator intelligence v1** — DONE.
+- **Rich ROP dashboard parity + operator intelligence v1** — DONE;
+- **ROP attachment extraction artifacts** — DONE;
+- **ROP Bitrix read-only reconciliation artifacts** — DONE;
+- **ROP current-state index** — DONE;
+- **ROP dashboard read-model** — DONE;
+- **ROP Bitrix match quality gate** — DONE;
+- **ROP action drafts v0** — DONE;
+- **ROP MVP handoff/readiness pack** — DONE.
 
 Первый реальный модуль:
 
@@ -957,12 +1007,17 @@ BeeAgent уже вышел из состояния “только демо”.
 - `./start.sh rop run --all-sources` запускает multi-source ingestion;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
+- BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
 - multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;
 - partial degraded source виден в artifacts и не скрывается aggregate метриками;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
-- production Bitrix/email/attachment connectors пока не входят в scope;
+- BeeAgent может строить Bitrix reconciliation artifact без CRM write-back;
+- Bitrix match quality gate не считает weak/unsafe matches безопасными target;
+- action drafts создаются как read-only/draft-only artifact, без выполнения действий в Bitrix;
+- MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
-- CRM write-back пока не входит в scope;
+- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts уже входят в scope;
+- production listener/stream, CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing всё ещё не входят в scope;
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;
 - ROP dashboard показывает latest/selected run summary, classification counts, priority/case type distributions and source status summary where artifacts are available;

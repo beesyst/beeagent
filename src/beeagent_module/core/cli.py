@@ -216,13 +216,17 @@ def handle_rop_reconcile_bitrix(
         aggregate = result.get("aggregate", {})
         print(
             f"\nBitrix reconciliation completed: status={status}\n"
-            f"  events:     {aggregate.get('event_count', 0)}\n"
-            f"  matched:    {aggregate.get('matched_count', 0)}\n"
-            f"  not_found:  {aggregate.get('not_found_count', 0)}\n"
-            f"  duplicates: {aggregate.get('duplicate_candidate_count', 0)}\n"
-            f"  ambiguous:  {aggregate.get('ambiguous_count', 0)}\n"
-            f"  skipped:    {aggregate.get('skipped_count', 0)}\n"
-            f"  errors:     {aggregate.get('connector_error_count', 0)}\n"
+            f"  events:              {aggregate.get('event_count', 0)}\n"
+            f"  safe_matched:        {aggregate.get('safe_matched_count', 0)}\n"
+            f"  matched:             {aggregate.get('matched_count', 0)}\n"
+            f"  weak_match:          {aggregate.get('weak_match_count', 0)}\n"
+            f"  not_found:           {aggregate.get('not_found_count', 0)}\n"
+            f"  duplicates:          {aggregate.get('duplicate_candidate_count', 0)}\n"
+            f"  ambiguous:           {aggregate.get('ambiguous_count', 0)}\n"
+            f"  skipped:             {aggregate.get('skipped_count', 0)}\n"
+            f"  connector_degraded:  {aggregate.get('connector_degraded_count', 0)}\n"
+            f"  errors:              {aggregate.get('error_count', 0)}\n"
+            f"  manual_review:       {aggregate.get('manual_review_count', 0)}\n"
         )
 
         try:
@@ -269,6 +273,25 @@ def handle_rop_reconcile_bitrix(
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after reconciliation: %s",
+                exc,
+            )
+
+        try:
+            from beeagent_module.cases.rop_action_drafts import build_action_drafts
+
+            build_action_drafts(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                reconciliation=result,
+                logger=logger,
+            )
+            logger.info(
+                "ROP CLI: action drafts auto-generated after reconciliation: run_id=%s",
+                run_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: action drafts generation failed after reconciliation: %s",
                 exc,
             )
 
@@ -388,10 +411,26 @@ def _export_review_tsv_for_run(
                 "ROP CLI: failed to read bitrix reconciliation artifact: %s", exc
             )
 
+    # Пытаемся прочитать action drafts artifact для обогащения TSV
+    action_drafts_path = storage_dir / "runs" / run_id / "rop_action_drafts.json"
+    action_drafts_data = None
+    if action_drafts_path.exists():
+        try:
+            action_drafts_data = json.loads(
+                action_drafts_path.read_text(encoding="utf-8")
+            )
+            logger.debug(
+                "ROP CLI: action drafts artifact found for TSV enrichment: %s",
+                action_drafts_path,
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("ROP CLI: failed to read action drafts artifact: %s", exc)
+
     tsv_rows = _build_review_tsv_rows(
         normalized_events,
         classified_events,
         reconciliation_data=reconciliation_data,
+        action_drafts_data=action_drafts_data,
     )
 
     try:
@@ -598,6 +637,15 @@ def _tsv_columns() -> list[str]:
         "bot_confidence",
         "bot_is_fallback",
         "bot_reasoning",
+        "bitrix_match_status",
+        "bitrix_match_quality",
+        "bitrix_confidence",
+        "needs_manual_review",
+        "safe_to_use_as_target",
+        "recommended_action",
+        "recommended_next_step",
+        "action_queue",
+        "action_draft_id",
         "human_case_type",
         "should_rop_see",
         "bitrix_status",
@@ -617,6 +665,7 @@ def _build_review_tsv_rows(
     normalized_events: list[dict],
     classified_events: list[dict],
     reconciliation_data: dict | None = None,
+    action_drafts_data: dict | None = None,
 ) -> list[dict[str, str]]:
     normalized_lookup = {evt.get("event_id"): evt for evt in normalized_events}
 
@@ -629,6 +678,16 @@ def _build_review_tsv_rows(
                 eid = item.get("event_id", "")
                 if eid:
                     bitrix_lookup[eid] = item
+
+    # Строим lookup для action drafts данных по event_id
+    action_drafts_lookup: dict[str, dict] = {}
+    if action_drafts_data and isinstance(action_drafts_data, dict):
+        items = action_drafts_data.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                eid = item.get("event_id", "")
+                if eid:
+                    action_drafts_lookup[eid] = item
 
     rows: list[dict[str, str]] = []
 
@@ -670,6 +729,18 @@ def _build_review_tsv_rows(
         if responsible_id is not None:
             bitrix_responsible = str(responsible_id)
 
+        bitrix_match_quality = recon_item.get("bitrix_match_quality", "")
+        bitrix_confidence = recon_item.get("bitrix_confidence", "")
+        needs_manual_review = recon_item.get("needs_manual_review", "")
+        safe_to_use_as_target = recon_item.get("safe_to_use_as_target", "")
+
+        # Action draft fields from action drafts artifact (if loaded)
+        action_draft_item = action_drafts_lookup.get(event_id, {})
+        action_draft_id = action_draft_item.get("action_draft_id", "")
+        recommended_action = action_draft_item.get("recommended_action", "")
+        recommended_next_step = action_draft_item.get("recommended_next_step", "")
+        action_queue = action_draft_item.get("queue", "")
+
         row = {
             "event_id": _safe_tsv_value(event_id),
             "source_id": _safe_tsv_value(classified_evt.get("source_id", "")),
@@ -691,13 +762,20 @@ def _build_review_tsv_rows(
                 str(classified_evt.get("is_fallback", False)).lower()
             ),
             "bot_reasoning": _safe_tsv_value(bot_reasoning),
+            "bitrix_match_status": _safe_tsv_value(bitrix_status),
+            "bitrix_match_quality": _safe_tsv_value(bitrix_match_quality),
+            "bitrix_confidence": _safe_tsv_value(bitrix_confidence),
+            "needs_manual_review": _safe_tsv_value(str(needs_manual_review).lower()),
+            "safe_to_use_as_target": _safe_tsv_value(
+                str(safe_to_use_as_target).lower()
+            ),
+            "recommended_action": _safe_tsv_value(recommended_action),
+            "recommended_next_step": _safe_tsv_value(recommended_next_step),
+            "action_queue": _safe_tsv_value(action_queue),
+            "action_draft_id": _safe_tsv_value(action_draft_id),
             "human_case_type": "",
             "should_rop_see": "",
-            "bitrix_status": _safe_tsv_value(bitrix_status),
             "notes": "",
-            "bitrix_lead_id": _safe_tsv_value(bitrix_lead_id),
-            "bitrix_deal_id": _safe_tsv_value(bitrix_deal_id),
-            "bitrix_responsible": _safe_tsv_value(bitrix_responsible),
             "is_duplicate": (
                 _safe_tsv_value(str(is_duplicate).lower())
                 if is_duplicate is not None
@@ -743,9 +821,12 @@ def handle_rop_current(
         print(f"  events_total:    {kpi.get('events_total', 0)}")
         print(f"  normalized:      {kpi.get('normalized_count', 0)}")
         print(f"  classified:      {kpi.get('classified_count', 0)}")
+        print(f"  safe_matched:    {kpi.get('safe_matched_count', 0)}")
         print(f"  matched_in_bitrix:  {kpi.get('matched_in_bitrix', 0)}")
+        print(f"  weak_match:        {kpi.get('weak_match_count', 0)}")
         print(f"  lost_in_bitrix:     {kpi.get('lost_in_bitrix', 0)}")
         print(f"  unreconciled:       {kpi.get('unreconciled', 0)}")
+        print(f"  connector_degraded: {kpi.get('connector_degraded', 0)}")
         warnings = state.get("warnings", [])
         if warnings:
             print(f"  warnings: {len(warnings)}")
@@ -916,12 +997,24 @@ def handle_rop_mvp_pack(
         print(f"\nROP MVP pack built: run_id={run_id} period={period}")
         print(f"  status:             {pack.get('status', '?')}")
         print(f"  client_id:          {pack.get('client_id', '?')}")
-        print(f"  configured_sources: {pack.get('source_coverage', {}).get('configured', 0)}")
-        print(f"  loaded_sources:     {pack.get('source_coverage', {}).get('loaded', 0)}")
-        print(f"  degraded_sources:   {pack.get('source_coverage', {}).get('degraded', 0)}")
-        print(f"  classified_events:  {pack.get('business_summary', {}).get('classified_count', 0)}")
-        print(f"  high_priority:      {pack.get('business_summary', {}).get('high_priority', 0)}")
-        print(f"  demo_readiness:     {pack.get('demo_readiness', {}).get('status', '?')}")
+        print(
+            f"  configured_sources: {pack.get('source_coverage', {}).get('configured', 0)}"
+        )
+        print(
+            f"  loaded_sources:     {pack.get('source_coverage', {}).get('loaded', 0)}"
+        )
+        print(
+            f"  degraded_sources:   {pack.get('source_coverage', {}).get('degraded', 0)}"
+        )
+        print(
+            f"  classified_events:  {pack.get('business_summary', {}).get('classified_count', 0)}"
+        )
+        print(
+            f"  high_priority:      {pack.get('business_summary', {}).get('high_priority', 0)}"
+        )
+        print(
+            f"  demo_readiness:     {pack.get('demo_readiness', {}).get('status', '?')}"
+        )
         print()
         print(f"  pack JSON:   {paths['pack']}")
         print(f"  report MD:   {paths['report']}")
@@ -957,6 +1050,67 @@ def handle_rop_mvp_pack(
     except Exception as exc:
         logger.error("ROP CLI: MVP pack build failed: %s", exc)
         raise RopCliError(f"ROP MVP pack build failed: {exc}") from exc
+
+
+# Handler для команды 'rop action-drafts': загружает bitrix_reconciliation.json
+# и генерирует rop_action_drafts.json для указанного run_id
+def handle_rop_action_drafts(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+
+    logger.info(
+        "ROP CLI: generating action drafts for run_id=%s",
+        run_id,
+    )
+
+    from beeagent_module.cases.rop_action_drafts import build_action_drafts
+
+    runs_dir = (storage_dir / "runs").resolve()
+    run_dir = (runs_dir / run_id).resolve()
+    try:
+        run_dir.relative_to(runs_dir)
+    except ValueError:
+        raise RopCliError(f"Invalid run_id: path traversal detected for '{run_id}'")
+
+    reconciliation_path = run_dir / "bitrix_reconciliation.json"
+    if not reconciliation_path.exists():
+        raise RopCliError(
+            f"bitrix_reconciliation.json not found for run_id={run_id}. "
+            "Run rop reconcile-bitrix first."
+        )
+
+    try:
+        reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise RopCliError(f"Failed to read bitrix_reconciliation.json: {exc}") from exc
+
+    artifact = build_action_drafts(
+        storage_dir=storage_dir,
+        run_id=run_id,
+        reconciliation=reconciliation,
+        logger=logger,
+    )
+
+    aggregate = artifact.get("aggregate", {})
+    print(
+        f"\nROP action drafts generated: run_id={run_id}\n"
+        f"  items:                    {len(artifact.get('items', []))}\n"
+        f"  actionable:               {aggregate.get('matched_actionable', 0)}\n"
+        f"  ignore:                   {aggregate.get('ignore_count', 0)}\n"
+        f"  degraded:                 {aggregate.get('degraded_count', 0)}\n"
+        f"  unreconciled:             {aggregate.get('unreconciled_count', 0)}\n"
+        f"  needs_manual_review:      {aggregate.get('needs_manual_review_count', 0)}\n"
+        f"  safe_to_use_as_target:    {aggregate.get('safe_to_use_as_target_count', 0)}\n"
+    )
+
+    logger.info(
+        "ROP CLI: action drafts generated: run_id=%s items=%d",
+        run_id,
+        len(artifact.get("items", [])),
+    )
 
 
 # Применение CLI-переопределений к конфигурации источников данных для ROP: позволяет указать source_id для выбора конкретного источника, а также items_max и period для ограничения количества обрабатываемых событий и периода для batch-источников
@@ -1078,6 +1232,17 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Period label for report (e.g. 7d, 30d); defaults to rop.dashboard.default_period",
+    )
+
+    action_drafts_parser = subparsers.add_parser(
+        "action-drafts",
+        help="Generate ROP action draft artifacts from Bitrix reconciliation",
+    )
+    action_drafts_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to generate action drafts for",
     )
 
     return parser

@@ -202,7 +202,7 @@ def _write_bitrix_current_state_artifacts(run_dir: Path, run_id: str) -> None:
             "matched_count": 1,
             "not_found_count": 1,
             "ambiguous_count": 1,
-            "connector_error_count": 1,
+            "connector_degraded_count": 1,
         },
         "items": [],
     }
@@ -747,7 +747,9 @@ def test_rop_overview_buckets_7d_and_30d_chart_series() -> None:
     for period, expected_count in (("7d", 7), ("30d", 30)):
         data = {**base_data, "period": period}
         layout = build_rop_page_layout(data, tab="overview")
-        chart = next(block for block in layout if block["title"] == "Email intake trend")
+        chart = next(
+            block for block in layout if block["title"] == "Email intake trend"
+        )
         assert len(chart["categories"]) == expected_count
         assert chart["categories"][-1] == "2026-06-21"
         for series_item in chart["series"]:
@@ -834,7 +836,7 @@ def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
         "evidence_links": [],
         "classification_distribution": {},
         "business_kpi": {"bitrix_errors": 2},
-        "bitrix": {"connector_error_count": 99},
+        "bitrix": {"connector_degraded_count": 99},
         "series": {},
     }
 
@@ -2379,7 +2381,9 @@ def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
 
     layout = build_rop_page_layout(data, tab="overview")
-    action_card = next(block for block in layout if block.get("title") == "Action Required")
+    action_card = next(
+        block for block in layout if block.get("title") == "Action Required"
+    )
     assert action_card["type"] == "chart"
     assert "2 items need review" in action_card["subtitle"]
 

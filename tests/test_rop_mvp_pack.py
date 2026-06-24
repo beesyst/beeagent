@@ -247,7 +247,7 @@ def run_dir(tmp_path: Path) -> Path:
             "not_found_count": 1,
             "ambiguous_count": 0,
             "duplicate_candidate_count": 0,
-            "connector_error_count": 0,
+            "connector_degraded_count": 0,
         },
         "items": [
             {"event_id": "evt-001", "bitrix_match_status": "matched_lead"},
@@ -328,10 +328,7 @@ class TestBuildRopMvpPack:
         links = pack["evidence_links"]
         assert len(links) > 0
 
-        available_by_id = {
-            link["artifact_id"]: link["available"]
-            for link in links
-        }
+        available_by_id = {link["artifact_id"]: link["available"] for link in links}
         assert available_by_id["operator_summary_json"] is True
         assert available_by_id["source_diagnostics_json"] is True
         assert available_by_id["intake_metadata_json"] is True
@@ -495,8 +492,7 @@ class TestBuildRopMvpPack:
         )
         assert pack["run_id"] == "mvp-test-run"
         available_by_id = {
-            link["artifact_id"]: link["available"]
-            for link in pack["evidence_links"]
+            link["artifact_id"]: link["available"] for link in pack["evidence_links"]
         }
         assert available_by_id["rop_review_table_tsv"] is False
 
@@ -554,7 +550,7 @@ class TestBuildRopMvpPack:
             "not_found_count": 1,
             "ambiguous_count": 1,
             "duplicate_candidate_count": 1,
-            "connector_error_count": 1,
+            "connector_degraded_count": 1,
             "skipped_count": 3,
         }
         bitrix_path.write_text(json.dumps(bitrix, indent=2), encoding="utf-8")
@@ -629,9 +625,7 @@ class TestMvpReportMarkdown:
             if re.search(pattern, md, re.IGNORECASE):
                 pytest.fail(f"Secret/content pattern found in report: {pattern}")
 
-    def test_run_id_and_period_in_report(
-        self, run_dir: Path, tmp_path: Path
-    ) -> None:
+    def test_run_id_and_period_in_report(self, run_dir: Path, tmp_path: Path) -> None:
         pack = build_rop_mvp_pack(
             storage_dir=tmp_path,
             run_id="mvp-test-run",
@@ -806,9 +800,7 @@ class TestSourceCoverage:
 
 
 class TestEvidenceLinks:
-    def test_evidence_links_are_safe(
-        self, run_dir: Path, tmp_path: Path
-    ) -> None:
+    def test_evidence_links_are_safe(self, run_dir: Path, tmp_path: Path) -> None:
         """Evidence links must not contain secrets or full artifact paths."""
         pack = build_rop_mvp_pack(
             storage_dir=tmp_path,

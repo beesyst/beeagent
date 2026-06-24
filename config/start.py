@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
+    handle_rop_action_drafts,
     handle_rop_current,
     handle_rop_dashboard,
     handle_rop_export_review,
@@ -115,6 +116,8 @@ def _handle_rop_cli(
             handle_rop_dashboard(args, settings=settings, logger=logger)
         elif args.rop_command == "mvp-pack":
             handle_rop_mvp_pack(args, settings=settings, logger=logger)
+        elif args.rop_command == "action-drafts":
+            handle_rop_action_drafts(args, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)
