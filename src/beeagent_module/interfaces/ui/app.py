@@ -15,6 +15,12 @@ from fastapi.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
+from beeagent_module.interfaces.ui.locale import (
+    reset_current_locale,
+    resolve_locale,
+    set_current_locale,
+    t,
+)
 
 
 def _result_data(
@@ -175,9 +181,17 @@ def build_beeui_app(
 def _register_rop_html_polish(app: FastAPI) -> None:
     @app.middleware("http")
     async def rop_html_polish(request: Request, call_next):
-        response = await call_next(request)
+        locale = resolve_locale(request.query_params.get("lang"))
+        token = set_current_locale(locale)
+        try:
+            response = await call_next(request)
+        finally:
+            reset_current_locale(token)
+
         content_type = response.headers.get("content-type", "")
-        if request.url.path != "/rop" or "text/html" not in content_type:
+        path = request.url.path
+        needs_polish = path == "/rop" or (locale == "ru" and path in {"/", "/runs"})
+        if not needs_polish or "text/html" not in content_type:
             return response
 
         body = b""
@@ -185,9 +199,12 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             body += chunk
 
         html = body.decode("utf-8")
-        html = _replace_period_buttons_with_dropdown(html)
-        html = _replace_rop_chart_ids(html)
-        html = _polish_rop_overview_cards(html)
+        if path == "/rop":
+            html = _replace_period_buttons_with_dropdown(html)
+            html = _replace_rop_chart_ids(html)
+            html = _polish_rop_overview_cards(html)
+        else:
+            html = _localize_product_console_html(html, path, locale)
         headers = dict(response.headers)
         headers.pop("content-length", None)
         return Response(
@@ -199,10 +216,10 @@ def _register_rop_html_polish(app: FastAPI) -> None:
 
 
 _PERIOD_BUTTON_RE = re.compile(
-    r'\s*<a href="(?P<href>/rop\?tab=[^"]+?&amp;period=(?P<period>[^"]+))" '
+    r'\s*<a href="(?P<href>/rop\?tab=overview&amp;period='
+    r'(?P<period>[^"&]+)(?:&amp;lang=[^"]+)?)" '
     r'class="btn btn-outline-primary btn-sm me-1">'
-    r"(?P<label>Today|Yesterday|Last 7 days|Last 30 days|Last 3 months|Last year|All time)"
-    r"(?P<current> \(current\))?</a>"
+    r"(?P<label>[^<]+)</a>"
 )
 
 _ROP_CHART_IDS: dict[str, str] = {
@@ -220,12 +237,17 @@ def _replace_period_buttons_with_dropdown(html: str) -> str:
     if not matches:
         return html
 
-    active_label = "Select period"
+    active_label = ""
     items: list[str] = []
     for match in matches:
         label = match.group("label")
         href = match.group("href")
-        is_active = bool(match.group("current"))
+        is_active = False
+        for suffix in (" (current)", " (текущий)"):
+            if label.endswith(suffix):
+                label = label[: -len(suffix)]
+                is_active = True
+                break
         if is_active:
             active_label = label
         active_class = " active" if is_active else ""
@@ -234,6 +256,9 @@ def _replace_period_buttons_with_dropdown(html: str) -> str:
             f'<a class="dropdown-item{active_class}" href="{href}"{aria_current}>'
             f"{label}</a>"
         )
+
+    if not active_label and matches:
+        active_label = matches[0].group("label").split(" (", 1)[0]
 
     dropdown = (
         '<div class="dropdown me-1 d-inline-block">'
@@ -245,6 +270,71 @@ def _replace_period_buttons_with_dropdown(html: str) -> str:
         + "</div></div>"
     )
     return html[: matches[0].start()] + dropdown + html[matches[-1].end() :]
+
+
+def _localize_product_console_html(
+    html: str,
+    path: str,
+    locale: str,
+) -> str:
+    if locale != "ru":
+        return html
+
+    replacements: dict[str, list[tuple[str, str]]] = {
+        "/": [
+            ("<title>Dashboard · ", f"<title>{t('BeeAgent Dashboard', locale)} · "),
+            (
+                '<h2 class="page-title">Dashboard</h2>',
+                f'<h2 class="page-title">{t("BeeAgent Dashboard", locale)}</h2>',
+            ),
+            (
+                '<div class="text-secondary mt-1">Adapter-backed product overview</div>',
+                (
+                    '<div class="text-secondary mt-1">'
+                    f"{t('Read-only operator dashboard', locale)}</div>"
+                ),
+            ),
+            (
+                '<h3 class="card-title">Latest run</h3>',
+                f'<h3 class="card-title">{t("Latest run", locale)}</h3>',
+            ),
+            (
+                '<h3 class="card-title">KPIs</h3>',
+                f'<h3 class="card-title">{t("KPIs", locale)}</h3>',
+            ),
+            (
+                '<h3 class="card-title">Summary</h3>',
+                f'<h3 class="card-title">{t("Summary", locale)}</h3>',
+            ),
+            ("Open run", t("Open run", locale)),
+            ("Technical details", t("Technical details", locale)),
+        ],
+        "/runs": [
+            ("<title>Runs · ", f"<title>{t('Runs', locale)} · "),
+            (
+                '<h2 class="page-title">Runs</h2>',
+                f'<h2 class="page-title">{t("Runs", locale)}</h2>',
+            ),
+            (
+                '<div class="text-secondary mt-1">Adapter-backed run list</div>',
+                f'<div class="text-secondary mt-1">{t("Run history", locale)}</div>',
+            ),
+            (
+                '<h3 class="card-title">Run list</h3>',
+                f'<h3 class="card-title">{t("Run list", locale)}</h3>',
+            ),
+            ("<th>Run ID</th>", f"<th>{t('Run ID', locale)}</th>"),
+            ("<th>Status</th>", f"<th>{t('Status', locale)}</th>"),
+            ("<th>Started</th>", f"<th>{t('Started', locale)}</th>"),
+            ("<th>Completed</th>", f"<th>{t('Completed', locale)}</th>"),
+            (">Open</a>", f">{t('Open', locale)}</a>"),
+        ],
+    }
+
+    result = html
+    for old, new in replacements.get(path, []):
+        result = result.replace(old, new)
+    return result
 
 
 def _replace_rop_chart_ids(html: str) -> str:

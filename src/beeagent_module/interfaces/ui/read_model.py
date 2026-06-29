@@ -81,7 +81,7 @@ def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
     return run_dir, ""
 
 
-def build_dashboard(storage_dir: Path) -> dict[str, Any]:
+def build_dashboard(storage_dir: Path, locale: str = "en") -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     run_ids: list[str] = []
     if runs_dir.is_dir():
@@ -133,15 +133,15 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
             modules_count = len(registry)
 
     kpi_items = [
-        {"label": "Total Runs", "value": len(run_ids)},
-        {"label": "Loaded Modules", "value": modules_count},
+        {"label": t("Total Runs", locale), "value": len(run_ids)},
+        {"label": t("Loaded Modules", locale), "value": modules_count},
         {
-            "label": "Latest Run Status",
+            "label": t("Latest Run Status", locale),
             "value": latest_run["status"] if latest_run else "none",
         },
-        {"label": "ROP Classified Cases", "value": rop_classified},
-        {"label": "Needs Review", "value": needs_review},
-        {"label": "Degraded Sources", "value": degraded_count},
+        {"label": t("ROP Classified Cases", locale), "value": rop_classified},
+        {"label": t("Needs Review", locale), "value": needs_review},
+        {"label": t("Degraded Sources", locale), "value": degraded_count},
     ]
 
     summary = {
@@ -156,6 +156,8 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
         summary["latest_run_status"] = latest_run["status"]
 
     return {
+        "title": t("BeeAgent Dashboard", locale),
+        "subtitle": t("Read-only operator dashboard", locale),
         "total_runs": len(run_ids),
         "recent_run_ids": run_ids[:10],
         "latest_run": latest_run,
@@ -165,7 +167,7 @@ def build_dashboard(storage_dir: Path) -> dict[str, Any]:
     }
 
 
-def build_runs_list(storage_dir: Path) -> dict[str, Any]:
+def build_runs_list(storage_dir: Path, locale: str = "en") -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     run_ids: list[str] = []
     if runs_dir.is_dir():
@@ -199,6 +201,8 @@ def build_runs_list(storage_dir: Path) -> dict[str, Any]:
         )
 
     return {
+        "title": t("Runs", locale),
+        "subtitle": t("Run history", locale),
         "runs": items,
         "total_runs": len(items),
         "layout": [],
@@ -1087,17 +1091,155 @@ def _build_thread_summary(
     }
 
 
+def _build_threads_from_index(
+    thread_index: dict[str, Any] | None,
+    classified: list | None,
+    normalized: list | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(thread_index, dict):
+        return []
+
+    idx_threads = _safe_list(thread_index.get("threads"), [])
+    if not idx_threads:
+        return []
+
+    classified_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(classified, list):
+        for item in classified:
+            if isinstance(item, dict) and item.get("event_id"):
+                classified_by_id[str(item["event_id"])] = item
+
+    normalized_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(normalized, list):
+        for item in normalized:
+            if isinstance(item, dict) and item.get("event_id"):
+                normalized_by_id[str(item["event_id"])] = item
+
+    threads: list[dict[str, Any]] = []
+    for raw_thread in idx_threads[:50]:
+        if not isinstance(raw_thread, dict):
+            continue
+
+        thread_id = str(raw_thread.get("thread_id") or "")
+        if not thread_id:
+            continue
+
+        raw_event_ids = raw_thread.get("event_ids", [])
+        event_ids = []
+        if isinstance(raw_event_ids, list):
+            event_ids = [str(value) for value in raw_event_ids if value]
+        if not event_ids:
+            continue
+
+        latest_event_id = event_ids[-1]
+        latest_normalized = normalized_by_id.get(latest_event_id)
+        latest_classified = classified_by_id.get(latest_event_id)
+        latest_timestamp = _event_timestamp(
+            latest_normalized or latest_classified or {}
+        )
+
+        for event_id in event_ids:
+            normalized_item = normalized_by_id.get(event_id)
+            classified_item = classified_by_id.get(event_id)
+            candidate = normalized_item or classified_item
+            candidate_ts = (
+                _event_timestamp(candidate) if isinstance(candidate, dict) else None
+            )
+            if latest_timestamp is None:
+                if candidate_ts is not None:
+                    latest_timestamp = candidate_ts
+                    latest_event_id = event_id
+                    latest_normalized = normalized_item
+                    latest_classified = classified_item
+                continue
+            if candidate_ts is not None and candidate_ts >= latest_timestamp:
+                latest_timestamp = candidate_ts
+                latest_event_id = event_id
+                latest_normalized = normalized_item
+                latest_classified = classified_item
+
+        if latest_normalized is None:
+            latest_normalized = normalized_by_id.get(latest_event_id)
+        if latest_classified is None:
+            latest_classified = classified_by_id.get(latest_event_id)
+
+        previous_case_type = None
+        previous_case_subtype = None
+        for previous_id in reversed(event_ids[:-1]):
+            previous = classified_by_id.get(previous_id)
+            if previous:
+                previous_case_type = previous.get("case_type") or previous_case_type
+                previous_case_subtype = (
+                    previous.get("case_subtype") or previous_case_subtype
+                )
+                if previous_case_type or previous_case_subtype:
+                    break
+
+        evidence = _safe_dict(raw_thread.get("evidence"), {})
+        review_reasons: list[str] = []
+        if latest_classified:
+            if latest_classified.get("priority") == "high":
+                review_reasons.append("High priority")
+            if latest_classified.get("is_fallback"):
+                review_reasons.append("Fallback")
+        if evidence.get("references_link"):
+            review_reasons.append("Linked by references")
+        if evidence.get("subject_fallback"):
+            review_reasons.append("Linked by subject")
+
+        threads.append(
+            {
+                "thread_id": thread_id,
+                "event_count": len(event_ids),
+                "source_id": str(
+                    (latest_normalized or {}).get(
+                        "source_id", (latest_classified or {}).get("source_id", "")
+                    )
+                ),
+                "client_id": str(
+                    (latest_normalized or {}).get(
+                        "client_id", (latest_classified or {}).get("client_id", "")
+                    )
+                ),
+                "latest_subject": str(
+                    (latest_normalized or {}).get(
+                        "subject",
+                        (latest_classified or {}).get(
+                            "subject", evidence.get("subject_fallback", "")
+                        ),
+                    )
+                ),
+                "latest_sender": str(
+                    (latest_normalized or {}).get(
+                        "sender", (latest_classified or {}).get("sender", "")
+                    )
+                ),
+                "previous_event_ids_count": max(len(event_ids) - 1, 0),
+                "has_reply_or_forward": False,
+                "previous_case_type": previous_case_type,
+                "previous_case_subtype": previous_case_subtype,
+                "confidence": (latest_classified or {}).get("confidence"),
+                "review_reason": "; ".join(review_reasons) if review_reasons else None,
+            }
+        )
+
+    return threads
+
+
 def _build_threads(
+    thread_index: dict[str, Any] | None,
     thread_context: dict[str, Any] | None,
     classified: list | None,
     normalized: list | None,
 ) -> list[dict[str, Any]]:
     if not isinstance(thread_context, dict):
-        return []
+        return _build_threads_from_index(thread_index, classified, normalized)
 
     contexts = thread_context.get("contexts", [])
     if not isinstance(contexts, list):
-        return []
+        return _build_threads_from_index(thread_index, classified, normalized)
+    if not contexts:
+        return _build_threads_from_index(thread_index, classified, normalized)
 
     classified_by_id: dict[str, dict[str, Any]] = {}
     if isinstance(classified, list):
@@ -1507,6 +1649,9 @@ def _build_ai_assist_events(
         res = res_by_eid.get(eid, {})
         norm = normalized_by_eid.get(eid, {})
 
+        if not req and not dec and not res:
+            continue
+
         ai_status = "not_requested"
         ai_used = False
         ai_confidence = None
@@ -1730,6 +1875,7 @@ def build_rop_dashboard_read_model(
     )
 
     thread_list = _build_threads(
+        thread_index if isinstance(thread_index, dict) else None,
         thread_context if isinstance(thread_context, dict) else None,
         classified if isinstance(classified, list) else None,
         normalized if isinstance(normalized, list) else None,
@@ -2022,8 +2168,8 @@ _OVERVIEW_PERIODS: tuple[str, ...] = (
 )
 
 
-def _period_label(period: str) -> str:
-    return _PERIOD_LABELS.get(period, period)
+def _period_label(period: str, locale: str = "en") -> str:
+    return t(_PERIOD_LABELS.get(period, period), locale)
 
 
 def _overview_cell(value: object, tone: str = "") -> dict[str, str]:
@@ -2033,16 +2179,26 @@ def _overview_cell(value: object, tone: str = "") -> dict[str, str]:
     return cell
 
 
-def _period_link_items(current_period: str, current_tab: str) -> list[dict[str, str]]:
-    items: list[dict[str, str]] = []
+def _period_link_items(
+    current_period: str,
+    current_tab: str,
+    locale: str = "en",
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for period_value in _OVERVIEW_PERIODS:
-        label = _period_label(period_value)
+        label = _period_label(period_value, locale)
         if period_value == current_period:
-            label = f"{label} (current)"
+            label = f"{label} ({t('current', locale)})"
         items.append(
             {
+                "period": period_value,
+                "active": period_value == current_period,
                 "label": label,
-                "href": f"/rop?tab={current_tab}&period={period_value}",
+                "href": _rop_href(
+                    tab=current_tab,
+                    period=period_value,
+                    locale=locale,
+                ),
             }
         )
     return items
@@ -2073,17 +2229,22 @@ def _bitrix_status_tone(status: object) -> str:
     return "unknown"
 
 
-def _readable_quality_note(warning: dict[str, Any]) -> str:
+def _readable_quality_note(warning: dict[str, Any], locale: str = "en") -> str:
     code = warning.get("code", "")
     if code == "time_basis_fallback":
-        return (
+        return t(
             "Some leads had no source timestamp; dashboard used run time for "
-            "period filtering."
+            "period filtering.",
+            locale,
         )
     if code == "degraded_sources":
-        return "One or more sources reported degraded intake health."
+        return t("One or more sources reported degraded intake health.", locale)
     message = warning.get("message")
-    return str(message) if message else "Review diagnostics for data quality notes."
+    return (
+        str(message)
+        if message
+        else t("Review diagnostics for data quality notes.", locale)
+    )
 
 
 def _chart_block(
@@ -2125,8 +2286,8 @@ _CHART_LABEL_MAP: dict[str, str] = {
 }
 
 
-def _humanize_label(raw: str) -> str:
-    return _CHART_LABEL_MAP.get(raw, raw.replace("_", " ").title())
+def _humanize_label(raw: str, locale: str = "en") -> str:
+    return t(_CHART_LABEL_MAP.get(raw, raw.replace("_", " ").title()), locale)
 
 
 def _non_zero_segments(values: list[Any]) -> int:
@@ -2235,6 +2396,7 @@ def _bucket_daily_chart_series(
     *,
     period: str,
     period_end_utc: Any,
+    locale: str = "en",
 ) -> tuple[list[str], list[dict[str, Any]]]:
     labels = [str(label) for label in _as_chart_labels(chart_data)]
     series_items = _as_chart_series(chart_data)
@@ -2259,7 +2421,7 @@ def _bucket_daily_chart_series(
                 values.append(_int(source_values[source_index]))
         bucketed.append(
             {
-                "name": _humanize_label(str(item.get("name", "Processed"))),
+                "name": _humanize_label(str(item.get("name", "Processed")), locale),
                 "data": values,
             }
         )
@@ -2280,14 +2442,25 @@ def _source_display_labels(source_health: list[Any]) -> dict[str, str]:
     return labels
 
 
-def _period_href(tab: str, period: str) -> str:
-    return f"/rop?tab={tab}&period={period}"
+def _rop_href(
+    *,
+    tab: str,
+    period: str | None = None,
+    locale: str = "en",
+) -> str:
+    params = [f"tab={tab}"]
+    if period:
+        params.append(f"period={period}")
+    if locale != "en":
+        params.append(f"lang={locale}")
+    return f"/rop?{'&'.join(params)}"
 
 
 def _collect_priority_queue_preview(
     queues: dict[str, Any],
     current_period: str,
     *,
+    locale: str = "en",
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     order = (
@@ -2313,23 +2486,27 @@ def _collect_priority_queue_preview(
             if event_id:
                 seen.add(event_id)
             subject = item.get("subject") or (
-                f"Lead event {event_id}" if event_id else "Lead event"
+                f"{t('Lead event', locale)} {event_id}"
+                if event_id
+                else t("Lead event", locale)
             )
             sender = (
                 item.get("sender")
                 or item.get("source_display_name")
                 or item.get("source_id")
-                or "Unknown sender"
+                or t("Unknown sender", locale)
             )
             priority = item.get("bot_priority") or item.get("priority") or bucket
-            next_step = item.get("recommended_next_step") or "Open Queue"
-            evidence_href = item.get("evidence_href") or _period_href(
-                "queue", current_period
+            next_step = item.get("recommended_next_step") or t("Open Queue", locale)
+            evidence_href = item.get("evidence_href") or _rop_href(
+                tab="queue",
+                period=current_period,
+                locale=locale,
             )
             rows.append(
                 {
                     "priority": {
-                        "label": _humanize_label(str(priority)),
+                        "label": _humanize_label(str(priority), locale),
                         "tone": "danger"
                         if priority == "high" or bucket == "high_priority"
                         else "warning"
@@ -2339,10 +2516,11 @@ def _collect_priority_queue_preview(
                     "sender": sender,
                     "subject": subject,
                     "reason": _humanize_label(
-                        str(item.get("reason") or item.get("review_reason", bucket))
+                        str(item.get("reason") or item.get("review_reason", bucket)),
+                        locale,
                     ),
                     "next_step": next_step.replace("_", " "),
-                    "evidence": {"label": "Open", "href": evidence_href},
+                    "evidence": {"label": t("Open", locale), "href": evidence_href},
                 }
             )
             if len(rows) >= limit:
@@ -2384,15 +2562,17 @@ def _build_latest_selection_block(
             },
             {
                 "label": t("Source selection", locale),
-                "value": " | ".join(source_lines) if source_lines else "No source data",
+                "value": " | ".join(source_lines)
+                if source_lines
+                else t("No source data", locale),
             },
             {
                 "label": t("Newest message", locale),
-                "value": latest_selection.get("newest_message_at") or "n/a",
+                "value": latest_selection.get("newest_message_at") or t("n/a", locale),
             },
             {
                 "label": t("Oldest message", locale),
-                "value": latest_selection.get("oldest_message_at") or "n/a",
+                "value": latest_selection.get("oldest_message_at") or t("n/a", locale),
             },
         ],
     }
@@ -2415,7 +2595,7 @@ def _build_rop_overview_layout(
     if not isinstance(warnings_list, list):
         warnings_list = []
     current_period = data.get("period", "")
-    period_hint = _period_label(current_period) if current_period else ""
+    period_hint = _period_label(current_period, locale) if current_period else ""
     updated_at = data.get("updated_at") or data.get("generated_at_utc") or ""
 
     layout: list[dict[str, Any]] = []
@@ -2434,19 +2614,26 @@ def _build_rop_overview_layout(
     classified_count = kpis.get("classified_count", 0)
     loaded_count = kpis.get("loaded_count", 0)
     source_summary = (
-        f"{source_count} / {degraded_sources} degraded"
+        t("{count} / {degraded} degraded", locale).format(
+            count=source_count,
+            degraded=degraded_sources,
+        )
         if degraded_sources
-        else f"{source_count} connected"
+        else t("{count} connected", locale).format(count=source_count)
     )
     bitrix_summary = (
-        f"{unreconciled} not reconciled"
+        t("{count} not reconciled", locale).format(count=unreconciled)
         if unreconciled
-        else ("OK" if not lost_in_bitrix else f"{lost_in_bitrix} lost")
+        else (
+            t("OK", locale)
+            if not lost_in_bitrix
+            else t("{count} lost", locale).format(count=lost_in_bitrix)
+        )
     )
     readable_warnings = [
-        _readable_quality_note(w) for w in warnings_list if isinstance(w, dict)
+        _readable_quality_note(w, locale) for w in warnings_list if isinstance(w, dict)
     ]
-    data_quality = readable_warnings[0] if readable_warnings else "OK"
+    data_quality = readable_warnings[0] if readable_warnings else t("OK", locale)
     period_emails = _int(
         business_kpi.get(
             "processed_emails",
@@ -2486,18 +2673,19 @@ def _build_rop_overview_layout(
     )
     period_actions = [
         item
-        for item in _period_link_items(current_period, "overview")
-        if item["href"].rsplit("=", 1)[-1] in configured_values
+        for item in _period_link_items(current_period, "overview", locale)
+        if item["period"] in configured_values
     ]
-    queue_href = _period_href("queue", current_period)
-    bitrix_href = _period_href("bitrix", current_period)
-    evidence_href = _period_href("evidence", current_period)
+    queue_href = _rop_href(tab="queue", period=current_period, locale=locale)
+    bitrix_href = _rop_href(tab="bitrix", period=current_period, locale=locale)
+    evidence_href = _rop_href(tab="evidence", period=current_period, locale=locale)
 
     processed_by_day = series.get("processed_by_day", {})
     workload_labels, workload_series = _bucket_daily_chart_series(
         processed_by_day,
         period=str(current_period or ""),
         period_end_utc=data.get("period_end_utc"),
+        locale=locale,
     )
     source_label_map = _source_display_labels(source_health)
 
@@ -2505,21 +2693,24 @@ def _build_rop_overview_layout(
         {
             "type": "operator_hero",
             "width": 6,
-            "title": "ROP Control Center",
-            "subtitle": "Inbound email intake, lead quality and Bitrix reconciliation",
+            "title": t("ROP Control Center", locale),
+            "subtitle": t(
+                "Inbound email intake, lead quality and Bitrix reconciliation",
+                locale,
+            ),
             "status": period_hint,
             "items": [
-                {"label": "TODAY'S EMAILS", "value": todays_emails},
-                {"label": "NEW LEADS", "value": new_leads},
-                {"label": "Period", "value": period_hint},
-                {"label": "Sources", "value": source_summary},
-                {"label": "Bitrix", "value": bitrix_summary},
-                {"label": "Data quality", "value": data_quality},
+                {"label": t("TODAY'S EMAILS", locale), "value": todays_emails},
+                {"label": t("NEW LEADS", locale), "value": new_leads},
+                {"label": t("Period", locale), "value": period_hint},
+                {"label": t("Sources", locale), "value": source_summary},
+                {"label": t("Bitrix", locale), "value": bitrix_summary},
+                {"label": t("Data quality", locale), "value": data_quality},
             ],
             "primary_links": period_actions
             + [
-                {"label": "Open Queue", "href": queue_href},
-                {"label": "Open Bitrix", "href": bitrix_href},
+                {"label": t("Open Queue", locale), "href": queue_href},
+                {"label": t("Open Bitrix", locale), "href": bitrix_href},
             ],
         }
     )
@@ -2527,33 +2718,37 @@ def _build_rop_overview_layout(
         {
             "type": "chart",
             "width": 3,
-            "title": "Email Workload",
-            "subtitle": (f"{period_emails} processed inbound items in selected period"),
+            "title": t("Email Workload", locale),
+            "subtitle": t(
+                "{count} processed inbound items in selected period",
+                locale,
+            ).format(count=period_emails),
             "kind": "area",
             "series": workload_series
-            or [{"name": "Processed", "data": [period_emails]}],
-            "categories": workload_labels or [period_hint or "Selected period"],
+            or [{"name": t("Processed", locale), "data": [period_emails]}],
+            "categories": workload_labels
+            or [period_hint or t("Selected period", locale)],
             "height": 180,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
     layout.append(
         {
             "type": "chart",
             "width": 3,
-            "title": "Action Required",
-            "subtitle": (
-                f"{action_required_count} items need review · "
-                f"{action_required_ratio}% action ratio"
-            ),
+            "title": t("Action Required", locale),
+            "subtitle": t(
+                "{count} items need review · {ratio}% action ratio",
+                locale,
+            ).format(count=action_required_count, ratio=action_required_ratio),
             "kind": "donut",
             "series": [
                 action_required_count,
                 max(_int(total_leads) - action_required_count, 0),
             ],
-            "labels": ["Needs attention", "Clear"],
+            "labels": [t("Needs attention", locale), t("Clear", locale)],
             "height": 180,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
 
@@ -2561,38 +2756,38 @@ def _build_rop_overview_layout(
         {
             "type": "venue_card",
             "width": 3,
-            "title": "Urgent leads",
-            "subtitle": "Open now",
+            "title": t("Urgent leads", locale),
+            "subtitle": t("Open now", locale),
             "status": str(high_priority),
-            "items": [{"label": "Count", "value": high_priority}],
-            "links": [{"label": "Open Queue", "href": queue_href}],
+            "items": [{"label": t("Count", locale), "value": high_priority}],
+            "links": [{"label": t("Open Queue", locale), "href": queue_href}],
         },
         {
             "type": "venue_card",
             "width": 3,
-            "title": "Needs review",
-            "subtitle": "Operator queue",
+            "title": t("Needs review", locale),
+            "subtitle": t("Operator queue", locale),
             "status": str(needs_review),
-            "items": [{"label": "Count", "value": needs_review}],
-            "links": [{"label": "Open Queue", "href": queue_href}],
+            "items": [{"label": t("Count", locale), "value": needs_review}],
+            "links": [{"label": t("Open Queue", locale), "href": queue_href}],
         },
         {
             "type": "venue_card",
             "width": 3,
-            "title": "Bitrix gaps",
-            "subtitle": "Check CRM evidence",
+            "title": t("Bitrix gaps", locale),
+            "subtitle": t("Check CRM evidence", locale),
             "status": str(bitrix_gap_count),
-            "items": [{"label": "Count", "value": bitrix_gap_count}],
-            "links": [{"label": "Open Bitrix", "href": bitrix_href}],
+            "items": [{"label": t("Count", locale), "value": bitrix_gap_count}],
+            "links": [{"label": t("Open Bitrix", locale), "href": bitrix_href}],
         },
         {
             "type": "venue_card",
             "width": 3,
-            "title": "Data quality",
-            "subtitle": "Timestamp/source/attachment issues",
+            "title": t("Data quality", locale),
+            "subtitle": t("Timestamp/source/attachment issues", locale),
             "status": str(data_quality_count),
-            "items": [{"label": "Issues", "value": data_quality_count}],
-            "links": [{"label": "Open Evidence", "href": evidence_href}],
+            "items": [{"label": t("Issues", locale), "value": data_quality_count}],
+            "links": [{"label": t("Open Evidence", locale), "href": evidence_href}],
         },
     ]
     layout.extend(small_cards)
@@ -2607,22 +2802,23 @@ def _build_rop_overview_layout(
         {
             "type": "chart",
             "size": "M",
-            "title": "Email intake trend",
+            "title": t("Email intake trend", locale),
             "kind": "area",
             "series": workload_series
-            or [{"name": "Processed", "data": [period_emails]}],
-            "categories": workload_labels or [period_hint or "Selected period"],
+            or [{"name": t("Processed", locale), "data": [period_emails]}],
+            "categories": workload_labels
+            or [period_hint or t("Selected period", locale)],
             "height": 240,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
 
     outcome_labels = [
-        "New leads",
-        "Existing clients",
-        "Follow-ups",
-        "Needs review",
-        "High priority",
+        t("New leads", locale),
+        t("Existing clients", locale),
+        t("Follow-ups", locale),
+        t("Needs review", locale),
+        t("High priority", locale),
     ]
     outcome_values = [
         _int(new_leads),
@@ -2635,20 +2831,20 @@ def _build_rop_overview_layout(
         {
             "type": "chart",
             "size": "M",
-            "title": "Lead outcome mix",
+            "title": t("Lead outcome mix", locale),
             "kind": "bar",
-            "series": [{"name": "Leads", "data": outcome_values}],
+            "series": [{"name": t("Leads", locale), "data": outcome_values}],
             "categories": outcome_labels,
             "height": 240,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
 
     bitrix_labels = [
-        "Matched in Bitrix",
-        "Lost in Bitrix",
-        "Ambiguous / duplicate",
-        "Not reconciled",
+        t("Matched in Bitrix", locale),
+        t("Lost in Bitrix", locale),
+        t("Ambiguous / duplicate", locale),
+        t("Not reconciled", locale),
     ]
     bitrix_values = [
         _int(business_kpi.get("matched_in_bitrix", 0)),
@@ -2660,12 +2856,12 @@ def _build_rop_overview_layout(
         {
             "type": "chart",
             "size": "M",
-            "title": "Bitrix reconciliation",
+            "title": t("Bitrix reconciliation", locale),
             "kind": "bar",
-            "series": [{"name": "Leads", "data": bitrix_values}],
+            "series": [{"name": t("Leads", locale), "data": bitrix_values}],
             "categories": bitrix_labels,
             "height": 240,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
 
@@ -2675,44 +2871,56 @@ def _build_rop_overview_layout(
         source_data.get("series", []) if isinstance(source_data, dict) else []
     )
     source_categories = [
-        source_label_map.get(str(label), _humanize_label(str(label)))
+        source_label_map.get(str(label), _humanize_label(str(label), locale))
         for label in source_labels
     ]
     layout.append(
         {
             "type": "chart",
             "size": "M",
-            "title": "Source contribution",
+            "title": t("Source contribution", locale),
             "kind": "bar",
-            "series": [{"name": "Leads", "data": source_values or [0]}],
-            "categories": source_categories or ["No data"],
+            "series": [{"name": t("Leads", locale), "data": source_values or [0]}],
+            "categories": source_categories or [t("No data", locale)],
             "height": 240,
-            "empty_message": "No chart data for this period",
+            "empty_message": t("No chart data for this period", locale),
         }
     )
 
     queues = data.get("queues", {})
     if not isinstance(queues, dict):
         queues = {}
-    preview_rows = _collect_priority_queue_preview(queues, current_period)
+    preview_rows = _collect_priority_queue_preview(
+        queues,
+        current_period,
+        locale=locale,
+    )
     layout.append(
         {
             "type": "data_table",
             "size": "XL",
-            "title": "Priority review queue",
+            "title": t("Priority review queue", locale),
             "compact": True,
             "mobile": "md",
             "columns": [
-                {"key": "priority", "label": "Priority/status", "cell": "badge"},
-                {"key": "sender", "label": "Sender / source", "cell": "text"},
-                {"key": "subject", "label": "Subject", "cell": "text"},
-                {"key": "reason", "label": "Reason", "cell": "muted"},
+                {
+                    "key": "priority",
+                    "label": t("Priority/status", locale),
+                    "cell": "badge",
+                },
+                {
+                    "key": "sender",
+                    "label": t("Sender / source", locale),
+                    "cell": "text",
+                },
+                {"key": "subject", "label": t("Subject", locale), "cell": "text"},
+                {"key": "reason", "label": t("Reason", locale), "cell": "muted"},
                 {
                     "key": "next_step",
-                    "label": "Recommended next step",
+                    "label": t("Recommended next step", locale),
                     "cell": "muted",
                 },
-                {"key": "evidence", "label": "Open", "cell": "link"},
+                {"key": "evidence", "label": t("Open", locale), "cell": "link"},
             ],
             "rows": preview_rows,
         }
@@ -3302,6 +3510,38 @@ def _build_rop_ai_assist_layout(
                         "label": t("AI Assist unavailable", locale),
                         "value": t(
                             "No AI assist artifacts available for this run", locale
+                        ),
+                        "status": "empty",
+                    }
+                ],
+            }
+        )
+        return layout
+
+    no_ai_activity = (
+        ai_summary.get("request_count", 0) == 0
+        and ai_summary.get("result_count", 0) == 0
+        and ai_summary.get("used_count", 0) == 0
+        and ai_summary.get("degraded_count", 0) == 0
+        and ai_summary.get("low_confidence_count", 0) == 0
+        and ai_summary.get("invalid_output_count", 0) == 0
+        and ai_summary.get("provider_unavailable_count", 0) == 0
+        and ai_summary.get("module_contract_unavailable_count", 0) == 0
+        and ai_summary.get("blocked_count", 0) == 0
+        and not ai_events
+    )
+    if no_ai_activity:
+        layout.append(
+            {
+                "type": "state_grid",
+                "size": "XL",
+                "title": t("AI Assist", locale),
+                "items": [
+                    {
+                        "label": t("AI Assist not used", locale),
+                        "value": t(
+                            "Deterministic classification only for this run",
+                            locale,
                         ),
                         "status": "empty",
                     }

@@ -782,18 +782,20 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
     overview = next(
         block for block in layout if block.get("title") == "ROP Control Center"
     )
-    items = overview["primary_links"][:4]
+    items = overview["primary_links"]
 
     assert [item["label"] for item in items] == [
         "Today",
         "Last 7 days (current)",
         "Last 30 days",
         "All time",
+        "Open Queue",
+        "Open Bitrix",
     ]
-    assert (
-        next(item for item in items if item["label"] == "Last 7 days (current)")["href"]
-        == "/rop?tab=overview&period=7d"
-    )
+    assert items[0]["href"] == "/rop?tab=overview&period=today"
+    assert items[1]["href"] == "/rop?tab=overview&period=7d"
+    assert items[4]["href"] == "/rop?tab=queue&period=7d"
+    assert items[5]["href"] == "/rop?tab=bitrix&period=7d"
 
 
 def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
@@ -2061,6 +2063,82 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     client = _client(storage_dir)
     response = client.get("/rop", params={"lang": "ru"})
     assert response.status_code == 200
+    html = response.text
+    assert "Панель РОПа" in html
+    assert "ПИСЬМА ЗА ПЕРИОД" in html
+    assert "НОВЫЕ ЛИДЫ" in html
+    assert "Открыть очередь" in html
+    assert "Открыть Битрикс" in html
+    assert "Последняя выборка" in html
+    assert "Требуют проверки" in html
+    assert "Needs review" not in html
+    assert "beeui-language-switcher" in html
+    assert 'class="dropdown me-1 d-inline-block"' in html
+    assert "dropdown-menu dropdown-menu-end" in html
+    assert "Последние 7 дней" in html
+    assert "Сегодня" in html
+    assert "Вчера" in html
+    assert "Последние 30 дней" in html
+    assert "Последние 3 месяца" in html
+    assert "Последний год" in html
+    assert "Всё время" in html
+    assert 'btn btn-outline-primary btn-sm me-1">Сегодня' not in html
+    assert 'btn btn-outline-primary btn-sm me-1">Последние 30 дней' not in html
+
+
+def test_rop_overview_lang_ru_removes_primary_english_labels(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-ru-overview")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "ROP Control Center" not in html
+    assert "TODAY&#39;S EMAILS" not in html
+    assert "NEW LEADS" not in html
+    assert "Open Queue" not in html
+
+
+def test_rop_tabs_preserve_lang_and_period(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-tab-links")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&period=7d&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert (
+        "/rop?tab=threads&amp;period=7d&amp;lang=ru" in html
+        or "/rop?lang=ru&amp;period=7d&amp;tab=threads" in html
+    )
+    assert (
+        "/rop?tab=ai_assist&amp;period=7d&amp;lang=ru" in html
+        or "/rop?lang=ru&amp;period=7d&amp;tab=ai_assist" in html
+    )
+
+
+def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-overview-links")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&period=7d&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "/rop?tab=queue&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=bitrix&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=evidence&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;period=today&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;period=30d&amp;lang=ru" in html
+
+
+def test_rop_language_switcher_visible(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-switcher")
+    client = _client(storage_dir)
+    response = client.get("/rop?lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "RU" in html
+    assert "EN" in html
 
 
 def test_api_rop_dashboard_backward_compatible(tmp_path: Path) -> None:
@@ -2204,8 +2282,15 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     assert "Last 3 months" in html
     assert "Last year" in html
     assert "All time" in html
-    assert "Last 7 days (current)" not in html
+    assert 'href="/rop?tab=overview&amp;period=today"' in html
+    assert 'href="/rop?tab=overview&amp;period=yesterday"' in html
+    assert 'href="/rop?tab=overview&amp;period=7d"' in html
+    assert 'href="/rop?tab=overview&amp;period=30d"' in html
     assert 'href="/rop?tab=overview&amp;period=90d"' in html
+    assert 'href="/rop?tab=overview&amp;period=365d"' in html
+    assert 'href="/rop?tab=overview&amp;period=all"' in html
+    assert 'href="/rop?tab=queue&amp;period=7d"' in html
+    assert 'href="/rop?tab=bitrix&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 
 
@@ -2634,7 +2719,7 @@ class TestUi6It30:
         assert response.status_code == 200
         html = response.text
         assert "Цепочки" in html
-        assert "Сводка по цепочкам" in html
+        assert "Группы цепочек" in html
 
     def test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -2732,6 +2817,135 @@ class TestUi6It30:
         ai_summary = response.json()["data"]["ai_assist_summary"]
         assert ai_summary["used_count"] == 0
         assert ai_summary["degraded_count"] == 2
+
+    def test_threads_fallback_to_index_when_contexts_empty(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-thread-index-fallback")
+        (run_dir / "mail_thread_context.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-thread-index-fallback",
+                    "contexts": [],
+                    "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        api_response = client.get("/api/rop/dashboard")
+        assert api_response.status_code == 200
+        payload = api_response.json()["data"]
+        assert payload["threads"]
+        assert payload["threads"][0]["latest_subject"]
+        assert payload["threads"][0]["latest_sender"]
+
+        html_response = client.get("/rop?tab=threads")
+        assert html_response.status_code == 200
+        assert "Re: Order #123" in html_response.text
+        assert "client@workshop.kz" in html_response.text
+        assert "Linked by references" in html_response.text
+
+    def test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-requested")
+
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "enabled": True,
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "eligible_count": 5,
+                    },
+                    "requests": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "counters": {"decision_count": 0},
+                    "decisions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "ai_assist_degraded_count": 0,
+                    },
+                    "results": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        api_response = client.get("/api/rop/dashboard")
+        assert api_response.status_code == 200
+        assert api_response.json()["data"]["ai_assist_events"] == []
+
+        html_response = client.get("/rop?tab=ai_assist")
+        assert html_response.status_code == 200
+        assert "AI Assist not used" in html_response.text
+        assert "not_requested" not in html_response.text
+
+    def test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-used-ru")
+
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "enabled": True,
+                    "counters": {"eligible_count": 5, "ai_assist_requested_count": 0},
+                    "requests": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "counters": {"decision_count": 0},
+                    "decisions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "ai_assist_degraded_count": 0,
+                    },
+                    "results": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist&lang=ru")
+        assert response.status_code == 200
+        assert "AI ассистент не использовался" in response.text
 
     def test_new_it30_artifact_ids_allowlisted(self) -> None:
         from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
