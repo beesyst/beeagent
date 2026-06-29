@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.39.0...beeagent-v0.40.0) (2026-06-29)
+
+
+### Features
+
+* **ui:** expose ROP It30 evidence in BeeUI console ([#124](https://github.com/beesyst/beeagent/issues/124)) ([0551f7e](https://github.com/beesyst/beeagent/commit/0551f7eb8d66358f062ee3ec8d711b31b6fc094d))
+
 ## [0.39.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.38.0...beeagent-v0.39.0) (2026-06-29)
 
 
