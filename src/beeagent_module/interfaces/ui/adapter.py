@@ -225,6 +225,8 @@ class BeeAgentUiAdapter:
                         "attachments",
                         "evidence",
                         "bitrix",
+                        "threads",
+                        "ai_assist",
                     }
                 )
                 if tab not in allowed_tabs:

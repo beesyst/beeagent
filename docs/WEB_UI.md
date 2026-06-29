@@ -503,6 +503,80 @@ Web Console должен соблюдать:
 - missing/malformed artifacts handled gracefully and degrade into warnings/errors, not crashes;
 - cache-control требования должны соблюдаться на route layer, но их фактический enforcement нужно подтверждать отдельно.
 
+### UI-6 — It30 evidence (latest-N, threads, AI assist)
+
+UI-6 добавляет read-only операторские секции на основе It30 артефактов:
+
+- **Latest/N selection**: `latest_selection` в read-model показывает количество выбранных писем, стратегию, источники;
+- **Thread summary**: `thread_summary` и `threads[]` показывают цепочки писем и thread-контекст;
+- **AI assist**: `ai_assist_summary` и `ai_assist_events[]` показывают evidence AI assist и статус каждого события;
+- **RU labels**: через `?lang=ru` переводятся все новые UI-6 секции;
+- **Det recommendations**: обогащены `_build_it30_recommendations()` — review threaded conversations, AI degraded, low confidence, module contract unavailable;
+- **New tabs**: `/rop?tab=threads` и `/rop?tab=ai_assist`.
+
+### UI-6 — Артефакты It30 в allowlist
+
+Добавлены в `ARTIFACT_ALLOWLIST`:
+
+| ID | Relative path |
+|---|---|
+| `mailbox_selection_json` | `mailbox_selection.json` |
+| `mail_thread_index_json` | `mail_thread_index.json` |
+| `mail_thread_context_json` | `mail_thread_context.json` |
+| `rop_ai_assist_requests_json` | `rop_ai_assist_requests.json` |
+| `rop_ai_assist_decisions_json` | `rop_ai_assist_decisions.json` |
+| `rop_ai_assist_results_json` | `rop_ai_assist_results.json` |
+
+### UI-6 — Новые поля `/api/rop/dashboard`
+
+```json
+{
+  "latest_selection": {
+    "selected_count": 20,
+    "strategy": "latest_n",
+    "source_count": 1,
+    "sources": [],
+    "newest_message_at": "...",
+    "oldest_message_at": "...",
+    "warnings": [],
+    "evidence_artifact_id": "mailbox_selection_json"
+  },
+  "thread_summary": {
+    "thread_count": 7,
+    "events_with_thread_context": 5,
+    "reply_or_forward_count": 3,
+    "linked_by_references_count": 2,
+    "linked_by_subject_fallback_count": 0,
+    "source_client_scoped_fallback_count": 0,
+    "warnings": [],
+    "evidence_artifact_ids": []
+  },
+  "threads": [],
+  "ai_assist_summary": {
+    "evidence_available": true,
+    "eligible_count": 10,
+    "request_count": 3,
+    "ok_count": 2,
+    "used_count": 2,
+    "degraded_count": 1,
+    "low_confidence_count": 1,
+    "status_counts": {}
+  },
+  "ai_assist_events": []
+}
+```
+
+Existing UI-5 поля сохраняются.
+
+### UI-6 — HTML route `/rop`
+
+Добавлены вкладки:
+
+- `threads` — сводка цепочек и таблица групп;
+- `ai_assist` — сводка AI assist и таблица событий.
+
+Поддерживается `?lang=ru` для русских меток во всех новых секциях.
+
 Sanitization rules:
 
 - JSON responses strip `raw_eml`, `raw_message`, `attachment_content`, `content`, `content_bytes`, `payload_bytes`;

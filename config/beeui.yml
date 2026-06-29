@@ -72,6 +72,12 @@ pages:
         - id: queue
           title: Queue
           href: /rop?tab=queue
+        - id: threads
+          title: Threads
+          href: /rop?tab=threads
+        - id: ai_assist
+          title: AI Assist
+          href: /rop?tab=ai_assist
         - id: sources
           title: Sources
           href: /rop?tab=sources

@@ -1776,7 +1776,603 @@ What was added:
 - Tests: 30+ new tests for locale, dashboard, Tabler URL tabs, backward-compatible API, artifact split;
 - `beeagent_module.interfaces.ui/templates/*.html` added to `pyproject.toml` package-data.
 
-### Итерация UI-6 — Remove legacy BeeAgent web after BeeUI MVP parity
+### Итерация UI-6 — Expose latest-N, threads, AI assist, RU labels, operator recommendations
+
+**Статус:** DONE
+
+#### Goal
+
+Сделать результаты BeeAgent It30 видимыми и полезными в BeeUI-backed ROP console: показать latest-N/source selection evidence, thread context, AI assist evidence, RU labels и deterministic operator recommendations в `/rop` и `/api/rop/dashboard`.
+
+#### Почему это нужно
+
+BeeAgent It30 уже добавила runtime/artifact-level слой для ROP MVP:
+
+```text
+mailbox/latest-N selection
+→ mailbox_selection.json
+→ mail_thread_index.json
+→ mail_thread_context.json
+→ bounded thread_context handoff
+→ classified_events.json with optional ROP business fields
+→ bounded AI assist evidence
+→ public ai_assist_merge module boundary
+```
+
+Но если эти данные остаются только в `storage/runs/<run_id>/...`, РОП не получает продуктовой пользы:
+
+- непонятно, какие письма реально попали в последнюю пачку;
+- не видно, где письмо является частью цепочки;
+- не видно, где AI assist помог, деградировал или был пропущен;
+- не видно, какие события требуют ручной проверки именно из-за thread/AI/fallback context;
+- русскоязычный оператор видит неполный набор RU labels;
+- evidence есть в artifacts, но не собрано в operator-facing view.
+
+UI-6 превращает It30 из backend evidence layer в operator-visible MVP increment.
+
+Главное правило сохраняется:
+
+```text
+BeeUI renders.
+BeeAgent decides/orchestrates.
+beeagent-rop classifies.
+```
+
+Эта итерация реализуется в `beeagent`, не в `beeui`, потому что latest-N, thread context, AI assist interpretation and ROP operator recommendations являются product-specific BeeAgent ROP read-model. BeeUI должен только рендерить generic layout blocks.
+
+#### Depends on
+
+- UI-5 — Rich ROP dashboard parity + operator intelligence v1;
+- BeeAgent It30 — latest-N fix + thread artifacts + AI providers/execution;
+- existing BeeUI adapter-backed custom page support;
+- existing BeeUI chart/data table/layout blocks where useful;
+- existing artifacts:
+  - `mailbox_selection.json`;
+  - `mail_thread_index.json`;
+  - `mail_thread_context.json`;
+  - `classified_events.json`;
+  - `rop_ai_assist_requests.json`;
+  - `rop_ai_assist_decisions.json`;
+  - `rop_ai_assist_results.json`;
+  - `operator_summary.json`;
+  - `source_diagnostics.json`;
+  - `intake_metadata.json`;
+  - `attachment_extraction.json`;
+  - `rop_review_table.tsv`;
+  - `rop_current_state.json`;
+  - `rop_dashboard.json`.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+- расширяется HTML/API exposure для artifact-derived данных;
+- добавляются новые allowlisted artifact IDs в UI artifact browser;
+- UI читает AI assist artifacts, thread artifacts and mailbox selection artifacts;
+- меняется ROP dashboard read-model and API payload;
+- значения из email/thread/AI artifacts считаются untrusted input;
+- нужно подтвердить отсутствие raw `.eml`, raw attachment content, secrets, provider tokens and AI secret leakage.
+
+SCA не требуется, если `pyproject.toml` / `uv.lock` не меняются.
+
+#### Scope
+
+**Включено:**
+
+- расширить BeeAgent UI artifact allowlist безопасными It30 artifacts:
+
+```text
+mailbox_selection_json          -> mailbox_selection.json
+mail_thread_index_json          -> mail_thread_index.json
+mail_thread_context_json        -> mail_thread_context.json
+rop_ai_assist_requests_json     -> rop_ai_assist_requests.json
+rop_ai_assist_decisions_json    -> rop_ai_assist_decisions.json
+rop_ai_assist_results_json      -> rop_ai_assist_results.json
+```
+
+- убедиться, что artifact preview остаётся bounded/redacted:
+  - no raw `.eml`;
+  - no raw attachment content;
+  - no provider credentials;
+  - no env values;
+  - no secret-like fields;
+  - no arbitrary storage browsing.
+
+- расширить ROP dashboard read-model в:
+
+```text
+src/beeagent_module/interfaces/ui/read_model.py
+```
+
+- расширить `BeeAgentUiAdapter.get_page("rop_dashboard", query)` / related adapter path так, чтобы `/rop` получал новые sections через existing BeeUI `layout[]`, а не через BeeAgent-owned templates.
+
+- добавить latest-N/source selection summary:
+
+```text
+latest_selection:
+  run_id
+  strategy
+  selected_count
+  source_count
+  sources[]
+  newest_message_at
+  oldest_message_at
+  warnings[]
+  evidence_artifact_id
+```
+
+- добавить thread summary:
+
+```text
+thread_summary:
+  thread_count
+  events_with_thread_context
+  reply_or_forward_count
+  linked_by_references_count
+  linked_by_subject_fallback_count
+  source_client_scoped_fallback_count
+  warnings[]
+  evidence_artifact_ids[]
+```
+
+- добавить bounded thread table / thread groups, максимум 50 строк:
+
+```text
+threads[]:
+  thread_id
+  event_count
+  source_id
+  client_id
+  latest_subject
+  latest_sender
+  previous_event_ids_count
+  has_reply_or_forward
+  previous_case_type
+  previous_case_subtype
+  confidence
+  review_reason
+```
+
+- добавить AI assist summary:
+
+```text
+ai_assist_summary:
+  evidence_available
+  enabled_if_known
+  eligible_count
+  request_count
+  decision_count
+  result_count
+  ok_count
+  used_count
+  low_confidence_count
+  invalid_output_count
+  provider_unavailable_count
+  module_contract_unavailable_count
+  blocked_count
+  degraded_count
+  status_counts
+  warnings[]
+  evidence_artifact_ids[]
+```
+
+- добавить AI assist event table, максимум 50 строк:
+
+```text
+ai_assist_events[]:
+  event_id
+  source_id
+  sender
+  subject
+  deterministic_case_type
+  ai_status
+  ai_used
+  ai_confidence
+  final_case_type
+  final_priority
+  reason_code
+  review_reason
+```
+
+- расширить deterministic recommendations.
+
+Recommendations должны строиться без LLM и без runtime execution, только из existing artifacts:
+
+```text
+if latest_selection.selected_count == 0:
+  Show empty/latest-N recommendation.
+
+if thread_summary.events_with_thread_context > 0:
+  Review threaded conversations first.
+
+if ai_assist_summary.degraded_count > 0:
+  Review AI degraded events.
+
+if ai_assist_summary.module_contract_unavailable_count > 0:
+  Check ai_assist_merge module contract.
+
+if ai_assist_summary.low_confidence_count > 0:
+  Review low-confidence AI assist events manually.
+
+if high_priority_count > 0:
+  Review high-priority events.
+
+if fallback_count > 0:
+  Review fallback classifications.
+
+if degraded_source_count > 0:
+  Check degraded sources.
+
+if review_tsv_available:
+  Open/export review TSV for human review.
+```
+
+- расширить attention/operator queue так, чтобы `review_reason` мог учитывать:
+  - high priority;
+  - fallback classification;
+  - AI degraded;
+  - AI low confidence;
+  - AI merge unavailable;
+  - thread context present;
+  - missing classification;
+  - source degraded;
+  - attachment refused/blocked.
+
+- добавить RU labels для новых UI sections через existing locale helper:
+
+```text
+Latest selection
+Threads
+AI Assist
+AI status
+Selected emails
+Threaded conversations
+Review AI degraded events
+Review threaded conversations
+Module contract unavailable
+Low confidence
+Evidence
+```
+
+- сохранить `?lang=ru` behavior:
+  - invalid lang falls back safely;
+  - `lang` сохраняется в `/rop` tab/run links where practical;
+  - API payload remains language-neutral where practical, or returns labels only in presentation/layout metadata.
+
+- обновить `config/beeui.yml` tabs for `/rop`.
+
+Expected tabs:
+
+```text
+overview
+queue
+threads
+ai_assist
+sources
+attachments
+evidence
+bitrix
+```
+
+`bitrix` остаётся read-only/reserved/evidence-only в рамках этой итерации.
+
+- расширить `/api/rop/dashboard` payload, сохранив backward-compatible existing fields.
+
+New fields:
+
+```text
+latest_selection
+thread_summary
+threads
+ai_assist_summary
+ai_assist_events
+recommendations
+attention_events
+evidence_links
+warnings
+```
+
+- добавить evidence links for It30 artifacts:
+
+```text
+mailbox_selection_json
+mail_thread_index_json
+mail_thread_context_json
+rop_ai_assist_requests_json
+rop_ai_assist_decisions_json
+rop_ai_assist_results_json
+```
+
+- graceful handling:
+  - missing It30 artifacts → visible warning / empty section;
+  - malformed It30 artifact → warning, not crash;
+  - old runs before It30 → dashboard still renders;
+  - AI assist disabled → explicit empty/disabled state;
+  - AI assist artifacts missing → explicit unavailable state;
+  - no threads → empty state;
+  - no latest-N selection artifact → warning, not crash.
+
+- preserve read-only/security boundary:
+  - no GET mutation;
+  - no POST routes;
+  - no web-triggered `rop run`;
+  - no mailbox calls from UI;
+  - no CRM/Bitrix calls from UI;
+  - no module/capability execution from UI;
+  - no AI provider calls from UI;
+  - no raw `.eml`;
+  - no raw attachment content;
+  - no arbitrary storage browsing;
+  - no secrets in HTML/API/logs.
+
+- обновить tests:
+  - latest selection summary;
+  - thread summary;
+  - thread groups/table;
+  - AI assist summary;
+  - AI assist events;
+  - operator recommendations;
+  - RU labels;
+  - `/rop?lang=ru`;
+  - `/rop?tab=threads`;
+  - `/rop?tab=ai_assist`;
+  - `/api/rop/dashboard` payload shape;
+  - old run without It30 artifacts;
+  - missing/malformed It30 artifacts;
+  - artifact allowlist access for new artifact IDs;
+  - non-allowlisted artifact rejection still works;
+  - no GET mutation;
+  - no raw `.eml` / raw attachment content / secrets in HTML/API.
+
+- обновить docs:
+  - `docs/product/ui_roadmap.md`;
+  - `docs/WEB_UI.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`, если меняется usage/smoke flow.
+
+**Не включено:**
+
+- изменения в `beeagent-rop`;
+- новые AI provider calls from UI;
+- изменение runtime AI assist execution logic;
+- изменение `run_rop_batch_case(...)` behavior;
+- изменение It30 artifact generation contract, кроме тестовых fixtures;
+- web-triggered `rop run`;
+- POST/write actions;
+- auth/RBAC;
+- CRM/Bitrix write-back;
+- mailbox delete/archive/reply/mark-as-read;
+- attachment download or raw attachment viewer;
+- OCR/deep attachment parsing;
+- stable API v1 freeze;
+- separate React/Reflex frontend;
+- new BeeUI features, unless a blocking generic BeeUI renderer bug is discovered;
+- dependency changes.
+
+#### Deliverable
+
+BeeUI-backed `/rop` becomes the operator-facing surface for It30 evidence.
+
+Operator can answer from one screen:
+
+```text
+1. Какие последние письма попали в обработку?
+2. Из каких источников они пришли?
+3. Какие письма связаны в цепочки?
+4. Где thread context мог повлиять на классификацию?
+5. Где AI assist помог?
+6. Где AI assist degraded / low confidence / unavailable?
+7. Какие события РОП должен проверить первыми?
+8. Какие artifacts подтверждают вывод?
+```
+
+`/api/rop/dashboard` returns the same enriched read-only model.
+
+No new runtime artifacts are required. This iteration reads existing artifacts and exposes them safely through BeeAgent UI read-model and BeeUI rendering.
+
+#### Expected artifacts read
+
+```text
+storage/runs/<run_id>/mailbox_selection.json
+storage/runs/<run_id>/mail_thread_index.json
+storage/runs/<run_id>/mail_thread_context.json
+storage/runs/<run_id>/rop_ai_assist_requests.json
+storage/runs/<run_id>/rop_ai_assist_decisions.json
+storage/runs/<run_id>/rop_ai_assist_results.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/source_diagnostics.json
+storage/runs/<run_id>/intake_metadata.json
+storage/runs/<run_id>/attachment_extraction.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_dashboard.json
+```
+
+#### Expected `/api/rop/dashboard` payload extension
+
+```json
+{
+  "ok": true,
+  "read_only": true,
+  "data": {
+    "selected_run_id": "run-id",
+    "latest_selection": {
+      "selected_count": 20,
+      "strategy": "latest_n",
+      "source_count": 1,
+      "sources": []
+    },
+    "thread_summary": {
+      "thread_count": 7,
+      "events_with_thread_context": 5,
+      "reply_or_forward_count": 3
+    },
+    "threads": [],
+    "ai_assist_summary": {
+      "evidence_available": true,
+      "eligible_count": 10,
+      "ok_count": 6,
+      "used_count": 4,
+      "degraded_count": 2,
+      "status_counts": {}
+    },
+    "ai_assist_events": [],
+    "recommendations": [],
+    "attention_events": [],
+    "evidence_links": [],
+    "warnings": []
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+Existing UI-5 fields must remain available where practical:
+
+```text
+kpis
+business_kpi
+series
+funnel
+source_health
+classification_distribution
+attachment_summary
+run_id
+summary
+sources
+classified_count
+case_type_counts
+priority_counts
+fallback_count
+```
+
+#### Expected HTML behavior
+
+`GET /rop` renders BeeUI adapter-backed ROP dashboard with tabs:
+
+```text
+Overview
+Queue
+Threads
+AI Assist
+Sources
+Attachments
+Evidence
+Bitrix
+```
+
+`GET /rop?lang=ru` renders Russian labels for all new UI-6 sections.
+
+`GET /rop?tab=threads` shows thread summary/table.
+
+`GET /rop?tab=ai_assist` shows AI assist summary/table.
+
+`GET /rop?tab=evidence` includes It30 artifact links.
+
+All sections must render from BeeAgent adapter/read-model/layout and BeeUI generic blocks. BeeAgent must not add product-owned Jinja templates for this iteration.
+
+#### Checks
+
+- `uv run pytest -q`;
+
+- targeted BeeUI/ROP dashboard tests;
+
+- targeted artifact allowlist tests;
+
+- targeted locale tests;
+
+- `uv run python config/start.py routes`;
+
+- route/API smoke:
+  - `/`;
+  - `/rop`;
+  - `/rop?lang=ru`;
+  - `/rop?tab=threads`;
+  - `/rop?tab=ai_assist`;
+  - `/rop?tab=evidence`;
+  - `/api/rop/dashboard`;
+  - `/api/rop/dashboard?run_id=<run_id>`;
+  - `/runs/<run_id>/artifacts/mailbox_selection_json`;
+  - `/runs/<run_id>/artifacts/mail_thread_index_json`;
+  - `/runs/<run_id>/artifacts/mail_thread_context_json`;
+  - `/runs/<run_id>/artifacts/rop_ai_assist_results_json`;
+
+- fixture scenarios:
+  - full It30 run;
+  - old run without It30 artifacts;
+  - AI assist disabled;
+  - AI assist degraded;
+  - module contract unavailable;
+  - low confidence AI result;
+  - threaded messages;
+  - no thread context;
+  - missing/malformed It30 artifacts.
+
+Security/static checks:
+
+```bash
+rg -n "raw_eml|raw_message|attachment_content|content_bytes|payload_bytes|message/rfc822" src/beeagent_module/interfaces/ui tests || true
+rg -n "ROP_AI_API_KEY|OPENAI_API_KEY|password|secret|token" storage/runs storage/interfaces logs || true
+rg -n "beeagent_rop\.(domain|services|cases)" src/beeagent_module || true
+rg -n "POST|delete|archive|mark-as-read|reply|write-back" src/beeagent_module/interfaces/ui tests || true
+git diff -- pyproject.toml uv.lock
+```
+
+SAST mindset review required.
+
+SCA is not required unless dependencies change.
+
+DAST-style route misuse checks required for artifact route IDs and tab/lang/run_id query params.
+
+IAST is not required.
+
+Fuzzing is not required; malformed JSON fixture tests are enough.
+
+#### DoD
+
+- `/rop` exposes latest-N/source selection evidence;
+- `/rop` exposes thread summary and thread groups/table;
+- `/rop` exposes AI assist summary and event-level AI status;
+- `/rop?lang=ru` renders RU labels for all new UI-6 sections;
+- `/rop?tab=threads` and `/rop?tab=ai_assist` work;
+- `/api/rop/dashboard` exposes new read-only fields while preserving existing UI-5 fields where practical;
+- It30 artifact links are visible in evidence section;
+- new It30 artifacts are allowlisted safely;
+- old runs without It30 artifacts still render;
+- missing/malformed It30 artifacts produce warnings, not crashes;
+- dashboard remains read-only;
+- UI does not call mailbox, CRM, Bitrix, module execution, capability execution or AI providers;
+- no raw `.eml`, raw attachment content, provider secrets or env values appear in HTML/API/logs/artifacts;
+- no BeeAgent-owned Jinja templates are added for `/rop`;
+- no changes to `beeagent-rop`;
+- no dependency changes unless explicitly justified;
+- `pyproject.toml.version` not changed;
+- tests and docs updated.
+
+#### Status notes (final — 2026-06-29)
+
+- `build_rop_dashboard_read_model` extended with `_build_latest_selection`, `_build_thread_summary`, `_build_threads`, `_build_ai_assist_summary`, `_build_ai_assist_events`, `_build_it30_recommendations`;
+- New safe artifact IDs already present in `ARTIFACT_ALLOWLIST` (UI-4/UI-5 baseline): `mailbox_selection_json`, `mail_thread_index_json`, `mail_thread_context_json`, `rop_ai_assist_requests_json`, `rop_ai_assist_decisions_json`, `rop_ai_assist_results_json`;
+- `/rop` tabs extended with `threads` and `ai_assist` in `config/beeui.yml`, `adapter.py` allowed_tabs, and `build_rop_page_layout` dispatch;
+- `/api/rop/dashboard` extended with `latest_selection`, `thread_summary`, `threads`, `ai_assist_summary`, `ai_assist_events` — all present in result dict and populated via helpers;
+- RU labels added in `locale.py` for all new UI-6 sections (42 new EN labels + 42 RU translations);
+- `_build_rop_threads_layout` and `_build_rop_ai_assist_layout` render BeeUI `kpi_grid`, `state_grid`, `status_table` blocks;
+- Old runs without It30 artifacts render warnings/empty states — not crashes;
+- Malformed It30 artifacts produce warnings (`_read_json` returns `None`, warnings added, empty sections render);
+- Tests: 14 new tests in `TestUi6It30` class covering full It30 fixture, API fields, tab routes, RU locale, old runs, malformed artifacts, allowlist, no GET mutation, no secrets/raw content;
+- Route/API smoke: `uv run python config/start.py routes` passes, 30 routes registered;
+- Full `pytest -q`: 572 passed (was 558 after UI-5);
+- No secrets/raw content exposure confirmed by test `test_no_secrets_in_html_it30` and `test_no_raw_eml_in_it30_html`;
+- `pyproject.toml.version` unchanged;
+- `beeagent-rop` not changed;
+- `uv.lock` unchanged.
+
+### Итерация UI-7 — Remove legacy BeeAgent web after BeeUI MVP parity
 
 **Статус:** PLANNED
 
@@ -1947,7 +2543,7 @@ src/beeagent_module/
 
 ## Этап 2 — ROP operator dashboards on BeeUI
 
-### Итерация UI-7 — Attachment-aware ROP dashboard
+### Итерация UI-8 — Attachment-aware ROP dashboard
 
 **Статус:** PLANNED
 
@@ -2040,7 +2636,7 @@ src/beeagent_module/
 - UI remains artifact-only/read-only;
 - source artifacts remain traceable.
 
-### Итерация UI-8 — ROP Bitrix reconciliation dashboard
+### Итерация UI-9 — ROP Bitrix reconciliation dashboard
 
 **Статус:** PLANNED
 
@@ -2117,7 +2713,7 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 
 ## Этап 3 — Stable backend API
 
-### Итерация UI-9 — Stable BeeAgent Web API contract v1
+### Итерация UI-10 — Stable BeeAgent Web API contract v1
 
 **Статус:** PLANNED
 
@@ -2191,7 +2787,7 @@ Future frontend or standalone BeeUI can consume BeeAgent API without reading fil
 
 ## Этап 4 — Auth and customer-safe access
 
-### Итерация UI-10 — Web auth boundary v0
+### Итерация UI-11 — Web auth boundary v0
 
 **Статус:** PLANNED
 
@@ -2269,7 +2865,7 @@ Web Console can require auth before showing runs/dashboard/API.
 
 ## Этап 5 — Operator Control Panel
 
-### Итерация UI-11 — Operator Web Control Panel v0
+### Итерация UI-12 — Operator Web Control Panel v0
 
 **Статус:** PLANNED
 
@@ -2368,7 +2964,7 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 
 ## Этап 6 — Admin/support surfaces
 
-### Итерация UI-12 — Support/Admin diagnostics v0
+### Итерация UI-13 — Support/Admin diagnostics v0
 
 **Статус:** PLANNED
 
@@ -2429,7 +3025,7 @@ Internal support can inspect diagnostics and audit trail without browsing `stora
 
 ## Этап 7 — Deferred product/admin platform
 
-### Итерация UI-13 — SQLAdmin evaluation for DB-backed admin only
+### Итерация UI-14 — SQLAdmin evaluation for DB-backed admin only
 
 **Статус:** DEFERRED
 

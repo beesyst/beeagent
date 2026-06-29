@@ -499,8 +499,6 @@ class TestRopTabs:
 
 
 class TestRopPageLayout:
-    """Проверка корректности вёрстки ROP-страницы: subtitle, tabs, card."""
-
     def _rop_html(self, tmp_path: Path) -> str:
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-subtitle")
@@ -2354,3 +2352,461 @@ def test_rop_overview_no_detailed_metrics_separate_card() -> None:
     )
     assert "Business metrics" not in titles
     assert "Overview" not in titles, "Old Overview block must not exist"
+
+
+class TestUi6It30:
+    def _write_full_it30_run(self, storage_dir: Path, run_id: str) -> Path:
+        run_dir = _write_rich_rop_run(storage_dir, run_id)
+
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        for item in classified:
+            if item.get("event_id") in ("evt-001", "evt-002"):
+                item["thread_id"] = "thr-001"
+            if item.get("event_id") == "evt-005":
+                item["thread_id"] = "thr-002"
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        mailbox_selection = {
+            "run_id": run_id,
+            "strategy": "latest_n_by_internaldate_desc",
+            "sources": [
+                {
+                    "source_id": "hotline_mailbox",
+                    "source_display_name": "Welding Hotline mailbox",
+                    "selected_count": 5,
+                    "available_count": 12,
+                    "messages": [
+                        {
+                            "source_message_id": "m-001",
+                            "internal_date": "2026-06-28T12:00:00+00:00",
+                            "message_id": "<m-001@example.com>",
+                            "subject": "Welding equipment inquiry",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-002",
+                            "internal_date": "2026-06-27T10:30:00+00:00",
+                            "message_id": "<m-002@example.com>",
+                            "subject": "Re: Welding equipment inquiry",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-003",
+                            "internal_date": "2026-06-26T09:00:00+00:00",
+                            "message_id": "<m-003@example.com>",
+                            "subject": "Pricing request",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-004",
+                            "internal_date": "2026-06-25T08:00:00+00:00",
+                            "message_id": "<m-004@example.com>",
+                            "subject": "Failure report",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-005",
+                            "internal_date": "2026-06-25T07:30:00+00:00",
+                            "message_id": "<m-005@example.com>",
+                            "subject": "Re: Failure report",
+                            "selected": True,
+                        },
+                    ],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mailbox_selection.json").write_text(
+            json.dumps(mailbox_selection), encoding="utf-8"
+        )
+
+        thread_index = {
+            "run_id": run_id,
+            "threads": [
+                {
+                    "thread_id": "thr-001",
+                    "event_ids": ["evt-001", "evt-002"],
+                    "message_ids": ["<m-001@example.com>", "<m-002@example.com>"],
+                    "evidence": {
+                        "message_id_link": False,
+                        "references_link": True,
+                        "subject_fallback": False,
+                    },
+                },
+                {
+                    "thread_id": "thr-002",
+                    "event_ids": ["evt-003", "evt-005"],
+                    "message_ids": ["<m-003@example.com>", "<m-005@example.com>"],
+                    "evidence": {
+                        "message_id_link": False,
+                        "references_link": False,
+                        "subject_fallback": True,
+                    },
+                },
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mail_thread_index.json").write_text(
+            json.dumps(thread_index), encoding="utf-8"
+        )
+
+        thread_context = {
+            "run_id": run_id,
+            "contexts": [
+                {
+                    "event_id": "evt-002",
+                    "thread_id": "thr-001",
+                    "reply_or_forward": True,
+                    "previous_event_ids": ["evt-001"],
+                    "source_id": "hotline_mailbox",
+                    "client_id": "welding",
+                    "thread_context_confidence": 0.65,
+                    "reason_codes": ["references_chain", "reply_or_forward"],
+                },
+                {
+                    "event_id": "evt-005",
+                    "thread_id": "thr-002",
+                    "reply_or_forward": False,
+                    "previous_event_ids": ["evt-003"],
+                    "source_id": "hotline_mailbox",
+                    "client_id": "welding",
+                    "thread_context_confidence": 0.4,
+                    "reason_codes": ["subject_match"],
+                },
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mail_thread_context.json").write_text(
+            json.dumps(thread_context), encoding="utf-8"
+        )
+
+        ai_requests = {
+            "run_id": run_id,
+            "enabled": True,
+            "counters": {
+                "ai_assist_requested_count": 3,
+                "ai_assist_used_count": 2,
+                "eligible_count": 5,
+            },
+            "requests": [
+                {"event_id": "evt-001", "requested": True},
+                {"event_id": "evt-003", "requested": True},
+                {"event_id": "evt-005", "requested": True},
+            ],
+        }
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(ai_requests), encoding="utf-8"
+        )
+
+        ai_decisions = {
+            "run_id": run_id,
+            "counters": {"decision_count": 3},
+            "decisions": [
+                {"event_id": "evt-001", "status": "ok"},
+                {"event_id": "evt-003", "status": "low_confidence"},
+                {"event_id": "evt-005", "status": "ok"},
+            ],
+        }
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(ai_decisions), encoding="utf-8"
+        )
+
+        ai_results = {
+            "run_id": run_id,
+            "counters": {
+                "ai_assist_requested_count": 3,
+                "ai_assist_used_count": 2,
+                "ai_assist_low_confidence_count": 1,
+                "ai_assist_invalid_output_count": 0,
+                "ai_assist_degraded_count": 1,
+            },
+            "results": [
+                {
+                    "event_id": "evt-001",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": True,
+                    "ai_confidence": 0.92,
+                    "final_case_type": "new_lead",
+                    "final_priority": "high",
+                },
+                {
+                    "event_id": "evt-003",
+                    "ai_assist_status": "low_confidence",
+                    "ai_assist_used": False,
+                    "ai_confidence": 0.35,
+                    "final_case_type": "new_lead",
+                    "final_priority": "medium",
+                },
+                {
+                    "event_id": "evt-005",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": True,
+                    "ai_confidence": 0.95,
+                    "final_case_type": "new_lead",
+                    "final_priority": "high",
+                },
+            ],
+        }
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(ai_results), encoding="utf-8"
+        )
+
+        return run_dir
+
+    def test_full_it30_run_renders_latest_selection(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-it30-full")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        assert "Latest selection" in response.text
+
+    def test_full_it30_api_includes_new_fields(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-it30-api")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        payload = data["data"]
+        assert "latest_selection" in payload
+        assert "thread_summary" in payload
+        assert "threads" in payload
+        assert "ai_assist_summary" in payload
+        assert "ai_assist_events" in payload
+
+        ls = payload["latest_selection"]
+        assert ls["selected_count"] == 5
+        assert ls["source_count"] == 1
+        assert ls["sources"][0]["available_count"] == 12
+        assert ls["newest_message_at"] == "2026-06-28T12:00:00+00:00"
+        assert ls["strategy"] == "latest_n_by_internaldate_desc"
+
+        ts = payload["thread_summary"]
+        assert ts["thread_count"] == 2
+        assert ts["events_with_thread_context"] == 2
+        assert ts["reply_or_forward_count"] == 1
+
+        ai = payload["ai_assist_summary"]
+        assert ai["evidence_available"] is True
+        assert ai["request_count"] == 3
+        assert ai["result_count"] == 3
+        assert ai["used_count"] == 2
+        assert ai["low_confidence_count"] == 1
+        assert payload["threads"][0]["event_count"] > 0
+        assert payload["threads"][0]["latest_subject"]
+        assert any(
+            item["ai_status"] == "low_confidence"
+            for item in payload["ai_assist_events"]
+        )
+        low_conf_event = next(
+            item
+            for item in payload["ai_assist_events"]
+            if item["ai_status"] == "low_confidence"
+        )
+        assert low_conf_event["sender"] == "partner@supply.kz"
+        assert low_conf_event["subject"] == "Price list"
+
+    def test_rop_tab_threads_returns_200(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-tab-threads")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=threads")
+        assert response.status_code == 200
+
+    def test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-tab-ai")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist")
+        assert response.status_code == 200
+
+    def test_rop_lang_ru_includes_russian_labels(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-lang-ru")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=threads&lang=ru")
+        assert response.status_code == 200
+        html = response.text
+        assert "Цепочки" in html
+        assert "Сводка по цепочкам" in html
+
+    def test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-lang-ru-ai")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist&lang=ru")
+        assert response.status_code == 200
+        html = response.text
+        assert "AI ассистент" in html
+        assert "Сводка AI ассистента" in html
+
+    def test_old_run_without_it30_renders(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-old-no-it30")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+
+    def test_old_run_without_it30_api_has_empty_warnings(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-old-api")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert "latest_selection" in payload
+        assert payload["latest_selection"]["selected_count"] == 0
+        assert "thread_summary" in payload
+        assert payload["thread_summary"]["thread_count"] == 0
+        assert "ai_assist_summary" in payload
+        assert payload["ai_assist_summary"]["evidence_available"] is False
+
+    def test_malformed_it30_artifacts_render_warnings(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-malformed-it30")
+        (run_dir / "mailbox_selection.json").write_text(
+            "{invalid json}", encoding="utf-8"
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            "{bad data}", encoding="utf-8"
+        )
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+
+    def test_malformed_it30_api_still_returns(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-malformed-api")
+        (run_dir / "mail_thread_context.json").write_text("{invalid}", encoding="utf-8")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert "thread_summary" in payload
+        assert "thread_summary" in payload
+
+    def test_ai_assist_summary_preserves_runtime_zero_and_degraded_count(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-zero-used")
+
+        ai_results = {
+            "run_id": "run-ai-zero-used",
+            "counters": {
+                "ai_assist_requested_count": 2,
+                "ai_assist_used_count": 0,
+                "ai_assist_degraded_count": 2,
+            },
+            "results": [
+                {
+                    "event_id": "evt-001",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": False,
+                    "ai_confidence": 0.92,
+                },
+                {
+                    "event_id": "evt-003",
+                    "ai_assist_status": "provider_unavailable",
+                    "ai_assist_used": False,
+                    "ai_confidence": None,
+                },
+            ],
+        }
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(ai_results),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+
+        assert response.status_code == 200
+        ai_summary = response.json()["data"]["ai_assist_summary"]
+        assert ai_summary["used_count"] == 0
+        assert ai_summary["degraded_count"] == 2
+
+    def test_new_it30_artifact_ids_allowlisted(self) -> None:
+        from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
+
+        for aid in (
+            "mailbox_selection_json",
+            "mail_thread_index_json",
+            "mail_thread_context_json",
+            "rop_ai_assist_requests_json",
+            "rop_ai_assist_decisions_json",
+            "rop_ai_assist_results_json",
+        ):
+            assert is_artifact_id_allowed(aid), f"{aid} should be allowlisted"
+
+    def test_non_allowlisted_still_rejected(self) -> None:
+        from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
+
+        assert is_artifact_id_allowed("raw_eml") is False
+        assert is_artifact_id_allowed("attachment_content") is False
+
+    def test_get_routes_no_mutation_it30(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-no-mutate-it30")
+        client = _client(storage_dir)
+
+        before = {
+            path.relative_to(storage_dir).as_posix(): path.read_text(encoding="utf-8")
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        client.get("/rop")
+        client.get("/api/rop/dashboard")
+        client.get("/rop?tab=threads")
+        client.get("/rop?tab=ai_assist")
+        client.get("/rop?lang=ru")
+
+        after = {
+            path.relative_to(storage_dir).as_posix(): path.read_text(encoding="utf-8")
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        assert after == before
+
+    def test_no_secrets_in_html_it30(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-sec-it30")
+        (run_dir / "mailbox_selection.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-sec-it30",
+                    "password_value": "should-not-leak",
+                    "ROP_API_KEY": "secret-key-12345",
+                    "strategy": "latest_n",
+                    "selected_count": 1,
+                    "source_count": 0,
+                    "sources": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        client = _client(storage_dir)
+        for tab in ("threads", "ai_assist", "overview"):
+            response = client.get(f"/rop?tab={tab}")
+            assert response.status_code == 200
+            assert "should-not-leak" not in response.text
+            assert "secret-key-12345" not in response.text
+
+    def test_no_raw_eml_in_it30_html(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-no-raw")
+        client = _client(storage_dir)
+        for tab in ("threads", "ai_assist"):
+            response = client.get(f"/rop?tab={tab}")
+            assert response.status_code == 200
+            assert "raw_eml" not in response.text.lower()
+            assert "attachment_content" not in response.text.lower()

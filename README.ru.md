@@ -40,7 +40,7 @@
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
 - использовать локальные BeeUI/static assets без CDN и npm runtime;
 - показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
-- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary и evidence links;
+- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary, evidence links, latest-N/thread/AI assist evidence и RU локализацией;
 - отдавать read-only JSON API поверх existing artifacts;
 - сохранять allowlist-based artifact access, bounded previews и sanitization;
 - поддерживать approval / reject в demo-потоке;
