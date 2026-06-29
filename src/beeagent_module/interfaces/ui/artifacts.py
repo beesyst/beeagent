@@ -22,6 +22,12 @@ ARTIFACT_ALLOWLIST: dict[str, str] = {
     "steps_json": "steps.json",
     "rop_mvp_pack_json": "rop_mvp_pack.json",
     "rop_mvp_report_md": "rop_mvp_report.md",
+    "mailbox_selection_json": "mailbox_selection.json",
+    "mail_thread_index_json": "mail_thread_index.json",
+    "mail_thread_context_json": "mail_thread_context.json",
+    "rop_ai_assist_requests_json": "rop_ai_assist_requests.json",
+    "rop_ai_assist_decisions_json": "rop_ai_assist_decisions.json",
+    "rop_ai_assist_results_json": "rop_ai_assist_results.json",
 }
 MODULE_ARTIFACT_IDS = frozenset(
     {
@@ -48,6 +54,12 @@ CONTENT_TYPE_MAP: dict[str, str] = {
     "steps_json": "application/json",
     "rop_mvp_pack_json": "application/json",
     "rop_mvp_report_md": "text/markdown",
+    "mailbox_selection_json": "application/json",
+    "mail_thread_index_json": "application/json",
+    "mail_thread_context_json": "application/json",
+    "rop_ai_assist_requests_json": "application/json",
+    "rop_ai_assist_decisions_json": "application/json",
+    "rop_ai_assist_results_json": "application/json",
 }
 
 

@@ -25,6 +25,12 @@ ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "steps_json",
     "rop_mvp_pack_json",
     "rop_mvp_report_md",
+    "mailbox_selection_json",
+    "mail_thread_index_json",
+    "mail_thread_context_json",
+    "rop_ai_assist_requests_json",
+    "rop_ai_assist_decisions_json",
+    "rop_ai_assist_results_json",
 )
 EVIDENCE_LABELS: dict[str, str] = {
     "operator_summary_json": "Operator summary",
@@ -41,6 +47,12 @@ EVIDENCE_LABELS: dict[str, str] = {
     "steps_json": "Steps",
     "rop_mvp_pack_json": "ROP MVP pack (JSON)",
     "rop_mvp_report_md": "ROP MVP report (Markdown)",
+    "mailbox_selection_json": "Mailbox selection",
+    "mail_thread_index_json": "Mail thread index",
+    "mail_thread_context_json": "Mail thread context",
+    "rop_ai_assist_requests_json": "ROP AI assist requests",
+    "rop_ai_assist_decisions_json": "ROP AI assist decisions",
+    "rop_ai_assist_results_json": "ROP AI assist results",
 }
 
 

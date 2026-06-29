@@ -59,6 +59,15 @@
 - запускать ROP flow через configurable `mailbox_readonly` source для controlled read-only mailbox smoke;
 - после source normalization классифицировать каждое ROP event через `beeagent-rop` case `lead_classification`;
 - сохранять batch-level classification artifact `classified_events.json`;
+- писать `mailbox_selection.json` как safe envelope для latest-N/source selection evidence;
+- строить `mail_thread_index.json`;
+- строить `mail_thread_context.json`;
+- передавать bounded `thread_context` в public `beeagent-rop` `lead_classification` path;
+- сохранять в `classified_events.json` optional поля `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action`;
+- выполнять bounded AI assist v0, disabled by default;
+- писать `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
+- применять AI result только через public module case `ai_assist_merge`;
+- сохранять deterministic result при `module_contract_unavailable`, invalid/low-confidence/blocked/provider-failed AI path;
 - передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
 - писать source-level diagnostics artifact `source_diagnostics.json`.
 - запускать ROP source flow через explicit `--source-id` или все enabled sources через `--all-sources`;
@@ -145,6 +154,18 @@ BeeAgent уже прошёл этап **module platform v0**:
 - Bitrix match quality gate;
 - action drafts v0 без write-back;
 - MVP handoff/readiness pack.
+
+Итерация 30 добавила:
+
+- latest-N/source selection evidence artifact `mailbox_selection.json`;
+- thread artifacts `mail_thread_index.json` и `mail_thread_context.json`;
+- bounded `thread_context` handoff в `beeagent-rop` `lead_classification`;
+- preservation optional ROP business fields в `classified_events.json`: `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action`;
+- config-driven `rop.ai_assist` contract, disabled by default;
+- fail-fast validation для AI env при `rop.ai_assist.enabled: true` и `dry_run: false`;
+- bounded AI assist artifacts: `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
+- public `ai_assist_merge` module boundary для применения AI result;
+- deterministic preservation path при unavailable/invalid merge contract или failed/invalid/blocked AI output.
 
 Текущий фокус:
 
@@ -326,7 +347,7 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 ./start.sh rop dashboard --period all --run-id <run_id>
 ```
 
-Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
+Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all`.
 
 Артефакт:
 
@@ -501,6 +522,7 @@ UI не должен обходить cases/modules/core.
 ### 6. Bounded AI
 
 AI используется как assistive layer, а не как неограниченный black box.
+AI assist в BeeAgent не должен обходить module boundary. BeeAgent может выполнять bounded provider call, писать evidence artifacts и передавать result в public module contract. Доменное применение результата остаётся за `beeagent-rop` через public case `ai_assist_merge`.
 
 ## Технологический стек
 
@@ -617,10 +639,14 @@ beeagent/
 configured source(s)
 → source_diagnostics.json
 → intake_metadata.json
+→ mailbox_selection.json
 → attachment_extraction.json
 → normalized_events.json
-→ beeagent-rop lead_classification per event
+→ mail_thread_index.json
+→ mail_thread_context.json
+→ beeagent-rop lead_classification per event with bounded thread_context
 → classified_events.json
+→ rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если AI assist включён
 → bitrix_reconciliation.json (optional read-only evidence)
 → rop_action_drafts.json (optional draft-only artifact)
 → rop_current_state.json / interfaces current index
@@ -813,6 +839,30 @@ rop:
 
 Эти поля валидируются fail-fast в `core/settings.py` и прокидываются в BeeAgent-owned artifacts как `source_role`, `client_id`, `source_display_name`.
 
+### ROP AI assist
+
+`rop.ai_assist` — BeeAgent-owned bounded AI assist config.
+
+По умолчанию AI assist выключен:
+
+```yaml
+rop:
+  ai_assist:
+    enabled: false
+    provider: openai_compatible
+    model_env: ROP_AI_MODEL
+    api_key_env: ROP_AI_API_KEY
+    base_url_env: ROP_AI_BASE_URL
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
+```
+
+Если `enabled: true` и `dry_run: false`, BeeAgent fail-fast проверяет наличие env vars из `model_env`, `api_key_env`, `base_url_env`.
+
+AI assist не является самостоятельной ROP business logic. BeeAgent строит bounded request/result artifacts, а применение AI result выполняется только через public `beeagent-rop` case `ai_assist_merge`. Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
+
 `mailbox_readonly` используется только для read-only smoke:
 
 - fetch latest N messages;
@@ -848,9 +898,15 @@ rop:
 
 - `storage/runs/<run_id>/source_diagnostics.json`
 - `storage/runs/<run_id>/intake_metadata.json`
+- `storage/runs/<run_id>/mailbox_selection.json`
 - `storage/runs/<run_id>/attachment_extraction.json`
 - `storage/runs/<run_id>/normalized_events.json`
+- `storage/runs/<run_id>/mail_thread_index.json`
+- `storage/runs/<run_id>/mail_thread_context.json`
 - `storage/runs/<run_id>/classified_events.json`
+- `storage/runs/<run_id>/rop_ai_assist_requests.json`
+- `storage/runs/<run_id>/rop_ai_assist_decisions.json`
+- `storage/runs/<run_id>/rop_ai_assist_results.json`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
 - `storage/runs/<run_id>/rop_current_state.json`
@@ -875,6 +931,16 @@ rop:
 - `rop_review_table.tsv` содержит source-aware columns.
 
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
+После It30 `classified_events.json` также сохраняет optional ROP business fields, если они возвращены модулем или public merge contract:
+
+- `case_subtype`
+- `recommended_queue`
+- `should_rop_see`
+- `correct_action`
+- `thread_context_ref`
+- `ai_assist_status`
+- `ai_assist_used`
+
 `rop_review_table.tsv` — BeeAgent-owned review artifact для ручной сверки с человеком / заказчиком. Он строится из `normalized_events.json` и `classified_events.json`, не содержит raw `.eml` и предназначен для загрузки в Google Sheets или аналогичную таблицу.
 
 **Структура `rop_review_table.tsv` (v1):**
@@ -931,6 +997,10 @@ rop:
 `operator_summary.json` — BeeAgent-level operator artifact.
 `source_diagnostics.json` — BeeAgent-owned source status / degraded diagnostics artifact.
 `intake_metadata.json` и `normalized_events.json` — BeeAgent-owned input/source artifacts.
+`mailbox_selection.json` — BeeAgent-owned safe evidence artifact для latest-N/source selection. Он не содержит raw `.eml`, raw body или attachment content.
+`mail_thread_index.json` — BeeAgent-owned thread index artifact.
+`mail_thread_context.json` — bounded thread context artifact, который может передаваться в public module classification path.
+`rop_ai_assist_*` artifacts — BeeAgent-owned AI assist evidence artifacts. Они фиксируют request preview, decision и result без secret values и без raw payload persistence.
 `module_result.json` и `<case_type>_result.json` — module-linked artifacts.
 
 Точный текущий контракт смотри в:
@@ -963,7 +1033,12 @@ rop:
 - external exposure требует отдельной deployment/auth hardening итерации;
 - artifact routes должны оставаться whitelist-based;
 - path traversal должен блокироваться;
-- raw `.eml`, attachment content и secret-like payload не должны рендериться в HTML или JSON artifact output.
+- raw `.eml`, attachment content и secret-like payload не должны рендериться в HTML или JSON artifact output;
+- `rop.ai_assist` disabled by default;
+- AI env values не пишутся в logs/artifacts;
+- при `enabled: true` и `dry_run: false` env валидируются fail-fast;
+- AI output не должен напрямую выполнять CRM/mailbox/Bitrix actions;
+- write-back/action instructions from AI output must be rejected or preserved as non-executed evidence.
 
 ## Статус проекта
 
@@ -991,6 +1066,10 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP dashboard read-model** — DONE;
 - **ROP Bitrix match quality gate** — DONE;
 - **ROP action drafts v0** — DONE;
+- **ROP latest-N/source selection evidence** — DONE;
+- **ROP thread artifacts and bounded thread context** — DONE;
+- **ROP bounded AI assist execution v0** — DONE;
+- **ROP public AI merge boundary** — DONE;
 - **ROP MVP handoff/readiness pack** — DONE.
 
 Первый реальный модуль:
@@ -1006,8 +1085,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - `run_rop_batch_case(...)` поддерживает explicit single-source и all enabled sources mode;
 - `./start.sh rop run --all-sources` запускает multi-source ingestion;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
-- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `normalized_events.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
+- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
+- BeeAgent передаёт bounded `thread_context` в `beeagent-rop` classification path;
+- BeeAgent пишет AI assist evidence artifacts;
+- AI assist disabled by default и не делает write-back;
+- AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
 - multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;
 - partial degraded source виден в artifacts и не скрывается aggregate метриками;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;

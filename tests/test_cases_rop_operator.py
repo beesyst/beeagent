@@ -1848,6 +1848,281 @@ def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
         _remove_fake_package("test_stub_valueerr")
 
 
+def test_json_batch_run_writes_mailbox_selection_envelope(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    batch_file = tmp_path / "batch_mailbox_selection.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-001",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need price",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-json-batch",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test JSON Batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _BatchSelectionStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "lead_classification":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="lead_classification",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Classified",
+                    data={
+                        "event_id": context.payload.get("event_id"),
+                        "case_type": "new_lead",
+                        "priority": "high",
+                        "confidence": 0.9,
+                        "reason_code": "classified",
+                        "is_fallback": False,
+                    },
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="rop_summary",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Summary",
+                data={"counts": {"new_lead": 1}},
+            )
+
+    _pkg = _make_fake_package(
+        "test_stub_mailbox_selection",
+        "RopModule",
+        _BatchSelectionStub,
+    )
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_mailbox_selection",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-batch-mailbox-selection",
+            session_id="session-batch-mailbox-selection",
+        )
+
+        mailbox_selection = json.loads(
+            (
+                tmp_path
+                / "runs"
+                / "run-batch-mailbox-selection"
+                / "mailbox_selection.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert mailbox_selection["run_id"] == "run-batch-mailbox-selection"
+        assert mailbox_selection["sources"] == []
+        assert "raw_eml" not in json.dumps(mailbox_selection)
+    finally:
+        _remove_fake_package("test_stub_mailbox_selection")
+
+
+def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda ai_cfg, prompt, logger: json.dumps(
+            {
+                "case_type": "existing_deal",
+                "case_subtype": "follow_up",
+                "recommended_queue": "review",
+                "should_rop_see": True,
+                "correct_action": "check_bitrix",
+                "confidence": 0.9,
+                "reason_code": "ai_assist",
+                "risk_flags": [],
+            }
+        ),
+    )
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"] = {
+        "enabled": True,
+        "provider": "openai_compatible",
+        "model_env": "ROP_AI_MODEL",
+        "api_key_env": "ROP_AI_API_KEY",
+        "base_url_env": "ROP_AI_BASE_URL",
+        "events_max": 20,
+        "request_timeout": 30,
+        "ai_confidence_min": 0.40,
+        "dry_run": True,
+    }
+
+    batch_file = tmp_path / "batch_ai_unavailable.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-ai-001",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need update",
+                        "case_type": "unknown",
+                        "priority": "medium",
+                        "confidence": 0.2,
+                        "is_fallback": True,
+                        "reason_code": "deterministic_fallback",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-ai-batch",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test AI Batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _NoMergeStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": "unknown",
+                    "priority": "medium",
+                    "confidence": 0.2,
+                    "reason_code": "deterministic_fallback",
+                    "is_fallback": True,
+                },
+            )
+
+    _pkg = _make_fake_package("test_stub_no_merge", "RopModule", _NoMergeStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_no_merge",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-ai-contract-unavailable",
+            session_id="session-ai-contract-unavailable",
+        )
+
+        run_dir = tmp_path / "runs" / "run-ai-contract-unavailable"
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        assert classified_events[0]["case_type"] == "unknown"
+
+        ai_results = json.loads(
+            (run_dir / "rop_ai_assist_results.json").read_text(encoding="utf-8")
+        )
+        assert (
+            ai_results["results"][0]["ai_assist_status"]
+            == "module_contract_unavailable"
+        )
+        assert ai_results["results"][0]["ai_assist_used"] is False
+
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["ai_assist_degraded_count"] == 1
+    finally:
+        _remove_fake_package("test_stub_no_merge")
+
+
 def test_no_direct_beeagent_rop_imports() -> None:
     import subprocess
 

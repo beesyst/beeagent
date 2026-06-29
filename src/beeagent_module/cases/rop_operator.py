@@ -11,9 +11,60 @@ from beeagent_module.core.input_source import (
     load_rop_source,
     select_rop_sources,
 )
+from beeagent_module.core.mailbox_selection import (
+    build_mailbox_selection_artifact,
+    write_mailbox_selection_artifact,
+)
 from beeagent_module.core.module_registry import ModuleRegistry, build_registry
 from beeagent_module.core.module_runtime import execute_module_case
+from beeagent_module.core.rop_ai_assist import (
+    run_ai_assist_for_event,
+    write_ai_assist_artifacts,
+)
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
+from beeagent_module.core.thread_index import (
+    build_thread_context,
+    build_thread_index,
+    write_thread_artifacts,
+)
+
+AI_ASSIST_MERGE_CASE_TYPE = "ai_assist_merge"
+_AI_MERGE_EVENT_KEYS = frozenset(
+    {
+        "event_id",
+        "source_id",
+        "source_type",
+        "source_role",
+        "source_display_name",
+        "client_id",
+        "sender",
+        "subject",
+        "case_type",
+        "case_subtype",
+        "priority",
+        "reason_code",
+        "confidence",
+        "is_fallback",
+        "recommended_queue",
+        "should_rop_see",
+        "correct_action",
+        "thread_context_ref",
+        "attachment_preview_available",
+        "attachment_extraction_status",
+    }
+)
+_AI_MERGED_OUTPUT_KEYS = frozenset(
+    {
+        "case_type",
+        "case_subtype",
+        "priority",
+        "reason_code",
+        "confidence",
+        "recommended_queue",
+        "should_rop_see",
+        "correct_action",
+    }
+)
 
 
 def run_rop_operator_case(
@@ -211,11 +262,20 @@ def _classify_normalized_events(
     run_id: str,
     session_id: str,
     source_id: str | None,
+    thread_context: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     classified_events: list[dict[str, Any]] = []
     classified_count = 0
     already_classified_count = 0
     failed_count = 0
+
+    context_map: dict[str, dict[str, Any]] = {}
+    if thread_context and isinstance(thread_context, dict):
+        for ctx in thread_context.get("contexts", []):
+            if isinstance(ctx, dict):
+                eid = ctx.get("event_id", "")
+                if eid:
+                    context_map[eid] = ctx
 
     for index, event in enumerate(events):
         if "case_type" in event and "confidence" in event:
@@ -243,6 +303,21 @@ def _classify_normalized_events(
             )
 
             filtered_event = _filter_event_for_module(event)
+
+            event_id = event.get("event_id", "")
+            event_tc = context_map.get(event_id)
+            if event_tc:
+                filtered_event["thread_context"] = {
+                    "thread_id": event_tc.get("thread_id", ""),
+                    "previous_event_ids": event_tc.get("previous_event_ids", []),
+                    "previous_case_type": event_tc.get("previous_case_type", ""),
+                    "previous_case_subtype": event_tc.get("previous_case_subtype", ""),
+                    "participant_overlap": event_tc.get("participant_overlap", False),
+                    "thread_context_confidence": event_tc.get(
+                        "thread_context_confidence", 0.0
+                    ),
+                    "reply_or_forward": event_tc.get("reply_or_forward", False),
+                }
 
             result = execute_module_case(
                 registry=registry,
@@ -553,9 +628,16 @@ def run_rop_batch_case(
     artifact_refs: list[str] = []
     source_meta: dict | None = None
     source_rollup: list[dict[str, Any]] = []
-    classification_diagnostics: dict[str, Any] | None = None
+    classification_diagnostics: dict[str, Any] = {}
     source_diagnostics: dict[str, Any] = {}
     attachment_extraction_summary: dict[str, Any] | None = None
+    thread_context: dict[str, Any] = {}
+    enriched_classified: list[dict[str, Any]] = []
+    ai_requested_count = 0
+    ai_used_count = 0
+    ai_invalid_count = 0
+    ai_degraded_count = 0
+    ai_enabled = False
 
     try:
         input_sources: list[dict] = settings.get("rop", {}).get("sources", [])
@@ -804,8 +886,63 @@ def run_rop_batch_case(
             len(normalized_events),
         )
 
+        mailbox_selection_sources = []
+        for s_item in source_diagnostics_items:
+            if s_item.get("source_type") == "mailbox_readonly":
+                msgs = [
+                    {
+                        "source_message_id": str(idx),
+                        "internal_date": ev.get("date") or ev.get("received_at"),
+                        "message_id": ev.get("message_id", ""),
+                        "subject": (ev.get("subject") or "")[:200],
+                        "_date_fallback": ev.get("_date_fallback", False),
+                    }
+                    for idx, ev in enumerate(normalized_events)
+                    if ev.get("source_id") == s_item.get("source_id")
+                ]
+                mailbox_selection_sources.append(
+                    {
+                        "source_id": s_item.get("source_id", ""),
+                        "items_max": s_item.get("items_max", 0),
+                        "total_available": s_item.get("fetched_count", 0),
+                        "messages": msgs,
+                    }
+                )
+
+        selection_artifact = build_mailbox_selection_artifact(
+            run_id=effective_run_id,
+            sources=mailbox_selection_sources,
+            logger=logger,
+        )
+        selection_ref = write_mailbox_selection_artifact(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            artifact=selection_artifact,
+            logger=logger,
+        )
+        artifact_refs.append(str(selection_ref.relative_to(storage_dir)))
+
         if registry is None:
             registry = build_registry(settings=settings, logger=logger)
+
+        thread_index = build_thread_index(
+            events=normalized_events,
+            logger=logger,
+        )
+        thread_context = build_thread_context(
+            events=normalized_events,
+            thread_index=thread_index,
+            classified_events=None,
+            logger=logger,
+        )
+        thread_refs = write_thread_artifacts(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            thread_index=thread_index,
+            thread_context=thread_context,
+            logger=logger,
+        )
+        artifact_refs.extend(thread_refs)
 
         classified_events, classification_diagnostics = _classify_normalized_events(
             events=normalized_events,
@@ -816,25 +953,121 @@ def run_rop_batch_case(
             run_id=effective_run_id,
             session_id=effective_session_id,
             source_id=None,
+            thread_context=thread_context,
         )
+
+        enriched_classified = _enrich_classified_events(
+            classified_events=classified_events,
+            thread_context=thread_context,
+        )
+
+        ai_cfg = settings.get("rop", {}).get("ai_assist", {})
+        ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
+
+        ai_requests: list[dict[str, Any]] = []
+        ai_decisions: list[dict[str, Any]] = []
+        ai_results: list[dict[str, Any]] = []
+
+        if ai_enabled:
+            min_conf = float(ai_cfg["ai_confidence_min"])
+            events_max = int(ai_cfg["events_max"])
+
+            eligible_events = [
+                e
+                for e in enriched_classified
+                if _is_event_eligible_for_ai_assist(e, min_conf)
+            ]
+            eligible_events = eligible_events[:events_max]
+            ai_requested_count = len(eligible_events)
+
+            for event in eligible_events:
+                event_id = event.get("event_id", "")
+                tc = None
+                for ctx in thread_context.get("contexts", []):
+                    if isinstance(ctx, dict) and ctx.get("event_id") == event_id:
+                        tc = ctx
+                        break
+
+                assist_result = run_ai_assist_for_event(
+                    event=event,
+                    ai_cfg=ai_cfg,
+                    thread_context=tc,
+                    min_ai_confidence=min_conf,
+                    logger=logger,
+                )
+                ai_requests.append(assist_result.get("request", {}))
+                ai_decisions.append(assist_result.get("decision", {}))
+                ai_results.append(assist_result.get("result", {}))
+
+                result_data = assist_result.get("result", {})
+                status = result_data.get("ai_assist_status", "")
+                if status == "ok":
+                    merge_result, merged_event = _merge_ai_result_via_public_contract(
+                        registry=registry,
+                        module_id=module_id,
+                        storage_dir=storage_dir,
+                        logger=logger,
+                        run_id=effective_run_id,
+                        session_id=effective_session_id,
+                        event=event,
+                        ai_result=result_data,
+                    )
+                    ai_results[-1] = merge_result
+
+                    if (
+                        merge_result.get("ai_assist_status") == "ok"
+                        and merged_event is not None
+                    ):
+                        ai_used_count += 1
+                        _apply_public_merged_event(event, merged_event)
+                    else:
+                        ai_degraded_count += 1
+                elif status == "invalid":
+                    ai_invalid_count += 1
+                elif status in ("degraded", "low_confidence", "blocked"):
+                    ai_degraded_count += 1
+
+        ai_refs = write_ai_assist_artifacts(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            requests=ai_requests,
+            decisions=ai_decisions,
+            results=ai_results,
+            counters={
+                "ai_assist_enabled": 1 if ai_enabled else 0,
+                "ai_assist_requested_count": ai_requested_count,
+                "ai_assist_used_count": ai_used_count,
+                "ai_assist_invalid_count": ai_invalid_count,
+                "ai_assist_degraded_count": ai_degraded_count,
+            },
+            logger=logger,
+        )
+        artifact_refs.extend(ai_refs)
+
+        classification_diagnostics["ai_assist_enabled"] = ai_enabled
+        classification_diagnostics["ai_assist_requested_count"] = ai_requested_count
+        classification_diagnostics["ai_assist_used_count"] = ai_used_count
+        classification_diagnostics["ai_assist_invalid_count"] = ai_invalid_count
+        classification_diagnostics["ai_assist_degraded_count"] = ai_degraded_count
 
         classified_path = run_dir / "classified_events.json"
         classified_path.write_text(
-            json.dumps(classified_events, indent=2, ensure_ascii=False),
+            json.dumps(enriched_classified, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         artifact_refs.append(classified_path.relative_to(storage_dir).as_posix())
         logger.info(
-            "classified_events written: run_id=%s events=%d classified=%d failed=%d",
+            "classified_events written: run_id=%s events=%d classified=%d failed=%d ai_requested=%d",
             effective_run_id,
             len(normalized_events),
             classification_diagnostics["classified_count"],
             classification_diagnostics["classification_failed_count"],
+            ai_requested_count,
         )
 
         payload: dict[str, Any] = {
             "period": intake_metadata.get("period", ""),
-            "events": classified_events,
+            "events": enriched_classified,
         }
 
         result = execute_module_case(
@@ -859,6 +1092,46 @@ def run_rop_batch_case(
                 case_type=case_type,
             )
         )
+
+        if isinstance(classification_diagnostics, dict):
+            classification_diagnostics["latest_n_strategy"] = True
+            classification_diagnostics["threaded_event_count"] = (
+                len(thread_context.get("contexts", []))
+                if isinstance(thread_context, dict)
+                else 0
+            )
+            classification_diagnostics["thread_context_available_count"] = (
+                sum(
+                    1
+                    for e in enriched_classified
+                    if isinstance(e, dict) and e.get("thread_context_ref")
+                )
+                if enriched_classified
+                else 0
+            )
+
+            case_subtype_counts: dict[str, int] = {}
+            recommended_queue_counts: dict[str, int] = {}
+            correct_action_counts: dict[str, int] = {}
+            for e in enriched_classified:
+                if isinstance(e, dict):
+                    st = e.get("case_subtype")
+                    if isinstance(st, str) and st:
+                        case_subtype_counts[st] = case_subtype_counts.get(st, 0) + 1
+                    rq = e.get("recommended_queue")
+                    if isinstance(rq, str) and rq:
+                        recommended_queue_counts[rq] = (
+                            recommended_queue_counts.get(rq, 0) + 1
+                        )
+                    ca = e.get("correct_action")
+                    if isinstance(ca, str) and ca:
+                        correct_action_counts[ca] = correct_action_counts.get(ca, 0) + 1
+
+            classification_diagnostics["case_subtype_counts"] = case_subtype_counts
+            classification_diagnostics["recommended_queue_counts"] = (
+                recommended_queue_counts
+            )
+            classification_diagnostics["correct_action_counts"] = correct_action_counts
 
     except InputSourceError as exc:
         module_summary = str(exc)
@@ -917,6 +1190,25 @@ def run_rop_batch_case(
     if diagnostics_ref not in artifact_refs:
         artifact_refs.append(diagnostics_ref)
 
+    if isinstance(classification_diagnostics, dict):
+        classification_diagnostics.setdefault("latest_n_strategy", False)
+        classification_diagnostics.setdefault("threaded_event_count", 0)
+        classification_diagnostics.setdefault("thread_context_available_count", 0)
+        classification_diagnostics.setdefault("ai_assist_enabled", ai_enabled)
+        classification_diagnostics.setdefault(
+            "ai_assist_requested_count", ai_requested_count
+        )
+        classification_diagnostics.setdefault("ai_assist_used_count", ai_used_count)
+        classification_diagnostics.setdefault(
+            "ai_assist_invalid_count", ai_invalid_count
+        )
+        classification_diagnostics.setdefault(
+            "ai_assist_degraded_count", ai_degraded_count
+        )
+        classification_diagnostics.setdefault("case_subtype_counts", {})
+        classification_diagnostics.setdefault("recommended_queue_counts", {})
+        classification_diagnostics.setdefault("correct_action_counts", {})
+
     operator_summary = {
         "run_id": effective_run_id,
         "session_id": effective_session_id,
@@ -965,3 +1257,163 @@ def run_rop_batch_case(
         **operator_summary,
         "operator_text": operator_text,
     }
+
+
+def _enrich_classified_events(
+    classified_events: list[dict[str, Any]],
+    thread_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    context_map: dict[str, dict[str, Any]] = {}
+    if thread_context and isinstance(thread_context, dict):
+        for ctx in thread_context.get("contexts", []):
+            if isinstance(ctx, dict):
+                eid = ctx.get("event_id", "")
+                if eid:
+                    context_map[eid] = ctx
+
+    for event in classified_events:
+        if not isinstance(event, dict):
+            enriched.append(event)
+            continue
+        enriched_event = dict(event)
+
+        enriched_event["case_subtype"] = event.get("case_subtype")
+        enriched_event["recommended_queue"] = event.get("recommended_queue")
+        enriched_event["should_rop_see"] = event.get("should_rop_see")
+        enriched_event["correct_action"] = event.get("correct_action")
+
+        eid = event.get("event_id", "")
+        tc = context_map.get(eid)
+        enriched_event["thread_context_ref"] = tc.get("thread_id") if tc else None
+
+        enriched.append(enriched_event)
+
+    return enriched
+
+
+def _is_event_eligible_for_ai_assist(
+    event: dict[str, Any],
+    min_confidence: float,
+) -> bool:
+    case_type = event.get("case_type", "")
+    is_fallback = event.get("is_fallback", False)
+    confidence = event.get("confidence", 1.0)
+    if isinstance(confidence, (int, float)):
+        confidence = float(confidence)
+    else:
+        confidence = 1.0
+
+    if is_fallback:
+        return True
+
+    eligible_case_types = {"unknown", "existing_deal", "follow_up"}
+    if case_type in eligible_case_types:
+        return True
+
+    if confidence < min_confidence:
+        return True
+
+    confident_types = {"spam", "noise", "new_lead"}
+    if case_type in confident_types and confidence >= min_confidence:
+        return False
+
+    return True
+
+
+def _merge_ai_result_via_public_contract(
+    registry: ModuleRegistry,
+    module_id: str,
+    storage_dir: Path,
+    logger: logging.Logger,
+    run_id: str,
+    session_id: str,
+    event: dict[str, Any],
+    ai_result: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    merge_payload = {
+        "event": {
+            key: value for key, value in event.items() if key in _AI_MERGE_EVENT_KEYS
+        },
+        "ai_assist_result": {
+            "case_type": ai_result.get("final_case_type"),
+            "case_subtype": ai_result.get("final_case_subtype"),
+            "recommended_queue": ai_result.get("final_recommended_queue"),
+            "correct_action": ai_result.get("final_correct_action"),
+            "ai_assist_status": ai_result.get("ai_assist_status"),
+            "merge_reason": ai_result.get("merge_reason"),
+            "warnings": ai_result.get("warnings", []),
+        },
+    }
+
+    try:
+        merge = execute_module_case(
+            registry=registry,
+            module_id=module_id,
+            case_type=AI_ASSIST_MERGE_CASE_TYPE,
+            payload=merge_payload,
+            storage_dir=storage_dir,
+            logger=logger,
+            run_id=run_id,
+            session_id=session_id,
+        )
+    except RuntimeError:
+        return _preserve_ai_result_without_merge(
+            ai_result,
+            "module_contract_unavailable",
+        ), None
+
+    if merge.status != "ok" or not isinstance(merge.data, dict):
+        return _preserve_ai_result_without_merge(
+            ai_result,
+            "module_contract_invalid",
+        ), None
+
+    merged_event = merge.data.get("event")
+    if not isinstance(merged_event, dict):
+        merged_event = merge.data.get("merged_event")
+    if not isinstance(merged_event, dict):
+        merged_event = merge.data
+
+    if not isinstance(merged_event, dict):
+        return _preserve_ai_result_without_merge(
+            ai_result,
+            "module_contract_invalid",
+        ), None
+
+    result = dict(ai_result)
+    result["ai_assist_used"] = True
+    result["ai_assist_status"] = "ok"
+    result["merge_reason"] = "public_ai_assist_merge_contract_applied"
+    result["warnings"] = list(ai_result.get("warnings", []))
+
+    return result, merged_event
+
+
+def _preserve_ai_result_without_merge(
+    ai_result: dict[str, Any],
+    status: str,
+) -> dict[str, Any]:
+    result = dict(ai_result)
+    result["ai_assist_used"] = False
+    result["ai_assist_status"] = status
+    result["merge_reason"] = (
+        f"public_ai_assist_merge_contract_{status}_deterministic_result_preserved"
+    )
+    result["warnings"] = [
+        *list(ai_result.get("warnings", [])),
+        f"AI assist merge was not applied ({status}); deterministic result preserved",
+    ]
+    return result
+
+
+def _apply_public_merged_event(
+    event: dict[str, Any],
+    merged_event: dict[str, Any],
+) -> None:
+    for key in _AI_MERGED_OUTPUT_KEYS:
+        if key in merged_event:
+            event[key] = merged_event[key]
+
+    event["ai_assist_status"] = "ok"
+    event["ai_assist_used"] = True

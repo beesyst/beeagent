@@ -5419,6 +5419,677 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 30 — ROP execution MVP: latest-N, thread artifacts and bounded AI assist execution v0
+
+**Статус:** DONE
+
+#### Goal
+
+Довести BeeAgent ROP flow до execution-level MVP после закрытия `beeagent-rop It19.1`: BeeAgent должен корректно выбирать последние N сообщений, строить bounded thread artifacts, передавать `thread_context` в `beeagent-rop`, сохранять subtype/queue/action enrichment в batch artifacts и добавить BeeAgent-owned bounded AI assist execution path для спорных событий.
+
+Итерация должна связать уже готовые domain contracts `beeagent-rop` с реальным BeeAgent runtime:
+
+```text
+mailbox/json sources
+→ latest-N selection
+→ normalized_events.json
+→ mail_thread_index.json
+→ mail_thread_context.json
+→ beeagent-rop lead_classification with thread_context
+→ classified_events.json with subtype/queue/action fields
+→ bounded AI assist request/provider/decision artifacts
+→ operator/current/dashboard/MVP artifacts updated where existing builders support it
+```
+
+#### Почему это нужно
+
+После It29 BeeAgent уже умеет строить ROP evidence chain до Bitrix match quality gate и read-only action drafts:
+
+```text
+source ingestion
+→ attachment extraction
+→ classification
+→ Bitrix reconciliation
+→ current-state/dashboard/MVP pack
+→ action drafts
+```
+
+После `beeagent-rop It19` модуль возвращает более полезную доменную семантику:
+
+```text
+case_subtype
+recommended_queue
+should_rop_see
+correct_action
+```
+
+После `beeagent-rop It19.1` публичный module path больше не теряет `thread_context`.
+
+Но BeeAgent всё ещё должен закрыть runtime gap:
+
+```text
+latest mailbox batch
+→ deterministic thread evidence
+→ bounded context into module
+→ AI assist execution through BeeAgent-owned provider boundary
+→ reproducible AI/thread artifacts
+```
+
+Без It30 BeeAgent не сможет уверенно двигаться к customer-facing MVP, потому что РОП будет видеть классификацию и Bitrix evidence без thread-aware context и без controlled AI-assist для ambiguous/fallback cases.
+
+#### Depends on
+
+Required:
+
+```text
+beeagent-rop It19 — ROP case subtype taxonomy and reviewed TSV evaluation fixtures v1
+beeagent-rop It19.1 — Thread context module plumbing hotfix
+BeeAgent It29 — ROP Bitrix match quality gate and action drafts v0
+```
+
+Important implementation rule:
+
+```text
+Do not import private beeagent-rop internals from BeeAgent.
+```
+
+If the installed `beeagent-rop` package exposes a public AI assist module case/API, BeeAgent may use it through the public module/package contract.
+
+If a public AI assist merge path is not available yet, BeeAgent must degrade safely:
+
+```text
+ai_assist_status = "module_contract_unavailable"
+ai_assist_used = false
+final classification remains deterministic
+AI request/decision artifacts remain available for review
+no crash
+no private imports
+```
+
+#### Scope
+
+**Включено:**
+
+##### 1. Correct latest-N mailbox selection
+
+Fix mailbox source selection so:
+
+```text
+items_max=N means newest N messages per source
+```
+
+Rules:
+
+- do not rely on raw IMAP search order;
+- sort by reliable mailbox/internal date descending;
+- use UID/order fallback only when date is missing;
+- record warning when fallback ordering is used;
+- apply `items_max` after sorting;
+- keep selection deterministic per source;
+- no raw body or raw `.eml` in selection artifacts;
+- no secrets in logs/artifacts.
+
+Add artifact:
+
+```text
+storage/runs/<run_id>/mailbox_selection.json
+```
+
+Expected shape:
+
+```json
+{
+  "run_id": "run-id",
+  "strategy": "latest_n_by_internaldate_desc",
+  "sources": [
+    {
+      "source_id": "hotline_mailbox",
+      "items_max": 50,
+      "selected_count": 50,
+      "available_count": 120,
+      "messages": [
+        {
+          "source_message_id": "uid-123",
+          "internal_date": "2026-06-27T10:15:00Z",
+          "message_id": "<bounded-message-id>",
+          "subject": "bounded subject",
+          "selected": true
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}
+```
+
+##### 2. Build thread index artifact
+
+Add BeeAgent-owned thread index artifact:
+
+```text
+storage/runs/<run_id>/mail_thread_index.json
+```
+
+Thread matching order:
+
+```text
+1. Message-ID / In-Reply-To / References
+2. Same normalized subject within same source/client when reply/forward markers exist
+3. Fallback single-event thread
+```
+
+Rules:
+
+- BeeAgent builds thread evidence;
+- `beeagent-rop` must not reconstruct raw mailbox threads;
+- no raw `.eml`;
+- no raw headers beyond bounded IDs needed for evidence;
+- no attachment content.
+
+Expected shape:
+
+```json
+{
+  "run_id": "run-id",
+  "threads": [
+    {
+      "thread_id": "thr_001",
+      "source_ids": ["hotline_mailbox"],
+      "event_ids": ["evt-1", "evt-2"],
+      "message_ids": ["<msg1>", "<msg2>"],
+      "subject_normalized": "shipping no 1",
+      "participants": ["bounded@example.local"],
+      "latest_event_id": "evt-2",
+      "latest_at": "2026-06-27T10:20:00Z",
+      "evidence": {
+        "message_id_link": true,
+        "references_link": true,
+        "subject_fallback": false
+      }
+    }
+  ],
+  "warnings": []
+}
+```
+
+##### 3. Build bounded thread context artifact
+
+Add artifact:
+
+```text
+storage/runs/<run_id>/mail_thread_context.json
+```
+
+Rules:
+
+- bounded summaries only;
+- no raw mailbox thread reconstruction inside artifacts;
+- no raw email body;
+- no raw attachments;
+- no secrets;
+- context may support ambiguous cases;
+- context must not override confident spam/noise/tender decisions inside BeeAgent.
+
+Expected shape:
+
+```json
+{
+  "run_id": "run-id",
+  "contexts": [
+    {
+      "event_id": "evt-2",
+      "thread_id": "thr_001",
+      "reply_or_forward": true,
+      "previous_event_ids": ["evt-1"],
+      "previous_case_type": "existing_deal",
+      "previous_case_subtype": "existing_deal_logistics",
+      "participant_overlap": true,
+      "previous_subject": "bounded previous subject",
+      "previous_summary": "bounded summary, no raw email",
+      "thread_context_confidence": 0.78,
+      "reason_codes": ["reply_chain", "previous_existing_deal"]
+    }
+  ],
+  "warnings": []
+}
+```
+
+##### 4. Pass `thread_context` into `beeagent-rop`
+
+For each normalized event:
+
+```text
+event
++ bounded thread_context if available
+→ RopModule.handle(case_type="lead_classification")
+```
+
+Expected module output fields remain module-owned:
+
+```text
+case_type
+priority
+confidence
+reason_code
+reasoning
+is_fallback
+case_subtype
+recommended_queue
+should_rop_see
+correct_action
+```
+
+Rules:
+
+- BeeAgent only passes context and persists returned fields;
+- BeeAgent does not implement ROP subtype rules;
+- malformed thread context must degrade safely;
+- classification must not crash the whole batch.
+
+##### 5. Produce enriched `classified_events.json`
+
+Update existing artifact:
+
+```text
+storage/runs/<run_id>/classified_events.json
+```
+
+Each item should include optional enrichment fields when returned by `beeagent-rop`:
+
+```json
+{
+  "event_id": "evt-001",
+  "case_type": "existing_deal",
+  "case_subtype": "existing_deal_logistics",
+  "recommended_queue": "logistics",
+  "should_rop_see": true,
+  "correct_action": "check_bitrix",
+  "priority": "medium",
+  "confidence": 0.72,
+  "reason_code": "thread_context_existing_deal_candidate",
+  "reasoning": "bounded explanation",
+  "is_fallback": true,
+  "thread_context_ref": "thr_001",
+  "source_id": "hotline_mailbox",
+  "sender": "bounded sender",
+  "subject": "bounded subject"
+}
+```
+
+Rules:
+
+- preserve backward compatibility;
+- append optional fields only;
+- no raw `.eml`;
+- no raw attachment content;
+- no secrets.
+
+##### 6. Add BeeAgent-owned bounded AI assist execution
+
+Add config block if missing:
+
+```yaml
+rop:
+  ai_assist:
+    enabled: false
+    provider: openai_compatible
+    model_env: ROP_AI_MODEL
+    api_key_env: ROP_AI_API_KEY
+    base_url_env: ROP_AI_BASE_URL
+    max_events_per_run: 20
+    request_timeout_seconds: 30
+    min_ai_confidence: 0.70
+    dry_run: false
+```
+
+Rules:
+
+- default disabled;
+- when enabled, required envs must fail fast if missing;
+- secrets must never appear in HTML/API/logs/artifacts;
+- ROP AI assist must not silently use unrelated `llm.enabled`;
+- implementation may reuse existing HTTP/LLM helper code only if config source of truth remains `rop.ai_assist`;
+- AI runs only for eligible ambiguous/fallback events;
+- AI provider returns structured JSON only;
+- invalid model output degrades safely;
+- AI cannot execute CRM/mailbox/Bitrix actions;
+- AI cannot create write-back payloads;
+- AI cannot override safe deterministic guards;
+- AI merge must use a public `beeagent-rop` contract if available;
+- if public merge contract is unavailable, record degraded status and keep deterministic classification.
+
+##### 7. Add AI assist artifacts
+
+Add artifacts:
+
+```text
+storage/runs/<run_id>/rop_ai_assist_requests.json
+storage/runs/<run_id>/rop_ai_assist_decisions.json
+storage/runs/<run_id>/rop_ai_assist_results.json
+```
+
+Request artifact must be redacted/safe:
+
+```json
+{
+  "event_id": "evt-001",
+  "eligible": true,
+  "request_preview": {
+    "subject": "bounded",
+    "body_preview": "bounded",
+    "attachment_preview": "bounded",
+    "thread_context_summary": "bounded"
+  },
+  "provider": "openai_compatible",
+  "model": "redacted-or-model-name-if-not-secret"
+}
+```
+
+Decision artifact:
+
+```json
+{
+  "event_id": "evt-001",
+  "status": "ok",
+  "ai_case_type": "existing_deal",
+  "case_subtype": "existing_deal_logistics",
+  "recommended_queue": "logistics",
+  "correct_action": "check_bitrix",
+  "should_rop_see": true,
+  "ai_confidence": 0.82,
+  "ai_reason_code": "business_thread_context",
+  "risk_flags": []
+}
+```
+
+Result artifact:
+
+```json
+{
+  "event_id": "evt-001",
+  "ai_assist_used": true,
+  "ai_assist_status": "ok",
+  "final_case_type": "existing_deal",
+  "final_case_subtype": "existing_deal_logistics",
+  "final_recommended_queue": "logistics",
+  "final_correct_action": "check_bitrix",
+  "merge_reason": "validated_ai_assist_for_fallback_case",
+  "warnings": []
+}
+```
+
+If public `beeagent-rop` merge contract is unavailable:
+
+```json
+{
+  "event_id": "evt-001",
+  "ai_assist_used": false,
+  "ai_assist_status": "module_contract_unavailable",
+  "final_case_type": "existing_deal",
+  "merge_reason": "deterministic_result_preserved",
+  "warnings": ["Public beeagent-rop AI assist merge contract is not available."]
+}
+```
+
+##### 8. Update existing operator artifacts where the pipeline already supports it
+
+Update existing summaries/read-models only minimally:
+
+```text
+operator_summary.json
+rop_current_state.json
+storage/interfaces/rop_dashboard.json
+rop_mvp_pack.json
+rop_mvp_report.md
+```
+
+Add counters if relevant:
+
+```text
+latest_n_strategy
+threaded_event_count
+thread_context_available_count
+case_subtype_counts
+recommended_queue_counts
+correct_action_counts
+ai_assist_enabled
+ai_assist_requested_count
+ai_assist_used_count
+ai_assist_invalid_count
+ai_assist_degraded_count
+```
+
+Rules:
+
+- do not redesign UI in It30;
+- do not add auth;
+- do not add row detail routes;
+- do not add Bitrix write-back;
+- preserve existing dashboard/API behavior.
+
+**Не включено:**
+
+- changes to `beeagent-rop`;
+- new ROP business rules in BeeAgent;
+- new subtype taxonomy in BeeAgent;
+- CRM/Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- timeline comments;
+- task creation;
+- mailbox delete/archive/reply/mark-as-read;
+- OCR;
+- raw PDF/DOCX/XLSX parsing;
+- raw `.eml` persistence/rendering;
+- raw attachment storage;
+- web-triggered ROP run;
+- UI auth/session;
+- UI row detail;
+- Sender/Subject UI polish;
+- BeeUI core changes;
+- new generic BeeUI components;
+- separate frontend;
+- manager scoring;
+- 1C integration.
+
+#### Deliverable
+
+BeeAgent can run ROP execution MVP with deterministic latest-N selection, thread evidence and bounded AI assist artifacts:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop current \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop mvp-pack \
+  --period 7d \
+  --run-id smoke-it30-rop-execution
+```
+
+Expected new artifacts:
+
+```text
+storage/runs/<run_id>/mailbox_selection.json
+storage/runs/<run_id>/mail_thread_index.json
+storage/runs/<run_id>/mail_thread_context.json
+storage/runs/<run_id>/rop_ai_assist_requests.json
+storage/runs/<run_id>/rop_ai_assist_decisions.json
+storage/runs/<run_id>/rop_ai_assist_results.json
+```
+
+Updated existing artifacts:
+
+```text
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_dashboard.json
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+```
+
+#### Config / contract impact
+
+Expected:
+
+```text
+config/settings.yml may add rop.ai_assist
+src/beeagent_module/core/settings.py validates rop.ai_assist fail-fast
+artifact contract changes
+CLI/runtime behavior changes
+module integration behavior changes
+docs update required
+```
+
+Source of truth:
+
+```text
+config/settings.yml → rop.sources[]
+config/settings.yml → rop.ai_assist
+storage/runs/<run_id>/* → run evidence
+beeagent-rop public module contract → ROP classification semantics
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- AI provider execution;
+- env/secret handling;
+- external provider call;
+- structured model output validation;
+- mailbox selection behavior;
+- artifact restore/parsing/serialization;
+- module/capability boundary;
+- future action/write-back safety boundary.
+
+No dependency change is expected. SCA is required only if dependencies change.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or mailbox or thread or ai or web or ui"
+```
+
+Targeted tests:
+
+```text
+latest-N selects newest messages, not oldest
+latest-N works per source
+missing date fallback records warning
+mailbox_selection.json is created and safe
+thread index from Message-ID/References
+thread index subject fallback
+single-event thread fallback
+mail_thread_index.json shape
+mail_thread_context.json shape
+thread_context passed into beeagent-rop payload
+malformed thread_context degrades safely
+classified_events.json includes case_subtype/recommended_queue/should_rop_see/correct_action when returned by module
+AI assist disabled by default
+AI assist enabled with missing env fails fast
+AI eligible fallback event creates request artifact
+confident spam/noise does not trigger AI
+confident new_lead does not trigger AI
+AI provider invalid output degrades safely
+AI output with executable/write-back instruction is rejected
+AI result preserves deterministic classification when module merge contract is unavailable
+AI artifacts contain no secrets
+operator/current/dashboard/MVP counters update without UI redesign
+no GET mutation
+no mailbox destructive actions
+no CRM/Bitrix mutation
+path traversal run_id rejected/degraded
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop current \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it30-rop-execution
+
+uv run python config/start.py rop mvp-pack \
+  --period 7d \
+  --run-id smoke-it30-rop-execution
+```
+
+Optional AI smoke only with explicit test env:
+
+```bash
+ROP_AI_MODEL="test-model"
+ROP_AI_API_KEY="test-key"
+ROP_AI_BASE_URL="http://127.0.0.1:<fake-provider-port>"
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it30-ai-enabled
+```
+
+Security checks:
+
+```bash
+grep -R "ROP_AI_API_KEY\|OPENAI_API_KEY\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+  logs storage/runs/smoke-it30-rop-execution storage/interfaces -n || true
+```
+
+Also verify:
+
+```text
+SAST required
+SCA only if dependencies change
+DAST-style CLI/runtime misuse checks for malformed artifacts and invalid run_id
+IAST not required
+fuzzing optional for malformed AI decision / thread context payloads
+```
+
+#### DoD
+
+- latest-N mailbox selection is deterministic and evidenced;
+- `mailbox_selection.json` is created;
+- `mail_thread_index.json` is created;
+- `mail_thread_context.json` is created;
+- bounded `thread_context` reaches `beeagent-rop` public module path;
+- `classified_events.json` preserves subtype/queue/action fields from `beeagent-rop`;
+- AI assist is disabled by default;
+- AI assist config is explicit and fail-fast when enabled;
+- AI provider execution is BeeAgent-owned;
+- AI output is structured and validated;
+- invalid/malicious AI output degrades safely;
+- no private `beeagent-rop` internals are imported by BeeAgent;
+- missing public AI merge contract degrades safely;
+- no CRM/Bitrix/mailbox mutation exists;
+- no POST/write/action route is added;
+- no raw `.eml`/raw attachment content/secrets appear in logs/artifacts/API/HTML;
+- existing ROP CLI/web paths remain backward-compatible;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

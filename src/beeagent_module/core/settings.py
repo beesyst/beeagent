@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -271,6 +272,8 @@ def validate_settings(settings: dict) -> None:
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
 
+    _validate_rop_ai_assist_settings(settings)
+
     input_sources = _get_nested_value(settings, ("rop", "sources"))
     if not isinstance(input_sources, list):
         raise RuntimeError("Invalid type for rop.sources, expected list")
@@ -382,6 +385,76 @@ def validate_settings(settings: dict) -> None:
     _validate_rop_dashboard_settings(settings)
 
     _validate_bitrix_settings(settings)
+
+
+def _validate_rop_ai_assist_settings(settings: dict) -> None:
+    ai_cfg = _get_nested_value(settings, ("rop", "ai_assist"))
+    if ai_cfg is None:
+        return
+    if not isinstance(ai_cfg, dict):
+        raise RuntimeError("Invalid type for rop.ai_assist, expected mapping")
+
+    old_keys = {
+        "max_events_per_run",
+        "request_timeout_seconds",
+        "min_ai_confidence",
+    }
+    found_old_keys = sorted(old_keys.intersection(ai_cfg))
+    if found_old_keys:
+        raise RuntimeError(
+            "Unsupported old rop.ai_assist config keys: " + ", ".join(found_old_keys)
+        )
+
+    if not isinstance(ai_cfg.get("enabled"), bool):
+        raise RuntimeError("Invalid type for rop.ai_assist.enabled, expected bool")
+
+    provider = ai_cfg.get("provider")
+    if not isinstance(provider, str) or not provider.strip():
+        raise RuntimeError(
+            "Invalid or missing rop.ai_assist.provider, expected non-empty string"
+        )
+    if provider != "openai_compatible":
+        raise RuntimeError(
+            "Unsupported rop.ai_assist.provider, expected 'openai_compatible'"
+        )
+
+    for key in ("model_env", "api_key_env", "base_url_env"):
+        value = ai_cfg.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(
+                f"Invalid or missing rop.ai_assist.{key}, expected non-empty string"
+            )
+
+    events_max = ai_cfg.get("events_max")
+    if not isinstance(events_max, int) or events_max <= 0:
+        raise RuntimeError("Invalid rop.ai_assist.events_max, expected int > 0")
+
+    request_timeout = ai_cfg.get("request_timeout")
+    if not isinstance(request_timeout, int) or request_timeout <= 0:
+        raise RuntimeError("Invalid rop.ai_assist.request_timeout, expected int > 0")
+
+    ai_confidence_min = ai_cfg.get("ai_confidence_min")
+    if not isinstance(ai_confidence_min, (int, float)):
+        raise RuntimeError("Invalid rop.ai_assist.ai_confidence_min, expected float")
+    if ai_confidence_min < 0.0 or ai_confidence_min > 1.0:
+        raise RuntimeError("Invalid rop.ai_assist.ai_confidence_min, expected 0.0..1.0")
+
+    dry_run = ai_cfg.get("dry_run")
+    if not isinstance(dry_run, bool):
+        raise RuntimeError("Invalid type for rop.ai_assist.dry_run, expected bool")
+
+    if ai_cfg.get("enabled") and not dry_run:
+        missing_env_vars: list[str] = []
+        for key in ("model_env", "api_key_env", "base_url_env"):
+            env_name = ai_cfg[key]
+            if not os.getenv(env_name, "").strip():
+                missing_env_vars.append(env_name)
+
+        if missing_env_vars:
+            raise RuntimeError(
+                "Missing required ROP AI assist env vars: "
+                + ", ".join(sorted(missing_env_vars))
+            )
 
 
 _ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(

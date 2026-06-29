@@ -1492,6 +1492,33 @@ def _write_rich_rop_run(storage_dir: Path, run_id: str) -> Path:
     )
     (module_dir / "module_result.json").write_text("{}", encoding="utf-8")
     (module_dir / "rop_summary_result.json").write_text("{}", encoding="utf-8")
+    (run_dir / "mailbox_selection.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "strategy": "latest_n_by_internaldate_desc",
+                "sources": [],
+                "warnings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "mail_thread_index.json").write_text(
+        json.dumps({"threads": [], "warnings": []}), encoding="utf-8"
+    )
+    (run_dir / "mail_thread_context.json").write_text(
+        json.dumps({"contexts": [], "warnings": []}), encoding="utf-8"
+    )
+    (run_dir / "rop_ai_assist_requests.json").write_text(
+        json.dumps({"run_id": run_id, "counters": {}, "requests": []}), encoding="utf-8"
+    )
+    (run_dir / "rop_ai_assist_decisions.json").write_text(
+        json.dumps({"run_id": run_id, "counters": {}, "decisions": []}),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_ai_assist_results.json").write_text(
+        json.dumps({"run_id": run_id, "counters": {}, "results": []}), encoding="utf-8"
+    )
     return run_dir
 
 
@@ -1736,6 +1763,12 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
         "steps_json",
         "rop_mvp_pack_json",
         "rop_mvp_report_md",
+        "mailbox_selection_json",
+        "mail_thread_index_json",
+        "mail_thread_context_json",
+        "rop_ai_assist_requests_json",
+        "rop_ai_assist_decisions_json",
+        "rop_ai_assist_results_json",
     }
     link_ids = {l["artifact_id"] for l in links}
     assert link_ids == allowed
