@@ -1,7 +1,11 @@
 app:
-  title: BeeAgent Console
+  title:
+    en: BeeAgent Console
+    ru: Консоль BeeAgent
   product: beeagent
-  logo_text: BeeAgent
+  logo_text:
+    en: BeeAgent
+    ru: BeeAgent
   locale:
     default: en
     available:
@@ -32,18 +36,28 @@ components:
     variant: default
 
 navigation:
-  - title: Operator
+  - title:
+      en: Operator
+      ru: Оператор
     children:
-      - title: Dashboard
+      - title:
+          en: Dashboard
+          ru: Дашборд
         path: /
         icon: dashboard
-      - title: ROP
+      - title:
+          en: ROP
+          ru: РОП
         path: /rop
         icon: users
-      - title: Runs
+      - title:
+          en: Runs
+          ru: Запуски
         path: /runs
         icon: runs
-      - title: Modules
+      - title:
+          en: Modules
+          ru: Модули
         path: /modules
         icon: modules
 
@@ -54,46 +68,84 @@ blocks: {}
 pages:
   - id: dashboard
     path: /
-    title: BeeAgent Dashboard
-    subtitle: Read-only operator dashboard
+    title:
+      en: BeeAgent Dashboard
+      ru: Дашборд BeeAgent
+    subtitle:
+      en: Read-only operator dashboard
+      ru: Read-only дашборд оператора
     blocks: []
 
   - id: rop_dashboard
     path: /rop
-    title: ROP Dashboard
-    subtitle: Inbound leads, review queue and Bitrix reconciliation
+    title:
+      en: ROP Dashboard
+      ru: Панель РОПа
+    subtitle:
+      en: Inbound leads, review queue and Bitrix reconciliation
+      ru: Входящие лиды, очередь проверки и сверка с Битрикс
     tabs:
       variant: fill
       active_param: tab
       items:
         - id: overview
-          title: Overview
+          title:
+            en: Overview
+            ru: Обзор
           href: /rop?tab=overview
         - id: queue
-          title: Queue
+          title:
+            en: Queue
+            ru: Очередь
           href: /rop?tab=queue
+        - id: threads
+          title:
+            en: Threads
+            ru: Цепочки
+          href: /rop?tab=threads
+        - id: ai_assist
+          title:
+            en: AI Assist
+            ru: AI ассистент
+          href: /rop?tab=ai_assist
         - id: sources
-          title: Sources
+          title:
+            en: Sources
+            ru: Источники
           href: /rop?tab=sources
         - id: attachments
-          title: Attachments
+          title:
+            en: Attachments
+            ru: Вложения
           href: /rop?tab=attachments
         - id: evidence
-          title: Evidence
+          title:
+            en: Evidence
+            ru: Доказательства
           href: /rop?tab=evidence
         - id: bitrix
-          title: Bitrix
+          title:
+            en: Bitrix
+            ru: Битрикс
           href: /rop?tab=bitrix
     blocks: []
 
   - id: runs
     path: /runs
-    title: Runs
-    subtitle: Run history
+    title:
+      en: Runs
+      ru: Запуски
+    subtitle:
+      en: Run history
+      ru: История запусков
     blocks: []
 
   - id: modules
     path: /modules
-    title: Modules
-    subtitle: Module diagnostics
+    title:
+      en: Modules
+      ru: Модули
+    subtitle:
+      en: Module diagnostics
+      ru: Диагностика модулей
     blocks: []

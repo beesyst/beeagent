@@ -22,7 +22,7 @@ from beeagent_module.interfaces.ui.artifacts import (
     resolve_artifact_path,
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
-from beeagent_module.interfaces.ui.locale import resolve_locale, t
+from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
@@ -61,14 +61,20 @@ class BeeAgentUiAdapter:
 
     def get_dashboard(self) -> AdapterResult | AdapterErrorResult:
         try:
-            data = build_dashboard(self._storage_dir)
+            data = build_dashboard(
+                self._storage_dir,
+                locale=get_current_locale(),
+            )
             return ok_result(data)
         except Exception as exc:
             return error_result_from_exception(exc)
 
     def list_runs(self) -> AdapterResult | AdapterErrorResult:
         try:
-            data = build_runs_list(self._storage_dir)
+            data = build_runs_list(
+                self._storage_dir,
+                locale=get_current_locale(),
+            )
             return ok_result(data)
         except Exception as exc:
             return error_result_from_exception(exc)
@@ -225,6 +231,8 @@ class BeeAgentUiAdapter:
                         "attachments",
                         "evidence",
                         "bitrix",
+                        "threads",
+                        "ai_assist",
                     }
                 )
                 if tab not in allowed_tabs:

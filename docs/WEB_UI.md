@@ -38,7 +38,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 
 ## Runtime foundation
 
-Реализованная основа UI-5:
+Текущий реализованный контракт — UI-6 (развитие UI-5).
 
 - **BeeUI** — canonical web layer для BeeAgent;
 - BeeAgent UI code находится в `src/beeagent_module/interfaces/ui/`;
@@ -82,6 +82,8 @@ CLI overrides:
 ## HTML routes (BeeUI-backed)
 
 Реализованные HTML routes (через BeeUI product console + custom BeeAgent routes):
+
+Основные product console pages поддерживают `?lang=ru`:
 
 - `/` — dashboard
 - `/health` — health check
@@ -248,27 +250,35 @@ Browser route показывает bounded/redacted artifact preview через 
 
 Разрешённые artifact ID и их fixed mapping внутри run directory:
 
-| ID | Relative path |
-|---|---|
-| `run_json` | `run.json` |
-| `operator_summary_json` | `operator_summary.json` |
-| `source_diagnostics_json` | `source_diagnostics.json` |
-| `intake_metadata_json` | `intake_metadata.json` |
-| `normalized_events_json` | `normalized_events.json` |
-| `classified_events_json` | `classified_events.json` |
-| `attachment_extraction_json` | `attachment_extraction.json` |
-| `rop_review_table_tsv` | `rop_review_table.tsv` |
-| `rop_current_state_json` | `rop_current_state.json` |
-| `rop_dashboard_json` | `rop_dashboard.json` (via `storage/interfaces/rop_dashboard.json`) |
-| `bitrix_reconciliation_json` | `bitrix_reconciliation.json` |
-| `module_result_json` | `module-beeagent-rop/module_result.json` |
-| `rop_summary_result_json` | `module-beeagent-rop/rop_summary_result.json` |
+| ID                                | Relative path                                         |
+| --------------------------------- | ----------------------------------------------------- |
+| `run_json`                        | `run.json`                                            |
+| `operator_summary_json`           | `operator_summary.json`                               |
+| `source_diagnostics_json`         | `source_diagnostics.json`                             |
+| `intake_metadata_json`            | `intake_metadata.json`                                |
+| `normalized_events_json`          | `normalized_events.json`                              |
+| `classified_events_json`          | `classified_events.json`                              |
+| `attachment_extraction_json`      | `attachment_extraction.json`                          |
+| `rop_review_table_tsv`            | `rop_review_table.tsv`                                |
+| `rop_current_state_json`          | `rop_current_state.json`                              |
+| `bitrix_reconciliation_json`      | `bitrix_reconciliation.json`                          |
+| `rop_action_drafts_json`          | `rop_action_drafts.json`                              |
+| `module_result_json`              | `module-beeagent-rop/module_result.json`              |
+| `rop_summary_result_json`         | `module-beeagent-rop/rop_summary_result.json`         |
 | `lead_classification_result_json` | `module-beeagent-rop/lead_classification_result.json` |
-| `steps_json` | `steps.json` |
+| `steps_json`                      | `steps.json`                                          |
+| `rop_mvp_pack_json`               | `rop_mvp_pack.json`                                   |
+| `rop_mvp_report_md`               | `rop_mvp_report.md`                                   |
+| `mailbox_selection_json`          | `mailbox_selection.json`                              |
+| `mail_thread_index_json`          | `mail_thread_index.json`                              |
+| `mail_thread_context_json`        | `mail_thread_context.json`                            |
+| `rop_ai_assist_requests_json`     | `rop_ai_assist_requests.json`                         |
+| `rop_ai_assist_decisions_json`    | `rop_ai_assist_decisions.json`                        |
+| `rop_ai_assist_results_json`      | `rop_ai_assist_results.json`                          |
 
 UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
 
-ROP dashboard поддерживает period query parameter: `?period=today`, `?period=7d`, `?period=30d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
+ROP dashboard поддерживает period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
 
 ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. Она читает только artifact-level current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json`, показывает read-only KPI и очереди matched/lost/ambiguous/degraded/unreconciled без POST actions или write-back.
 
@@ -283,20 +293,22 @@ ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. О
 - provider tokens
 - mailbox source content beyond normalized/sanitized artifacts
 
-### ROP dashboard contract (UI-5 — enriched)
+### ROP dashboard contract (UI-6 — enriched)
 
 `GET /api/rop/dashboard` возвращает source-aware ROP dashboard read-model с расширенными полями.
 
 Поддерживаемые query parameters:
 
 - `run_id` — optional explicit run selection; если параметр не передан, используется latest run;
-- `period` — period filter для dashboard data: `today`, `yesterday`, `7d`, `30d`, `365d`, `all` (default определяется `config/settings.yml` → `rop.dashboard.default_period`);
+- `period` — period filter для dashboard data: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all` (default определяется `config/settings.yml` → `rop.dashboard.default_period`);
 - `tab` — HTML page tab selector для `/rop`;
 - `lang` — HTML page locale selector для `/rop`.
 
 `/api/rop/dashboard` принимает `run_id` и `period`.
 
-Новые поля в UI-5 enriched payload (It27.1):
+Existing UI-5 fields сохранены (backward-compatible).
+
+Новые поля в UI-6 enriched payload (It30):
 
 - `business_kpi` — бизнес-метрики:
   - `processed_events`, `processed_emails`;
@@ -313,16 +325,37 @@ ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. О
 - `period_start_utc`, `period_end_utc` — границы периода;
 - `time_basis` — basis used: `event_timestamp`, `run_generated_at`, `run_mtime_fallback`, `mixed`, `unknown`.
 
+UI-6 добавляет поля:
+
+- `latest_selection` — latest/N selection evidence:
+  - `selected_count`, `strategy`, `source_count`, `sources[]`;
+  - `newest_message_at`, `oldest_message_at`;
+  - `warnings`, `evidence_artifact_id`;
+- `thread_summary` — thread evidence summary:
+  - `thread_count`, `events_with_thread_context`;
+  - `reply_or_forward_count`, `linked_by_references_count`;
+  - `linked_by_subject_fallback_count`;
+  - `source_client_scoped_fallback_count`;
+  - `warnings`, `evidence_artifact_ids[]`;
+- `threads[]` — thread groups with per-thread event list;
+- `ai_assist_summary` — AI assist evidence:
+  - `evidence_available`, `eligible_count`, `request_count`;
+  - `ok_count`, `used_count`, `degraded_count`;
+  - `low_confidence_count`, `status_counts{}`;
+- `ai_assist_events[]` — per-event AI assist status.
+
 HTML `/rop` использует BeeUI tabs:
 
 - `overview`
 - `queue`
+- `threads`
+- `ai_assist`
 - `sources`
 - `attachments`
 - `evidence`
-- `bitrix` — disabled/reserved
+- `bitrix` — read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state
 
-Возвращаемые данные (UI-5 enriched payload):
+Возвращаемые данные (UI-6 enriched payload):
 
 - `selected_run_id` — выбранный run ID;
 - `available_runs` — список всех run ID;
@@ -348,7 +381,7 @@ Backward-compatible поля сохранены:
 - `run_id`, `summary`, `source_diagnostics`, `intake_metadata`;
 - `sources[]`, `classified_count`, `case_type_counts`, `priority_counts`, `fallback_count`, `normalized_count`, `has_attachment_extraction`.
 
-### Пример ответа (UI-5 /api/rop/dashboard)
+### Пример ответа (UI-6 /api/rop/dashboard)
 
 ```json
 {
@@ -377,13 +410,13 @@ Backward-compatible поля сохранены:
       "review_tsv_available": true
     },
     "funnel": [
-      {"stage": "Configured Sources", "count": 2},
-      {"stage": "Enabled Sources", "count": 2},
-      {"stage": "Fetched Items", "count": 15},
-      {"stage": "Loaded Items", "count": 13},
-      {"stage": "Normalized Events", "count": 5},
-      {"stage": "Classified Events", "count": 5},
-      {"stage": "Review Candidates", "count": 3}
+      { "stage": "Configured Sources", "count": 2 },
+      { "stage": "Enabled Sources", "count": 2 },
+      { "stage": "Fetched Items", "count": 15 },
+      { "stage": "Loaded Items", "count": 13 },
+      { "stage": "Normalized Events", "count": 5 },
+      { "stage": "Classified Events", "count": 5 },
+      { "stage": "Review Candidates", "count": 3 }
     ],
     "source_health": [
       {
@@ -399,9 +432,16 @@ Backward-compatible поля сохранены:
       }
     ],
     "classification_distribution": {
-      "case_type_counts": {"new_lead": 3, "existing_deal": 1, "irrelevant": 1},
-      "priority_counts": {"high": 2, "medium": 2, "low": 1},
-      "reason_code_counts": {"new_contact_no_existing_lead": 1, "existing_deal_followup": 1},
+      "case_type_counts": {
+        "new_lead": 3,
+        "existing_deal": 1,
+        "irrelevant": 1
+      },
+      "priority_counts": { "high": 2, "medium": 2, "low": 1 },
+      "reason_code_counts": {
+        "new_contact_no_existing_lead": 1,
+        "existing_deal_followup": 1
+      },
       "fallback_count": 1
     },
     "attachment_summary": {
@@ -448,13 +488,17 @@ Backward-compatible поля сохранены:
     ],
     "warnings": [],
     "run_id": "run-rich-001",
-    "summary": {"status": "ok", "summary": "batch completed with results"},
+    "summary": { "status": "ok", "summary": "batch completed with results" },
     "sources": [
-      {"source_id": "hotline_mailbox", "display_name": "Welding Hotline mailbox", "status": "ok"}
+      {
+        "source_id": "hotline_mailbox",
+        "display_name": "Welding Hotline mailbox",
+        "status": "ok"
+      }
     ],
     "classified_count": 5,
-    "case_type_counts": {"new_lead": 3, "existing_deal": 1, "irrelevant": 1},
-    "priority_counts": {"high": 2, "medium": 2, "low": 1},
+    "case_type_counts": { "new_lead": 3, "existing_deal": 1, "irrelevant": 1 },
+    "priority_counts": { "high": 2, "medium": 2, "low": 1 },
     "fallback_count": 1
   },
   "warnings": [],
@@ -462,7 +506,7 @@ Backward-compatible поля сохранены:
 }
 ```
 
-### HTML route /rop (UI-5 enriched)
+### HTML route /rop (UI-6)
 
 `GET /rop` рендерит BeeUI generic adapter custom page для rich ROP dashboard.
 
@@ -470,6 +514,7 @@ Backward-compatible поля сохранены:
 
 - `run_id` — optional explicit run selection;
 - `tab` — tab selector;
+- `period` — period selector;
 - `lang` — locale override (`en` или `ru`), fallback на `en`.
 
 Источник данных: `BeeAgentUiAdapter.get_page("rop_dashboard", query)`.
@@ -478,12 +523,14 @@ Backward-compatible поля сохранены:
 
 Секции страницы:
 
-- `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда;
+- `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда; Overview использует period dropdown;
 - `queue`: attention events;
+- `threads`: сводка цепочек и таблица групп;
+- `ai_assist`: сводка AI assist и таблица событий;
 - `sources`: source health details;
 - `attachments`: attachment processing summary;
 - `evidence`: allowlisted evidence links;
-- `bitrix`: disabled/reserved.
+- `bitrix`: read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state.
 
 BeeAgent не держит manual HTML builders/templates для `/rop`.
 
@@ -503,6 +550,80 @@ Web Console должен соблюдать:
 - missing/malformed artifacts handled gracefully and degrade into warnings/errors, not crashes;
 - cache-control требования должны соблюдаться на route layer, но их фактический enforcement нужно подтверждать отдельно.
 
+### UI-6 evidence sections (latest-N, threads, AI assist)
+
+Read-only операторские секции на основе It30 артефактов, интегрированные в текущий контракт:
+
+- **Latest/N selection**: `latest_selection` в read-model показывает количество выбранных писем, стратегию, источники;
+- **Thread summary**: `thread_summary` и `threads[]` показывают цепочки писем и thread-контекст;
+- **AI assist**: `ai_assist_summary` и `ai_assist_events[]` показывают evidence AI assist и статус каждого события;
+- **RU labels**: через `?lang=ru` переводятся все новые UI-6 секции;
+- **Det recommendations**: обогащены `_build_it30_recommendations()` — review threaded conversations, AI degraded, low confidence, module contract unavailable;
+- **New tabs**: `/rop?tab=threads` и `/rop?tab=ai_assist`.
+
+### UI-6 — Артефакты It30 в allowlist
+
+Добавлены в `ARTIFACT_ALLOWLIST`:
+
+| ID                             | Relative path                  |
+| ------------------------------ | ------------------------------ |
+| `mailbox_selection_json`       | `mailbox_selection.json`       |
+| `mail_thread_index_json`       | `mail_thread_index.json`       |
+| `mail_thread_context_json`     | `mail_thread_context.json`     |
+| `rop_ai_assist_requests_json`  | `rop_ai_assist_requests.json`  |
+| `rop_ai_assist_decisions_json` | `rop_ai_assist_decisions.json` |
+| `rop_ai_assist_results_json`   | `rop_ai_assist_results.json`   |
+
+### UI-6 — Новые поля `/api/rop/dashboard`
+
+```json
+{
+  "latest_selection": {
+    "selected_count": 20,
+    "strategy": "latest_n",
+    "source_count": 1,
+    "sources": [],
+    "newest_message_at": "...",
+    "oldest_message_at": "...",
+    "warnings": [],
+    "evidence_artifact_id": "mailbox_selection_json"
+  },
+  "thread_summary": {
+    "thread_count": 7,
+    "events_with_thread_context": 5,
+    "reply_or_forward_count": 3,
+    "linked_by_references_count": 2,
+    "linked_by_subject_fallback_count": 0,
+    "source_client_scoped_fallback_count": 0,
+    "warnings": [],
+    "evidence_artifact_ids": []
+  },
+  "threads": [],
+  "ai_assist_summary": {
+    "evidence_available": true,
+    "eligible_count": 10,
+    "request_count": 3,
+    "ok_count": 2,
+    "used_count": 2,
+    "degraded_count": 1,
+    "low_confidence_count": 1,
+    "status_counts": {}
+  },
+  "ai_assist_events": []
+}
+```
+
+Existing UI-5 поля сохраняются.
+
+### HTML route `/rop` — UI-6 tabs
+
+Текущие вкладки:
+
+- `threads` — сводка цепочек и таблица групп;
+- `ai_assist` — сводка AI assist и таблица событий.
+
+Поддерживается `?lang=ru` для русских меток во всех новых секциях.
+
 Sanitization rules:
 
 - JSON responses strip `raw_eml`, `raw_message`, `attachment_content`, `content`, `content_bytes`, `payload_bytes`;
@@ -511,7 +632,7 @@ Sanitization rules:
 
 ## Out of scope
 
-UI-4/UI-5 intentionally do not include:
+UI-6 intentionally does not include:
 
 - auth;
 - RBAC;
@@ -525,5 +646,4 @@ UI-4/UI-5 intentionally do not include:
 - SQLAdmin;
 - changes to `beeagent-rop`;
 - stable API v1 freeze;
-- standalone BeeUI service;
-- removal of legacy frozen `src/beeagent_module/web`.
+- standalone BeeUI service.

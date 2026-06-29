@@ -499,8 +499,6 @@ class TestRopTabs:
 
 
 class TestRopPageLayout:
-    """Проверка корректности вёрстки ROP-страницы: subtitle, tabs, card."""
-
     def _rop_html(self, tmp_path: Path) -> str:
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-subtitle")
@@ -784,18 +782,20 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
     overview = next(
         block for block in layout if block.get("title") == "ROP Control Center"
     )
-    items = overview["primary_links"][:4]
+    items = overview["primary_links"]
 
     assert [item["label"] for item in items] == [
         "Today",
         "Last 7 days (current)",
         "Last 30 days",
         "All time",
+        "Open Queue",
+        "Open Bitrix",
     ]
-    assert (
-        next(item for item in items if item["label"] == "Last 7 days (current)")["href"]
-        == "/rop?tab=overview&period=7d"
-    )
+    assert items[0]["href"] == "/rop?tab=overview&period=today"
+    assert items[1]["href"] == "/rop?tab=overview&period=7d"
+    assert items[4]["href"] == "/rop?tab=queue&period=7d"
+    assert items[5]["href"] == "/rop?tab=bitrix&period=7d"
 
 
 def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
@@ -2063,6 +2063,82 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     client = _client(storage_dir)
     response = client.get("/rop", params={"lang": "ru"})
     assert response.status_code == 200
+    html = response.text
+    assert "Панель РОПа" in html
+    assert "ПИСЬМА ЗА ПЕРИОД" in html
+    assert "НОВЫЕ ЛИДЫ" in html
+    assert "Открыть очередь" in html
+    assert "Открыть Битрикс" in html
+    assert "Последняя выборка" in html
+    assert "Требуют проверки" in html
+    assert "Needs review" not in html
+    assert "beeui-language-switcher" in html
+    assert 'class="dropdown me-1 d-inline-block"' in html
+    assert "dropdown-menu dropdown-menu-end" in html
+    assert "Последние 7 дней" in html
+    assert "Сегодня" in html
+    assert "Вчера" in html
+    assert "Последние 30 дней" in html
+    assert "Последние 3 месяца" in html
+    assert "Последний год" in html
+    assert "Всё время" in html
+    assert 'btn btn-outline-primary btn-sm me-1">Сегодня' not in html
+    assert 'btn btn-outline-primary btn-sm me-1">Последние 30 дней' not in html
+
+
+def test_rop_overview_lang_ru_removes_primary_english_labels(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-ru-overview")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "ROP Control Center" not in html
+    assert "TODAY&#39;S EMAILS" not in html
+    assert "NEW LEADS" not in html
+    assert "Open Queue" not in html
+
+
+def test_rop_tabs_preserve_lang_and_period(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-tab-links")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&period=7d&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert (
+        "/rop?tab=threads&amp;period=7d&amp;lang=ru" in html
+        or "/rop?lang=ru&amp;period=7d&amp;tab=threads" in html
+    )
+    assert (
+        "/rop?tab=ai_assist&amp;period=7d&amp;lang=ru" in html
+        or "/rop?lang=ru&amp;period=7d&amp;tab=ai_assist" in html
+    )
+
+
+def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-overview-links")
+    client = _client(storage_dir)
+    response = client.get("/rop?tab=overview&period=7d&lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "/rop?tab=queue&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=bitrix&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=evidence&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;period=today&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;period=30d&amp;lang=ru" in html
+
+
+def test_rop_language_switcher_visible(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rich_rop_run(storage_dir, "run-lang-switcher")
+    client = _client(storage_dir)
+    response = client.get("/rop?lang=ru")
+    assert response.status_code == 200
+    html = response.text
+    assert "RU" in html
+    assert "EN" in html
 
 
 def test_api_rop_dashboard_backward_compatible(tmp_path: Path) -> None:
@@ -2206,8 +2282,15 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     assert "Last 3 months" in html
     assert "Last year" in html
     assert "All time" in html
-    assert "Last 7 days (current)" not in html
+    assert 'href="/rop?tab=overview&amp;period=today"' in html
+    assert 'href="/rop?tab=overview&amp;period=yesterday"' in html
+    assert 'href="/rop?tab=overview&amp;period=7d"' in html
+    assert 'href="/rop?tab=overview&amp;period=30d"' in html
     assert 'href="/rop?tab=overview&amp;period=90d"' in html
+    assert 'href="/rop?tab=overview&amp;period=365d"' in html
+    assert 'href="/rop?tab=overview&amp;period=all"' in html
+    assert 'href="/rop?tab=queue&amp;period=7d"' in html
+    assert 'href="/rop?tab=bitrix&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 
 
@@ -2354,3 +2437,590 @@ def test_rop_overview_no_detailed_metrics_separate_card() -> None:
     )
     assert "Business metrics" not in titles
     assert "Overview" not in titles, "Old Overview block must not exist"
+
+
+class TestUi6It30:
+    def _write_full_it30_run(self, storage_dir: Path, run_id: str) -> Path:
+        run_dir = _write_rich_rop_run(storage_dir, run_id)
+
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        for item in classified:
+            if item.get("event_id") in ("evt-001", "evt-002"):
+                item["thread_id"] = "thr-001"
+            if item.get("event_id") == "evt-005":
+                item["thread_id"] = "thr-002"
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        mailbox_selection = {
+            "run_id": run_id,
+            "strategy": "latest_n_by_internaldate_desc",
+            "sources": [
+                {
+                    "source_id": "hotline_mailbox",
+                    "source_display_name": "Welding Hotline mailbox",
+                    "selected_count": 5,
+                    "available_count": 12,
+                    "messages": [
+                        {
+                            "source_message_id": "m-001",
+                            "internal_date": "2026-06-28T12:00:00+00:00",
+                            "message_id": "<m-001@example.com>",
+                            "subject": "Welding equipment inquiry",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-002",
+                            "internal_date": "2026-06-27T10:30:00+00:00",
+                            "message_id": "<m-002@example.com>",
+                            "subject": "Re: Welding equipment inquiry",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-003",
+                            "internal_date": "2026-06-26T09:00:00+00:00",
+                            "message_id": "<m-003@example.com>",
+                            "subject": "Pricing request",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-004",
+                            "internal_date": "2026-06-25T08:00:00+00:00",
+                            "message_id": "<m-004@example.com>",
+                            "subject": "Failure report",
+                            "selected": True,
+                        },
+                        {
+                            "source_message_id": "m-005",
+                            "internal_date": "2026-06-25T07:30:00+00:00",
+                            "message_id": "<m-005@example.com>",
+                            "subject": "Re: Failure report",
+                            "selected": True,
+                        },
+                    ],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mailbox_selection.json").write_text(
+            json.dumps(mailbox_selection), encoding="utf-8"
+        )
+
+        thread_index = {
+            "run_id": run_id,
+            "threads": [
+                {
+                    "thread_id": "thr-001",
+                    "event_ids": ["evt-001", "evt-002"],
+                    "message_ids": ["<m-001@example.com>", "<m-002@example.com>"],
+                    "evidence": {
+                        "message_id_link": False,
+                        "references_link": True,
+                        "subject_fallback": False,
+                    },
+                },
+                {
+                    "thread_id": "thr-002",
+                    "event_ids": ["evt-003", "evt-005"],
+                    "message_ids": ["<m-003@example.com>", "<m-005@example.com>"],
+                    "evidence": {
+                        "message_id_link": False,
+                        "references_link": False,
+                        "subject_fallback": True,
+                    },
+                },
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mail_thread_index.json").write_text(
+            json.dumps(thread_index), encoding="utf-8"
+        )
+
+        thread_context = {
+            "run_id": run_id,
+            "contexts": [
+                {
+                    "event_id": "evt-002",
+                    "thread_id": "thr-001",
+                    "reply_or_forward": True,
+                    "previous_event_ids": ["evt-001"],
+                    "source_id": "hotline_mailbox",
+                    "client_id": "welding",
+                    "thread_context_confidence": 0.65,
+                    "reason_codes": ["references_chain", "reply_or_forward"],
+                },
+                {
+                    "event_id": "evt-005",
+                    "thread_id": "thr-002",
+                    "reply_or_forward": False,
+                    "previous_event_ids": ["evt-003"],
+                    "source_id": "hotline_mailbox",
+                    "client_id": "welding",
+                    "thread_context_confidence": 0.4,
+                    "reason_codes": ["subject_match"],
+                },
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mail_thread_context.json").write_text(
+            json.dumps(thread_context), encoding="utf-8"
+        )
+
+        ai_requests = {
+            "run_id": run_id,
+            "enabled": True,
+            "counters": {
+                "ai_assist_requested_count": 3,
+                "ai_assist_used_count": 2,
+                "eligible_count": 5,
+            },
+            "requests": [
+                {"event_id": "evt-001", "requested": True},
+                {"event_id": "evt-003", "requested": True},
+                {"event_id": "evt-005", "requested": True},
+            ],
+        }
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(ai_requests), encoding="utf-8"
+        )
+
+        ai_decisions = {
+            "run_id": run_id,
+            "counters": {"decision_count": 3},
+            "decisions": [
+                {"event_id": "evt-001", "status": "ok"},
+                {"event_id": "evt-003", "status": "low_confidence"},
+                {"event_id": "evt-005", "status": "ok"},
+            ],
+        }
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(ai_decisions), encoding="utf-8"
+        )
+
+        ai_results = {
+            "run_id": run_id,
+            "counters": {
+                "ai_assist_requested_count": 3,
+                "ai_assist_used_count": 2,
+                "ai_assist_low_confidence_count": 1,
+                "ai_assist_invalid_output_count": 0,
+                "ai_assist_degraded_count": 1,
+            },
+            "results": [
+                {
+                    "event_id": "evt-001",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": True,
+                    "ai_confidence": 0.92,
+                    "final_case_type": "new_lead",
+                    "final_priority": "high",
+                },
+                {
+                    "event_id": "evt-003",
+                    "ai_assist_status": "low_confidence",
+                    "ai_assist_used": False,
+                    "ai_confidence": 0.35,
+                    "final_case_type": "new_lead",
+                    "final_priority": "medium",
+                },
+                {
+                    "event_id": "evt-005",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": True,
+                    "ai_confidence": 0.95,
+                    "final_case_type": "new_lead",
+                    "final_priority": "high",
+                },
+            ],
+        }
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(ai_results), encoding="utf-8"
+        )
+
+        return run_dir
+
+    def test_full_it30_run_renders_latest_selection(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-it30-full")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        assert "Latest selection" in response.text
+
+    def test_full_it30_api_includes_new_fields(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-it30-api")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        payload = data["data"]
+        assert "latest_selection" in payload
+        assert "thread_summary" in payload
+        assert "threads" in payload
+        assert "ai_assist_summary" in payload
+        assert "ai_assist_events" in payload
+
+        ls = payload["latest_selection"]
+        assert ls["selected_count"] == 5
+        assert ls["source_count"] == 1
+        assert ls["sources"][0]["available_count"] == 12
+        assert ls["newest_message_at"] == "2026-06-28T12:00:00+00:00"
+        assert ls["strategy"] == "latest_n_by_internaldate_desc"
+
+        ts = payload["thread_summary"]
+        assert ts["thread_count"] == 2
+        assert ts["events_with_thread_context"] == 2
+        assert ts["reply_or_forward_count"] == 1
+
+        ai = payload["ai_assist_summary"]
+        assert ai["evidence_available"] is True
+        assert ai["request_count"] == 3
+        assert ai["result_count"] == 3
+        assert ai["used_count"] == 2
+        assert ai["low_confidence_count"] == 1
+        assert payload["threads"][0]["event_count"] > 0
+        assert payload["threads"][0]["latest_subject"]
+        assert any(
+            item["ai_status"] == "low_confidence"
+            for item in payload["ai_assist_events"]
+        )
+        low_conf_event = next(
+            item
+            for item in payload["ai_assist_events"]
+            if item["ai_status"] == "low_confidence"
+        )
+        assert low_conf_event["sender"] == "partner@supply.kz"
+        assert low_conf_event["subject"] == "Price list"
+
+    def test_rop_tab_threads_returns_200(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-tab-threads")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=threads")
+        assert response.status_code == 200
+
+    def test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-tab-ai")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist")
+        assert response.status_code == 200
+
+    def test_rop_lang_ru_includes_russian_labels(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-lang-ru")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=threads&lang=ru")
+        assert response.status_code == 200
+        html = response.text
+        assert "Цепочки" in html
+        assert "Группы цепочек" in html
+
+    def test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-lang-ru-ai")
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist&lang=ru")
+        assert response.status_code == 200
+        html = response.text
+        assert "AI ассистент" in html
+        assert "Сводка AI ассистента" in html
+
+    def test_old_run_without_it30_renders(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-old-no-it30")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+
+    def test_old_run_without_it30_api_has_empty_warnings(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-old-api")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert "latest_selection" in payload
+        assert payload["latest_selection"]["selected_count"] == 0
+        assert "thread_summary" in payload
+        assert payload["thread_summary"]["thread_count"] == 0
+        assert "ai_assist_summary" in payload
+        assert payload["ai_assist_summary"]["evidence_available"] is False
+
+    def test_malformed_it30_artifacts_render_warnings(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-malformed-it30")
+        (run_dir / "mailbox_selection.json").write_text(
+            "{invalid json}", encoding="utf-8"
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            "{bad data}", encoding="utf-8"
+        )
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+
+    def test_malformed_it30_api_still_returns(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-malformed-api")
+        (run_dir / "mail_thread_context.json").write_text("{invalid}", encoding="utf-8")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert "thread_summary" in payload
+        assert "thread_summary" in payload
+
+    def test_ai_assist_summary_preserves_runtime_zero_and_degraded_count(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-zero-used")
+
+        ai_results = {
+            "run_id": "run-ai-zero-used",
+            "counters": {
+                "ai_assist_requested_count": 2,
+                "ai_assist_used_count": 0,
+                "ai_assist_degraded_count": 2,
+            },
+            "results": [
+                {
+                    "event_id": "evt-001",
+                    "ai_assist_status": "ok",
+                    "ai_assist_used": False,
+                    "ai_confidence": 0.92,
+                },
+                {
+                    "event_id": "evt-003",
+                    "ai_assist_status": "provider_unavailable",
+                    "ai_assist_used": False,
+                    "ai_confidence": None,
+                },
+            ],
+        }
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(ai_results),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+
+        assert response.status_code == 200
+        ai_summary = response.json()["data"]["ai_assist_summary"]
+        assert ai_summary["used_count"] == 0
+        assert ai_summary["degraded_count"] == 2
+
+    def test_threads_fallback_to_index_when_contexts_empty(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-thread-index-fallback")
+        (run_dir / "mail_thread_context.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-thread-index-fallback",
+                    "contexts": [],
+                    "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        api_response = client.get("/api/rop/dashboard")
+        assert api_response.status_code == 200
+        payload = api_response.json()["data"]
+        assert payload["threads"]
+        assert payload["threads"][0]["latest_subject"]
+        assert payload["threads"][0]["latest_sender"]
+
+        html_response = client.get("/rop?tab=threads")
+        assert html_response.status_code == 200
+        assert "Re: Order #123" in html_response.text
+        assert "client@workshop.kz" in html_response.text
+        assert "Linked by references" in html_response.text
+
+    def test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-requested")
+
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "enabled": True,
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "eligible_count": 5,
+                    },
+                    "requests": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "counters": {"decision_count": 0},
+                    "decisions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-requested",
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "ai_assist_degraded_count": 0,
+                    },
+                    "results": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        api_response = client.get("/api/rop/dashboard")
+        assert api_response.status_code == 200
+        assert api_response.json()["data"]["ai_assist_events"] == []
+
+        html_response = client.get("/rop?tab=ai_assist")
+        assert html_response.status_code == 200
+        assert "AI Assist not used" in html_response.text
+        assert "not_requested" not in html_response.text
+
+    def test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-used-ru")
+
+        (run_dir / "rop_ai_assist_requests.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "enabled": True,
+                    "counters": {"eligible_count": 5, "ai_assist_requested_count": 0},
+                    "requests": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_decisions.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "counters": {"decision_count": 0},
+                    "decisions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_assist_results.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ai-not-used-ru",
+                    "counters": {
+                        "ai_assist_requested_count": 0,
+                        "ai_assist_used_count": 0,
+                        "ai_assist_degraded_count": 0,
+                    },
+                    "results": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        client = _client(storage_dir)
+        response = client.get("/rop?tab=ai_assist&lang=ru")
+        assert response.status_code == 200
+        assert "AI ассистент не использовался" in response.text
+
+    def test_new_it30_artifact_ids_allowlisted(self) -> None:
+        from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
+
+        for aid in (
+            "mailbox_selection_json",
+            "mail_thread_index_json",
+            "mail_thread_context_json",
+            "rop_ai_assist_requests_json",
+            "rop_ai_assist_decisions_json",
+            "rop_ai_assist_results_json",
+        ):
+            assert is_artifact_id_allowed(aid), f"{aid} should be allowlisted"
+
+    def test_non_allowlisted_still_rejected(self) -> None:
+        from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
+
+        assert is_artifact_id_allowed("raw_eml") is False
+        assert is_artifact_id_allowed("attachment_content") is False
+
+    def test_get_routes_no_mutation_it30(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-no-mutate-it30")
+        client = _client(storage_dir)
+
+        before = {
+            path.relative_to(storage_dir).as_posix(): path.read_text(encoding="utf-8")
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        client.get("/rop")
+        client.get("/api/rop/dashboard")
+        client.get("/rop?tab=threads")
+        client.get("/rop?tab=ai_assist")
+        client.get("/rop?lang=ru")
+
+        after = {
+            path.relative_to(storage_dir).as_posix(): path.read_text(encoding="utf-8")
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        assert after == before
+
+    def test_no_secrets_in_html_it30(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-sec-it30")
+        (run_dir / "mailbox_selection.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-sec-it30",
+                    "password_value": "should-not-leak",
+                    "ROP_API_KEY": "secret-key-12345",
+                    "strategy": "latest_n",
+                    "selected_count": 1,
+                    "source_count": 0,
+                    "sources": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        client = _client(storage_dir)
+        for tab in ("threads", "ai_assist", "overview"):
+            response = client.get(f"/rop?tab={tab}")
+            assert response.status_code == 200
+            assert "should-not-leak" not in response.text
+            assert "secret-key-12345" not in response.text
+
+    def test_no_raw_eml_in_it30_html(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-no-raw")
+        client = _client(storage_dir)
+        for tab in ("threads", "ai_assist"):
+            response = client.get(f"/rop?tab={tab}")
+            assert response.status_code == 200
+            assert "raw_eml" not in response.text.lower()
+            assert "attachment_content" not in response.text.lower()

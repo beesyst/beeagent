@@ -40,7 +40,7 @@
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
 - использовать локальные BeeUI/static assets без CDN и npm runtime;
 - показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
-- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary и evidence links;
+- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary, evidence links, latest-N/thread/AI assist evidence и RU локализацией;
 - отдавать read-only JSON API поверх existing artifacts;
 - сохранять allowlist-based artifact access, bounded previews и sanitization;
 - поддерживать approval / reject в demo-потоке;
@@ -215,7 +215,7 @@ run:
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
 ```
 
-### Operator Web Console (UI-5 — Rich ROP dashboard и operator intelligence)
+### Operator Web Console (BeeUI-backed, UI-6)
 
 Read-only web console запускается отдельной командой:
 
@@ -237,16 +237,16 @@ Route listing diagnostic:
 
 Web Console запускается через `./start.sh web`.
 
-BeeUI — canonical web layer. BeeAgent в этом пути отвечает только за read-only adapter, read-model, layout builders и artifact allowlist. HTML/rendering/templates/shell и browser artifact pages принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-5 rendering path.
+BeeUI — canonical web layer. BeeAgent в этом пути отвечает только за read-only adapter, read-model, layout builders и artifact allowlist. HTML/rendering/templates/shell и browser artifact pages принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-6 rendering path.
 
 Доступные HTML маршруты:
 
-- `/` — dashboard (customer-facing KPI + Quick Links + Technical details)
+- `/` — dashboard (customer-facing KPI + Quick Links + Technical details), поддерживает `?lang=ru`
 - `/health` — health check
-- `/runs` — run history
-- `/runs/<run_id>` — run detail
-- `/rop` — BeeUI generic adapter custom page для ROP dashboard
-- `/modules` — module diagnostics
+- `/runs` — run history, поддерживает `?lang=ru`
+- `/runs/<run_id>` — run detail, поддерживает `?lang=ru`
+- `/rop` — ROP dashboard, поддерживает `?lang=ru`
+- `/modules` — module diagnostics, поддерживает `?lang=ru`
 
 JSON API маршруты:
 
@@ -254,7 +254,7 @@ JSON API маршруты:
 - `/api/runs`
 - `/api/runs/<run_id>`
 - `/api/modules`
-- `/api/rop/dashboard` (UI-5 enriched)
+- `/api/rop/dashboard` (UI-6 enriched read-only payload)
 
 Browser artifact маршруты:
 
@@ -276,10 +276,11 @@ API artifact маршруты:
 
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
-- HTML tabs на `/rop`: Overview, Queue, Sources, Attachments, Evidence, Bitrix Evidence / Action Drafts. Bitrix/action sections остаются read-only и показывают empty/reserved state, если соответствующих artifacts нет.
+- HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
+- Overview использует period dropdown для выбора периода, а не отдельные period buttons;
 - dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 50), attachment summary без raw content и evidence links по allowlist;
-- `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload.
+- `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload с UI-6 полями: `latest_selection`, `thread_summary`, `threads`, `ai_assist_summary`, `ai_assist_events`.
 
 Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
 Доступ к артефактам идёт только по allowlisted `artifact_id`, а не по произвольным именам файлов.
@@ -294,6 +295,14 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 - mailbox/CRM/module/capability execution;
 - attachment content parsing;
 - production deployment hardening.
+
+Security гарантии Web Console:
+
+- нет raw `.eml`;
+- нет raw attachment content;
+- нет provider secrets;
+- нет destructive mailbox actions;
+- нет CRM/Bitrix write-back из UI.
 
 ### ROP CLI
 
