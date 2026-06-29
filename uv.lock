@@ -83,7 +83,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "beeui"
-version = "0.21.0"
+version = "0.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -93,9 +93,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/9a/78aa6b5e16bbf1e019eb8ea3f4e7ffa5fe9da16a80d9a40794647fc63e63/beeui-0.21.0.tar.gz", hash = "sha256:5445346eca980c788bee44c397a55fcd02f4ac60a9ccab42401606aa0a503c37", size = 301955, upload-time = "2026-06-19T20:02:11.223Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/49/07/0dcbdc992f8bda6bc68dc56f0a6aaa19ca54f56e8d8be8a1ce8b4c2801d7/beeui-0.21.1.tar.gz", hash = "sha256:71dccc1d3a1ca0c06254172118d15365404e5c30aaf12cff5e27892cc976b788", size = 285391, upload-time = "2026-06-29T13:09:59.27Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/99/864ad1b8f55bb1f61d7f0711b38956831480d6ca4cd838a5a3f236db7960/beeui-0.21.0-py3-none-any.whl", hash = "sha256:0c33c918f3aea19a26051e83b21acd8d62574606a464ea94afc2cfb47a837f7b", size = 234618, upload-time = "2026-06-19T20:02:08.321Z" },
+    { url = "https://files.pythonhosted.org/packages/61/d5/d6c19a9771bcb7209fd9e98e3cc84cdc47aaf3fd31f13de5565e91347fe1/beeui-0.21.1-py3-none-any.whl", hash = "sha256:ed8e5cda7130ee0548eaf902023256d2257f2db54952ced97138e4cfb542f10c", size = 225813, upload-time = "2026-06-29T13:10:08.983Z" },
 ]
 
 [[package]]
