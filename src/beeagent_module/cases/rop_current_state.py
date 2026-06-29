@@ -174,6 +174,42 @@ def build_rop_current_state(
         source_degraded_count=_int(source_block.get("degraded_source_count", 0)),
     )
 
+    operator_summary_path = run_dir / "operator_summary.json"
+    operator_summary: dict | None = None
+    if operator_summary_path.exists():
+        try:
+            operator_summary = _read_json_dict(operator_summary_path)
+            artifact_refs.append(str(operator_summary_path.relative_to(storage_dir)))
+        except (json.JSONDecodeError, OSError) as exc:
+            warnings.append(
+                {
+                    "code": "malformed_artifact",
+                    "artifact": "operator_summary.json",
+                    "message": f"Failed to read operator_summary.json: {exc}",
+                }
+            )
+
+    if isinstance(operator_summary, dict):
+        cls = operator_summary.get("classification", {})
+        if isinstance(cls, dict):
+            kpi["latest_n_strategy"] = cls.get("latest_n_strategy", False)
+            kpi["threaded_event_count"] = _int(cls.get("threaded_event_count", 0))
+            kpi["thread_context_available_count"] = _int(
+                cls.get("thread_context_available_count", 0)
+            )
+            kpi["case_subtype_counts"] = cls.get("case_subtype_counts", {})
+            kpi["recommended_queue_counts"] = cls.get("recommended_queue_counts", {})
+            kpi["correct_action_counts"] = cls.get("correct_action_counts", {})
+            kpi["ai_assist_enabled"] = cls.get("ai_assist_enabled", False)
+            kpi["ai_assist_requested_count"] = _int(
+                cls.get("ai_assist_requested_count", 0)
+            )
+            kpi["ai_assist_used_count"] = _int(cls.get("ai_assist_used_count", 0))
+            kpi["ai_assist_invalid_count"] = _int(cls.get("ai_assist_invalid_count", 0))
+            kpi["ai_assist_degraded_count"] = _int(
+                cls.get("ai_assist_degraded_count", 0)
+            )
+
     queues = _build_queues(classified_events, bitrix_reconciliation)
 
     current_alias = _determine_current_alias(storage_dir, run_id)

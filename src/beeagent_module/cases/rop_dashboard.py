@@ -120,6 +120,7 @@ def build_rop_dashboard(
     current_state = _read_json_dict(run_dir / "rop_current_state.json")
     bitrix_reconciliation = _read_json_dict(run_dir / "bitrix_reconciliation.json")
     attachment_extraction = _read_json_dict(run_dir / "attachment_extraction.json")
+    operator_summary = _read_json_dict(run_dir / "operator_summary.json")
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)

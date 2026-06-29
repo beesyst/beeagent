@@ -269,6 +269,17 @@ def load_mailbox_readonly(
             ),
         )
 
+    events = _sort_events_by_date_desc(events)
+    events = events[:items_max]
+
+    date_fallback_count = sum(1 for e in events if e.get("_date_fallback"))
+    if date_fallback_count > 0:
+        logger.warning(
+            "mailbox_readonly source_id=%s: %d event(s) had no reliable date, used UID/order fallback",
+            source_id,
+            date_fallback_count,
+        )
+
     mailbox_details = {
         "host": str(mailbox_cfg["host"]),
         "port": int(mailbox_cfg["port"]),
@@ -365,6 +376,10 @@ def _normalize_mailbox_message(
     ):
         raise ValueError("message missing identifying headers")
 
+    date_raw = message.get("Date")
+    date_value = _normalize_message_date(date_raw)
+    date_fallback = not bool(date_raw and date_value)
+
     return {
         "event_id": event_id,
         "source": "mailbox_readonly",
@@ -374,7 +389,8 @@ def _normalize_mailbox_message(
         "to": to_list,
         "cc": cc_list,
         "subject": subject,
-        "date": _normalize_message_date(message.get("Date")),
+        "date": date_value,
+        "_date_fallback": date_fallback,
         "body_preview": body_preview,
         "attachments": attachments,
     }
@@ -491,6 +507,21 @@ def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
         normalized_filename.endswith(".eml")
         or normalized_content_type == "message/rfc822"
     )
+
+
+def _sort_events_by_date_desc(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _sort_key(event: dict[str, Any]) -> tuple[int, str, int]:
+        raw_date = event.get("date") or event.get("received_at") or ""
+        if isinstance(raw_date, str) and raw_date:
+            try:
+                dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                return (0, dt.isoformat(), 0)
+            except ValueError:
+                return (1, raw_date, 0)
+        uid = event.get("source_message_id") or event.get("uid") or ""
+        return (1, uid, 1)
+
+    return sorted(events, key=_sort_key, reverse=True)
 
 
 def _make_source_diagnostics(
@@ -671,11 +702,19 @@ def _normalize_batch_items(
             skipped,
         )
 
-    truncated = valid[:items_max]
+    sorted_valid = sorted(
+        valid,
+        key=lambda e: (
+            e.get("date") or e.get("received_at") or e.get("event_date") or ""
+        ),
+        reverse=True,
+    )
+
+    truncated = sorted_valid[:items_max]
 
     if len(valid) > items_max:
         logger.info(
-            "json_batch source_id=%s: truncated to items_max=%d (total valid=%d)",
+            "json_batch source_id=%s: sorted by date, truncated to items_max=%d (total valid=%d)",
             source_id,
             items_max,
             len(valid),

@@ -178,6 +178,17 @@ def _build_business_summary(
                 "attachment_count",
                 "attachment_refused",
                 "manual_review_count",
+                "latest_n_strategy",
+                "threaded_event_count",
+                "thread_context_available_count",
+                "case_subtype_counts",
+                "recommended_queue_counts",
+                "correct_action_counts",
+                "ai_assist_enabled",
+                "ai_assist_requested_count",
+                "ai_assist_used_count",
+                "ai_assist_invalid_count",
+                "ai_assist_degraded_count",
             ):
                 if key not in kpi and key in ckpi:
                     kpi[key] = ckpi[key]

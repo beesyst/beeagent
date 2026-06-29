@@ -79,6 +79,16 @@ modules:
       enabled: true # true/false - включить/выключить загрузку модуля
 
 rop:
+  ai_assist:
+    enabled: false
+    provider: openai_compatible
+    model_env: ROP_AI_MODEL
+    api_key_env: ROP_AI_API_KEY
+    base_url_env: ROP_AI_BASE_URL
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
   attachments: # настройки для извлечения вложений из событий ROP
     enabled: true # true/false - включить/выключить извлечение вложений из событий ROP
     chars_max: 500 # макс. число символов для извлечения из одного вложения
