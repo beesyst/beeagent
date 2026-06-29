@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.38.0...beeagent-v0.39.0) (2026-06-29)
+
+
+### Features
+
+* **rop:** add latest-n thread context and ai assist execution ([#121](https://github.com/beesyst/beeagent/issues/121)) ([e2f10c4](https://github.com/beesyst/beeagent/commit/e2f10c4c0b77d3d73d565e81c928a79aec09d3d7))
+
 ## [0.38.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.37.0...beeagent-v0.38.0) (2026-06-24)
 
 
