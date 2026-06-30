@@ -106,6 +106,17 @@ CLI overrides:
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
 - `/runs/{run_id}/artifacts/{artifact_id}` — browser artifact detail route, BeeUI-owned HTML
 
+## HTML routes (event detail)
+
+Реализованные event detail HTML routes:
+
+- `/rop/events/{event_id}` — ROP event detail review page (read-only)
+
+Query parameters:
+
+- `run_id` (required): run identifier
+- `lang` (optional, `en`/`ru`): locale override
+
 ## JSON API routes
 
 Реализованные JSON API routes (через BeeUI product console + custom BeeAgent routes):
@@ -115,6 +126,7 @@ CLI overrides:
 - `/api/runs/{run_id}`
 - `/api/modules`
 - `/api/rop/dashboard`
+- `/api/rop/events/{event_id}` — ROP event detail read-only JSON envelope
 - `/api/runs/{run_id}/artifacts`
 - `/api/runs/{run_id}/artifacts/{artifact_id}`
 
@@ -178,7 +190,7 @@ Session secret не печатается.
 
 HTML routes:
 
-- `/`, `/rop`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
+- `/`, `/rop`, `/rop?*`, `/rop/events/{event_id}`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
 
 API routes:
 
@@ -341,6 +353,89 @@ Browser route показывает bounded/redacted artifact preview через 
       "medium": 2
     },
     "fallback_count": 1
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+`GET /api/rop/events/{event_id}?run_id={run_id}`
+
+```json
+{
+  "ok": true,
+  "read_only": true,
+  "data": {
+    "run_id": "smoke-it31",
+    "event_id": "evt-001",
+    "source": {
+      "source_id": "hotline_mailbox",
+      "source_type": "mailbox_readonly",
+      "source_display_name": "Welding Hotline mailbox",
+      "client_id": "welding"
+    },
+    "message": {
+      "sender": "client@example.com",
+      "subject": "Welding machine inquiry",
+      "body_preview": "bounded sanitized email text",
+      "body_preview_truncated": true,
+      "body_preview_chars": 4000,
+      "body_preview_source": "text_plain"
+    },
+    "classification": {
+      "case_type": "new_lead",
+      "priority": "high",
+      "confidence": 0.95,
+      "is_fallback": false,
+      "recommended_queue": "sales",
+      "correct_action": "create_lead",
+      "should_rop_see": true
+    },
+    "thread": {
+      "thread_id": "thr_001",
+      "previous_event_ids": ["evt-000"],
+      "reply_or_forward": false,
+      "thread_connection": "subject_fallback"
+    },
+    "ai_assist": {
+      "ai_assist_status": "not_applied"
+    },
+    "bitrix": {
+      "available": false
+    },
+    "action_draft": {
+      "available": false
+    },
+    "attachments": [],
+    "evidence_links": [
+      {
+        "artifact_id": "normalized_events_json",
+        "available": true,
+        "url": "/runs/smoke-it31/artifacts/normalized_events_json"
+      },
+      {
+        "artifact_id": "classified_events_json",
+        "available": true,
+        "url": "/runs/smoke-it31/artifacts/classified_events_json"
+      }
+    ],
+    "warnings": [],
+    "read_only": true
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+Пример ответа для несуществующего события:
+
+```json
+{
+  "ok": false,
+  "read_only": true,
+  "error": {
+    "code": "not_found",
+    "message": "Event evt-999 not found in run smoke-it31"
   },
   "warnings": [],
   "meta": {}

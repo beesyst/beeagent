@@ -83,7 +83,14 @@
 - выполнять read-only Bitrix reconciliation;
 - применять Bitrix match quality gate для weak/ambiguous/unsafe candidates;
 - формировать read-only/draft-only `rop_action_drafts.json`;
-- формировать ROP MVP handoff/readiness pack.
+- формировать ROP MVP handoff/readiness pack;
+- использовать bounded email body preview через `rop.email_preview.body_chars_max`;
+- сохранять `body_preview`, `body_preview_chars`, `body_preview_truncated`, `body_preview_source` в `normalized_events.json`;
+- отдавать read-only ROP event detail HTML page `/rop/events/{event_id}?run_id=...`;
+- отдавать read-only JSON API `/api/rop/events/{event_id}?run_id=...`;
+- показывать detail links из ROP Queue;
+- использовать RU label `Подробнее` для detail link;
+- рендерить HTML event detail через BeeUI generic detail renderer, при том что BeeAgent отдаёт safe read-model/page-model.
 
 ## Текущий фокус проекта
 
@@ -171,6 +178,19 @@ BeeAgent уже прошёл этап **module platform v0**:
 - public `ai_assist_merge` module boundary для применения AI result;
 - deterministic preservation path при unavailable/invalid merge contract или failed/invalid/blocked AI output.
 
+Итерация 31 добавила:
+
+- config-driven bounded email preview contract `rop.email_preview.body_chars_max`;
+- fail-fast validation для `rop.email_preview.body_chars_max`;
+- поля `body_preview`, `body_preview_chars`, `body_preview_truncated`, `body_preview_source` в `normalized_events.json`;
+- read-only API route `/api/rop/events/{event_id}?run_id=<run_id>`;
+- read-only HTML route `/rop/events/{event_id}?run_id=<run_id>`;
+- BeeUI generic detail renderer для ROP event detail page;
+- BeeAgent-owned `rop_event_detail` read-model/page-model;
+- detail links из ROP Queue;
+- RU локализацию detail link: `Подробнее`;
+- сохранение границ: no raw `.eml`, no attachment content, no mailbox/CRM/Bitrix mutations.
+
 Текущий фокус:
 
 1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;
@@ -256,6 +276,7 @@ BeeUI — canonical web layer. BeeAgent в этом пути отвечает з
 - `/runs` — run history, поддерживает `?lang=ru`
 - `/runs/<run_id>` — run detail, поддерживает `?lang=ru`
 - `/rop` — ROP dashboard, поддерживает `?lang=ru`
+- `/rop/events/<event_id>` — read-only ROP event detail review page, требует `?run_id=<run_id>`, поддерживает `?lang=ru`
 - `/modules` — module diagnostics, поддерживает `?lang=ru`
 
 JSON API маршруты:
@@ -265,6 +286,7 @@ JSON API маршруты:
 - `/api/runs/<run_id>`
 - `/api/modules`
 - `/api/rop/dashboard` (UI-6 enriched read-only payload)
+- `/api/rop/events/<event_id>` — read-only JSON envelope для ROP event detail, требует `?run_id=<run_id>`
 
 Browser artifact маршруты:
 
@@ -287,6 +309,8 @@ API artifact маршруты:
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
 - HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
+- вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
+- при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
 - Overview использует period dropdown для выбора периода, а не отдельные period buttons;
 - dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 50), attachment summary без raw content и evidence links по allowlist;
@@ -731,7 +755,7 @@ configured source(s)
 → intake_metadata.json
 → mailbox_selection.json
 → attachment_extraction.json
-→ normalized_events.json
+→ normalized_events.json с bounded `body_preview_*`
 → mail_thread_index.json
 → mail_thread_context.json
 → beeagent-rop lead_classification per event with bounded thread_context
@@ -937,6 +961,25 @@ rop:
 
 Эти поля валидируются fail-fast в `core/settings.py` и прокидываются в BeeAgent-owned artifacts как `source_role`, `client_id`, `source_display_name`.
 
+### ROP email preview
+
+`rop.email_preview` управляет bounded preview тела письма, которое может попадать в normalized artifacts, API и read-only HTML review page.
+
+```yaml
+rop:
+  email_preview:
+    body_chars_max: 4000
+```
+
+Правила:
+
+- значение валидируется fail-fast;
+- допустимый диапазон: `200..10000`;
+- preview строится для `json_batch` и `mailbox_readonly`;
+- raw `.eml` и attachment content не сохраняются;
+- HTML предпочитает text/plain, для HTML body используется stripped text;
+- результат фиксируется в `normalized_events.json`.
+
 ### ROP AI assist
 
 `rop.ai_assist` — BeeAgent-owned bounded AI assist config.
@@ -1027,6 +1070,15 @@ AI assist не является самостоятельной ROP business logi
 - `normalized_events.json` и `classified_events.json` сохраняют source traceability per event;
 - `operator_summary.json` содержит aggregate source summary и per-source rollup;
 - `rop_review_table.tsv` содержит source-aware columns.
+
+После It31 `normalized_events.json` также содержит bounded preview поля:
+
+- `body_preview`
+- `body_preview_chars`
+- `body_preview_truncated`
+- `body_preview_source`
+
+Эти поля используются для ROP event detail review page и API. Они не должны содержать raw `.eml` или attachment content.
 
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
 После It30 `classified_events.json` также сохраняет optional ROP business fields, если они возвращены модулем или public merge contract:
@@ -1136,6 +1188,9 @@ AI assist не является самостоятельной ROP business logi
 - artifact routes должны оставаться whitelist-based;
 - path traversal должен блокироваться;
 - raw `.eml`, attachment content и secret-like payload не должны рендериться в HTML или JSON artifact output;
+- body preview должен быть bounded через `rop.email_preview.body_chars_max`;
+- event detail routes должны оставаться read-only;
+- `/rop/events/{event_id}` не должен запускать module/capability/mailbox/CRM actions;
 - `rop.ai_assist` disabled by default;
 - AI env values не пишутся в logs/artifacts;
 - при `enabled: true` и `dry_run: false` env валидируются fail-fast;
@@ -1175,6 +1230,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP thread artifacts and bounded thread context** — DONE;
 - **ROP bounded AI assist execution v0** — DONE;
 - **ROP public AI merge boundary** — DONE;
+- **ROP Review Workbench event details** — DONE;
 - **ROP MVP handoff/readiness pack** — DONE.
 
 Первый реальный модуль:
@@ -1192,6 +1248,11 @@ BeeAgent уже вышел из состояния “только демо”.
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
+- ROP Queue ведёт на read-only event detail page `/rop/events/{event_id}?run_id=...`;
+- BeeAgent отдаёт JSON detail через `/api/rop/events/{event_id}?run_id=...`;
+- event detail HTML рендерится через BeeUI generic detail renderer;
+- event detail использует bounded `body_preview_*`, classification, thread, AI, Bitrix, action draft, attachments metadata и evidence links;
+- raw `.eml`, raw attachment content и secret-like payload не рендерятся;
 - BeeAgent передаёт bounded `thread_context` в `beeagent-rop` classification path;
 - BeeAgent пишет AI assist evidence artifacts;
 - AI assist disabled by default и не делает write-back;

@@ -90,6 +90,8 @@ modules:
   registry: []
 
 rop:
+  email_preview:
+    body_chars_max: 4000
   attachments:
     enabled: true
     chars_max: 500
@@ -214,6 +216,8 @@ modules:
   registry: []
 
 rop:
+  email_preview:
+    body_chars_max: 4000
   attachments:
     enabled: true
     chars_max: 500
@@ -340,6 +344,8 @@ modules:
   registry: []
 
 rop:
+  email_preview:
+    body_chars_max: 4000
   attachments:
     enabled: true
     chars_max: 500
@@ -478,6 +484,8 @@ modules:
   registry: []
 
 rop:
+  email_preview:
+    body_chars_max: 4000
   attachments:
     enabled: true
     chars_max: 500

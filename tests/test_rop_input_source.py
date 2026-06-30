@@ -14,6 +14,8 @@ from beeagent_module.core.input_source import (
     select_rop_sources,
 )
 
+EMAIL_PREVIEW_BODY_CHARS_MAX = 4000
+
 
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_input_source_null")
@@ -119,7 +121,10 @@ def test_load_json_batch_success(tmp_path: Path) -> None:
 
     source = _make_source(str(batch_file.relative_to(tmp_path)), period="2026-05")
     events, metadata = load_json_batch(
-        source=source, project_root=tmp_path, logger=_null_logger()
+        source=source,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
     )
 
     assert len(events) == 2
@@ -140,7 +145,10 @@ def test_load_json_batch_uses_config_period_when_file_has_none(tmp_path: Path) -
 
     source = _make_source(str(batch_file.relative_to(tmp_path)), period="2026-05")
     _events, metadata = load_json_batch(
-        source=source, project_root=tmp_path, logger=_null_logger()
+        source=source,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
     )
     assert metadata["period"] == "2026-05"
 
@@ -148,7 +156,12 @@ def test_load_json_batch_uses_config_period_when_file_has_none(tmp_path: Path) -
 def test_load_json_batch_missing_file(tmp_path: Path) -> None:
     source = _make_source("storage/mock/nonexistent.json")
     with pytest.raises(RuntimeError, match="batch file not found"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_invalid_json(tmp_path: Path) -> None:
@@ -157,7 +170,12 @@ def test_load_json_batch_invalid_json(tmp_path: Path) -> None:
 
     source = _make_source(str(bad_file.relative_to(tmp_path)))
     with pytest.raises(RuntimeError, match="not valid JSON"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_invalid_shape_not_dict(tmp_path: Path) -> None:
@@ -166,7 +184,12 @@ def test_load_json_batch_invalid_shape_not_dict(tmp_path: Path) -> None:
 
     source = _make_source(str(list_file.relative_to(tmp_path)))
     with pytest.raises(RuntimeError, match="top-level JSON object"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_missing_items_key(tmp_path: Path) -> None:
@@ -175,7 +198,12 @@ def test_load_json_batch_missing_items_key(tmp_path: Path) -> None:
 
     source = _make_source(str(batch_file.relative_to(tmp_path)))
     with pytest.raises(RuntimeError, match="'items' as a list"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_respects_max_items(tmp_path: Path) -> None:
@@ -188,7 +216,10 @@ def test_load_json_batch_respects_max_items(tmp_path: Path) -> None:
 
     source = _make_source(str(batch_file.relative_to(tmp_path)), items_max=3)
     events, metadata = load_json_batch(
-        source=source, project_root=tmp_path, logger=_null_logger()
+        source=source,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
     )
 
     assert len(events) == 3
@@ -207,7 +238,10 @@ def test_load_json_batch_skips_non_dict_items(tmp_path: Path) -> None:
 
     source = _make_source(str(batch_file.relative_to(tmp_path)))
     events, metadata = load_json_batch(
-        source=source, project_root=tmp_path, logger=_null_logger()
+        source=source,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
     )
 
     assert len(events) == 2
@@ -227,7 +261,12 @@ def test_load_json_batch_empty_path_raises(tmp_path: Path) -> None:
         "batch": {"path": "", "period": "2026-05"},
     }
     with pytest.raises(RuntimeError, match="batch.path is empty"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_raises_when_items_max_missing(tmp_path: Path) -> None:
@@ -242,7 +281,12 @@ def test_load_json_batch_raises_when_items_max_missing(tmp_path: Path) -> None:
         "batch": {"path": "any.json", "period": "2026-05"},
     }
     with pytest.raises(RuntimeError, match="items_max must be int > 0"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_raises_when_batch_missing(tmp_path: Path) -> None:
@@ -257,7 +301,12 @@ def test_load_json_batch_raises_when_batch_missing(tmp_path: Path) -> None:
         "items_max": 10,
     }
     with pytest.raises(RuntimeError, match="batch must be a mapping"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
 
 
 def test_load_json_batch_raises_when_batch_period_missing(tmp_path: Path) -> None:
@@ -277,7 +326,89 @@ def test_load_json_batch_raises_when_batch_period_missing(tmp_path: Path) -> Non
         "batch": {"path": str(batch_file.relative_to(tmp_path)), "period": ""},
     }
     with pytest.raises(RuntimeError, match="batch.period is empty"):
-        load_json_batch(source=source, project_root=tmp_path, logger=_null_logger())
+        load_json_batch(
+            source=source,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        )
+
+
+def test_load_json_batch_body_preview_respects_configured_body_chars_max(
+    tmp_path: Path,
+) -> None:
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e1",
+                "body": "A" * 80,
+            }
+        ],
+    }
+    batch_file = tmp_path / "preview.json"
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=32,
+    )
+
+    assert events[0]["body_preview"] == "A" * 32
+    assert events[0]["body_preview_chars"] == 32
+    assert events[0]["body_preview_truncated"] is True
+
+
+def test_load_json_batch_bounds_existing_body_preview(tmp_path: Path) -> None:
+    batch_file = tmp_path / "batch_existing_preview.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "preview-only",
+                        "sender": "lead@example.com",
+                        "subject": "Preview only",
+                        "body_preview": "<script>bad()</script>" + ("B" * 260),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    source = {
+        "source_id": "test-preview-only",
+        "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Preview Only",
+        "enabled": True,
+        "authority": "read_only",
+        "items_max": 10,
+        "batch": {
+            "path": str(batch_file.relative_to(tmp_path)),
+            "period": "2026-05",
+        },
+    }
+
+    events, _metadata = load_json_batch(
+        source=source,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=50,
+    )
+
+    assert len(events) == 1
+    assert events[0]["body_preview"] == "B" * 50
+    assert events[0]["body_preview_chars"] == 50
+    assert events[0]["body_preview_truncated"] is True
+    assert events[0]["body_preview_source"] == "existing"
+    assert "<script" not in events[0]["body_preview"]
+    assert "bad()" not in events[0]["body_preview"]
 
 
 class _FakeMailboxClient:
@@ -324,10 +455,15 @@ def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     events, metadata, diagnostics = load_mailbox_readonly(
         source=_mailbox_source(),
         logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
         mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
     )
 
     assert len(events) == 1
+    assert events[0]["body_preview"] == "Need hotline callback."
+    assert events[0]["body_preview_chars"] == len("Need hotline callback.")
+    assert events[0]["body_preview_truncated"] is False
+    assert events[0]["body_preview_source"] == "text_plain"
     assert events[0]["message_id"] == "<mail-1@example.com>"
     assert events[0]["sender"] == "lead@example.com"
     assert events[0]["to"] == ["hotline@example.com"]
@@ -354,6 +490,7 @@ def test_load_mailbox_readonly_missing_credentials_degraded(
         load_mailbox_readonly(
             source=_mailbox_source(),
             logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
             mailbox_client_factory=lambda _source: _FakeMailboxClient([]),
         )
 
@@ -373,6 +510,7 @@ def test_load_mailbox_readonly_skips_malformed_message(
     events, _metadata, diagnostics = load_mailbox_readonly(
         source=_mailbox_source(items_max=5),
         logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
         mailbox_client_factory=lambda _source: _FakeMailboxClient([malformed, valid]),
     )
 
@@ -380,6 +518,42 @@ def test_load_mailbox_readonly_skips_malformed_message(
     assert events[0]["message_id"] == "<mail-2@example.com>"
     assert diagnostics["malformed_count"] == 1
     assert diagnostics["skipped_count"] == 1
+
+
+def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+
+    long_html = (
+        "<html><body><script>bad()</script><p>" + ("A" * 260) + "</p></body></html>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: HTML body\n"
+        "Message-ID: <mail-html@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{long_html}"
+    ).encode("utf-8")
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=50,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    assert len(events) == 1
+    assert events[0]["body_preview"] == "A" * 50
+    assert events[0]["body_preview_chars"] == 50
+    assert events[0]["body_preview_truncated"] is True
+    assert events[0]["body_preview_source"] == "html_text"
+    assert "<script" not in events[0]["body_preview"]
+    assert "bad()" not in events[0]["body_preview"]
+    assert "<p>" not in events[0]["body_preview"]
 
 
 def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -391,6 +565,7 @@ def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> 
         source=_mailbox_source(),
         project_root=Path.cwd(),
         logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
         mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
     )
 

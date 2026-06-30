@@ -136,6 +136,81 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
+def _write_rop_event_detail_artifacts(storage_dir: Path, run_id: str) -> Path:
+    run_dir = _write_run_artifacts(storage_dir, run_id)
+    normalized_events = [
+        {
+            "event_id": "evt-1",
+            "source_id": "hotline_mailbox",
+            "source_type": "mailbox_readonly",
+            "source_role": "technical_aggregator",
+            "source_display_name": "Welding Hotline mailbox",
+            "client_id": "welding",
+            "sender": "client@example.com",
+            "subject": "Need welding quote",
+            "body_preview": "Please send pricing for welding equipment.",
+            "body_preview_chars": 42,
+            "body_preview_truncated": False,
+            "body_preview_source": "existing",
+            "attachments": [
+                {
+                    "filename": "brief.pdf",
+                    "content_type": "application/pdf",
+                    "size_bytes": 128,
+                    "content": "RAW-ATTACHMENT-CONTENT",
+                }
+            ],
+            "raw_eml": "RAW-EML-CONTENT",
+        }
+    ]
+    classified_events = [
+        {
+            "event_id": "evt-1",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "client@example.com",
+            "subject": "Need welding quote",
+            "case_type": "new_lead",
+            "priority": "high",
+            "confidence": 0.95,
+            "reason_code": "new_contact",
+            "recommended_queue": "high_priority",
+            "correct_action": "review",
+            "should_rop_see": True,
+            "is_fallback": False,
+        }
+    ]
+    current_state = {
+        "run_id": run_id,
+        "status": "ok",
+        "read_only": True,
+        "queues": {
+            "needs_review": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "client@example.com",
+                    "subject": "Need welding quote",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "source_id": "hotline_mailbox",
+                    "source_display_name": "Welding Hotline mailbox",
+                    "recommended_next_step": "Manual review",
+                }
+            ]
+        },
+    }
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized_events), encoding="utf-8"
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified_events), encoding="utf-8"
+    )
+    (run_dir / "rop_current_state.json").write_text(
+        json.dumps(current_state), encoding="utf-8"
+    )
+    return run_dir
+
+
 def _write_bitrix_current_state_artifacts(run_dir: Path, run_id: str) -> None:
     current_state = {
         "run_id": run_id,
@@ -265,6 +340,9 @@ def _build_settings() -> dict:
         "web": {"host": "127.0.0.1", "port": 18080, "open_browser": False},
         "logging": {"clear_logs": True, "utc": True, "level": "INFO"},
         "rop": {
+            "email_preview": {
+                "body_chars_max": 4000,
+            },
             "dashboard": {
                 "default_period": "7d",
                 "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
@@ -426,6 +504,50 @@ def test_rop_route_escapes_html(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "<script>alert" not in response.text
     assert "alert(1)" not in response.text
+
+
+def test_rop_event_detail_html_route_returns_html(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-rop-detail-html")
+    client = _client(storage_dir)
+
+    response = client.get("/rop/events/evt-1?run_id=run-rop-detail-html")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Event Detail" in response.text
+    assert "Need welding quote" in response.text
+    assert "client@example.com" in response.text
+    assert "Please send pricing for welding equipment." in response.text
+    assert "RAW-EML-CONTENT" not in response.text
+    assert "RAW-ATTACHMENT-CONTENT" not in response.text
+
+
+def test_api_rop_event_detail_route_remains_json(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-rop-detail-api")
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/events/evt-1?run_id=run-rop-detail-api")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    data = response.json()
+    assert data["data"]["message"]["subject"] == "Need welding quote"
+
+
+def test_rop_queue_detail_link_is_localized_in_ru(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-rop-detail-ru")
+    client = _client(storage_dir)
+
+    response = client.get("/rop?run_id=run-rop-detail-ru&tab=queue&lang=ru")
+
+    assert response.status_code == 200
+    assert "Подробнее" in response.text
+    assert (
+        'href="/rop/events/evt-1?run_id=run-rop-detail-ru&amp;lang=ru"' in response.text
+    )
 
 
 class TestRopTabs:
@@ -3489,6 +3611,9 @@ def _build_full_settings() -> dict:
         "quiz": {"enabled": False, "path": "q.json"},
         "modules": {"registry": []},
         "rop": {
+            "email_preview": {
+                "body_chars_max": 4000,
+            },
             "attachments": {
                 "enabled": False,
                 "chars_max": 100,

@@ -658,6 +658,9 @@ def run_rop_batch_case(
                     source=selected,
                     project_root=project_root,
                     logger=logger,
+                    email_preview_body_chars_max=settings["rop"]["email_preview"][
+                        "body_chars_max"
+                    ],
                     mailbox_client_factory=mailbox_client_factory,
                 )
                 effective_period = str(

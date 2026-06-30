@@ -236,6 +236,7 @@ def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
 def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [
             {
@@ -260,6 +261,7 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
 def _make_mailbox_settings(enabled: bool = True) -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [
             {
@@ -387,6 +389,7 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [],
     }
@@ -415,6 +418,7 @@ def test_rop_batch_case_source_selection_error_writes_diagnostics(
 ) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [],
     }
@@ -715,6 +719,7 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [
             {
@@ -816,6 +821,7 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
         "sources": [
             {
@@ -1007,6 +1013,7 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
     batch_file.write_text(json.dumps(batch), encoding="utf-8")
 
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": {
             "enabled": True,
             "chars_max": 12,
@@ -1108,6 +1115,7 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
     batch_file.write_text(json.dumps(batch), encoding="utf-8")
 
     settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
         "attachments": {
             "enabled": True,
             "chars_max": 200,
