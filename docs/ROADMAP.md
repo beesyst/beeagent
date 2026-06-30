@@ -6090,6 +6090,616 @@ fuzzing optional for malformed AI decision / thread context payloads
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 31 — ROP Review Workbench v0
+
+**Статус:** PLANNED
+
+#### Goal
+
+Сделать BeeUI-backed ROP console пригодной для ручной проверки конкретного письма: оператор должен открыть событие из Queue и увидеть sender, subject, bounded body preview, attachments metadata, classification evidence, thread context, AI assist evidence, Bitrix evidence, action draft evidence и evidence links по одному `event_id`.
+
+Целевой flow:
+
+```text
+/rop?tab=queue
+→ View details
+→ /rop/events/{event_id}?run_id=<run_id>
+→ read-only review card
+```
+
+#### Почему это нужно
+
+После It30 и UI-6 BeeAgent уже показывает aggregate evidence:
+
+```text
+latest-N
+threads
+AI assist
+Bitrix/current-state
+operator recommendations
+```
+
+Но MVP review loop всё ещё неполный:
+
+```text
+бот классифицировал письмо
+→ РОП не может удобно открыть конкретное письмо
+→ не видит нормальный sender/subject/body preview
+→ не может сверить classification/thread/AI/Bitrix/action evidence в одном месте
+→ невозможно быстро понять, ошибка в классификации, thread context, AI assist или Bitrix matching
+```
+
+Без event-level review бессмысленно делать Bitrix write-back, operator POST actions или большую AI provider platform: сначала нужен безопасный read-only workbench для проверки решений.
+
+#### Depends on
+
+- BeeAgent It30 — latest-N, thread artifacts and bounded AI assist execution;
+- UI-6 — enriched ROP dashboard/read-model;
+- UI-7 — BeeUI-backed auth boundary;
+- existing BeeUI adapter-backed custom page support;
+- existing artifacts:
+  - `normalized_events.json`;
+  - `classified_events.json`;
+  - `attachment_extraction.json`;
+  - `mail_thread_context.json`;
+  - `rop_ai_assist_results.json`;
+  - `bitrix_reconciliation.json`;
+  - `rop_action_drafts.json`;
+  - `rop_review_table.tsv`;
+  - `operator_summary.json`.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- email-derived sender/subject/body exposure in HTML/API;
+- new event-detail API/HTML routes;
+- artifact parsing and join logic across multiple evidence artifacts;
+- bounded body preview contract;
+- path/query validation for `run_id` and `event_id`;
+- untrusted email/AI/Bitrix values rendered in HTML;
+- strict read-only/no-mutation boundary must be preserved.
+
+SCA is not required unless dependencies change.
+
+#### Scope
+
+**Включено:**
+
+##### 1. Fix Queue sender/subject mapping
+
+Починить ROP Queue read-model so Queue rows do not show `Unknown Sender` / `n/a` when normalized/classified artifacts contain real values.
+
+Sender fallback order:
+
+```text
+normalized_event.sender
+normalized_event.from_email
+normalized_event.from
+classified_event.sender
+classified_event.from_email
+classified_event.from
+row.sender
+"Unknown Sender"
+```
+
+Subject fallback order:
+
+```text
+normalized_event.subject
+classified_event.subject
+row.subject
+"n/a"
+```
+
+Rules:
+
+- JSON artifacts are primary source;
+- TSV is fallback only;
+- empty strings and placeholder values must not overwrite real values;
+- HTML escaping is mandatory.
+
+##### 2. Add bounded email body preview to normalized event contract
+
+Add safe body preview fields to `normalized_events.json` where possible:
+
+```json
+{
+  "body_preview": "bounded sanitized email text",
+  "body_preview_chars": 4000,
+  "body_preview_truncated": true,
+  "body_preview_source": "text_plain"
+}
+```
+
+Config:
+
+```yaml
+rop:
+  email_preview:
+    body_chars_max: 4000
+```
+
+Validation in:
+
+```text
+src/beeagent_module/core/settings.py
+```
+
+Rules:
+
+- default/source of truth value lives in `config/settings.yml`;
+- value must be int;
+- value must be `>= 200`;
+- hard cap in code: `10000`;
+- no raw `.eml`;
+- no raw MIME;
+- no attachment content;
+- no script/style HTML;
+- normalize whitespace;
+- strip control chars;
+- safely truncate;
+- old runs without `body_preview` use `body_short` or empty unavailable state in read-model without mutating storage.
+
+##### 3. Add event detail read-model builder
+
+Add event detail read-model builder, preferably in:
+
+```text
+src/beeagent_module/interfaces/ui/rop_event_detail.py
+```
+
+Expected function:
+
+```python
+build_rop_event_detail_read_model(storage_dir, run_id, event_id, *, lang="en") -> dict
+```
+
+Builder reads and joins:
+
+```text
+normalized_events.json
+classified_events.json
+attachment_extraction.json
+mail_thread_context.json
+rop_ai_assist_results.json
+bitrix_reconciliation.json
+rop_action_drafts.json
+rop_review_table.tsv
+operator_summary.json
+```
+
+Rules:
+
+- normalized event is primary source for message fields;
+- classified event is primary source for classification fields;
+- optional missing artifacts produce warnings, not crash;
+- malformed optional artifacts produce warnings, not crash;
+- missing event returns safe 404;
+- no storage mutation from GET/read-model paths.
+
+##### 4. Add event detail API route
+
+Add read-only JSON route:
+
+```text
+GET /api/rop/events/{event_id}?run_id=<run_id>
+```
+
+Response envelope:
+
+```json
+{
+  "ok": true,
+  "read_only": true,
+  "data": {
+    "run_id": "run-id",
+    "event_id": "evt-001",
+    "source": {},
+    "message": {},
+    "classification": {},
+    "thread": {},
+    "ai_assist": {},
+    "bitrix": {},
+    "action_draft": {},
+    "attachments": [],
+    "evidence_links": [],
+    "warnings": []
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+Expected `data.message`:
+
+```json
+{
+  "sender": "client@example.com",
+  "recipients": ["sales@example.com"],
+  "cc": [],
+  "subject": "Request for welding equipment",
+  "received_at": "2026-06-29T10:15:00Z",
+  "body_preview": "bounded text",
+  "body_preview_truncated": true,
+  "body_preview_chars": 4000
+}
+```
+
+##### 5. Add event detail HTML route
+
+Add BeeUI-backed HTML route:
+
+```text
+GET /rop/events/{event_id}?run_id=<run_id>
+```
+
+The page must use BeeUI shell/layout primitives via BeeAgent adapter/read-model. Do not add product-owned legacy Jinja templates.
+
+The page should show:
+
+```text
+Header:
+  event_id
+  sender
+  subject
+  source
+  received_at
+  priority badge
+  case_type badge
+
+Message:
+  bounded body preview
+  body truncated marker
+  recipients/cc
+
+Classification:
+  case_type
+  case_subtype
+  recommended_queue
+  should_rop_see
+  correct_action
+  priority
+  confidence
+  reason_code
+  reasoning
+  fallback status
+
+Thread:
+  thread_id
+  previous events
+  previous case type/subtype
+  thread confidence
+  reason codes
+
+AI Assist:
+  status
+  used/not used
+  confidence
+  final case type/subtype
+  merge reason
+  warnings
+
+Bitrix:
+  match status
+  match quality
+  confidence
+  safe_to_use_as_target
+  entity type/id/title/stage
+  manual review flag
+
+Action Draft:
+  queue
+  recommended_action
+  recommended_next_step
+  draft/read-only status
+
+Attachments:
+  filename
+  content_type
+  size
+  extraction_status
+  preview/refusal metadata only
+
+Evidence:
+  allowlisted artifact links
+```
+
+##### 6. Add detail links from Queue
+
+Each Queue / attention event row must include:
+
+```text
+View details
+```
+
+URL:
+
+```text
+/rop/events/{event_id}?run_id=<run_id>&lang=<lang>
+```
+
+Also add `detail_href` to `/api/rop/dashboard` rows where practical:
+
+```json
+{
+  "event_id": "evt-001",
+  "sender": "client@example.com",
+  "subject": "Request",
+  "detail_href": "/rop/events/evt-001?run_id=run-id"
+}
+```
+
+##### 7. RU localization polish
+
+Add RU labels through existing BeeAgent locale helper:
+
+```text
+Sender / Client          → Отправитель / клиент
+Subject / Request        → Тема / запрос
+View details             → Открыть письмо
+Message body             → Тело письма
+Body preview             → Предпросмотр письма
+Classification           → Классификация
+Thread context           → Контекст цепочки
+AI Assist                → AI-помощник
+Bitrix evidence          → Данные Bitrix
+Action draft             → Черновик действия
+Recommended queue        → Рекомендуемая очередь
+Correct action           → Правильное действие
+Should ROP see           → Показать РОПу
+Match quality            → Качество совпадения
+Safe target              → Безопасная цель
+Manual review required   → Нужна ручная проверка
+Evidence artifacts       → Артефакты evidence
+Back to queue            → Назад к очереди
+```
+
+Rules:
+
+- `?lang=ru` is preserved in detail links;
+- invalid lang falls back safely;
+- API may remain language-neutral;
+- HTML labels must support RU.
+
+##### 8. Preserve auth/read-only boundary
+
+When `web.auth.enabled=true`, new routes must be protected by the existing UI-7 BeeUI auth boundary.
+
+Rules:
+
+- no GET mutation;
+- no POST/operator action routes;
+- no web-triggered `rop run`;
+- no mailbox calls;
+- no CRM/Bitrix calls;
+- no module/capability execution;
+- no AI provider calls;
+- no raw `.eml`;
+- no raw attachment content;
+- no arbitrary artifact browsing;
+- no secrets in HTML/API/logs/artifacts.
+
+**Не включено:**
+
+- Bitrix write-back;
+- `crm.item.add`;
+- `crm.item.update`;
+- timeline comments;
+- task creation;
+- mailbox archive/delete/reply/mark-as-read;
+- operator POST actions;
+- saving human review decisions;
+- editing labels in UI;
+- new AI provider profiles;
+- new classification taxonomy;
+- changes to `beeagent-rop`;
+- BeeUI core changes unless a blocking generic renderer/auth bug exists;
+- legacy web removal;
+- OCR / PDF / DOCX / XLSX deep parsing;
+- attachment download or raw viewer.
+
+#### Deliverable
+
+BeeAgent exposes a read-only event review workbench:
+
+```text
+/rop?tab=queue
+→ /rop/events/{event_id}?run_id=<run_id>
+→ /api/rop/events/{event_id}?run_id=<run_id>
+```
+
+The operator can inspect a single event with message preview, classification, thread, AI assist, Bitrix and action draft evidence without opening raw JSON/TSV artifacts manually.
+
+#### Expected routes
+
+New HTML:
+
+```text
+/rop/events/{event_id}
+```
+
+New API:
+
+```text
+/api/rop/events/{event_id}
+```
+
+Existing routes must remain:
+
+```text
+/rop
+/api/rop/dashboard
+/runs/{run_id}/artifacts/{artifact_id}
+/api/runs/{run_id}/artifacts/{artifact_id}
+```
+
+#### Expected artifact changes
+
+Updated artifact for new runs:
+
+```text
+storage/runs/<run_id>/normalized_events.json
+```
+
+May include:
+
+```json
+{
+  "body_preview": "bounded sanitized body",
+  "body_preview_chars": 4000,
+  "body_preview_truncated": true,
+  "body_preview_source": "text_plain"
+}
+```
+
+No new required run artifact is needed. It31 is mainly read-model/API/UI over existing artifacts plus bounded body preview extension.
+
+#### Config / contract impact
+
+Expected config addition:
+
+```yaml
+rop:
+  email_preview:
+    body_chars_max: 4000
+```
+
+Source of truth:
+
+```text
+config/settings.yml -> rop.email_preview.body_chars_max
+storage/runs/<run_id>/normalized_events.json -> bounded event message preview
+storage/runs/<run_id>/* -> event evidence
+BeeAgent UI read-model -> event detail API/HTML
+```
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or ui or web"
+```
+
+Targeted tests:
+
+```text
+Queue sender uses normalized_events sender
+Queue sender does not show Unknown Sender when sender exists
+Queue subject uses normalized_events subject
+Queue subject does not show n/a when subject exists
+
+body_preview is added and bounded for normalized events
+body_preview truncates over limit
+body_preview strips unsafe HTML/script/style
+body_preview does not include raw .eml/MIME/attachment content
+
+/api/rop/events/{event_id}?run_id=<run_id> returns event detail
+/rop/events/{event_id}?run_id=<run_id> renders HTML detail
+missing event returns safe 404
+missing run returns safe 404
+path traversal run_id is rejected
+path traversal event_id is rejected
+
+event detail includes classification fields
+event detail includes subtype/queue/should_rop_see/correct_action
+event detail includes thread context when available
+event detail includes AI assist result when available
+event detail includes Bitrix evidence when available
+event detail includes action draft when available
+event detail handles missing optional artifacts with warnings
+
+Queue rows include detail_href
+?lang=ru is preserved in detail links
+/rop/events/{event_id}?lang=ru renders RU labels
+
+auth enabled protects new HTML/API routes
+GET routes do not mutate storage
+HTML escapes sender/subject/body/reasoning
+API/HTML do not expose secrets
+API/HTML do not expose raw .eml
+API/HTML do not expose attachment content
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 2 \
+  --run-id smoke-it31-review-workbench
+
+uv run python config/start.py rop current \
+  --run-id smoke-it31-review-workbench
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it31-review-workbench
+
+uv run python config/start.py web \
+  --host 127.0.0.1 \
+  --port 8780 \
+  --no-open
+```
+
+Manual checks:
+
+```text
+GET /rop?run_id=smoke-it31-review-workbench&tab=queue
+GET /rop/events/<event_id>?run_id=smoke-it31-review-workbench
+GET /rop/events/<event_id>?run_id=smoke-it31-review-workbench&lang=ru
+GET /api/rop/events/<event_id>?run_id=smoke-it31-review-workbench
+```
+
+Security/static checks:
+
+```bash
+rg -n "raw_eml|message/rfc822|attachment_content|content_bytes|payload_bytes" src/beeagent_module/interfaces/ui tests || true
+
+rg -n "BITRIX_WEBHOOK|ROP_AI_API_KEY|OPENAI_API_KEY|password|secret|token" logs storage/runs storage/interfaces || true
+
+rg -n "POST|delete|archive|mark-as-read|reply|write-back|crm\.item\.add|crm\.item\.update|timeline" src/beeagent_module/interfaces/ui tests || true
+
+git diff -- pyproject.toml uv.lock
+```
+
+SAST mindset review required.
+
+SCA is not required unless dependencies change.
+
+#### DoD
+
+- Queue shows real sender instead of `Unknown Sender` when available;
+- Queue shows real subject instead of `n/a` when available;
+- each Queue row has a detail link;
+- `/rop/events/{event_id}` works;
+- `/api/rop/events/{event_id}` works;
+- detail page shows bounded body preview;
+- detail page shows classification/subtype/queue/action;
+- detail page shows thread context when available;
+- detail page shows AI assist evidence when available;
+- detail page shows Bitrix evidence when available;
+- detail page shows action draft when available;
+- `?lang=ru` covers new labels;
+- missing/malformed optional artifacts produce warnings, not crashes;
+- auth-enabled mode protects new routes;
+- no GET mutation;
+- no POST/write/action routes;
+- no CRM/Bitrix/mailbox mutation;
+- no raw `.eml`;
+- no raw attachment content;
+- no secrets in HTML/API/logs/artifacts;
+- path traversal is blocked;
+- tests and docs are updated;
+- `pyproject.toml.version` unchanged;
+- `beeagent-rop` unchanged.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
