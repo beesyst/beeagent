@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import types
 from pathlib import Path
@@ -14,6 +15,10 @@ from beeagent_module.core.module_contract import (
 )
 from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.settings import load_settings
+
+os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
+os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
 
 
 def _null_logger() -> logging.Logger:

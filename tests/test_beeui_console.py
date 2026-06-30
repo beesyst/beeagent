@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
 from beeui_module.adapters.envelopes import AdapterErrorResult
 from fastapi.testclient import TestClient
 
@@ -3024,3 +3026,479 @@ class TestUi6It30:
             assert response.status_code == 200
             assert "raw_eml" not in response.text.lower()
             assert "attachment_content" not in response.text.lower()
+
+
+def _build_auth_settings(enabled: bool = False) -> dict:
+    settings = _build_settings()
+    settings["web"]["auth"] = {
+        "enabled": enabled,
+        "mode": "beeui_session",
+        "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
+        "principals": [
+            {
+                "id": "admin_1",
+                "username": "admin1",
+                "role": "admin",
+                "token_env": "BEEAGENT_WEB_ADMIN1_TOKEN",
+            },
+            {
+                "id": "admin_2",
+                "username": "admin2",
+                "role": "admin",
+                "token_env": "BEEAGENT_WEB_ADMIN2_TOKEN",
+            },
+        ],
+    }
+    return settings
+
+
+@pytest.mark.parametrize(
+    ("env_name", "expected_secure"),
+    [
+        ("dev", False),
+        ("test", False),
+        ("local", False),
+        ("prod", True),
+    ],
+)
+def test_auth_cookie_secure_tracks_app_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    expected_secure: bool,
+) -> None:
+    from beeagent_module.interfaces.ui.app import build_beeui_settings
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+
+    settings = _build_auth_settings(enabled=True)
+    settings["app"]["env"] = env_name
+
+    beeui_settings = build_beeui_settings(settings)
+
+    assert beeui_settings["auth"]["cookie_secure"] is expected_secure
+
+
+def test_multi_admin_auth_service_preserves_secure_cookie_in_prod(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.app import build_beeui_app
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+
+    settings = _build_auth_settings(enabled=True)
+    settings["app"]["env"] = "prod"
+
+    app = build_beeui_app(
+        settings=settings,
+        logger=_logger(),
+        storage_dir=_make_storage(tmp_path),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/auth/login",
+        data={"user_id": "admin1", "token": "admin1-token"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (200, 302)
+    assert "secure" in response.headers.get("set-cookie", "").lower()
+
+
+def _set_auth_env() -> tuple[dict[str, str], dict[str, str | None]]:
+    env = {
+        "BEEAGENT_WEB_SESSION_SECRET": "test-session-secret-not-for-prod",
+        "BEEAGENT_WEB_ADMIN1_TOKEN": "admin1-test-token",
+        "BEEAGENT_WEB_ADMIN2_TOKEN": "admin2-test-token",
+    }
+    previous = {key: os.environ.get(key) for key in env}
+    for k, v in env.items():
+        os.environ[k] = v
+    return env, previous
+
+
+def _clear_auth_env(
+    env: dict[str, str],
+    previous: dict[str, str | None],
+) -> None:
+    for key in env:
+        old_value = previous.get(key)
+        if old_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_value
+
+
+def _auth_client(storage_dir: Path) -> TestClient:
+    from beeagent_module.interfaces.ui.app import build_beeui_app
+
+    settings = _build_auth_settings(enabled=True)
+    app = build_beeui_app(
+        settings=settings,
+        logger=_logger(),
+        storage_dir=storage_dir,
+    )
+    return TestClient(app)
+
+
+def test_auth_disabled_current_behavior(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-auth-off")
+    client = _client(storage_dir)
+    for path in ["/", "/health", "/rop", "/runs", "/modules"]:
+        response = client.get(path)
+        assert response.status_code == 200, f"GET {path} should be 200"
+    for path in ["/api/dashboard", "/api/modules", "/api/rop/dashboard"]:
+        response = client.get(path)
+        assert response.status_code == 200, f"GET {path} should be 200"
+
+
+def test_auth_disabled_no_env_vars_required(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.app import build_beeui_app
+
+    settings = _build_settings()
+    storage_dir = _make_storage(tmp_path)
+    app = build_beeui_app(
+        settings=settings,
+        logger=_logger(),
+        storage_dir=storage_dir,
+    )
+    assert app is not None
+
+
+def test_auth_enabled_fails_fast_without_beeui_auth_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fastapi import FastAPI
+
+    from beeagent_module.interfaces.ui import app as ui_app
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+
+    settings = _build_auth_settings(enabled=True)
+
+    def fake_create_beeui_app(**_: Any) -> FastAPI:
+        return FastAPI()
+
+    monkeypatch.setattr(ui_app, "create_beeui_app", fake_create_beeui_app)
+
+    with pytest.raises(RuntimeError, match="BeeUI auth service is required"):
+        ui_app.build_beeui_app(
+            settings=settings,
+            logger=_logger(),
+            storage_dir=_make_storage(tmp_path),
+        )
+
+
+def test_auth_disabled_non_loopback_host_rejected() -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_full_settings()
+    settings["web"]["host"] = "0.0.0.0"
+    settings["web"]["auth"]["enabled"] = False
+
+    with pytest.raises(RuntimeError, match="web.auth.enabled=false"):
+        validate_settings(settings)
+
+
+class TestAuthEnabled:
+    _env: dict[str, str] = {}
+    _previous_env: dict[str, str | None] = {}
+
+    @classmethod
+    def setup_class(cls) -> None:
+        cls._env, cls._previous_env = _set_auth_env()
+
+    @classmethod
+    def teardown_class(cls) -> None:
+        _clear_auth_env(cls._env, cls._previous_env)
+
+    def _login(self, client: TestClient, user_id: str, token: str) -> Any:
+        return client.post("/auth/login", data={"user_id": user_id, "token": token})
+
+    def test_unauthenticated_rop_protected(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        client = _auth_client(storage_dir)
+        response = client.get("/rop", follow_redirects=False)
+        assert response.status_code in (302, 401)
+
+    def test_unauthenticated_api_returns_401(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        client = _auth_client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 401
+
+    def test_health_remains_public(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _auth_client(storage_dir)
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+
+    def test_static_remains_public(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _auth_client(storage_dir)
+        response = client.get("/static/")
+        assert response.status_code in (200, 404)
+
+    def test_admin1_can_access_rop(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        client = _auth_client(storage_dir)
+        login_resp = self._login(client, "admin1", "admin1-test-token")
+        assert login_resp.status_code in (302, 200)
+        response = client.get("/rop", follow_redirects=False)
+        assert response.status_code == 200
+
+    def test_admin1_can_access_api(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        client = _auth_client(storage_dir)
+        self._login(client, "admin1", "admin1-test-token")
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+
+    def test_operator_principal_keeps_operator_role(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from beeui_module.auth.models import UserRole
+
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+        monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-test-token")
+        monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "operator-test-token")
+
+        settings = _build_auth_settings(enabled=True)
+        settings["web"]["auth"]["principals"][1]["role"] = "operator"
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-operator-role")
+
+        app = build_beeui_app(
+            settings=settings,
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        service = app.state.beeui_auth_service
+
+        assert service._resolve_role("admin1-test-token") == UserRole.admin
+        assert service._resolve_role("operator-test-token") == UserRole.operator
+
+        client = TestClient(app)
+        login_resp = client.post(
+            "/auth/login",
+            data={"user_id": "admin2", "token": "operator-test-token"},
+        )
+        assert login_resp.status_code in (302, 200)
+
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+
+    def test_invalid_token_rejected(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _auth_client(storage_dir)
+        login_resp = self._login(client, "admin1", "wrong-token")
+        assert login_resp.status_code == 401
+
+    def test_protected_route_fails_closed_if_auth_service_removed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth-service-missing")
+
+        app = build_beeui_app(
+            settings=_build_auth_settings(enabled=True),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        app.state.beeui_auth_service = None
+
+        client = TestClient(app)
+        response = client.get("/api/rop/dashboard")
+
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "auth_unavailable"
+
+    def test_unknown_api_path_requires_auth_before_404(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _auth_client(storage_dir)
+
+        response = client.get("/api/not-existing")
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "unauthenticated"
+
+
+def _build_valid_enabled_auth_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict:
+    settings = _build_full_settings()
+    settings["web"]["auth"] = {
+        "enabled": True,
+        "mode": "beeui_session",
+        "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
+        "principals": [
+            {
+                "id": "admin_1",
+                "username": "admin1",
+                "role": "admin",
+                "token_env": "BEEAGENT_WEB_ADMIN1_TOKEN",
+            },
+            {
+                "id": "admin_2",
+                "username": "admin2",
+                "role": "admin",
+                "token_env": "BEEAGENT_WEB_ADMIN2_TOKEN",
+            },
+        ],
+    }
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    return settings
+
+
+def test_auth_settings_fail_fast_missing_session_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+
+    with pytest.raises(RuntimeError, match="BEEAGENT_WEB_SESSION_SECRET"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_missing_admin_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
+
+    with pytest.raises(RuntimeError, match="BEEAGENT_WEB_ADMIN2_TOKEN"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_duplicate_principal_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["id"] = "admin_1"
+
+    with pytest.raises(RuntimeError, match="Duplicate web.auth.principals id"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_duplicate_username(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["username"] = "admin1"
+
+    with pytest.raises(RuntimeError, match="Duplicate web.auth.principals username"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_duplicate_token_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["token_env"] = "BEEAGENT_WEB_ADMIN1_TOKEN"
+
+    with pytest.raises(RuntimeError, match="Duplicate web.auth.principals token_env"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_invalid_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["role"] = "superadmin"
+
+    with pytest.raises(RuntimeError, match="Invalid web.auth.principals\\[1\\].role"):
+        validate_settings(settings)
+
+
+def _build_full_settings() -> dict:
+    return {
+        "app": {"name": "BeeAgent", "env": "test"},
+        "run": {"mode": "telegram"},
+        "web": {
+            "host": "127.0.0.1",
+            "port": 8000,
+            "open_browser": False,
+            "auth": {
+                "enabled": False,
+                "mode": "beeui_session",
+                "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
+                "principals": [],
+            },
+        },
+        "telegram": {
+            "enabled": False,
+            "bot_token_env": "T",
+            "chat_id_env": "T",
+            "telemetry_enabled": False,
+        },
+        "logging": {"clear_logs": True, "utc": True, "level": "INFO"},
+        "mock": {"seed": 1, "weeks": 1, "stores": 1, "skus": 1, "category": "X"},
+        "data": {"adapter": "mock"},
+        "scheduler": {"enabled": False, "interval": 100, "start_run": True},
+        "approval": {"reject_reason": "R"},
+        "promo": {"stock_min": 1, "units_max": 1},
+        "recommendations": {"enabled": False, "items_max": 1},
+        "llm": {
+            "enabled": False,
+            "provider": "openai",
+            "model": "gpt",
+            "api_key_env": "K",
+            "api_url": "https://x",
+            "prompts_path": "p.yml",
+            "assistant": {"prompts_key": "k", "items_max": 1},
+            "throttling": {"timeout": 10, "retries": 1},
+        },
+        "i18n": {"lang": "ru", "path": "i18n.yml"},
+        "quiz": {"enabled": False, "path": "q.json"},
+        "modules": {"registry": []},
+        "rop": {
+            "attachments": {
+                "enabled": False,
+                "chars_max": 100,
+                "size_max": 100,
+                "types": ["text/plain"],
+            },
+            "sources": [],
+            "dashboard": {
+                "default_period": "7d",
+                "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
+            },
+        },
+    }

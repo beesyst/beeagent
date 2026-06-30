@@ -27,6 +27,14 @@
   - `web.host`
   - `web.port`
   - `web.open_browser`
+  - `web.auth`
+
+Источник правды для auth-конфига:
+
+- `config/settings.yml`
+  - `web.auth`
+- `.env` / runtime env
+  - actual auth secrets
 
 Источник правды для UI read-model данных:
 
@@ -38,7 +46,10 @@ UI не хранит отдельный runtime state и не создаёт в�
 
 ## Runtime foundation
 
-Текущий реализованный контракт — UI-6 (развитие UI-5).
+Текущий реализованный контракт:
+
+- UI-6 = enriched ROP dashboard/read-model;
+- UI-7 = BeeUI-backed auth boundary.
 
 - **BeeUI** — canonical web layer для BeeAgent;
 - BeeAgent UI code находится в `src/beeagent_module/interfaces/ui/`;
@@ -53,7 +64,8 @@ UI не хранит отдельный runtime state и не создаёт в�
 - ROP block composition пока задаётся в BeeAgent read-model layout builders, а не полностью через config;
 - `config/start.py` вызывает `beeagent_module.cli.web.run_web`;
 - legacy `src/beeagent_module/web` заморожен;
-- нет auth, POST actions и runtime control endpoints;
+- auth boundary реализован через BeeUI session/role layer;
+- нет non-auth operator POST/write actions и runtime control endpoints;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
 - локализация UI: en по умолчанию, ru через `?lang=ru`, конфигурация в `config/beeui.yml`;
 - product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
@@ -105,6 +117,110 @@ CLI overrides:
 - `/api/rop/dashboard`
 - `/api/runs/{run_id}/artifacts`
 - `/api/runs/{run_id}/artifacts/{artifact_id}`
+
+## Auth mode (UI-7)
+
+BeeAgent Web Console поддерживает config-driven auth boundary через BeeUI session/role layer.
+BeeUI владеет login/logout/session/CSRF.
+BeeAgent владеет config/env policy, bootstrap, CLI rotation и route protection.
+
+Auth настройки живут в `config/settings.yml` → `web.auth`:
+
+```yaml
+web:
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+```
+
+Реальные secrets живут только в env:
+
+- `BEEAGENT_WEB_SESSION_SECRET` — secret для HMAC-подписи session cookie
+- `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` — token для аутентификации
+
+Secrets никогда не хранятся в `settings.yml`.
+
+### Bootstrap
+
+- `ensure_web_auth_env(...)` выполняется до `load_settings(...)`;
+- при `web.auth.enabled=true` отсутствующие или пустые auth env values генерируются автоматически;
+- пустые ключи в `.env` обновляются in-place;
+- отсутствующие ключи дописываются в `.env`;
+- значения выставляются в `os.environ` для текущего процесса;
+- на POSIX для `.env` выставляется `chmod 0600`;
+- в stdout печатается только `KEY=<generated>`.
+
+### Rotation CLI
+
+```bash
+./start.sh auth rotate <principal-id-or-username>
+./start.sh auth rotate all
+./start.sh auth rotate all --logout-all
+./start.sh auth rotate session
+```
+
+После rotation нужен restart web app.
+Session secret не печатается.
+
+### Поведение
+
+- `web.auth.enabled: false` (default): текущее local/dev поведение без auth.
+- `web.auth.enabled: true`: включена session-based auth через BeeUI.
+- external exposure с `web.auth.enabled=false` должна считаться rejected/fail-fast по settings policy.
+
+### Protected routes (when enabled)
+
+HTML routes:
+
+- `/`, `/rop`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
+
+API routes:
+
+- `/api/*`
+
+Даже неизвестный `/api/...` путь при включённом auth требует аутентификации до возврата route-level результата.
+
+### Public routes
+
+- `/health` — public sanitized health check (без details runtime state)
+- `/static/*` — public static assets
+- `/auth/*` — auth routes owned by BeeUI (login/logout/CSRF)
+
+### Unauthenticated response
+
+HTML routes: redirect to `/auth/login`.
+
+API routes: `401` JSON envelope:
+
+```json
+{
+  "ok": false,
+  "read_only": true,
+  "error": { "code": "unauthenticated", "message": "Authentication required" },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+### Session
+
+Session управляется BeeUI через подписанную cookie `beeui_session`. Session secret читается из env по `web.auth.session_secret_env`.
+
+### Роли
+
+- `viewer` — просмотр dashboard/run/ROP (read-only)
+- `operator` — operator-level доступ (future)
+- `admin` — admin-level доступ (future config/actions)
+
+Поддерживаются `viewer` / `operator` / `admin`.
+UI-7 пока не применяет дифференцированные permissions.
+Все текущие business/operator routes Web Console остаются read-only.
 
 ## Artifact routes
 
@@ -539,8 +655,10 @@ BeeAgent не держит manual HTML builders/templates для `/rop`.
 Web Console должен соблюдать:
 
 - no GET mutation;
-- no POST/write actions;
+- no non-auth operator POST/write actions;
+- BeeUI auth POST endpoints допустимы только для authentication/session flow;
 - no mailbox/CRM/module/capability execution from GET routes;
+- no web-triggered module/capability/mailbox/CRM execution;
 - no web-triggered `rop run`;
 - no raw `.eml` rendering;
 - no `message/rfc822` attachment rendering;
@@ -632,14 +750,17 @@ Sanitization rules:
 
 ## Out of scope
 
-UI-6 intentionally does not include:
+Текущий контракт intentionally does not include:
 
-- auth;
-- RBAC;
+- per-role RBAC enforcement;
+- UI settings/config editing;
+- user registration/password reset;
+- OAuth/OIDC;
+- DB-backed user management;
 - POST/write actions;
-- config editing;
 - CRM/mailbox actions;
 - web-triggered ROP run;
+- production deployment hardening;
 - attachment parsing/OCR;
 - full attachment-aware dashboard with per-file detail viewer;
 - React/Reflex frontend;

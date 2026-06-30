@@ -28,7 +28,17 @@ def _valid_settings() -> dict:
     return {
         "app": {"name": "BeeAgent", "env": "dev"},
         "run": {"mode": "telegram"},
-        "web": {"host": "127.0.0.1", "port": 8000, "open_browser": False},
+        "web": {
+            "host": "127.0.0.1",
+            "port": 8000,
+            "open_browser": False,
+            "auth": {
+                "enabled": False,
+                "mode": "beeui_session",
+                "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
+                "principals": [],
+            },
+        },
         "telegram": {
             "enabled": False,
             "bot_token_env": "TELEGRAM_BOT_TOKEN",

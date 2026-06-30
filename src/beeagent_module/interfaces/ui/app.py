@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,46 @@ def _error_json(
 def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
     web_cfg = agent_settings.get("web", {})
     log_cfg = agent_settings.get("logging", {})
+    web_auth = web_cfg.get("auth", {})
+    auth_enabled = bool(web_auth.get("enabled", False))
+
+    beeui_auth: dict[str, Any] = {"enabled": auth_enabled}
+
+    if auth_enabled:
+        session_env = web_auth["session_secret_env"]
+        app_env = str(agent_settings.get("app", {}).get("env", "dev")).strip().lower()
+        beeui_auth["session_secret"] = os.environ.get(session_env, "")
+        beeui_auth["cookie_secure"] = app_env not in {"dev", "test", "local"}
+
+        principals = web_auth.get("principals", [])
+        resolved_principals = []
+        first_token = ""
+        first_admin_token = ""
+        first_operator_token = ""
+
+        for principal in principals:
+            role = str(principal.get("role", "")).strip()
+            token = os.environ.get(principal["token_env"], "")
+            if not first_token:
+                first_token = token
+            if role == "admin" and not first_admin_token:
+                first_admin_token = token
+            if role == "operator" and not first_operator_token:
+                first_operator_token = token
+
+            resolved_principals.append(
+                {
+                    "id": principal.get("id", ""),
+                    "username": principal.get("username", ""),
+                    "role": role,
+                    "token": token,
+                }
+            )
+
+        if first_token:
+            beeui_auth["admin_token"] = first_admin_token or first_token
+            beeui_auth["operator_token"] = first_operator_token or first_token
+        beeui_auth["principals"] = resolved_principals
 
     return {
         "app": {
@@ -119,9 +160,7 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
             "html_autoescape": True,
             "assets_ext": False,
         },
-        "auth": {
-            "enabled": False,
-        },
+        "auth": beeui_auth,
         "features": {
             "browser_artifact": True,
             "config_preview": False,
@@ -173,9 +212,172 @@ def build_beeui_app(
     app.state.beeagent_storage_dir = resolved_storage
     app.state.beeagent_adapter = adapter
 
+    _setup_beeagent_auth(app, beeui_settings, logger)
     _register_custom_routes(app, adapter, logger)
 
     return app
+
+
+def _setup_beeagent_auth(
+    app: FastAPI,
+    beeui_settings: dict[str, Any],
+    logger: logging.Logger,
+) -> None:
+    auth_cfg = beeui_settings.get("auth", {})
+    enabled = bool(auth_cfg.get("enabled", False))
+
+    if not enabled:
+        logger.info("Auth is disabled (web.auth.enabled=false)")
+        return
+
+    from beeui_module.auth.models import UserRole
+    from beeui_module.auth.service import AuthService
+
+    principal_configs: list[dict[str, Any]] = auth_cfg.get("principals", [])
+    original_service: AuthService | None = getattr(
+        app.state, "beeui_auth_service", None
+    )
+
+    if original_service is None:
+        raise RuntimeError("BeeUI auth service is required when web.auth.enabled=true")
+
+    if not original_service.enabled:
+        raise RuntimeError(
+            "BeeUI auth service must be enabled when web.auth.enabled=true"
+        )
+
+    session_secret = str(auth_cfg.get("session_secret", ""))
+    if not session_secret:
+        raise RuntimeError(
+            "Non-empty session secret is required when web.auth.enabled=true"
+        )
+
+    if not principal_configs:
+        raise RuntimeError(
+            "Non-empty principals are required when web.auth.enabled=true"
+        )
+
+    token_roles: list[tuple[str, UserRole]] = []
+    for principal in principal_configs:
+        token = str(principal.get("token", ""))
+        role_name = str(principal.get("role", "")).strip()
+        if not token:
+            raise RuntimeError(
+                "Non-empty principal tokens are required when web.auth.enabled=true"
+            )
+
+        try:
+            role = getattr(UserRole, role_name)
+        except AttributeError as exc:
+            raise RuntimeError(f"Unsupported BeeUI auth role '{role_name}'") from exc
+
+        token_roles.append((token, role))
+
+    class _BeeAgentAuthService(AuthService):
+        def _resolve_role(self, token: str) -> UserRole | None:
+            import hmac
+
+            for candidate_token, candidate_role in token_roles:
+                if hmac.compare_digest(token, candidate_token):
+                    return candidate_role
+            return None
+
+    primary_token = token_roles[0][0]
+    auth_settings = {
+        "enabled": True,
+        "session_secret": session_secret,
+        "admin_token": auth_cfg.get("admin_token") or primary_token,
+        "operator_token": auth_cfg.get("operator_token") or primary_token,
+        "cookie_secure": bool(auth_cfg.get("cookie_secure", False)),
+    }
+    app.state.beeui_auth_service = _BeeAgentAuthService(auth_settings)
+    logger.info("Auth enabled with %d principal(s)", len(token_roles))
+
+    _register_auth_middleware(app, logger)
+
+
+_PROTECTED_HTML_PATHS: list[re.Pattern[str]] = [
+    re.compile(r"^/$"),
+    re.compile(r"^/rop$"),
+    re.compile(r"^/rop\?.*"),
+    re.compile(r"^/runs$"),
+    re.compile(r"^/runs/"),
+    re.compile(r"^/modules$"),
+]
+_PUBLIC_PATHS: list[re.Pattern[str]] = [
+    re.compile(r"^/health"),
+    re.compile(r"^/static/"),
+    re.compile(r"^/auth/"),
+]
+
+
+def _is_path_protected(path: str) -> bool:
+    for pattern in _PUBLIC_PATHS:
+        if pattern.match(path):
+            return False
+    if path == "/api" or path.startswith("/api/"):
+        return True
+    for pattern in _PROTECTED_HTML_PATHS:
+        if pattern.match(path):
+            return True
+    return False
+
+
+def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
+    logger.info("Registering auth middleware for protected routes")
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        if not _is_path_protected(str(request.url.path)):
+            return await call_next(request)
+
+        from beeui_module.auth.service import AuthService
+
+        service: AuthService | None = getattr(
+            request.app.state, "beeui_auth_service", None
+        )
+        if service is None or not service.enabled:
+            logger.error("BeeUI auth service unavailable for protected route")
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "read_only": True,
+                    "error": {
+                        "code": "auth_unavailable",
+                        "message": "Authentication service unavailable",
+                    },
+                    "warnings": [],
+                    "meta": {},
+                },
+                status_code=503,
+            )
+
+        cookie_name = service.cookie_name()
+        cookie = request.cookies.get(cookie_name)
+        session = service.verify_session(cookie)
+
+        if session is not None:
+            return await call_next(request)
+
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            from starlette.responses import RedirectResponse
+
+            return RedirectResponse(url="/auth/login", status_code=302)
+
+        return JSONResponse(
+            {
+                "ok": False,
+                "read_only": True,
+                "error": {
+                    "code": "unauthenticated",
+                    "message": "Authentication required",
+                },
+                "warnings": [],
+                "meta": {},
+            },
+            status_code=401,
+        )
 
 
 def _register_rop_html_polish(app: FastAPI) -> None:
