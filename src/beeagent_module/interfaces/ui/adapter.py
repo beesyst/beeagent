@@ -23,6 +23,9 @@ from beeagent_module.interfaces.ui.artifacts import (
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
+from beeagent_module.interfaces.ui.rop_event_detail import (
+    build_rop_event_detail_page_model,
+)
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
@@ -221,7 +224,7 @@ class BeeAgentUiAdapter:
         self, page_id: str, query: Mapping[str, str]
     ) -> AdapterResult | AdapterErrorResult:
         try:
-            if page_id == "rop_dashboard":
+            if page_id in {"rop", "rop_dashboard"}:
                 tab = query.get("tab", "overview")
                 allowed_tabs = frozenset(
                     {
@@ -269,6 +272,30 @@ class BeeAgentUiAdapter:
                 modules_data = build_modules_list(self._storage_dir)
                 modules_data["layout"] = build_modules_page_layout(modules_data)
                 return ok_result(modules_data)
+
+            if page_id == "rop_event_detail":
+                run_id = query.get("run_id")
+                event_id = query.get("event_id")
+                if not run_id or not event_id:
+                    return error_result(
+                        "missing_params",
+                        "run_id and event_id are required",
+                    )
+                try:
+                    validate_run_id(run_id)
+                except Exception:
+                    return error_result("invalid_run_id", "Invalid run_id")
+
+                locale = resolve_locale(query.get("lang"))
+                data = build_rop_event_detail_page_model(
+                    self._storage_dir,
+                    run_id,
+                    event_id,
+                    lang=locale,
+                )
+                if not data.get("ok", True) and data.get("error") == "not_found":
+                    return error_result("not_found", "Event not found")
+                return ok_result(data)
 
             return error_result("unavailable", f"Page '{page_id}' is unavailable")
         except Exception as exc:

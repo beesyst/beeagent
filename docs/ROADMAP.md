@@ -6092,7 +6092,7 @@ fuzzing optional for malformed AI decision / thread context payloads
 
 ### Итерация 31 — ROP Review Workbench v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 

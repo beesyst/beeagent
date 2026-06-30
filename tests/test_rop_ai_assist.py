@@ -81,6 +81,9 @@ def _valid_settings() -> dict:
             ]
         },
         "rop": {
+            "email_preview": {
+                "body_chars_max": 4000,
+            },
             "attachments": {
                 "enabled": True,
                 "chars_max": 500,

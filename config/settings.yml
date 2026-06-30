@@ -92,6 +92,8 @@ modules:
       enabled: true # true/false - включить/выключить загрузку модуля
 
 rop:
+  email_preview:
+    body_chars_max: 4000
   ai_assist:
     enabled: false
     provider: openai_compatible

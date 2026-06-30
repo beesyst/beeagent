@@ -50,6 +50,7 @@ REQUIRED_KEYS = (
     ("rop", "attachments", "chars_max"),
     ("rop", "attachments", "size_max"),
     ("rop", "attachments", "types"),
+    ("rop", "email_preview", "body_chars_max"),
     ("rop", "sources"),
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
@@ -278,6 +279,7 @@ def validate_settings(settings: dict) -> None:
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
 
+    _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
 
     input_sources = _get_nested_value(settings, ("rop", "sources"))
@@ -519,6 +521,28 @@ def _validate_web_auth_settings(settings: dict) -> None:
                     f"Duplicate web.auth.principals token_env '{token_env}'"
                 )
             seen_token_envs.append(token_env)
+
+
+def _validate_rop_email_preview_settings(settings: dict) -> None:
+    preview_cfg = _get_nested_value(settings, ("rop", "email_preview"))
+    if preview_cfg is None:
+        return
+    if not isinstance(preview_cfg, dict):
+        raise RuntimeError("Invalid type for rop.email_preview, expected mapping")
+
+    body_chars_max = preview_cfg.get("body_chars_max")
+    if not isinstance(body_chars_max, int):
+        raise RuntimeError(
+            "Invalid type for rop.email_preview.body_chars_max, expected int"
+        )
+    if body_chars_max < 200:
+        raise RuntimeError(
+            "Invalid value for rop.email_preview.body_chars_max, expected >= 200"
+        )
+    if body_chars_max > 10000:
+        raise RuntimeError(
+            "Invalid value for rop.email_preview.body_chars_max, hard cap is 10000"
+        )
 
 
 def _validate_rop_ai_assist_settings(settings: dict) -> None:

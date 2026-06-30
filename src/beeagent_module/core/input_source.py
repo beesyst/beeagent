@@ -81,6 +81,7 @@ def load_rop_source(
     source: dict,
     project_root: Path,
     logger: logging.Logger,
+    email_preview_body_chars_max: int,
     mailbox_client_factory: Callable[[dict], MailboxReadonlyClient] | None = None,
 ) -> tuple[list[dict], dict[str, Any], dict[str, Any]]:
     source_type = source.get("source_type")
@@ -91,6 +92,7 @@ def load_rop_source(
                 source=source,
                 project_root=project_root,
                 logger=logger,
+                email_preview_body_chars_max=email_preview_body_chars_max,
             )
         except RuntimeError as exc:
             raise InputSourceError(
@@ -117,6 +119,7 @@ def load_rop_source(
         return load_mailbox_readonly(
             source=source,
             logger=logger,
+            email_preview_body_chars_max=email_preview_body_chars_max,
             mailbox_client_factory=mailbox_client_factory,
         )
 
@@ -150,6 +153,7 @@ def _resolve_project_file_path(project_root: Path, raw_path: str) -> Path:
 def load_mailbox_readonly(
     source: dict,
     logger: logging.Logger,
+    email_preview_body_chars_max: int,
     mailbox_client_factory: Callable[[dict], MailboxReadonlyClient] | None = None,
 ) -> tuple[list[dict], dict[str, Any], dict[str, Any]]:
     source_id = str(source.get("source_id", "unknown"))
@@ -244,6 +248,7 @@ def load_mailbox_readonly(
                     raw_message=raw_message,
                     source=source,
                     position=index,
+                    email_preview_body_chars_max=email_preview_body_chars_max,
                 )
             )
         except ValueError as exc:
@@ -349,6 +354,7 @@ def _normalize_mailbox_message(
     raw_message: bytes,
     source: dict,
     position: int,
+    email_preview_body_chars_max: int,
 ) -> dict[str, Any]:
     message = BytesParser(policy=policy.default).parsebytes(raw_message)
     source_id = str(source.get("source_id", "unknown"))
@@ -360,7 +366,10 @@ def _normalize_mailbox_message(
         raw_message=raw_message,
     )
 
-    body_preview = _extract_body_preview(message)
+    body_preview_fields = _extract_body_preview(
+        message,
+        email_preview_body_chars_max=email_preview_body_chars_max,
+    )
     sender_list = _extract_addresses(message.get_all("From", []))
     to_list = _extract_addresses(message.get_all("To", []))
     cc_list = _extract_addresses(message.get_all("Cc", []))
@@ -391,32 +400,87 @@ def _normalize_mailbox_message(
         "subject": subject,
         "date": date_value,
         "_date_fallback": date_fallback,
-        "body_preview": body_preview,
+        **body_preview_fields,
         "attachments": attachments,
     }
 
 
-def _extract_body_preview(message: Any) -> str:
-    body_parts: list[str] = []
+def _extract_body_preview(
+    message: Any,
+    email_preview_body_chars_max: int,
+) -> dict[str, Any]:
+    text_parts: list[str] = []
+    html_parts: list[str] = []
+
+    def collect_part(part: Any) -> None:
+        if part.get_content_disposition() == "attachment":
+            return
+
+        content_type = str(part.get_content_type() or "").strip().lower()
+        if content_type not in {"text/plain", "text/html"}:
+            return
+
+        payload = part.get_content()
+        if not isinstance(payload, str) or not payload.strip():
+            return
+
+        if content_type == "text/plain":
+            text_parts.append(payload)
+        elif content_type == "text/html":
+            html_parts.append(payload)
 
     if message.is_multipart():
         for part in message.walk():
             if part.is_multipart():
                 continue
-            if part.get_content_disposition() == "attachment":
-                continue
-            if part.get_content_type() != "text/plain":
-                continue
-            payload = part.get_content()
-            if isinstance(payload, str) and payload.strip():
-                body_parts.append(payload)
+            collect_part(part)
     else:
-        payload = message.get_content()
-        if isinstance(payload, str) and payload.strip():
-            body_parts.append(payload)
+        collect_part(message)
 
-    normalized = _sanitize_text("\n".join(body_parts))
-    return normalized[:1000]
+    if text_parts:
+        return _build_body_preview_metadata(
+            text="\n".join(text_parts),
+            source="text_plain",
+            email_preview_body_chars_max=email_preview_body_chars_max,
+        )
+
+    if html_parts:
+        return _build_body_preview_metadata(
+            text=_strip_html("\n".join(html_parts)),
+            source="html_text",
+            email_preview_body_chars_max=email_preview_body_chars_max,
+        )
+
+    return _empty_body_preview_metadata()
+
+
+def _empty_body_preview_metadata() -> dict[str, Any]:
+    return {
+        "body_preview": "",
+        "body_preview_chars": 0,
+        "body_preview_truncated": False,
+        "body_preview_source": "unavailable",
+    }
+
+
+def _build_body_preview_metadata(
+    text: str,
+    source: str,
+    email_preview_body_chars_max: int,
+) -> dict[str, Any]:
+    cleaned = _sanitize_text(text)
+    if not cleaned:
+        return _empty_body_preview_metadata()
+
+    truncated = len(cleaned) > email_preview_body_chars_max
+    preview = cleaned[:email_preview_body_chars_max]
+
+    return {
+        "body_preview": preview,
+        "body_preview_chars": len(preview),
+        "body_preview_truncated": truncated,
+        "body_preview_source": source,
+    }
 
 
 def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
@@ -493,11 +557,6 @@ def _clean_header_value(value: Any) -> str:
     if value is None:
         return ""
     return _sanitize_text(str(value))
-
-
-def _sanitize_text(value: str) -> str:
-    compact = re.sub(r"\s+", " ", value).strip()
-    return compact
 
 
 def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
@@ -582,6 +641,7 @@ def load_json_batch(
     source: dict,
     project_root: Path,
     logger: logging.Logger,
+    email_preview_body_chars_max: int,
 ) -> tuple[list[dict], dict[str, Any]]:
     source_id: str = source.get("source_id", "unknown")
 
@@ -642,6 +702,7 @@ def load_json_batch(
         source_id=source_id,
         items_max=items_max,
         logger=logger,
+        email_preview_body_chars_max=email_preview_body_chars_max,
     )
 
     metadata: dict[str, Any] = {
@@ -680,6 +741,7 @@ def _normalize_batch_items(
     source_id: str,
     items_max: int,
     logger: logging.Logger,
+    email_preview_body_chars_max: int,
 ) -> list[dict]:
     valid: list[dict] = []
     skipped = 0
@@ -693,7 +755,12 @@ def _normalize_batch_items(
             )
             skipped += 1
             continue
-        valid.append(_sanitize_batch_item(item))
+        valid.append(
+            _sanitize_batch_item(
+                item,
+                email_preview_body_chars_max=email_preview_body_chars_max,
+            )
+        )
 
     if skipped:
         logger.warning(
@@ -723,7 +790,10 @@ def _normalize_batch_items(
     return truncated
 
 
-def _sanitize_batch_item(item: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_batch_item(
+    item: dict[str, Any],
+    email_preview_body_chars_max: int,
+) -> dict[str, Any]:
     blocked_top_level_keys = {
         "raw_eml",
         "raw_message",
@@ -753,4 +823,72 @@ def _sanitize_batch_item(item: dict[str, Any]) -> dict[str, Any]:
 
         sanitized["attachments"] = safe_attachments
 
+    body_preview = _build_batch_body_preview(
+        sanitized,
+        email_preview_body_chars_max=email_preview_body_chars_max,
+    )
+    if body_preview is not None:
+        sanitized["body_preview"] = body_preview["body_preview"]
+        sanitized["body_preview_chars"] = body_preview["body_preview_chars"]
+        sanitized["body_preview_truncated"] = body_preview["body_preview_truncated"]
+        sanitized["body_preview_source"] = body_preview["body_preview_source"]
+
     return sanitized
+
+
+def _build_batch_body_preview(
+    item: dict[str, Any],
+    email_preview_body_chars_max: int,
+) -> dict[str, Any] | None:
+    raw_body = ""
+    source = "text_plain"
+
+    for key in ("body", "text", "text_plain", "body_preview"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            raw_body = value
+            source = "existing" if key == "body_preview" else "text_plain"
+            break
+
+    if not raw_body:
+        payload = item.get("payload")
+        if isinstance(payload, dict):
+            for key in ("body", "text", "text_plain"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    raw_body = value
+                    break
+
+    if not raw_body:
+        return None
+
+    stripped = _strip_html(raw_body)
+    is_html = stripped != raw_body
+    preview_source = (
+        source if source == "existing" else ("html_text" if is_html else "text_plain")
+    )
+
+    return _build_body_preview_metadata(
+        text=stripped if is_html else raw_body,
+        source=preview_source,
+        email_preview_body_chars_max=email_preview_body_chars_max,
+    )
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style)[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL
+)
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _strip_html(text: str) -> str:
+    without_script = _SCRIPT_STYLE_RE.sub("", text)
+    without_tags = _HTML_TAG_RE.sub("", without_script)
+    return without_tags
+
+
+def _sanitize_text(text: str) -> str:
+    without_control = _CONTROL_CHARS_RE.sub("", text)
+    normalized = re.sub(r"\s+", " ", without_control).strip()
+    return normalized

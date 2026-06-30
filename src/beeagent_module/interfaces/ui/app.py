@@ -10,9 +10,12 @@ from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
     AdapterResult,
 )
+from beeui_module.pages.config import load_beeui_config
+from beeui_module.pages.detail import render_beeui_detail_page
 from beeui_module.web.app import create_beeui_app
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.templating import Jinja2Templates
 from starlette.routing import Route
 
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
@@ -21,6 +24,9 @@ from beeagent_module.interfaces.ui.locale import (
     resolve_locale,
     set_current_locale,
     t,
+)
+from beeagent_module.interfaces.ui.rop_event_detail import (
+    build_rop_event_detail_read_model,
 )
 
 
@@ -196,13 +202,22 @@ def build_beeui_app(
     )
 
     config_path = get_project_root() / "config" / "beeui.yml"
+    from beeui_module.web import app as beeui_web_app
+
+    resolved_ui_config = load_beeui_config(config_path)
+    resolved_templates = Jinja2Templates(
+        directory=str(Path(beeui_web_app.__file__).resolve().parent / "templates")
+    )
+    resolved_templates.env.autoescape = bool(
+        beeui_settings["security"]["html_autoescape"]
+    )
 
     app = create_beeui_app(
         settings=beeui_settings,
+        ui_config=resolved_ui_config,
         product_id="beeagent",
         product_title="BeeAgent",
         adapter=adapter,
-        config_path=str(config_path),
     )
     _register_apexcharts_compat(app)
     _register_rop_html_polish(app)
@@ -211,6 +226,9 @@ def build_beeui_app(
     app.state.beeagent_settings = settings
     app.state.beeagent_storage_dir = resolved_storage
     app.state.beeagent_adapter = adapter
+    app.state.beeagent_beeui_templates = resolved_templates
+    app.state.beeagent_beeui_ui_config = resolved_ui_config
+    app.state.beeagent_beeui_route_prefix = beeui_settings["web"]["route_prefix"]
 
     _setup_beeagent_auth(app, beeui_settings, logger)
     _register_custom_routes(app, adapter, logger)
@@ -300,6 +318,7 @@ _PROTECTED_HTML_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/$"),
     re.compile(r"^/rop$"),
     re.compile(r"^/rop\?.*"),
+    re.compile(r"^/rop/events/"),
     re.compile(r"^/runs$"),
     re.compile(r"^/runs/"),
     re.compile(r"^/modules$"),
@@ -679,6 +698,13 @@ def _register_apexcharts_compat(app: FastAPI) -> None:
     app.router.routes.insert(0, route)
 
 
+_PATH_TRAVERSAL_RE = re.compile(r"(?:^|/)\.\.(?:/|$)")
+
+
+def _is_path_traversal(value: str) -> bool:
+    return bool(_PATH_TRAVERSAL_RE.search(value))
+
+
 def _register_custom_routes(
     app: FastAPI,
     adapter: BeeAgentUiAdapter,
@@ -713,6 +739,117 @@ def _register_custom_routes(
         data = _result_data(result, {})
         return _ok_json(data)
 
+    @app.get("/api/rop/events/{event_id}", include_in_schema=False)
+    async def api_rop_event_detail(request: Request, event_id: str) -> JSONResponse:
+        run_id = request.query_params.get("run_id")
+        if not run_id:
+            return _error_json(
+                "missing_run_id",
+                "run_id query parameter is required",
+                status_code=400,
+            )
+        try:
+            from beeui_module.adapters.ids import validate_run_id
+
+            validate_run_id(run_id)
+        except Exception:
+            return _error_json(
+                "invalid_run_id",
+                "Invalid run_id",
+                status_code=400,
+            )
+
+        if _is_path_traversal(event_id):
+            return _error_json(
+                "invalid_event_id",
+                "Invalid event_id",
+                status_code=400,
+            )
+
+        result = build_rop_event_detail_read_model(
+            storage_dir=app.state.beeagent_storage_dir,
+            run_id=run_id,
+            event_id=event_id,
+            lang=resolve_locale(request.query_params.get("lang")),
+        )
+        if not result.get("ok", True) and result.get("error") == "not_found":
+            return _error_json(
+                "not_found",
+                f"Event {event_id} not found in run {run_id}",
+                status_code=404,
+            )
+
+        warnings_result = result.get("warnings", [])
+        return _ok_json(result, warnings=warnings_result)
+
+    @app.get("/rop/events/{event_id}", include_in_schema=False)
+    async def rop_event_detail_html(request: Request, event_id: str) -> Response:
+        run_id = request.query_params.get("run_id")
+        if not run_id:
+            return _error_json(
+                "missing_run_id",
+                "run_id query parameter is required",
+                status_code=400,
+            )
+        try:
+            from beeui_module.adapters.ids import validate_run_id
+
+            validate_run_id(run_id)
+        except Exception:
+            return _error_json(
+                "invalid_run_id",
+                "Invalid run_id",
+                status_code=400,
+            )
+
+        if _is_path_traversal(event_id):
+            return _error_json(
+                "invalid_event_id",
+                "Invalid event_id",
+                status_code=400,
+            )
+
+        locale = resolve_locale(request.query_params.get("lang"))
+        token = set_current_locale(locale)
+        try:
+            query_params = {"run_id": run_id, "event_id": event_id}
+            if locale != "en":
+                query_params["lang"] = locale
+
+            page_result = adapter.get_page("rop_event_detail", query_params)
+            if isinstance(page_result, AdapterErrorResult):
+                code = str(page_result.error.get("code", "page_error"))
+                status_code = 404 if code == "not_found" else 500
+                message = (
+                    f"Event {event_id} not found in run {run_id}"
+                    if code == "not_found"
+                    else str(
+                        page_result.error.get(
+                            "message", "Failed to build event detail page"
+                        )
+                    )
+                )
+                return _error_json(
+                    code,
+                    message,
+                    status_code=status_code,
+                    error=page_result.error,
+                )
+
+            return render_beeui_detail_page(
+                request,
+                page_result.data,
+                templates=app.state.beeagent_beeui_templates,
+                route_prefix=app.state.beeagent_beeui_route_prefix,
+                ui_config=app.state.beeagent_beeui_ui_config,
+                product_title=app.state.beeui_product["title"],
+                product_id=app.state.beeui_product["id"],
+            )
+        finally:
+            reset_current_locale(token)
+
     logger.info(
-        "BeeAgent custom routes registered: /health, /api/modules, /api/rop/dashboard"
+        "BeeAgent custom routes registered: "
+        "/health, /api/modules, /api/rop/dashboard, "
+        "/api/rop/events/{event_id}, /rop/events/{event_id}"
     )

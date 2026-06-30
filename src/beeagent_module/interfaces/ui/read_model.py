@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from beeagent_module.cases.rop_dashboard import build_rop_dashboard
 from beeagent_module.interfaces.ui.locale import t
@@ -777,10 +778,41 @@ def _build_it30_recommendations(
     return recs
 
 
+def _resolve_sender(
+    norm: dict[str, Any] | None,
+    classified_item: dict[str, Any],
+) -> str:
+    for key in ("sender", "from_email", "from"):
+        value = norm.get(key) if norm else None
+        if isinstance(value, str) and value.strip() and "Unknown" not in value:
+            return value
+    for key in ("sender", "from_email", "from"):
+        value = classified_item.get(key)
+        if isinstance(value, str) and value.strip() and "Unknown" not in value:
+            return value
+    return "Unknown Sender"
+
+
+def _resolve_subject(
+    norm: dict[str, Any] | None,
+    classified_item: dict[str, Any],
+) -> str:
+    for key in ("subject",):
+        value = norm.get(key) if norm else None
+        if isinstance(value, str) and value.strip() and value not in ("n/a", ""):
+            return value
+    value = classified_item.get("subject")
+    if isinstance(value, str) and value.strip() and value not in ("n/a", ""):
+        return value
+    return "n/a"
+
+
 def _build_attention_events(
     classified: list | None,
     normalized: list | None,
     source_health: list[dict[str, Any]],
+    locale: str = "en",
+    run_id: str = "",
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     if not isinstance(classified, list):
@@ -832,12 +864,15 @@ def _build_attention_events(
         if not reasons:
             reasons.append("Needs review")
 
+        sender = _resolve_sender(norm, item)
+        subject = _resolve_subject(norm, item)
+
         evt = {
             "event_id": eid,
             "source_id": sid,
             "source_display_name": src_display.get(sid, ""),
-            "sender": norm.get("sender", item.get("sender", "")),
-            "subject": norm.get("subject", item.get("subject", "")),
+            "sender": sender,
+            "subject": subject,
             "case_type": item.get("case_type", ""),
             "priority": item.get("priority", ""),
             "confidence": conf,
@@ -847,6 +882,9 @@ def _build_attention_events(
                 norm.get("attachment_count", item.get("attachment_count", 0))
             ),
             "review_reason": "; ".join(reasons),
+            "detail_href": _rop_event_detail_href(str(eid), run_id, locale)
+            if eid and run_id
+            else None,
         }
         events.append(evt)
 
@@ -1906,6 +1944,8 @@ def build_rop_dashboard_read_model(
         classified=classified if isinstance(classified, list) else None,
         normalized=normalized if isinstance(normalized, list) else None,
         source_health=source_health,
+        locale="en",
+        run_id=run_id,
     )
 
     evidence_links = _build_evidence_links(run_id)
@@ -2456,6 +2496,17 @@ def _rop_href(
     return f"/rop?{'&'.join(params)}"
 
 
+def _rop_event_detail_href(
+    event_id: str,
+    run_id: str,
+    locale: str = "en",
+) -> str:
+    href = f"/rop/events/{quote(event_id, safe='')}?run_id={quote(run_id, safe='')}"
+    if locale != "en":
+        href += f"&lang={quote(locale, safe='')}"
+    return href
+
+
 def _collect_priority_queue_preview(
     queues: dict[str, Any],
     current_period: str,
@@ -2936,6 +2987,7 @@ def _build_rop_queue_layout(
     queues = data.get("queues", {})
     if not isinstance(queues, dict):
         queues = {}
+    run_id = data.get("run_id", "")
 
     queue_specs = (
         "high_priority",
@@ -2962,7 +3014,9 @@ def _build_rop_queue_layout(
             queue_rows.append(item)
 
     if queue_rows:
-        return [_queue_table("ROP Work Queue", queue_rows)]
+        return [
+            _queue_table("ROP Work Queue", queue_rows, run_id=run_id, locale=locale)
+        ]
 
     if not attention_events:
         return [
@@ -3014,7 +3068,12 @@ def _build_rop_queue_layout(
     ]
 
 
-def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any]:
+def _queue_table(
+    title: str,
+    rows_source: list[dict[str, Any]],
+    run_id: str = "",
+    locale: str = "en",
+) -> dict[str, Any]:
     rows = []
     for item in rows_source[:50]:
         if not isinstance(item, dict):
@@ -3025,6 +3084,9 @@ def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any
         evidence_href = item.get("evidence_href") or (
             f"/rop?tab=evidence#event-{event_id}" if event_id else "/rop?tab=evidence"
         )
+        detail_href = item.get("detail_href")
+        if not detail_href and event_id and run_id:
+            detail_href = _rop_event_detail_href(event_id, run_id, locale)
         rows.append(
             {
                 "priority": {
@@ -3051,8 +3113,30 @@ def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any
                     "label": "Evidence",
                     "href": evidence_href,
                 },
+                "detail_href": detail_href if event_id else None,
             }
         )
+
+    columns = [
+        {"key": "priority", "label": "Priority", "cell": "badge"},
+        {"key": "client", "label": "Sender / Client", "cell": "avatar_text"},
+        {"key": "subject", "label": "Subject / Request", "cell": "text"},
+        {"key": "classification", "label": "Classification", "cell": "text"},
+        {"key": "bitrix_status", "label": "Bitrix status", "cell": "status"},
+        {"key": "reason", "label": "Reason", "cell": "muted"},
+        {"key": "next_step", "label": "Recommended next step", "cell": "muted"},
+        {"key": "evidence", "label": "Evidence link", "cell": "link"},
+    ]
+
+    has_detail = any(row.get("detail_href") for row in rows)
+    if has_detail:
+        columns.append({"key": "detail", "label": t("Detail", locale), "cell": "link"})
+        for row in rows:
+            if row.get("detail_href"):
+                row["detail"] = {
+                    "label": t("View details", locale),
+                    "href": row["detail_href"],
+                }
 
     return {
         "type": "data_table",
@@ -3060,16 +3144,7 @@ def _queue_table(title: str, rows_source: list[dict[str, Any]]) -> dict[str, Any
         "title": title,
         "striped": True,
         "mobile": "md",
-        "columns": [
-            {"key": "priority", "label": "Priority", "cell": "badge"},
-            {"key": "client", "label": "Sender / Client", "cell": "avatar_text"},
-            {"key": "subject", "label": "Subject / Request", "cell": "text"},
-            {"key": "classification", "label": "Classification", "cell": "text"},
-            {"key": "bitrix_status", "label": "Bitrix status", "cell": "status"},
-            {"key": "reason", "label": "Reason", "cell": "muted"},
-            {"key": "next_step", "label": "Recommended next step", "cell": "muted"},
-            {"key": "evidence", "label": "Evidence link", "cell": "link"},
-        ],
+        "columns": columns,
         "rows": rows,
     }
 
