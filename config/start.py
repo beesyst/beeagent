@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from dotenv import load_dotenv
 
+from beeagent_module.cli.auth import ensure_auth_env, handle_auth_cli
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -23,11 +24,35 @@ from beeagent_module.core.settings import load_settings
 
 def main() -> None:
     project_root = get_project_root()
-
+    args = sys.argv[1:]
     env_path = project_root / ".env"
+    settings_path = project_root / "config" / "settings.yml"
+
+    if args and args[0] == "auth":
+        exit_code = handle_auth_cli(args[1:], project_root=project_root)
+        sys.exit(exit_code)
+
     load_dotenv(dotenv_path=env_path, override=False)
 
-    settings_path = project_root / "config" / "settings.yml"
+    if args and args[0] == "auth-init":
+        rotate = _parse_auth_init_args(args[1:])
+        ensure_auth_env(
+            project_root=project_root,
+            settings_path=settings_path,
+            env_path=env_path,
+            rotate=rotate,
+            quiet=False,
+        )
+        return
+
+    ensure_auth_env(
+        project_root=project_root,
+        settings_path=settings_path,
+        env_path=env_path,
+        quiet=True,
+    )
+    load_dotenv(dotenv_path=env_path, override=False)
+
     settings = load_settings(settings_path)
 
     ensure_dirs()
@@ -42,8 +67,6 @@ def main() -> None:
     )
 
     logger = get_logger("app")
-
-    args = sys.argv[1:]
 
     if not args:
         from beeagent_module.core.app import run_app
@@ -78,7 +101,22 @@ def main() -> None:
 
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, auth, auth-init",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _parse_auth_init_args(cli_args: list[str]) -> str | None:
+    if not cli_args:
+        return None
+    if len(cli_args) == 2 and cli_args[0] == "--rotate":
+        return cli_args[1]
+
+    print(
+        "Usage:\n"
+        "  start.py auth-init\n"
+        "  start.py auth-init --rotate <principal-id-or-username|session|all>",
         file=sys.stderr,
     )
     sys.exit(2)

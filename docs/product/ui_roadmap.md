@@ -2372,7 +2372,411 @@ Fuzzing is not required; malformed JSON fixture tests are enough.
 - `beeagent-rop` not changed;
 - `uv.lock` unchanged.
 
-### Итерация UI-7 — Remove legacy BeeAgent web after BeeUI MVP parity
+### Итерация UI-7 — BeeUI-backed auth boundary for BeeAgent console
+
+**Статус:** DONE
+
+#### Goal
+
+Добавить минимальную auth/session boundary для BeeUI-backed BeeAgent Web Console, чтобы `/`, `/rop`, `/runs`, `/modules`, artifact browser и read-only API нельзя было открыть без явной аутентификации, когда `web.auth.enabled: true`.
+
+#### Почему это нужно
+
+После UI-6 BeeAgent Web Console стала показывать operator-facing ROP evidence:
+
+```text
+latest-N mailbox selection
+thread context
+AI assist evidence
+source/client metadata
+artifact links
+operator recommendations
+```
+
+Эти данные уже нельзя безопасно показывать по private/customer link без auth boundary.
+
+Удаление legacy web важно, но это cleanup. Для MVP приоритет выше у customer-safe/private access:
+
+```text
+UI-7 auth boundary
+→ UI-8 remove legacy web
+→ UI-9 attachment-aware dashboard
+→ UI-10 Bitrix reconciliation dashboard
+```
+
+Главное правило сохраняется:
+
+```text
+BeeUI renders and owns generic auth/session primitives.
+BeeAgent owns product config, policy and route integration.
+beeagent-rop remains domain-only.
+```
+
+Эта итерация реализуется в `beeagent`, но не должна дублировать BeeUI auth internals. BeeAgent должен использовать существующий BeeUI auth/session layer. Если нужного generic BeeUI hook нет, нужно остановиться и явно зафиксировать BeeUI prerequisite, а не писать собственную session/cookie реализацию в BeeAgent.
+
+#### Depends on
+
+- UI-6 — Expose latest-N, threads, AI assist, RU labels, operator recommendations;
+- BeeUI Iteration 13 — Auth/session/CSRF boundary;
+- BeeUI Iteration 13.7 — Locale-aware shell labels and query-preserving navigation;
+- existing BeeUI embedded app integration in `src/beeagent_module/interfaces/ui/app.py`.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+- auth/session boundary;
+- role/principal config;
+- secrets through environment variables;
+- HTML/API route protection;
+- signed session/cookie behavior delegated to BeeUI;
+- artifact/API exposure changes from public-local to authenticated mode;
+- customer/private deployment readiness.
+
+#### Scope
+
+**Включено:**
+
+- добавить config-driven BeeAgent web auth policy в `config/settings.yml`:
+
+```yaml
+web:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: true
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+      - id: admin_2
+        username: admin2
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+```
+
+- config stores only:
+  - auth mode;
+  - role/principal metadata;
+  - env variable names.
+
+- env stores secrets only:
+  - `BEEAGENT_WEB_SESSION_SECRET`;
+  - `BEEAGENT_WEB_ADMIN1_TOKEN`;
+  - `BEEAGENT_WEB_ADMIN2_TOKEN`.
+
+- validate auth config fail-fast when `web.auth.enabled: true`:
+  - `mode` is supported;
+  - `session_secret_env` is present;
+  - session secret env value exists and is non-empty;
+  - `principals[]` is non-empty;
+  - each principal has safe `id`;
+  - each principal has safe `username`;
+  - each principal has allowed `role`;
+  - each principal has `token_env`;
+  - each token env value exists and is non-empty;
+  - duplicate usernames/ids are rejected;
+  - secret values are not logged.
+
+- integrate BeeAgent app composition with BeeUI auth/session layer:
+  - pass auth config/policy to BeeUI if supported;
+  - protect BeeAgent HTML routes when enabled;
+  - protect BeeAgent read-only API routes when enabled;
+  - keep `/health` public but minimal/sanitized;
+  - keep static assets public;
+  - keep login/logout/auth helper routes controlled by BeeUI.
+
+- protected HTML routes when auth enabled:
+
+```text
+/
+ /rop
+ /runs
+ /runs/{run_id}
+ /runs/{run_id}/artifacts
+ /runs/{run_id}/artifacts/{artifact_id}
+ /modules
+```
+
+- protected API routes when auth enabled:
+
+```text
+/api/dashboard
+/api/rop/dashboard
+/api/runs
+/api/runs/{run_id}
+/api/runs/{run_id}/artifacts
+/api/runs/{run_id}/artifacts/{artifact_id}
+/api/modules
+```
+
+- support roles:
+
+```text
+viewer
+operator
+admin
+```
+
+- UI-7 remains read-only:
+  - all authenticated roles can view read-only routes;
+  - `admin` is reserved for future config/admin/actions;
+  - no POST/action/config apply is added in this iteration.
+
+- unauthenticated HTML route behavior:
+  - redirect to BeeUI login page or render BeeUI unauthenticated page, depending on existing BeeUI contract.
+
+- unauthenticated API route behavior:
+  - return `401` safe JSON envelope;
+  - no internal exception details.
+
+- preserve locale/navigation behavior:
+  - `?lang=ru` continues to work after login/session;
+  - query-preserving tab links remain safe.
+
+- preserve read-only/security boundary:
+  - no GET mutation;
+  - no POST routes;
+  - no web-triggered ROP run;
+  - no mailbox calls;
+  - no CRM/Bitrix calls;
+  - no module/capability execution;
+  - no AI provider calls;
+  - no raw `.eml`;
+  - no raw attachment content;
+  - no arbitrary storage browsing;
+  - no secrets in HTML/API/logs/artifacts.
+
+- update tests:
+  - auth disabled keeps current local behavior;
+  - auth enabled without session secret fails fast;
+  - auth enabled without principal token fails fast;
+  - duplicate principals fail fast;
+  - invalid role fails fast;
+  - unauthenticated HTML protected route is blocked;
+  - unauthenticated API protected route returns `401`;
+  - authenticated admin can access `/rop`;
+  - authenticated admin can access `/api/rop/dashboard`;
+  - `/health` remains public and sanitized;
+  - static assets remain accessible;
+  - no secrets in HTML/API/logs;
+  - no GET mutation.
+
+- update docs:
+  - `docs/product/ui_roadmap.md`;
+  - `docs/WEB_UI.md`;
+  - `README.ru.md`;
+  - `docs/DEV_GUIDE.md`;
+  - `docs/SECURITY.md` if auth deployment/security notes materially change.
+
+**Не включено:**
+
+- custom session/cookie implementation inside BeeAgent;
+- custom password hashing inside BeeAgent;
+- user registration;
+- password reset;
+- OAuth/SSO;
+- user database;
+- multi-tenant RBAC;
+- public SaaS auth model;
+- config apply;
+- admin panel;
+- operator actions;
+- POST routes;
+- CSRF changes beyond using BeeUI existing behavior;
+- web-triggered ROP run;
+- mailbox delete/archive/reply/mark-as-read;
+- CRM/Bitrix write-back;
+- changes to `beeagent-rop`;
+- ROP business logic changes;
+- dependency changes unless existing BeeUI auth API requires none.
+
+#### Deliverable
+
+BeeAgent Web Console can run in two explicit modes:
+
+```text
+web.auth.enabled: false
+  → local/dev read-only mode, current behavior preserved
+
+web.auth.enabled: true
+  → BeeUI-backed login/session boundary protects BeeAgent HTML/API routes
+```
+
+Two admin users can be configured without storing secrets in YAML:
+
+```yaml
+principals:
+  - id: admin_1
+    username: admin1
+    role: admin
+    token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+  - id: admin_2
+    username: admin2
+    role: admin
+    token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+```
+
+Real secrets live only in environment variables.
+
+#### Expected config/env behavior
+
+`config/settings.yml`:
+
+```yaml
+web:
+  auth:
+    enabled: true
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+      - id: admin_2
+        username: admin2
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+```
+
+`.env` example:
+
+```text
+BEEAGENT_WEB_SESSION_SECRET=<long-random-secret>
+BEEAGENT_WEB_ADMIN1_TOKEN=<long-random-token-1>
+BEEAGENT_WEB_ADMIN2_TOKEN=<long-random-token-2>
+```
+
+No token/session secret values may appear in:
+
+```text
+HTML
+API responses
+logs/app.log
+storage/*
+docs examples with real values
+```
+
+#### Expected route behavior
+
+Auth disabled:
+
+```text
+GET /rop
+→ 200
+```
+
+Auth enabled, unauthenticated:
+
+```text
+GET /rop
+→ 302 to login or 401 unauthenticated page, depending on BeeUI contract
+
+GET /api/rop/dashboard
+→ 401 JSON envelope
+```
+
+Auth enabled, authenticated admin:
+
+```text
+GET /rop
+→ 200
+
+GET /api/rop/dashboard
+→ 200
+```
+
+Public minimal routes:
+
+```text
+GET /health
+→ 200 sanitized health response
+
+GET /static/...
+→ 200
+```
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted BeeUI/BeeAgent auth integration tests;
+- targeted settings validation tests;
+- `uv run python config/start.py routes`;
+
+Smoke:
+
+```text
+/health
+/
+ /rop
+ /rop?lang=ru
+ /rop?tab=threads&lang=ru
+ /runs
+ /modules
+ /api/rop/dashboard
+ /runs/<run_id>/artifacts/mailbox_selection_json
+```
+
+Auth scenarios:
+
+```text
+auth disabled
+auth enabled with missing session secret
+auth enabled with missing admin token
+auth enabled with duplicate principal id
+auth enabled with duplicate username
+auth enabled with invalid role
+unauthenticated HTML protected route
+unauthenticated API protected route
+authenticated admin HTML route
+authenticated admin API route
+```
+
+Security/static checks:
+
+```bash
+rg -n "BEEAGENT_WEB_SESSION_SECRET|BEEAGENT_WEB_ADMIN1_TOKEN|BEEAGENT_WEB_ADMIN2_TOKEN" logs storage || true
+rg -n "token|secret|password" logs/app.log storage/interfaces storage/runs || true
+rg -n "POST|delete|archive|mark-as-read|reply|write-back" src/beeagent_module/interfaces/ui tests || true
+rg -n "beeagent_rop\.(domain|services|cases)" src/beeagent_module || true
+git diff -- pyproject.toml uv.lock
+```
+
+SAST mindset review required.
+
+SCA is not required unless dependencies change.
+
+DAST-style route misuse checks required for protected HTML/API routes, artifact routes, `lang`, `tab`, and `run_id` query params.
+
+#### DoD
+
+- BeeAgent has explicit `web.auth` config contract.
+- Auth-disabled local/dev mode preserves current behavior.
+- Auth-enabled mode fails fast when required env secrets are missing.
+- Auth-enabled mode protects BeeAgent HTML routes.
+- Auth-enabled mode protects BeeAgent read-only API routes.
+- `/health` remains public and sanitized.
+- Static assets remain accessible.
+- Two admin principals can be configured via env-backed tokens.
+- Secrets are never stored in YAML.
+- Secrets do not appear in HTML/API/logs/artifacts.
+- BeeAgent does not implement its own session/cookie/security primitives when BeeUI provides them.
+- No POST/operator/config/action routes are added.
+- No mailbox/CRM/Bitrix/module/capability/AI execution is added.
+- `beeagent-rop` is unchanged.
+- `pyproject.toml.version` is unchanged.
+- Tests and docs are updated.
+
+### Итерация UI-8 — Remove legacy BeeAgent web after BeeUI MVP parity
 
 **Статус:** PLANNED
 
@@ -2543,7 +2947,7 @@ src/beeagent_module/
 
 ## Этап 2 — ROP operator dashboards on BeeUI
 
-### Итерация UI-8 — Attachment-aware ROP dashboard
+### Итерация UI-9 — Attachment-aware ROP dashboard
 
 **Статус:** PLANNED
 
@@ -2636,7 +3040,7 @@ src/beeagent_module/
 - UI remains artifact-only/read-only;
 - source artifacts remain traceable.
 
-### Итерация UI-9 — ROP Bitrix reconciliation dashboard
+### Итерация UI-10 — ROP Bitrix reconciliation dashboard
 
 **Статус:** PLANNED
 
@@ -2713,7 +3117,7 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 
 ## Этап 3 — Stable backend API
 
-### Итерация UI-10 — Stable BeeAgent Web API contract v1
+### Итерация UI-11 — Stable BeeAgent Web API contract v1
 
 **Статус:** PLANNED
 
@@ -2787,7 +3191,7 @@ Future frontend or standalone BeeUI can consume BeeAgent API without reading fil
 
 ## Этап 4 — Auth and customer-safe access
 
-### Итерация UI-11 — Web auth boundary v0
+### Итерация UI-12 — Web auth boundary v0
 
 **Статус:** PLANNED
 
@@ -2865,7 +3269,7 @@ Web Console can require auth before showing runs/dashboard/API.
 
 ## Этап 5 — Operator Control Panel
 
-### Итерация UI-12 — Operator Web Control Panel v0
+### Итерация UI-13 — Operator Web Control Panel v0
 
 **Статус:** PLANNED
 
@@ -2932,11 +3336,11 @@ storage/interfaces/operator_actions/<action_id>.json
 - role-based multi-user admin;
 - scheduler/listener.
 
-### Deliverable
+#### Deliverable
 
 Operator can use Web Control Panel for bounded BeeAgent actions without hidden execution paths.
 
-### Checks
+#### Checks
 
 - actions read-model;
 - allowed/blocked/denied rendering;
@@ -2964,7 +3368,7 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 
 ## Этап 6 — Admin/support surfaces
 
-### Итерация UI-13 — Support/Admin diagnostics v0
+### Итерация UI-14 — Support/Admin diagnostics v0
 
 **Статус:** PLANNED
 
@@ -3025,7 +3429,7 @@ Internal support can inspect diagnostics and audit trail without browsing `stora
 
 ## Этап 7 — Deferred product/admin platform
 
-### Итерация UI-14 — SQLAdmin evaluation for DB-backed admin only
+### Итерация UI-15 — SQLAdmin evaluation for DB-backed admin only
 
 **Статус:** DEFERRED
 

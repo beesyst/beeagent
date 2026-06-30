@@ -9,6 +9,19 @@ web:
   host: "127.0.0.1" # bind host for read-only operator web shell
   port: 8000 # bind port for read-only operator web shell
   open_browser: true # true/false - auto-open browser in web mode
+  auth:
+    enabled: true
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin # viewer/operator/admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+      - id: admin_2
+        username: admin2
+        role: admin # viewer/operator/admin
+        token_env: BEEAGENT_WEB_ADMIN2_TOKEN
 
 telegram:
   enabled: false # true/false - включить/выключить интеграцию с Telegram

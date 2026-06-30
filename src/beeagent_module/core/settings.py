@@ -53,6 +53,10 @@ REQUIRED_KEYS = (
     ("rop", "sources"),
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
+    ("web", "auth", "enabled"),
+    ("web", "auth", "mode"),
+    ("web", "auth", "session_secret_env"),
+    ("web", "auth", "principals"),
 )
 
 
@@ -102,6 +106,8 @@ def validate_settings(settings: dict) -> None:
 
     if not isinstance(_get_nested_value(settings, ("web", "open_browser")), bool):
         raise RuntimeError("Invalid type for web.open_browser, expected bool")
+
+    _validate_web_auth_settings(settings)
 
     if not isinstance(_get_nested_value(settings, ("telegram", "enabled")), bool):
         raise RuntimeError("Invalid type for telegram.enabled, expected bool")
@@ -385,6 +391,134 @@ def validate_settings(settings: dict) -> None:
     _validate_rop_dashboard_settings(settings)
 
     _validate_bitrix_settings(settings)
+
+    _validate_web_auth_settings(settings)
+
+
+def _validate_web_auth_settings(settings: dict) -> None:
+    import re
+
+    web_auth = _get_nested_value(settings, ("web", "auth"))
+    if web_auth is None:
+        return
+    if not isinstance(web_auth, dict):
+        raise RuntimeError("Invalid type for web.auth, expected mapping")
+
+    enabled = web_auth.get("enabled")
+    if not isinstance(enabled, bool):
+        raise RuntimeError("Invalid type for web.auth.enabled, expected bool")
+
+    mode = web_auth.get("mode")
+    if not isinstance(mode, str) or not mode.strip():
+        raise RuntimeError(
+            "Invalid or missing web.auth.mode, expected non-empty string"
+        )
+    if mode != "beeui_session":
+        raise RuntimeError("Unsupported web.auth.mode, expected 'beeui_session'")
+
+    session_secret_env = web_auth.get("session_secret_env")
+    if not isinstance(session_secret_env, str) or not session_secret_env.strip():
+        raise RuntimeError(
+            "Invalid or missing web.auth.session_secret_env, expected non-empty string"
+        )
+
+    principals = web_auth.get("principals")
+    if not isinstance(principals, list):
+        raise RuntimeError("Invalid type for web.auth.principals, expected list")
+
+    host = str(_get_nested_value(settings, ("web", "host")) or "").strip().lower()
+    is_loopback = host == "localhost"
+    if not is_loopback:
+        try:
+            import ipaddress
+
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = False
+
+    if not enabled and not is_loopback:
+        raise RuntimeError(
+            "Unsafe web.auth config: web.auth.enabled=false is allowed only "
+            "for loopback web.host"
+        )
+
+    _ALLOWED_ROLES = frozenset({"viewer", "operator", "admin"})
+    _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+
+    if enabled:
+        session_secret = os.getenv(session_secret_env, "")
+        if not session_secret:
+            raise RuntimeError(
+                f"Missing required env var '{session_secret_env}' "
+                f"for web.auth.session_secret_env when web.auth.enabled=true"
+            )
+
+        if not principals:
+            raise RuntimeError(
+                "web.auth.principals must be non-empty when web.auth.enabled=true"
+            )
+
+        seen_ids: list[str] = []
+        seen_usernames: list[str] = []
+        seen_token_envs: list[str] = []
+
+        for idx, principal in enumerate(principals):
+            if not isinstance(principal, dict):
+                raise RuntimeError(
+                    f"Invalid type for web.auth.principals[{idx}], expected mapping"
+                )
+
+            principal_id = principal.get("id")
+            if not isinstance(principal_id, str) or not _SAFE_ID_RE.match(principal_id):
+                raise RuntimeError(
+                    f"Invalid web.auth.principals[{idx}].id, "
+                    f"expected non-empty alphanumeric string"
+                )
+
+            username = principal.get("username")
+            if not isinstance(username, str) or not _SAFE_ID_RE.match(username):
+                raise RuntimeError(
+                    f"Invalid web.auth.principals[{idx}].username, "
+                    f"expected non-empty alphanumeric string"
+                )
+
+            role = principal.get("role")
+            if not isinstance(role, str) or role not in _ALLOWED_ROLES:
+                raise RuntimeError(
+                    f"Invalid web.auth.principals[{idx}].role '{role}', "
+                    f"expected one of: {sorted(_ALLOWED_ROLES)}"
+                )
+
+            token_env = principal.get("token_env")
+            if not isinstance(token_env, str) or not token_env.strip():
+                raise RuntimeError(
+                    f"Invalid or missing web.auth.principals[{idx}].token_env, "
+                    f"expected non-empty string"
+                )
+
+            token_value = os.getenv(token_env, "")
+            if not token_value:
+                raise RuntimeError(
+                    f"Missing required env var '{token_env}' "
+                    f"for web.auth.principals[{idx}].token_env "
+                    f"when web.auth.enabled=true"
+                )
+
+            if principal_id in seen_ids:
+                raise RuntimeError(f"Duplicate web.auth.principals id '{principal_id}'")
+            seen_ids.append(principal_id)
+
+            if username in seen_usernames:
+                raise RuntimeError(
+                    f"Duplicate web.auth.principals username '{username}'"
+                )
+            seen_usernames.append(username)
+
+            if token_env in seen_token_envs:
+                raise RuntimeError(
+                    f"Duplicate web.auth.principals token_env '{token_env}'"
+                )
+            seen_token_envs.append(token_env)
 
 
 def _validate_rop_ai_assist_settings(settings: dict) -> None:

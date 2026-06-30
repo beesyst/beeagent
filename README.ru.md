@@ -36,6 +36,10 @@
 - сохранять run artifacts в `storage/`;
 - вести logs в `logs/app.log`;
 - запускать BeeUI-backed read-only Operator Web Console через `./start.sh web`;
+- иметь BeeUI-backed auth boundary для Web Console;
+- автоматически bootstrap'ить auth env values при старте;
+- ротировать principal tokens и session secret через CLI;
+- защищать HTML/API routes при `web.auth.enabled=true`;
 - использовать BeeUI поверх FastAPI/Jinja2/Tabler как canonical web layer;
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
 - использовать локальные BeeUI/static assets без CDN и npm runtime;
@@ -213,9 +217,15 @@ run:
 
 # ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
+
+# Auth rotation CLI
+./start.sh auth rotate <principal-id-or-username>
+./start.sh auth rotate all
+./start.sh auth rotate all --logout-all
+./start.sh auth rotate session
 ```
 
-### Operator Web Console (BeeUI-backed, UI-6)
+### Operator Web Console (BeeUI-backed, UI-6/UI-7)
 
 Read-only web console запускается отдельной командой:
 
@@ -237,7 +247,7 @@ Route listing diagnostic:
 
 Web Console запускается через `./start.sh web`.
 
-BeeUI — canonical web layer. BeeAgent в этом пути отвечает только за read-only adapter, read-model, layout builders и artifact allowlist. HTML/rendering/templates/shell и browser artifact pages принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-6 rendering path.
+BeeUI — canonical web layer. BeeAgent в этом пути отвечает за read-only adapter, read-model, layout builders, artifact allowlist, config/env policy, auth bootstrap, route protection и rotation CLI. HTML/rendering/templates/shell, browser artifact pages, login/logout/session/CSRF принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-6/UI-7 rendering path.
 
 Доступные HTML маршруты:
 
@@ -289,12 +299,12 @@ Browser artifact routes возвращают BeeUI HTML, API artifact routes в�
 
 В текущем scope не входят:
 
-- login/auth;
 - web-triggered `rop run`;
-- POST/write actions;
-- mailbox/CRM/module/capability execution;
-- attachment content parsing;
-- production deployment hardening.
+- operator POST/write actions;
+- config editing;
+- CRM/Bitrix write-back;
+- production listener/stream;
+- full RBAC enforcement.
 
 Security гарантии Web Console:
 
@@ -303,6 +313,77 @@ Security гарантии Web Console:
 - нет provider secrets;
 - нет destructive mailbox actions;
 - нет CRM/Bitrix write-back из UI.
+
+#### Auth
+
+Web Console поддерживает config-driven auth boundary через BeeUI session/role layer. Настройки в `config/settings.yml` → `web.auth`:
+
+```yaml
+web:
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+      - id: admin_2
+        username: admin2
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+```
+
+Реальные secrets живут только в env:
+
+- `BEEAGENT_WEB_SESSION_SECRET` — HMAC secret для session cookie
+- `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` — admin token для входа
+
+`web.auth.enabled: false` (default) сохраняет current dev behavior. При `web.auth.enabled: true`:
+
+- все HTML/API routes (кроме `/health`, `/static/...`, `/auth/...`) требуют аутентификации;
+- вход через BeeUI login page `/auth/login`: введите `user_id` и `token`;
+- `/health` остаётся публичным (sanitized);
+- session управляется BeeUI через подписанную cookie.
+
+`web.auth.enabled=false` допустим для local/dev, но небезопасная external exposure с auth disabled должна считаться rejected/fail-fast по settings policy.
+
+##### Auth bootstrap
+
+- `start.sh` создаёт `.env` из `.env.example`, если `.env` отсутствует;
+- ручной `cp .env.example .env` по-прежнему допустим;
+- `config/start.py` вызывает `ensure_web_auth_env(...)` до `load_settings(...)`;
+- при `web.auth.enabled=true` отсутствующие или пустые auth env values генерируются автоматически;
+- `BEEAGENT_WEB_SESSION_SECRET` генерируется через `secrets.token_urlsafe(64)`;
+- principal tokens генерируются через `secrets.token_urlsafe(32)`;
+- реальные значения пишутся только в `.env` / runtime env, не в `settings.yml`;
+- на POSIX для `.env` выставляется `chmod 0600`;
+- в stdout печатается только masked вывод вида `KEY=<generated>`, реальные значения не печатаются.
+
+##### Token/session rotation
+
+```bash
+./start.sh auth rotate admin1
+./start.sh auth rotate admin_1
+./start.sh auth rotate all
+./start.sh auth rotate all --logout-all
+./start.sh auth rotate session
+```
+
+- single principal меняет только token этого principal;
+- `all` меняет tokens всех principals;
+- `all --logout-all` меняет tokens и session secret;
+- `session` меняет только session secret;
+- после rotation нужен restart web app;
+- session secret value не печатается;
+- при rotation principal token печатается один раз, его нужно сохранить для входа.
+
+##### Roles
+
+- роли `viewer` / `operator` / `admin` валидируются и сохраняются;
+- в UI-7 все роли сейчас имеют одинаковый read-only доступ;
+- per-role RBAC и operator actions остаются future scope.
 
 ### ROP CLI
 
@@ -681,11 +762,15 @@ configured source(s)
 cp .env.example .env
 ```
 
-Заполнить нужные переменные:
+Ручной `cp .env.example .env` остаётся допустимым, но `start.sh` сам создаёт `.env`, если файла нет.
+При `web.auth.enabled=true` auth secrets могут быть сгенерированы автоматически при старте.
+
+Оператору всё равно нужно вручную заполнить реальные значения для внешних credentials:
 
 - `TELEGRAM_BOT_TOKEN`
 - `CHAT_ID`
 - `OPENAI_API_KEY` (если включён LLM)
+- credentials для Telegram / Bitrix / OpenAI и других внешних интеграций.
 
 ### 2. Запуск
 
@@ -746,6 +831,10 @@ uv run pytest -q
 - `./start.sh rop export-review --run-id <run_id> --format tsv`;
 - `./start.sh rop reconcile-bitrix --run-id <run_id>`;
 - `./start.sh rop action-drafts --run-id <run_id>`;
+- `./start.sh auth rotate <principal-id-or-username>`;
+- `./start.sh auth rotate all`;
+- `./start.sh auth rotate all --logout-all`;
+- `./start.sh auth rotate session`;
 - тесты;
 - прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
 
@@ -1033,13 +1122,17 @@ AI assist не является самостоятельной ROP business logi
 ## Важно про безопасность
 
 - секреты хранятся в env, а не в репозитории;
+- auth secrets должны жить только в env / `.env`, а не в `config/settings.yml`;
+- на POSIX `.env` получает `chmod 0600`;
+- session secret никогда не печатается;
 - новые обязательные ключи должны валидироваться fail-fast;
 - transport / module / capability boundaries нельзя размывать ad hoc;
 - file parsing, external connectors и execution paths требуют более внимательной проверки;
 - логи и artifacts не должны утекать в sensitive data;
 - v0 должен оставаться read-only;
 - default bind host — `127.0.0.1`;
-- external exposure требует отдельной deployment/auth hardening итерации;
+- `web.auth.enabled=false` допустим только для local/dev;
+- external deployment всё ещё требует отдельной deployment hardening итерации;
 - artifact routes должны оставаться whitelist-based;
 - path traversal должен блокироваться;
 - raw `.eml`, attachment content и secret-like payload не должны рендериться в HTML или JSON artifact output;
@@ -1068,6 +1161,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP multi-source ingestion artifacts** — DONE;
 - **Operator Web Console v0 with ROP dashboard** — DONE;
 - **BeeUI-backed Web Console foundation** — DONE;
+- **BeeUI-backed auth boundary** — DONE;
+- **Web Console auth bootstrap** — DONE;
+- **Auth token/session rotation CLI** — DONE;
 - **Rich ROP dashboard parity + operator intelligence v1** — DONE;
 - **ROP attachment extraction artifacts** — DONE;
 - **ROP Bitrix read-only reconciliation artifacts** — DONE;
@@ -1111,8 +1207,11 @@ BeeAgent уже вышел из состояния “только демо”.
 - controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts уже входят в scope;
 - production listener/stream, CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing всё ещё не входят в scope;
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
+- `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;
+- protected routes требуют BeeUI session;
 - ROP dashboard показывает latest/selected run summary, classification counts, priority/case type distributions and source status summary where artifacts are available;
 - web console отдаёт read-only `/api/*` поверх existing artifacts;
 - web console использует BeeUI поверх FastAPI/Jinja2/локальных Tabler assets;
 - web console читает existing artifacts и не запускает mailbox/CRM/module/capability actions.
+- `./start.sh auth rotate ...` управляет token/session rotation.

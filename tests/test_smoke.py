@@ -20,6 +20,11 @@ web:
   host: "127.0.0.1"
   port: 8000
   open_browser: false
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals: []
 telegram:
   enabled: true
   bot_token_env: "TELEGRAM_BOT_TOKEN"
@@ -139,6 +144,11 @@ web:
   host: "127.0.0.1"
   port: 8000
   open_browser: false
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals: []
 telegram:
   enabled: false
   bot_token_env: "TELEGRAM_BOT_TOKEN"
@@ -260,6 +270,11 @@ web:
   host: "127.0.0.1"
   port: 8000
   open_browser: false
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals: []
 telegram:
   enabled: false
   bot_token_env: "TELEGRAM_BOT_TOKEN"
@@ -393,6 +408,11 @@ web:
   host: "127.0.0.1"
   port: 8000
   open_browser: false
+  auth:
+    enabled: false
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals: []
 telegram:
   enabled: false
   bot_token_env: "TELEGRAM_BOT_TOKEN"

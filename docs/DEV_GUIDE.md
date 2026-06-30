@@ -143,6 +143,20 @@ Web console читает только existing artifacts из `storage/` и не
 Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 `./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
 
+#### Web Console Auth (UI-7, dev smoke)
+
+По умолчанию auth отключён (`web.auth.enabled: false`). Для локального теста:
+
+```bash
+export BEEAGENT_WEB_SESSION_SECRET="dev-only-secret"
+export BEEAGENT_WEB_ADMIN1_TOKEN="dev-admin-token"
+./start.sh web
+```
+
+В `config/settings.yml` `web.auth.enabled` уже `false` по умолчанию. Для проверки работы auth временно установи `enabled: true` в YAML и передай токен при входе на `/auth/login`.
+
+При `web.auth.enabled: false` все routes доступны без аутентификации (current dev behavior). При `enabled: true` HTML routes без сессии редиректят на `/auth/login`, API routes возвращают 401.
+
 ### ROP operator flow v0
 
 Для первого operator-facing ROP прогона используй existing transport path:
