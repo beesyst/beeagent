@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.41.0...beeagent-v0.42.0) (2026-06-30)
+
+
+### Features
+
+* **rop:** add review workbench event details ([#131](https://github.com/beesyst/beeagent/issues/131)) ([e2f9cbe](https://github.com/beesyst/beeagent/commit/e2f9cbeb0e7ff75b54ef77db4a69aba0a4c4d558))
+
 ## [0.41.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.40.0...beeagent-v0.41.0) (2026-06-30)
 
 
