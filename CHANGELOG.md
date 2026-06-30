@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.40.0...beeagent-v0.41.0) (2026-06-30)
+
+
+### Features
+
+* **ui:** add BeeUI-backed auth boundary ([#127](https://github.com/beesyst/beeagent/issues/127)) ([6d742bf](https://github.com/beesyst/beeagent/commit/6d742bf3f6efa154ddfc64bc3cc34b01e26fa19a))
+
 ## [0.40.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.39.0...beeagent-v0.40.0) (2026-06-29)
 
 
