@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.42.0...beeagent-v0.43.0) (2026-07-01)
+
+
+### Features
+
+* **rop:** add customer delivery MVP ([#134](https://github.com/beesyst/beeagent/issues/134)) ([038e722](https://github.com/beesyst/beeagent/commit/038e722f3a58ead23e73f6274bda4fe0dc1b9b9d))
+
 ## [0.42.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.41.0...beeagent-v0.42.0) (2026-06-30)
 
 
