@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.0...beeagent-v0.43.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **bootstrap:** sync env and rotate internal secrets ([#136](https://github.com/beesyst/beeagent/issues/136)) ([cb52ef8](https://github.com/beesyst/beeagent/commit/cb52ef8dc286bcc3ed42803934f8b11d959bb3fa))
+
 ## [0.43.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.42.0...beeagent-v0.43.0) (2026-07-01)
 
 
