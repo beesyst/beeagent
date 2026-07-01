@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.1...beeagent-v0.43.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* **rop:** resolve mailbox host and folder from env ([#138](https://github.com/beesyst/beeagent/issues/138)) ([49e4dfa](https://github.com/beesyst/beeagent/commit/49e4dfa3f82031f4a7142d88b16ea61afdc50790))
+
 ## [0.43.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.0...beeagent-v0.43.1) (2026-07-01)
 
 
