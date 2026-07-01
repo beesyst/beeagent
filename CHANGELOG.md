@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.2...beeagent-v0.43.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* **rop:** normalize forwarded mailbox traffic ([#141](https://github.com/beesyst/beeagent/issues/141)) ([9536c3e](https://github.com/beesyst/beeagent/commit/9536c3ef7200931388e417aeecdad8b8ee80e488))
+
 ## [0.43.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.1...beeagent-v0.43.2) (2026-07-01)
 
 
