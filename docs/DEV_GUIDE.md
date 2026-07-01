@@ -240,7 +240,9 @@ print(result["operator_text"])
 }
 ```
 
-Для `mailbox_readonly` normalizer сохраняет только safe fields: `event_id`, `source`, `source_id`, `message_id`, `sender`, `to`, `cc`, `subject`, `date`, `body_preview`, `attachments`. Attachment content не читается, raw `.eml` не сохраняется.
+Для `mailbox_readonly` normalizer сохраняет safe fields: `event_id`, `source`, `source_id`, `message_id`, `sender`, `to`, `cc`, `subject`, `clean_subject`, `transport_labels`, `spam_label_present`, `reply_label_present`, `forwarded_wrapper`, `original_sender`, `original_recipient`, `original_message_date`, `date_source`, `x_email_id`, `date`, `body_preview`, `attachments`. Attachment content не читается, raw `.eml` не сохраняется.
+
+После It33 mailbox normalizer также извлекает forwarded wrapper поля из тела письма и вычисляет `clean_subject` и `transport_labels` из темы. Эти поля передаются в `beeagent-rop` `lead_classification` payload как transport evidence, не как business labels.
 
 `run.mode` остаётся transport/runtime selector. ROP source flow запускается через case/test/dev invocation, не через run.mode.
 

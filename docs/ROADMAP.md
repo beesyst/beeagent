@@ -7493,6 +7493,534 @@ Fuzzing optional for malformed reviewed TSV / malformed recommendation artifacts
 - tests and required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 33 — ROP real-mail normalization and classification polish for forwarded mailbox traffic
+
+**Статус:** DONE
+
+#### Goal
+
+Исправить pilot-blocking ошибки на реальном mailbox traffic: BeeAgent должен нормализовать forwarded/spam/reply mailbox wrappers в явные transport/evidence fields, а `beeagent-rop` должен использовать эти поля как weak transport signals, не путая технические почтовые labels с бизнес-классификацией.
+
+Целевой flow:
+
+```text
+mailbox/json source
+→ forwarded wrapper extraction
+→ clean_subject + transport_labels + original sender/date fields
+→ normalized_events.json
+→ beeagent-rop lead_classification using clean/original fields
+→ classified_events.json with corrected tender/spam/existing-deal behavior
+→ rop_review_table.tsv for human/customer validation
+→ recommendations/current/dashboard remain delivery layer
+```
+
+#### Почему это нужно
+
+После It32 BeeAgent уже имеет customer-delivery слой:
+
+```text
+evaluation gate
+context enrichment
+routing map
+recommendations
+Bitrix widget API
+Web UI recommendations tab
+```
+
+Но real-mail pilot batch показал системную проблему ниже delivery layer:
+
+```text
+[AUTO-FWD] / FWD / RE / *** SPAM ***
+```
+
+сейчас могут ошибочно восприниматься как business evidence:
+
+```text
+FWD → reply/existing-deal/manual-review
+SPAM → ignore
+AUTO-FWD → business signal
+```
+
+Это неправильно.
+
+Нужная модель:
+
+```text
+AUTO-FWD / FWD / RE / SPAM = transport labels
+clean_subject + original_sender + body + attachments + Bitrix/thread evidence = business evidence
+```
+
+Без этой итерации MVP будет давать ошибки на реальных пересланных письмах из агрегирующего mailbox:
+
+- хорошие тендеры могут уйти не в tender queue;
+- SPAM-marked business письма могут быть проигнорированы;
+- supplier/marketing рассылки могут попасть в manual_review;
+- слабые FWD/RE признаки могут создавать ложные existing_deal;
+- РОП будет видеть шум вместо полезной очереди.
+
+#### Depends on
+
+Required:
+
+```text
+BeeAgent It32 — ROP Customer Delivery MVP
+beeagent-rop current public lead_classification contract
+```
+
+Companion work:
+
+```text
+beeagent-rop — classification polish using clean/original normalized fields
+```
+
+Important boundary:
+
+```text
+BeeAgent normalizes transport/mailbox evidence.
+beeagent-rop owns ROP business classification.
+BeeAgent delivery layer may route weak/conflicting evidence to manual_review but must not reimplement the classifier.
+```
+
+#### Scope
+
+**Включено в BeeAgent:**
+
+##### 1. Forwarded wrapper normalization
+
+Extract safe original forwarded headers from email body when present:
+
+```text
+Email:
+Оригинальный отправитель:
+Оригинальный адрес получения:
+Дата:
+X-Email-ID:
+```
+
+Populate normalized event fields:
+
+```text
+original_sender
+original_recipient
+original_message_date
+x_email_id
+forwarded_wrapper
+date_source
+```
+
+Rules:
+
+- wrapper extraction must be bounded and safe;
+- no raw `.eml`;
+- no raw MIME;
+- no raw attachment content;
+- malformed forwarded wrapper must degrade safely;
+- existing sender/subject fields remain backward-compatible display fields.
+
+##### 2. Clean subject and transport labels
+
+Add normalized event fields:
+
+```text
+clean_subject
+transport_labels
+spam_label_present
+reply_label_present
+forwarded_wrapper
+```
+
+Technical prefixes to strip into `transport_labels`:
+
+```text
+[AUTO-FWD]
+FWD:
+FW:
+RE:
+*** SPAM ***
+```
+
+Example:
+
+```text
+subject = "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied"
+clean_subject = "OEM submerged-arc welding machine supplied"
+transport_labels = ["auto_fwd", "fwd", "spam"]
+spam_label_present = true
+reply_label_present = false
+forwarded_wrapper = true
+```
+
+Rules:
+
+- `subject` remains raw-safe display field;
+- `clean_subject` is used for classification payload;
+- transport labels are not business labels;
+- empty or malformed subject must not crash normalization.
+
+##### 3. Original date source
+
+If forwarded body contains original date:
+
+```text
+Дата: Tue, 9 Jun 2026 11:54:27 +0800
+```
+
+write:
+
+```text
+original_message_date
+date_source = original_forwarded_date
+```
+
+Rules:
+
+- keep `received_at` / mailbox date as mailbox-level evidence;
+- use original forwarded date where safely parsed;
+- fallback order must be explicit;
+- date parse failure must degrade with warning, not crash.
+
+##### 4. Classification payload handoff
+
+Pass normalized/original fields into `beeagent-rop` `lead_classification` payload:
+
+```text
+clean_subject
+transport_labels
+spam_label_present
+reply_label_present
+forwarded_wrapper
+original_sender
+original_recipient
+original_message_date
+date_source
+x_email_id
+```
+
+Rules:
+
+- do not import private `beeagent-rop` internals;
+- use existing public module runtime path;
+- preserve backward compatibility for modules that ignore the new fields.
+
+##### 5. Review TSV enrichment
+
+Extend `rop_review_table.tsv` with review-useful normalized mail fields:
+
+```text
+clean_subject
+transport_labels
+spam_label_present
+reply_label_present
+forwarded_wrapper
+original_sender
+original_recipient
+original_message_date
+date_source
+x_email_id
+```
+
+Rules:
+
+- TSV remains tab-separated and Google Sheets pasteable;
+- optional/missing fields export as empty cells;
+- no raw `.eml`;
+- no raw attachment content;
+- no secrets.
+
+##### 6. Source/operator artifacts
+
+Update existing artifacts where useful:
+
+```text
+normalized_events.json
+classified_events.json
+operator_summary.json
+source_diagnostics.json
+rop_review_table.tsv
+```
+
+Add counters/warnings if minimal and useful:
+
+```text
+forwarded_wrapper_count
+spam_label_count
+transport_label_count
+original_date_used_count
+date_fallback_count
+```
+
+Do not create a new artifact unless it materially improves evidence.
+
+##### 7. Delivery safety remains in BeeAgent
+
+BeeAgent delivery layer may use enriched evidence only for delivery safety:
+
+```text
+possible existing deal + weak/conflicting evidence
+→ manual_review / AI fallback eligibility
+```
+
+Rules:
+
+- do not silently rewrite module classification;
+- do not implement ROP tender/supplier/logistics/finance rules in BeeAgent;
+- routing/recommendations stay read-only/draft-only.
+
+**Включено в companion `beeagent-rop` work:**
+
+- use `clean_subject` instead of raw `subject` for semantic classification when available;
+- use `original_sender` instead of wrapper sender when available;
+- treat `AUTO-FWD`, `FWD`, `RE`, `SPAM` as weak transport signals;
+- tender/procedure/lot/protocol markers route to tender queue;
+- `spam_label_present=true` does not automatically mean `ignore`;
+- supplier/bulk/marketing/newsletter spam can become irrelevant/ignore;
+- SPAM + business markers must still classify normally, possibly with confidence penalty/manual review;
+- reduce marketing/newsletter manual_review false positives;
+- reduce existing_deal false positives;
+- require stronger evidence for `existing_deal`.
+
+**Не включено:**
+
+- CRM/Bitrix write-back;
+- mailbox delete/archive/reply/mark-as-read;
+- production listener/polling;
+- OCR;
+- PDF/DOCX/XLSX deep parsing;
+- raw `.eml` persistence;
+- raw attachment persistence;
+- new AI provider work;
+- new Bitrix widget routes;
+- Web POST/operator actions;
+- saving human review decisions;
+- BeeUI core changes;
+- reimplementing `beeagent-rop` classifier in BeeAgent;
+- hardcoding Welding-specific classifications in BeeAgent.
+
+#### Deliverable
+
+BeeAgent produces richer normalized/review artifacts for forwarded mailbox traffic, and the ROP classification path receives clean/original fields without treating mailbox transport labels as business labels.
+
+Expected BeeAgent artifacts after a ROP run:
+
+```text
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_review_table.tsv
+```
+
+`normalized_events.json` event example:
+
+```json
+{
+  "event_id": "evt-001",
+  "sender": "wrapper@example.com",
+  "subject": "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied",
+  "clean_subject": "OEM submerged-arc welding machine supplied",
+  "transport_labels": ["auto_fwd", "fwd", "spam"],
+  "forwarded_wrapper": true,
+  "spam_label_present": true,
+  "reply_label_present": false,
+  "original_sender": "gina.shi@morrowwelding.com",
+  "original_recipient": "online@welding.kz",
+  "original_message_date": "2026-06-09T11:54:27+08:00",
+  "date_source": "original_forwarded_date",
+  "x_email_id": "bounded-id"
+}
+```
+
+#### Acceptance on current 20-mail pilot batch
+
+Expected behavior after BeeAgent + `beeagent-rop` companion fixes:
+
+```text
+ETS Tender → tender / review_tender
+DIGTP procedure → tender / review_tender
+Mir-svarki request details/doc → tender/manual_review, not plain sales
+K-MAX marketing → ignore
+Robotiq webinar → ignore
+Edukz HR newsletter → ignore
+Molina cosmetics spam → ignore
+SZGH supplier promo → ignore
+Dawson logistics thread → existing_deal_logistics or manual_review
+Pentagon freight invoices → existing_deal_logistics or manual_review
+SAP/Qarmet delivery expiry → existing_deal_logistics or manual_review
+1C delivery report bulk → ignore or manual_review, not confident existing_deal
+```
+
+#### Config / contract impact
+
+Expected:
+
+```text
+No new required BeeAgent config key unless implementation proves one is needed.
+```
+
+Existing source of truth remains:
+
+```text
+config/settings.yml -> rop.sources[]
+config/settings.yml -> rop.email_preview.body_chars_max
+storage/runs/<run_id>/normalized_events.json -> normalized event contract
+beeagent-rop public lead_classification payload -> business classification input
+```
+
+If a new config key is proposed, it must be justified first and validated fail-fast in:
+
+```text
+src/beeagent_module/core/settings.py
+```
+
+#### Artifact contract impact
+
+Updated:
+
+```text
+storage/runs/<run_id>/normalized_events.json
+storage/runs/<run_id>/rop_review_table.tsv
+storage/runs/<run_id>/operator_summary.json
+```
+
+May be updated:
+
+```text
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/rop_context_enrichment.json
+storage/runs/<run_id>/rop_recommendations.json
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- email-derived input parsing;
+- forwarded wrapper parsing;
+- subject/body normalization;
+- date parsing from untrusted email body;
+- artifact contract change;
+- classification payload contract change;
+- sensitive client email data serialized into artifacts/TSV/UI;
+- no raw `.eml` / attachment content / secrets must leak.
+
+No dependency change is expected.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or mailbox or input_source or review or classification"
+```
+
+Targeted BeeAgent tests:
+
+```text
+clean_subject strips AUTO-FWD/FWD/FW/RE/SPAM prefixes
+transport_labels captures auto_fwd/fwd/fw/re/spam
+subject remains raw-safe display field
+forwarded wrapper extracts original_sender/original_recipient/original_message_date/x_email_id
+original forwarded date is preferred when safely parsed
+date fallback records date_source
+malformed forwarded wrapper degrades safely
+SPAM label does not force BeeAgent ignore
+FWD label alone does not force reply/existing-deal/manual_review in BeeAgent
+classification payload includes clean/original fields
+rop_review_table.tsv includes clean/original/transport fields
+TSV remains valid tab-separated output
+no raw .eml appears in artifacts/logs
+no attachment content appears in artifacts/logs
+no secrets appear in artifacts/logs
+```
+
+Companion `beeagent-rop` tests:
+
+```text
+classification uses clean_subject when present
+classification uses original_sender when present
+tender/procedure/lot/protocol markers route to tender queue
+SPAM + business markers is not automatically ignored
+SPAM + supplier/bulk/marketing markers can become irrelevant/ignore
+FWD/RE alone does not create existing_deal
+existing_deal requires Bitrix/thread/order/invoice/shipping/customer evidence
+marketing/newsletter false positives reduced
+current 20-mail reviewed fixture meets expected acceptance behavior
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 20 \
+  --run-id smoke-it33-real-mail-normalization
+
+uv run python config/start.py rop export-review \
+  --run-id smoke-it33-real-mail-normalization \
+  --format tsv
+
+uv run python config/start.py rop evaluate-review \
+  --run-id smoke-it33-real-mail-normalization
+
+uv run python config/start.py rop recommendations \
+  --run-id smoke-it33-real-mail-normalization
+```
+
+Optional live smoke only with explicit approval and available mailbox credentials:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --run-id live-it33-forwarded-mailbox-20
+```
+
+Security/static checks:
+
+```bash
+rg -n "raw_eml|message/rfc822|attachment_content|content_bytes|payload_bytes" \
+  storage/runs storage/interfaces src tests || true
+
+rg -n "BITRIX_WEBHOOK|ROP_AI_.*KEY|OPENAI_API_KEY|password|secret|token" \
+  logs storage/runs storage/interfaces || true
+
+rg -n "crm\.item\.add|crm\.item\.update|crm\.item\.delete|crm\.timeline|task\.item\.add" \
+  src tests || true
+```
+
+SAST required.
+
+SCA only if dependencies change.
+
+Fuzzing optional for forwarded-wrapper/date/subject parsing if parser complexity grows.
+
+#### DoD
+
+- `normalized_events.json` includes `clean_subject`;
+- `normalized_events.json` includes `transport_labels`;
+- `normalized_events.json` includes `spam_label_present`, `reply_label_present`, `forwarded_wrapper`;
+- forwarded body wrapper fields are extracted when safely available;
+- original forwarded date is captured as `original_message_date` with explicit `date_source`;
+- classification payload includes clean/original/transport fields;
+- `rop_review_table.tsv` exposes clean/original/transport fields for human review;
+- `AUTO-FWD`, `FWD`, `RE`, `SPAM` are not treated as decisive business labels in BeeAgent;
+- SPAM label does not automatically force ignore;
+- FWD/RE label alone does not automatically force existing_deal/manual_review;
+- companion `beeagent-rop` classification uses clean/original fields and treats transport labels as weak signals;
+- tender queue behavior is fixed in `beeagent-rop`;
+- supplier/marketing/newsletter noise false positives are reduced in `beeagent-rop`;
+- existing_deal false positives are reduced in `beeagent-rop`;
+- current 20-mail pilot batch reaches the expected acceptance behavior;
+- no CRM/mailbox/Bitrix mutation exists;
+- no raw `.eml` / raw attachment content / secrets appear in logs/artifacts/API/HTML;
+- tests and docs are updated;
+- required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

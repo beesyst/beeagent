@@ -7,7 +7,11 @@ import sys
 import types
 from pathlib import Path
 
-from beeagent_module.cases.rop_operator import run_rop_batch_case, run_rop_operator_case
+from beeagent_module.cases.rop_operator import (
+    _filter_event_for_module,
+    run_rop_batch_case,
+    run_rop_operator_case,
+)
 from beeagent_module.core.module_contract import (
     AuthorityLevel,
     ModuleContext,
@@ -1248,6 +1252,42 @@ def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
     )
 
 
+def test_filter_event_for_module_normalizes_empty_received_at_to_none() -> None:
+    filtered = _filter_event_for_module({"event_id": "e1", "received_at": ""})
+
+    assert "received_at" in filtered
+    assert filtered["received_at"] is None
+
+
+def test_filter_event_for_module_preserves_context_fields() -> None:
+    event = {
+        "event_id": "e-preserve",
+        "received_at": "2026-05-08T10:30:00+00:00",
+        "original_message_date": "2026-06-09T04:55:46+00:00",
+        "date_source": "original_forwarded_date",
+        "clean_subject": "OEM submerged-arc welding machine supplied",
+        "transport_labels": ["auto_fwd", "fwd", "spam"],
+        "forwarded_wrapper": True,
+        "original_sender": "gina.shi@morrowwelding.com",
+        "original_recipient": "online@welding.kz",
+        "x_email_id": "bounded-id-12345",
+        "subject": "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied",
+        "sender": "wrapper@example.com",
+    }
+
+    filtered = _filter_event_for_module(event)
+
+    assert filtered["received_at"] == "2026-05-08T10:30:00+00:00"
+    assert filtered["original_message_date"] == "2026-06-09T04:55:46+00:00"
+    assert filtered["date_source"] == "original_forwarded_date"
+    assert filtered["clean_subject"] == "OEM submerged-arc welding machine supplied"
+    assert filtered["transport_labels"] == ["auto_fwd", "fwd", "spam"]
+    assert filtered["forwarded_wrapper"] is True
+    assert filtered["original_sender"] == "gina.shi@morrowwelding.com"
+    assert filtered["original_recipient"] == "online@welding.kz"
+    assert filtered["x_email_id"] == "bounded-id-12345"
+
+
 def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1336,8 +1376,15 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
                 "event_id": "e-preview-001",
                 "source": "email",
                 "sender": "preview@example.com",
-                "subject": "Preview only",
-                "body_preview": "Safe preview text for classification",
+                "subject": "[AUTO-FWD] FWD: *** SPAM *** Preview only",
+                "body_preview": (
+                    "--- Original Message ---\n"
+                    "Email: gina.shi@morrowwelding.com\n"
+                    "Оригинальный адрес получения: online@welding.kz\n"
+                    "Дата: Tue, 9 Jun 2026 11:54:27 +0800\n"
+                    "X-Email-ID: bounded-id-12345\n"
+                    "\nSafe preview text for classification"
+                ),
             }
         ],
     }
@@ -1374,7 +1421,7 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
 
         def handle(self, context: ModuleContext) -> ModuleResult:
             if context.case_type == "lead_classification":
-                assert context.payload["body"] == "Safe preview text for classification"
+                assert "Safe preview text for classification" in context.payload["body"]
                 return ModuleResult(
                     module_id="beeagent-rop",
                     case_type="lead_classification",
@@ -1432,6 +1479,18 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
         )
         assert len(classified_events) == 1
         assert classified_events[0]["reason_code"] == "preview_text_classified"
+        assert classified_events[0]["clean_subject"] == "Preview only"
+        assert classified_events[0]["transport_labels"] == ["auto_fwd", "fwd", "spam"]
+        assert classified_events[0]["spam_label_present"] is True
+        assert classified_events[0]["reply_label_present"] is False
+        assert classified_events[0]["forwarded_wrapper"] is True
+        assert classified_events[0]["original_sender"] == "gina.shi@morrowwelding.com"
+        assert classified_events[0]["original_recipient"] == "online@welding.kz"
+        assert (
+            classified_events[0]["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        )
+        assert classified_events[0]["date_source"] == "original_forwarded_date"
+        assert classified_events[0]["x_email_id"] == "bounded-id-12345"
     finally:
         _remove_fake_package("test_stub_preview")
 
@@ -1456,7 +1515,14 @@ def test_rop_batch_per_event_classification_failure(
                 "event_id": "e-bad",
                 "source": "email",
                 "sender": "bad@example.com",
-                "subject": "Bad",
+                "subject": "[AUTO-FWD] FWD: *** SPAM *** Bad",
+                "body_preview": (
+                    "--- Original Message ---\n"
+                    "Email: bad-origin@example.com\n"
+                    "Оригинальный адрес получения: online@welding.kz\n"
+                    "Дата: Tue, 9 Jun 2026 11:54:27 +0800\n"
+                    "X-Email-ID: bounded-id-bad\n"
+                ),
             },
         ],
     }
@@ -1586,6 +1652,16 @@ def test_rop_batch_per_event_classification_failure(
         assert fallback["reasoning"] == (
             "Per-event classification failed; event was converted to controlled fallback item."
         )
+        assert fallback["clean_subject"] == "Bad"
+        assert fallback["transport_labels"] == ["auto_fwd", "fwd", "spam"]
+        assert fallback["spam_label_present"] is True
+        assert fallback["reply_label_present"] is False
+        assert fallback["forwarded_wrapper"] is True
+        assert fallback["original_sender"] == "bad-origin@example.com"
+        assert fallback["original_recipient"] == "online@welding.kz"
+        assert fallback["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        assert fallback["date_source"] == "original_forwarded_date"
+        assert fallback["x_email_id"] == "bounded-id-bad"
 
         operator_summary_path = run_dir / "operator_summary.json"
         operator_summary = json.loads(operator_summary_path.read_text(encoding="utf-8"))
@@ -1595,6 +1671,154 @@ def test_rop_batch_per_event_classification_failure(
 
     finally:
         _remove_fake_package("test_stub_rop")
+
+
+def test_rop_batch_classification_payload_does_not_send_empty_received_at(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_received_at_empty.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-empty-received-at",
+                "source": "email",
+                "sender": "wrapper@example.com",
+                "subject": "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied",
+                "clean_subject": "OEM submerged-arc welding machine supplied",
+                "transport_labels": ["auto_fwd", "fwd", "spam"],
+                "forwarded_wrapper": True,
+                "original_sender": "gina.shi@morrowwelding.com",
+                "original_recipient": "online@welding.kz",
+                "original_message_date": "2026-06-09T04:55:46+00:00",
+                "date_source": "original_forwarded_date",
+                "received_at": "",
+                "x_email_id": "bounded-id-empty-received-at",
+                "body_preview": "Safe preview for empty received_at boundary test",
+            }
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-empty-received-at",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Empty received_at",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _ReceivedAtBoundaryStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "lead_classification":
+                assert context.payload["received_at"] is None
+                assert context.payload["original_message_date"] == (
+                    "2026-06-09T04:55:46+00:00"
+                )
+                assert context.payload["date_source"] == "original_forwarded_date"
+                assert context.payload["clean_subject"] == (
+                    "OEM submerged-arc welding machine supplied"
+                )
+                assert context.payload["transport_labels"] == [
+                    "auto_fwd",
+                    "fwd",
+                    "spam",
+                ]
+                assert context.payload["forwarded_wrapper"] is True
+                assert context.payload["original_sender"] == (
+                    "gina.shi@morrowwelding.com"
+                )
+                assert context.payload["original_recipient"] == "online@welding.kz"
+                assert context.payload["x_email_id"] == "bounded-id-empty-received-at"
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="lead_classification",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Classified with normalized received_at",
+                    data={
+                        "event_id": context.payload.get("event_id"),
+                        "case_type": "new_lead",
+                        "priority": "high",
+                        "reason_code": "normalized_received_at",
+                        "confidence": 0.9,
+                        "is_fallback": False,
+                    },
+                )
+
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="rop_summary",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Summary ok",
+                data={"counts": {"new_lead": 1}},
+            )
+
+    _make_fake_package(
+        "test_stub_received_at_boundary",
+        "RopModule",
+        _ReceivedAtBoundaryStub,
+    )
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_received_at_boundary",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-empty-received-at-boundary",
+            session_id="session-empty-received-at-boundary",
+        )
+
+        assert result["status"] == "ok"
+        operator_summary = json.loads(
+            (
+                tmp_path
+                / "runs"
+                / "run-empty-received-at-boundary"
+                / "operator_summary.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["normalized_count"] == 1
+        assert operator_summary["classification"]["classified_count"] == 1
+        assert operator_summary["classification"]["classification_failed_count"] == 0
+    finally:
+        _remove_fake_package("test_stub_received_at_boundary")
 
 
 def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:

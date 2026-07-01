@@ -408,6 +408,229 @@ def _default_mailbox_client_factory(source: dict) -> MailboxReadonlyClient:
     )
 
 
+_TRANSPORT_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("[AUTO-FWD]", "auto_fwd"),
+    ("AUTO-FWD:", "auto_fwd"),
+    ("FWD:", "fwd"),
+    ("FW:", "fwd"),
+    ("RE:", "re"),
+    ("*** SPAM ***", "spam"),
+)
+
+_FORWARDED_SENDER_RE = re.compile(
+    r"^(?:Email|От\s*кого|Оригинальный\s*отправитель)\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_RECIPIENT_RE = re.compile(
+    r"^(?:Оригинальный\s*адрес\s*получения|Кому)\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_DATE_RE = re.compile(
+    r"^Дата\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_X_EMAIL_ID_RE = re.compile(
+    r"^X-Email-ID\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_MARKER_RE = re.compile(
+    r"^-{2,}\s*(?:Original|Пересылаемое|Forwarded|Переадресованное)\s*(?:Message|сообщение|message)?\s*-{2,}",
+    re.IGNORECASE,
+)
+
+
+_ALLOWED_TRANSPORT_LABELS = frozenset({"auto_fwd", "fwd", "re", "spam"})
+
+
+def _normalize_transport_labels(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        if item not in _ALLOWED_TRANSPORT_LABELS:
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _extract_clean_subject(subject: Any) -> str:
+    if not isinstance(subject, str) or not subject.strip():
+        return ""
+    result = subject.strip()
+    changed = True
+    while changed:
+        changed = False
+        for prefix, _label in _TRANSPORT_PREFIXES:
+            if result.upper().startswith(prefix.upper()):
+                result = result[len(prefix) :].strip()
+                changed = True
+                break
+    return _sanitize_text(result)
+
+
+def _extract_transport_labels(subject: Any) -> list[str]:
+    if not isinstance(subject, str) or not subject.strip():
+        return []
+    result = subject.strip()
+    labels: list[str] = []
+    seen: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for prefix, label in _TRANSPORT_PREFIXES:
+            if result.upper().startswith(prefix.upper()):
+                result = result[len(prefix) :].strip()
+                if label not in seen:
+                    seen.add(label)
+                    labels.append(label)
+                changed = True
+                break
+    return labels
+
+
+def _extract_forwarded_wrapper_fields(
+    body_text: str,
+    logger: logging.Logger | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "original_sender": "",
+        "original_recipient": "",
+        "original_message_date": "",
+        "date_source": "",
+        "x_email_id": "",
+        "forwarded_wrapper": False,
+    }
+    if not isinstance(body_text, str) or not body_text.strip():
+        return result
+
+    lines = body_text.splitlines()
+    found_any = False
+    marker_found = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if _FORWARDED_MARKER_RE.match(stripped):
+            found_any = True
+            marker_found = True
+            continue
+
+        match = _FORWARDED_SENDER_RE.match(stripped)
+        if match and not result["original_sender"]:
+            result["original_sender"] = _sanitize_text(match.group(1))
+            found_any = True
+            continue
+
+        match = _FORWARDED_RECIPIENT_RE.match(stripped)
+        if match and not result["original_recipient"]:
+            result["original_recipient"] = _sanitize_text(match.group(1))
+            found_any = True
+            continue
+
+        match = _FORWARDED_DATE_RE.match(stripped)
+        if match and not result["original_message_date"]:
+            date_str = _sanitize_text(match.group(1))
+            parsed = _parse_original_date(date_str, logger=logger)
+            if parsed:
+                result["original_message_date"] = parsed
+                result["date_source"] = "original_forwarded_date"
+            found_any = True
+            continue
+
+        match = _FORWARDED_X_EMAIL_ID_RE.match(stripped)
+        if match and not result["x_email_id"]:
+            result["x_email_id"] = _sanitize_text(match.group(1))
+            found_any = True
+            continue
+
+    if not _has_forwarded_wrapper_evidence(marker_found, result):
+        result["forwarded_wrapper"] = False
+        result["original_sender"] = ""
+        result["original_recipient"] = ""
+        result["original_message_date"] = ""
+        result["date_source"] = ""
+        result["x_email_id"] = ""
+    else:
+        result["forwarded_wrapper"] = True
+    return result
+
+
+def _has_forwarded_wrapper_evidence(
+    marker_found: bool,
+    fields: dict[str, Any],
+) -> bool:
+    if marker_found:
+        return True
+    forwarded_field_keys = (
+        "original_sender",
+        "original_recipient",
+        "original_message_date",
+        "x_email_id",
+    )
+    count = sum(1 for k in forwarded_field_keys if fields.get(k))
+    return count >= 2
+
+
+def _parse_original_date(
+    date_str: str,
+    logger: logging.Logger | None = None,
+) -> str:
+    if not date_str:
+        return ""
+    try:
+        parsed = parsedate_to_datetime(date_str)
+    except TypeError, ValueError, IndexError:
+        if logger:
+            logger.debug("failed to parse forwarded date: %s", date_str[:200])
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _extract_raw_body_text(message: Any, chars_max: int) -> str:
+    text_parts: list[str] = []
+    remaining = chars_max if chars_max > 0 else 0
+
+    def collect_text(part: Any) -> None:
+        nonlocal remaining
+
+        if remaining <= 0:
+            return
+        if part.get_content_disposition() == "attachment":
+            return
+
+        content_type = str(part.get_content_type() or "").strip().lower()
+        if content_type != "text/plain":
+            return
+
+        payload = part.get_content()
+        if isinstance(payload, str) and payload.strip():
+            bounded = payload[:remaining]
+            text_parts.append(bounded)
+            remaining -= len(bounded)
+
+    if message.is_multipart():
+        for part in message.walk():
+            if remaining <= 0:
+                break
+            if part.is_multipart():
+                continue
+            collect_text(part)
+    else:
+        collect_text(message)
+
+    return "\n".join(text_parts)
+
+
 def _normalize_mailbox_message(
     raw_message: bytes,
     source: dict,
@@ -444,8 +667,32 @@ def _normalize_mailbox_message(
         raise ValueError("message missing identifying headers")
 
     date_raw = message.get("Date")
-    date_value = _normalize_message_date(date_raw)
-    date_fallback = not bool(date_raw and date_value)
+    received_at = _normalize_message_date(date_raw) or None
+
+    clean_subject = _extract_clean_subject(subject)
+    transport_labels = _extract_transport_labels(subject)
+    spam_label_present = "spam" in transport_labels
+    reply_label_present = "re" in transport_labels
+
+    raw_body_text = _extract_raw_body_text(
+        message,
+        chars_max=email_preview_body_chars_max,
+    )
+    forwarded_fields = _extract_forwarded_wrapper_fields(raw_body_text)
+
+    original_message_date = forwarded_fields.get("original_message_date", "")
+    if original_message_date:
+        date_value = original_message_date
+        date_source = "original_forwarded_date"
+        date_fallback = False
+    elif received_at:
+        date_value = received_at
+        date_source = "mailbox_header"
+        date_fallback = False
+    else:
+        date_value = ""
+        date_source = "fallback_order"
+        date_fallback = True
 
     return {
         "event_id": event_id,
@@ -456,7 +703,18 @@ def _normalize_mailbox_message(
         "to": to_list,
         "cc": cc_list,
         "subject": subject,
+        "clean_subject": clean_subject,
+        "transport_labels": transport_labels,
+        "spam_label_present": spam_label_present,
+        "reply_label_present": reply_label_present,
+        "forwarded_wrapper": forwarded_fields["forwarded_wrapper"],
+        "original_sender": forwarded_fields["original_sender"],
+        "original_recipient": forwarded_fields["original_recipient"],
+        "original_message_date": original_message_date,
+        "date_source": date_source,
+        "x_email_id": forwarded_fields["x_email_id"],
         "date": date_value,
+        "received_at": received_at,
         "_date_fallback": date_fallback,
         **body_preview_fields,
         "attachments": attachments,
@@ -579,7 +837,7 @@ def _normalize_message_date(value: Any) -> str:
     try:
         parsed = parsedate_to_datetime(value)
     except TypeError, ValueError, IndexError:
-        return _clean_header_value(value)
+        return ""
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -881,6 +1139,17 @@ def _sanitize_batch_item(
 
         sanitized["attachments"] = safe_attachments
 
+    forwarded_body_text = "\n".join(
+        value.strip()
+        for key in ("body", "text", "text_plain", "body_preview")
+        if isinstance((value := sanitized.get(key)), str) and value.strip()
+    )
+    forwarded_fields = _extract_forwarded_wrapper_fields(
+        forwarded_body_text[:email_preview_body_chars_max]
+        if email_preview_body_chars_max > 0
+        else ""
+    )
+
     body_preview = _build_batch_body_preview(
         sanitized,
         email_preview_body_chars_max=email_preview_body_chars_max,
@@ -890,6 +1159,59 @@ def _sanitize_batch_item(
         sanitized["body_preview_chars"] = body_preview["body_preview_chars"]
         sanitized["body_preview_truncated"] = body_preview["body_preview_truncated"]
         sanitized["body_preview_source"] = body_preview["body_preview_source"]
+
+    raw_subject = sanitized.get("subject")
+    if "clean_subject" not in sanitized:
+        sanitized["clean_subject"] = _extract_clean_subject(raw_subject)
+
+    raw_transport_labels = sanitized.get("transport_labels")
+    transport_labels = _normalize_transport_labels(raw_transport_labels)
+    if not transport_labels:
+        transport_labels = _extract_transport_labels(raw_subject)
+    sanitized["transport_labels"] = transport_labels
+
+    if "spam_label_present" not in sanitized:
+        sanitized["spam_label_present"] = "spam" in transport_labels
+    if "reply_label_present" not in sanitized:
+        sanitized["reply_label_present"] = "re" in transport_labels
+
+    for key in (
+        "forwarded_wrapper",
+        "original_sender",
+        "original_recipient",
+        "original_message_date",
+        "date_source",
+        "x_email_id",
+    ):
+        value = sanitized.get(key)
+        if key == "forwarded_wrapper":
+            if not isinstance(value, bool):
+                sanitized[key] = forwarded_fields[key]
+            continue
+        if not isinstance(value, str) or not value:
+            sanitized[key] = forwarded_fields[key]
+
+    _od = sanitized.get("original_message_date", "")
+    if _od:
+        sanitized["date"] = _od
+        received_at_value = sanitized.get("received_at")
+        if isinstance(received_at_value, str) and received_at_value.strip():
+            sanitized["received_at"] = received_at_value.strip()
+        else:
+            sanitized["received_at"] = None
+        sanitized["date_source"] = "original_forwarded_date"
+        sanitized["_date_fallback"] = False
+    elif sanitized.get("date") or sanitized.get("received_at"):
+        _d = sanitized.get("date") or sanitized.get("received_at", "")
+        sanitized["date"] = _d
+        sanitized["received_at"] = _d
+        sanitized["date_source"] = "mailbox_header"
+        sanitized["_date_fallback"] = False
+    else:
+        sanitized["date"] = ""
+        sanitized["received_at"] = None
+        sanitized["date_source"] = "fallback_order"
+        sanitized["_date_fallback"] = True
 
     return sanitized
 

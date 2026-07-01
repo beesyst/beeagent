@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from beeagent_module.core.input_source import (
+    _extract_clean_subject,
+    _extract_forwarded_wrapper_fields,
+    _extract_transport_labels,
+    _sanitize_batch_item,
     find_active_rop_source,
     load_json_batch,
     load_mailbox_readonly,
@@ -572,3 +576,583 @@ def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> 
     assert len(events) == 1
     assert metadata["source_type"] == "mailbox_readonly"
     assert diagnostics["source_type"] == "mailbox_readonly"
+
+
+class TestCleanSubject:
+    def test_strips_auto_fwd_prefix(self) -> None:
+        result = _extract_clean_subject(
+            "[AUTO-FWD] OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_fwd_prefix(self) -> None:
+        result = _extract_clean_subject(
+            "FWD: OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_fw_prefix(self) -> None:
+        result = _extract_clean_subject(
+            "FW: OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_re_prefix(self) -> None:
+        result = _extract_clean_subject(
+            "RE: OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_spam_prefix(self) -> None:
+        result = _extract_clean_subject(
+            "*** SPAM *** OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_all_prefixes_combined(self) -> None:
+        result = _extract_clean_subject(
+            "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_auto_fwd_colon_variant(self) -> None:
+        result = _extract_clean_subject(
+            "AUTO-FWD: OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_strips_repeated_prefixes(self) -> None:
+        result = _extract_clean_subject(
+            "FWD: FWD: RE: OEM submerged-arc welding machine supplied"
+        )
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_preserves_original_subject_when_no_prefixes(self) -> None:
+        result = _extract_clean_subject("OEM submerged-arc welding machine supplied")
+        assert result == "OEM submerged-arc welding machine supplied"
+
+    def test_empty_subject_returns_empty(self) -> None:
+        assert _extract_clean_subject("") == ""
+        assert _extract_clean_subject("   ") == ""
+
+    def test_none_subject_returns_empty(self) -> None:
+        assert _extract_clean_subject(None) == ""
+
+
+class TestTransportLabels:
+    def test_extracts_auto_fwd_label(self) -> None:
+        labels = _extract_transport_labels(
+            "[AUTO-FWD] OEM submerged-arc welding machine supplied"
+        )
+        assert "auto_fwd" in labels
+
+    def test_extracts_multiple_labels(self) -> None:
+        labels = _extract_transport_labels(
+            "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied"
+        )
+        assert "auto_fwd" in labels
+        assert "fwd" in labels
+        assert "spam" in labels
+
+    def test_extracts_re_label(self) -> None:
+        labels = _extract_transport_labels(
+            "RE: OEM submerged-arc welding machine supplied"
+        )
+        assert "re" in labels
+
+    def test_empty_subject_returns_empty_labels(self) -> None:
+        assert _extract_transport_labels("") == []
+        assert _extract_transport_labels("   ") == []
+
+    def test_no_transport_labels_for_clean_subject(self) -> None:
+        labels = _extract_transport_labels("OEM submerged-arc welding machine supplied")
+        assert labels == []
+
+    def test_labels_are_deduplicated(self) -> None:
+        labels = _extract_transport_labels("[AUTO-FWD] AUTO-FWD: test")
+        assert labels.count("auto_fwd") == 1
+
+    def test_does_not_extract_re_from_middle_of_business_subject(self) -> None:
+        labels = _extract_transport_labels("Certification RE: ISO 9001 update")
+        assert labels == []
+
+
+class TestForwardedWrapperExtraction:
+    def test_single_email_line_does_not_create_forwarded_wrapper(self) -> None:
+        body = "Email: gina.shi@morrowwelding.com\nSome other text"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+        assert fields["original_sender"] == ""
+
+    def test_extracts_original_recipient(self) -> None:
+        body = "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0430\u0434\u0440\u0435\u0441 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f: online@welding.kz\nmore"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+        assert fields["original_recipient"] == ""
+
+    def test_single_date_line_does_not_create_forwarded_wrapper(self) -> None:
+        body = "\u0414\u0430\u0442\u0430: Tue, 9 Jun 2026 11:54:27 +0800\nmore text"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+        assert fields["original_message_date"] == ""
+        assert fields["date_source"] == ""
+
+    def test_single_x_email_id_line_does_not_create_forwarded_wrapper(self) -> None:
+        body = "X-Email-ID: bounded-id-12345\nmore"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+        assert fields["x_email_id"] == ""
+
+    def test_extracts_all_fields_together(self) -> None:
+        body = (
+            "--- Original Message ---\n"
+            "Email: gina.shi@morrowwelding.com\n"
+            "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0430\u0434\u0440\u0435\u0441 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f: online@welding.kz\n"
+            "\u0414\u0430\u0442\u0430: Tue, 9 Jun 2026 11:54:27 +0800\n"
+            "X-Email-ID: bounded-id-12345\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["original_sender"] == "gina.shi@morrowwelding.com"
+        assert fields["original_recipient"] == "online@welding.kz"
+        assert fields["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        assert fields["date_source"] == "original_forwarded_date"
+        assert fields["x_email_id"] == "bounded-id-12345"
+        assert fields["forwarded_wrapper"] is True
+
+    def test_empty_body_returns_defaults(self) -> None:
+        fields = _extract_forwarded_wrapper_fields("")
+        assert fields["forwarded_wrapper"] is False
+        assert fields["original_sender"] == ""
+        assert fields["date_source"] == ""
+
+    def test_malformed_date_degrades_gracefully(self) -> None:
+        body = "Дата: not-a-real-date-at-all\nmore"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["original_message_date"] == ""
+        assert fields["date_source"] == ""
+        assert fields["forwarded_wrapper"] is False
+
+    def test_no_forwarded_wrapper_for_plain_body(self) -> None:
+        body = "Just a normal email body without any forwarded markers"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+
+    def test_forwarded_marker_detected(self) -> None:
+        body = "--- Forwarded Message ---\nEmail: test@example.com"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is True
+        assert fields["original_sender"] == "test@example.com"
+
+    def test_two_extracted_fields_create_forwarded_wrapper_without_marker(self) -> None:
+        body = (
+            "Email: gina.shi@morrowwelding.com\n"
+            "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0430\u0434\u0440\u0435\u0441 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f: online@welding.kz\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is True
+        assert fields["original_sender"] == "gina.shi@morrowwelding.com"
+        assert fields["original_recipient"] == "online@welding.kz"
+
+
+class TestSanitizeBatchItemNormalization:
+    def test_computes_clean_subject_for_batch_item(self) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "[AUTO-FWD] FWD: *** SPAM *** OEM welding machine",
+            "sender": "test@example.com",
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["clean_subject"] == "OEM welding machine"
+        assert result["transport_labels"] == ["auto_fwd", "fwd", "spam"]
+        assert result["spam_label_present"] is True
+        assert result["reply_label_present"] is False
+        assert result["forwarded_wrapper"] is False
+
+    def test_normalization_fields_default_for_batch_item_without_subject(self) -> None:
+        item = {"event_id": "e1", "sender": "test@example.com"}
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["clean_subject"] == ""
+        assert result["transport_labels"] == []
+        assert result["spam_label_present"] is False
+        assert result["reply_label_present"] is False
+
+    def test_normalizes_invalid_transport_labels_from_input(self) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "FWD: Test",
+            "transport_labels": [123, "custom", "re"],
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["transport_labels"] == ["re"]
+
+    def test_computes_transport_labels_from_subject_when_provided_labels_are_invalid(
+        self,
+    ) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "FWD: Test",
+            "transport_labels": ["custom", "unknown"],
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["transport_labels"] == ["fwd"]
+
+    def test_preserves_existing_valid_transport_labels(self) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "FWD: Test",
+            "clean_subject": "Already cleaned",
+            "transport_labels": ["fwd"],
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["clean_subject"] == "Already cleaned"
+        assert result["transport_labels"] == ["fwd"]
+
+    def test_computes_missing_transport_fields_when_clean_subject_exists(self) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "FWD: RE: Test",
+            "clean_subject": "Already cleaned",
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["clean_subject"] == "Already cleaned"
+        assert result["transport_labels"] == ["fwd", "re"]
+        assert result["spam_label_present"] is False
+        assert result["reply_label_present"] is True
+
+    def test_extracts_missing_forwarded_wrapper_fields_from_batch_body(self) -> None:
+        item = {
+            "event_id": "e1",
+            "sender": "wrapper@example.com",
+            "subject": "FWD: Test",
+            "body": (
+                "--- Original Message ---\n"
+                "Email: gina.shi@morrowwelding.com\n"
+                "Оригинальный адрес получения: online@welding.kz\n"
+                "Дата: Tue, 9 Jun 2026 11:54:27 +0800\n"
+                "X-Email-ID: bounded-id-12345\n"
+            ),
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["forwarded_wrapper"] is True
+        assert result["original_sender"] == "gina.shi@morrowwelding.com"
+        assert result["original_recipient"] == "online@welding.kz"
+        assert result["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        assert result["date_source"] == "original_forwarded_date"
+        assert result["x_email_id"] == "bounded-id-12345"
+
+    def test_does_not_extract_forwarded_wrapper_fields_outside_bound(self) -> None:
+        item = {
+            "event_id": "e1",
+            "sender": "wrapper@example.com",
+            "subject": "FWD: Test",
+            "body": (
+                ("A" * 33) + "--- Original Message ---\n"
+                "Email: gina.shi@morrowwelding.com\n"
+                "Оригинальный адрес получения: online@welding.kz\n"
+                "Дата: Tue, 9 Jun 2026 11:54:27 +0800\n"
+                "X-Email-ID: bounded-id-12345\n"
+            ),
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=32)
+        assert result["forwarded_wrapper"] is False
+        assert result["original_sender"] == ""
+        assert result["original_recipient"] == ""
+        assert result["original_message_date"] == ""
+        assert result["date_source"] == "fallback_order"
+        assert result["date"] == ""
+        assert result["received_at"] is None
+        assert result["_date_fallback"] is True
+        assert result["x_email_id"] == ""
+
+    def test_extracts_forwarded_wrapper_fields_inside_bound(self) -> None:
+        item = {
+            "event_id": "e1",
+            "sender": "wrapper@example.com",
+            "subject": "FWD: Test",
+            "body": (
+                "--- Original Message ---\n"
+                "Email: gina.shi@morrowwelding.com\n"
+                "Оригинальный адрес получения: online@welding.kz\n"
+                "Дата: Tue, 9 Jun 2026 11:54:27 +0800\n"
+                "X-Email-ID: bounded-id-12345\n" + ("A" * 200)
+            ),
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=200)
+        assert result["forwarded_wrapper"] is True
+        assert result["original_sender"] == "gina.shi@morrowwelding.com"
+        assert result["original_recipient"] == "online@welding.kz"
+        assert result["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        assert result["date_source"] == "original_forwarded_date"
+        assert result["date"] == result["original_message_date"]
+        assert result["received_at"] is None
+        assert result["_date_fallback"] is False
+        assert result["x_email_id"] == "bounded-id-12345"
+
+    def test_original_date_normalizes_empty_received_at_to_none(self) -> None:
+        item = {
+            "event_id": "e1",
+            "subject": "FWD: Test",
+            "original_message_date": "2026-06-09T04:55:46+00:00",
+            "date_source": "original_forwarded_date",
+            "received_at": "",
+        }
+
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+
+        assert result["date"] == "2026-06-09T04:55:46+00:00"
+        assert result["received_at"] is None
+        assert result["date_source"] == "original_forwarded_date"
+        assert result["_date_fallback"] is False
+
+
+class TestNormalizedEventFields:
+    def test_normalized_event_contains_new_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: wrapper@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: [AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied\n"
+            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            "Message-ID: <mail-spam@example.com>\n"
+            "Content-Type: text/plain; charset=utf-8\n"
+            "\n"
+            "--- Original Message ---\n"
+            "Email: gina.shi@morrowwelding.com\n"
+            "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0430\u0434\u0440\u0435\u0441 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f: online@welding.kz\n"
+            "\u0414\u0430\u0442\u0430: Tue, 9 Jun 2026 11:54:27 +0800\n"
+            "X-Email-ID: bounded-id-12345\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["subject"] == (
+            "[AUTO-FWD] FWD: *** SPAM *** OEM submerged-arc welding machine supplied"
+        )
+        assert evt["clean_subject"] == "OEM submerged-arc welding machine supplied"
+        assert evt["transport_labels"] == ["auto_fwd", "fwd", "spam"]
+        assert evt["spam_label_present"] is True
+        assert evt["reply_label_present"] is False
+        assert evt["forwarded_wrapper"] is True
+        assert evt["original_sender"] == "gina.shi@morrowwelding.com"
+        assert evt["original_recipient"] == "online@welding.kz"
+        assert evt["original_message_date"] == "2026-06-09T03:54:27+00:00"
+        assert evt["received_at"] == "2026-05-08T10:30:00+00:00"
+        assert evt["date"] == evt["original_message_date"]
+        assert evt["date_source"] == "original_forwarded_date"
+        assert evt["_date_fallback"] is False
+        assert evt["x_email_id"] == "bounded-id-12345"
+
+    def test_normalized_event_uses_mailbox_header_date_without_forwarded_original(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: test@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: RE: Simple reply\n"
+            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            "Message-ID: <reply@example.com>\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "Just a reply\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        evt = events[0]
+        assert evt["date"] == "2026-05-08T10:30:00+00:00"
+        assert evt["received_at"] == "2026-05-08T10:30:00+00:00"
+        assert evt["date_source"] == "mailbox_header"
+        assert evt["_date_fallback"] is False
+
+    def test_normalized_event_prefers_forwarded_date_and_keeps_missing_mailbox_date_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: wrapper@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: [AUTO-FWD] FWD: OEM submerged-arc welding machine supplied\n"
+            "Date: invalid mailbox date\n"
+            "Message-ID: <mail-invalid-date@example.com>\n"
+            "Content-Type: text/plain; charset=utf-8\n"
+            "\n"
+            "--- Original Message ---\n"
+            "Email: gina.shi@morrowwelding.com\n"
+            "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0430\u0434\u0440\u0435\u0441 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f: online@welding.kz\n"
+            "\u0414\u0430\u0442\u0430: Tue, 9 Jun 2026 12:55:46 +0800\n"
+            "X-Email-ID: bounded-id-invalid-date\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["original_message_date"] == "2026-06-09T04:55:46+00:00"
+        assert evt["date"] == evt["original_message_date"]
+        assert evt["date_source"] == "original_forwarded_date"
+        assert evt["received_at"] is None
+        assert evt["_date_fallback"] is False
+
+    def test_normalized_event_date_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: test@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: No date header\n"
+            "Message-ID: <no-date@example.com>\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "Simple body\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["date"] == ""
+        assert evt["received_at"] is None
+        assert evt["_date_fallback"] is True
+        assert evt["date_source"] == "fallback_order"
+
+    def test_normalized_event_clean_body_without_forwarded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: test@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: RE: Simple reply\n"
+            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            "Message-ID: <reply@example.com>\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "Just a reply\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        evt = events[0]
+        assert evt["clean_subject"] == "Simple reply"
+        assert evt["reply_label_present"] is True
+        assert evt["spam_label_present"] is False
+        assert evt["forwarded_wrapper"] is False
+        assert evt["date"] == evt["received_at"]
+        assert evt["date_source"] == "mailbox_header"
+
+
+class TestNoRawEmlNoAttachmentNoSecrets:
+    def test_blocked_keys_not_in_normalized_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: test@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: Test\n"
+            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            "Message-ID: <test@example.com>\n"
+            "Content-Type: multipart/mixed; boundary=sep\n"
+            "\n"
+            "--sep\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "body\n"
+            "--sep\n"
+            "Content-Type: message/rfc822\n"
+            "Content-Disposition: attachment; filename=nested.eml\n"
+            "\n"
+            "nested data\n"
+            "--sep--\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        assert len(events) == 1
+        evt = events[0]
+        blocked_keys = {
+            "raw_eml",
+            "raw_message",
+            "attachment_content",
+            "content",
+            "content_bytes",
+            "payload_bytes",
+        }
+        for key in blocked_keys:
+            assert key not in evt, f"blocked key {key} found in normalized event"
+
+        attachments = evt.get("attachments", [])
+        filenames = [att.get("filename", "") for att in attachments]
+        content_types = [att.get("content_type", "") for att in attachments]
+        assert "nested.eml" not in filenames
+        assert "message/rfc822" not in content_types
+
+    def test_no_secrets_in_normalized_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        raw_message = (
+            "From: test@example.com\n"
+            "To: hotline@example.com\n"
+            "Subject: Test\n"
+            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            "Message-ID: <test@example.com>\n"
+            "Content-Type: text/plain\n"
+            "\n"
+            "normal body\n"
+        ).encode("utf-8")
+
+        events, _metadata, _diagnostics = load_mailbox_readonly(
+            source=_mailbox_source(),
+            logger=_null_logger(),
+            email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+            mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+        )
+
+        evt = events[0]
+        evt_json = json.dumps(evt)
+        assert "secret" not in evt_json.lower()
+        assert "BITRIX_WEBHOOK" not in evt_json
