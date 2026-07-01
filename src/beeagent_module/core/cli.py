@@ -421,13 +421,21 @@ def _validate_mailbox_env_for_sources(
             raise RopCliError(
                 f"Invalid config for enabled ROP source {sid}:\n"
                 "- mailbox\n\n"
-                "mailbox_readonly sources require mailbox.username_env and "
-                "mailbox.password_env in config."
+                "mailbox_readonly sources require mailbox host/folder and "
+                "credential config before run."
             )
 
         missing_config: list[str] = []
+        host_raw = mailbox_cfg.get("host")
+        folder_raw = mailbox_cfg.get("folder")
+        host_env_raw = mailbox_cfg.get("host_env")
+        folder_env_raw = mailbox_cfg.get("folder_env")
         username_env_raw = mailbox_cfg.get("username_env")
         password_env_raw = mailbox_cfg.get("password_env")
+        host = host_raw.strip() if isinstance(host_raw, str) else ""
+        folder = folder_raw.strip() if isinstance(folder_raw, str) else ""
+        host_env = host_env_raw.strip() if isinstance(host_env_raw, str) else ""
+        folder_env = folder_env_raw.strip() if isinstance(folder_env_raw, str) else ""
         username_env = (
             username_env_raw.strip() if isinstance(username_env_raw, str) else ""
         )
@@ -435,6 +443,10 @@ def _validate_mailbox_env_for_sources(
             password_env_raw.strip() if isinstance(password_env_raw, str) else ""
         )
 
+        if not host_env and not host:
+            missing_config.append("mailbox.host_env or mailbox.host")
+        if not folder_env and not folder:
+            missing_config.append("mailbox.folder_env or mailbox.folder")
         if not username_env:
             missing_config.append("mailbox.username_env")
         if not password_env:
@@ -449,13 +461,42 @@ def _validate_mailbox_env_for_sources(
             )
 
         missing: list[str] = []
-        for env_name in (username_env, password_env):
+        host_value = os.environ.get(host_env, "").strip() if host_env else host
+        folder_value = os.environ.get(folder_env, "").strip() if folder_env else folder
+
+        for env_name in (host_env, folder_env, username_env, password_env):
+            if not env_name:
+                continue
             val = os.environ.get(env_name, "").strip()
             if not val:
                 missing.append(env_name)
 
         if missing:
             env_list = "\n".join(f"- {name}" for name in missing)
+            raise RopCliError(
+                f"Missing required env for ROP source {sid}:\n"
+                f"{env_list}\n\n"
+                "Add values to .env and retry."
+            )
+
+        if host_value and (
+            host_value.lower().startswith("http://")
+            or host_value.lower().startswith("https://")
+            or "/" in host_value
+        ):
+            host_name = host_env or "mailbox.host"
+            raise RopCliError(
+                f"Invalid ROP mailbox host for source {sid}:\n"
+                f"- {host_name} must be an IMAP host like web01.srv.welding.kz, not a URL."
+            )
+
+        if not host_value or not folder_value:
+            missing_runtime: list[str] = []
+            if not host_value:
+                missing_runtime.append(host_env or "mailbox.host")
+            if not folder_value:
+                missing_runtime.append(folder_env or "mailbox.folder")
+            env_list = "\n".join(f"- {name}" for name in missing_runtime)
             raise RopCliError(
                 f"Missing required env for ROP source {sid}:\n"
                 f"{env_list}\n\n"

@@ -26,6 +26,28 @@ class InputSourceError(RuntimeError):
         self.diagnostics = diagnostics or {}
 
 
+def _normalized_mailbox_value(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _resolve_mailbox_value(
+    mailbox_cfg: dict[str, Any],
+    env_key: str,
+    direct_key: str,
+) -> tuple[str, str]:
+    env_name = _normalized_mailbox_value(mailbox_cfg.get(env_key))
+    if env_name:
+        return os.getenv(env_name, "").strip(), env_name
+    return _normalized_mailbox_value(mailbox_cfg.get(direct_key)), ""
+
+
+def _is_invalid_mailbox_host(host: str) -> bool:
+    lowered = host.lower()
+    return (
+        lowered.startswith("http://") or lowered.startswith("https://") or "/" in host
+    )
+
+
 def find_active_rop_source(input_sources: list[dict]) -> dict:
     if not input_sources:
         raise RuntimeError("rop.sources is empty: no input source declared in config")
@@ -179,9 +201,9 @@ def load_mailbox_readonly(
             ),
         )
 
-    username_env = mailbox_cfg.get("username_env")
-    password_env = mailbox_cfg.get("password_env")
-    if not isinstance(username_env, str) or not username_env:
+    username_env = _normalized_mailbox_value(mailbox_cfg.get("username_env"))
+    password_env = _normalized_mailbox_value(mailbox_cfg.get("password_env"))
+    if not username_env:
         raise InputSourceError(
             f"rop.sources source_id={source_id}: mailbox.username_env is empty",
             diagnostics=_make_source_diagnostics(
@@ -190,9 +212,44 @@ def load_mailbox_readonly(
                 reason="invalid_mailbox_config",
             ),
         )
-    if not isinstance(password_env, str) or not password_env:
+    if not password_env:
         raise InputSourceError(
             f"rop.sources source_id={source_id}: mailbox.password_env is empty",
+            diagnostics=_make_source_diagnostics(
+                source=source,
+                status="degraded",
+                reason="invalid_mailbox_config",
+            ),
+        )
+
+    host, host_env_name = _resolve_mailbox_value(mailbox_cfg, "host_env", "host")
+    folder, folder_env_name = _resolve_mailbox_value(
+        mailbox_cfg, "folder_env", "folder"
+    )
+    if not host:
+        missing_key = host_env_name or "mailbox.host"
+        raise InputSourceError(
+            f"rop.sources source_id={source_id}: mailbox host is empty ({missing_key})",
+            diagnostics=_make_source_diagnostics(
+                source=source,
+                status="degraded",
+                reason="invalid_mailbox_config",
+            ),
+        )
+    if _is_invalid_mailbox_host(host):
+        invalid_key = host_env_name or "mailbox.host"
+        raise InputSourceError(
+            f"rop.sources source_id={source_id}: mailbox host must be IMAP host, not URL ({invalid_key})",
+            diagnostics=_make_source_diagnostics(
+                source=source,
+                status="degraded",
+                reason="invalid_mailbox_config",
+            ),
+        )
+    if not folder:
+        missing_key = folder_env_name or "mailbox.folder"
+        raise InputSourceError(
+            f"rop.sources source_id={source_id}: mailbox folder is empty ({missing_key})",
             diagnostics=_make_source_diagnostics(
                 source=source,
                 status="degraded",
@@ -216,7 +273,7 @@ def load_mailbox_readonly(
 
     try:
         raw_messages = factory(source).fetch_latest(
-            folder=str(mailbox_cfg["folder"]),
+            folder=folder,
             items_max=items_max,
         )
     except MailboxAuthError as exc:
@@ -286,10 +343,10 @@ def load_mailbox_readonly(
         )
 
     mailbox_details = {
-        "host": str(mailbox_cfg["host"]),
+        "host": host,
         "port": int(mailbox_cfg["port"]),
         "use_ssl": bool(mailbox_cfg["use_ssl"]),
-        "folder": str(mailbox_cfg["folder"]),
+        "folder": folder,
     }
 
     loaded_at = datetime.now(timezone.utc).isoformat()
@@ -338,11 +395,12 @@ def load_mailbox_readonly(
 
 def _default_mailbox_client_factory(source: dict) -> MailboxReadonlyClient:
     mailbox_cfg = source["mailbox"]
+    host, _ = _resolve_mailbox_value(mailbox_cfg, "host_env", "host")
     username = os.getenv(str(mailbox_cfg["username_env"]), "").strip()
     password = os.getenv(str(mailbox_cfg["password_env"]), "").strip()
 
     return ImapReadonlyMailboxClient(
-        host=str(mailbox_cfg["host"]),
+        host=host,
         port=int(mailbox_cfg["port"]),
         use_ssl=bool(mailbox_cfg["use_ssl"]),
         username=username,

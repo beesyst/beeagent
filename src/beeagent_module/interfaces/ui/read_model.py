@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2149,11 +2150,25 @@ def build_config_read_model(settings: dict[str, Any]) -> dict[str, Any]:
 
         mailbox = source.get("mailbox")
         if isinstance(mailbox, dict):
+            host = mailbox.get("host", "")
+            host_env = mailbox.get("host_env", "")
+            if (not isinstance(host, str) or not host) and isinstance(host_env, str):
+                host = os.environ.get(host_env, "")
+
+            folder = mailbox.get("folder", "")
+            folder_env = mailbox.get("folder_env", "")
+            if (not isinstance(folder, str) or not folder) and isinstance(
+                folder_env, str
+            ):
+                folder = os.environ.get(folder_env, "")
+
             safe_source["mailbox"] = {
-                "host": mailbox.get("host", ""),
+                "host": host,
+                "host_env": host_env,
                 "port": mailbox.get("port", 0),
                 "use_ssl": mailbox.get("use_ssl", False),
-                "folder": mailbox.get("folder", ""),
+                "folder": folder,
+                "folder_env": folder_env,
                 "username_env": mailbox.get("username_env", ""),
             }
 

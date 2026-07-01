@@ -390,7 +390,23 @@ def validate_settings(settings: dict) -> None:
                 raise RuntimeError(
                     f"Missing or invalid rop.sources[{idx}].mailbox, expected mapping"
                 )
-            for key in ("host", "folder", "username_env", "password_env"):
+            host = mailbox.get("host")
+            host_env = mailbox.get("host_env")
+            has_host_env = isinstance(host_env, str) and bool(host_env)
+            has_host = isinstance(host, str) and bool(host)
+            if not (has_host_env or has_host):
+                raise RuntimeError(
+                    f"Missing rop.sources[{idx}].mailbox.host_env or rop.sources[{idx}].mailbox.host, expected non-empty string"
+                )
+            folder = mailbox.get("folder")
+            folder_env = mailbox.get("folder_env")
+            has_folder_env = isinstance(folder_env, str) and bool(folder_env)
+            has_folder = isinstance(folder, str) and bool(folder)
+            if not (has_folder_env or has_folder):
+                raise RuntimeError(
+                    f"Missing rop.sources[{idx}].mailbox.folder_env or rop.sources[{idx}].mailbox.folder, expected non-empty string"
+                )
+            for key in ("username_env", "password_env"):
                 value = mailbox.get(key)
                 if not isinstance(value, str) or not value:
                     raise RuntimeError(
