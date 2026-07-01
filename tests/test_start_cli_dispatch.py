@@ -106,3 +106,35 @@ def test_main_unknown_command_exits_with_code_2(monkeypatch) -> None:
         assert False, "SystemExit expected"
     except SystemExit as exc:
         assert exc.code == 2
+
+
+def test_main_auth_runs_bootstrap_before_cli_exit(monkeypatch) -> None:
+    called: dict[str, Any] = {"bootstrap": 0, "auth": 0}
+
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
+
+    def _fake_bootstrap(*args, **kwargs):
+        called["bootstrap"] += 1
+        return {}
+
+    def _fake_auth_cli(argv, project_root):
+        called["auth"] += 1
+        called["argv"] = argv
+        assert called["bootstrap"] == 1
+        return 0
+
+    monkeypatch.setattr(start_module, "ensure_bootstrap_env", _fake_bootstrap)
+    monkeypatch.setattr(start_module, "handle_auth_cli", _fake_auth_cli)
+    monkeypatch.setattr(
+        start_module.sys, "argv", ["start.py", "auth", "rotate", "admin1"]
+    )
+
+    try:
+        start_module.main()
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert called["bootstrap"] == 1
+    assert called["auth"] == 1
+    assert called["argv"] == ["rotate", "admin1"]

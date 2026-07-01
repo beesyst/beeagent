@@ -19,6 +19,7 @@ from beeagent_module.core.cli import (
     handle_rop_run,
     handle_rop_summary,
 )
+from beeagent_module.core.env_sync import ensure_bootstrap_env, sync_env_with_example
 from beeagent_module.core.log import get_logger, setup_logging
 from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_project_root
 from beeagent_module.core.settings import load_settings
@@ -30,30 +31,39 @@ def main() -> None:
     env_path = project_root / ".env"
     settings_path = project_root / "config" / "settings.yml"
 
-    if args and args[0] == "auth":
-        exit_code = handle_auth_cli(args[1:], project_root=project_root)
-        sys.exit(exit_code)
-
+    sync_env_with_example(project_root)
     load_dotenv(dotenv_path=env_path, override=False)
 
     if args and args[0] == "auth-init":
         rotate = _parse_auth_init_args(args[1:])
-        ensure_auth_env(
-            project_root=project_root,
-            settings_path=settings_path,
-            env_path=env_path,
-            rotate=rotate,
-            quiet=False,
-        )
+        if rotate is None:
+            ensure_bootstrap_env(
+                project_root=project_root,
+                settings_path=settings_path,
+                env_path=env_path,
+                quiet=False,
+            )
+        else:
+            ensure_auth_env(
+                project_root=project_root,
+                settings_path=settings_path,
+                env_path=env_path,
+                rotate=rotate,
+                quiet=False,
+            )
         return
 
-    ensure_auth_env(
+    ensure_bootstrap_env(
         project_root=project_root,
         settings_path=settings_path,
         env_path=env_path,
         quiet=True,
     )
     load_dotenv(dotenv_path=env_path, override=False)
+
+    if args and args[0] == "auth":
+        exit_code = handle_auth_cli(args[1:], project_root=project_root)
+        sys.exit(exit_code)
 
     settings = load_settings(settings_path)
 

@@ -148,7 +148,7 @@ rop:
       source_role: "batch_sample" # роль источника в бизнес-контексте клиента
       client_id: "welding" # идентификатор клиента/тенанта для источника
       display_name: "ROP Batch Sample" # человеко-читаемое имя источника для артефактов/UI
-      enabled: true # true/false - использовать этот источник
+      enabled: false # true/false - использовать этот источник
       authority: "read_only" # уровень доступа (read_only/draft_only/execution_capable)
       items_max: 100 # максимальное число событий из источника
       batch:

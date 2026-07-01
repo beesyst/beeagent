@@ -37,8 +37,9 @@
 - вести logs в `logs/app.log`;
 - запускать BeeUI-backed read-only Operator Web Console через `./start.sh web`;
 - иметь BeeUI-backed auth boundary для Web Console;
-- автоматически bootstrap'ить auth env values при старте;
-- ротировать principal tokens и session secret через CLI;
+- автоматически синхронизировать `.env` из `.env.example` при старте;
+- автоматически bootstrap'ить internal env secrets при старте;
+- ротировать principal tokens, session secret и Bitrix widget token через CLI;
 - защищать HTML/API routes при `web.auth.enabled=true`;
 - использовать BeeUI поверх FastAPI/Jinja2/Tabler как canonical web layer;
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
@@ -261,6 +262,7 @@ run:
 ./start.sh auth rotate all
 ./start.sh auth rotate all --logout-all
 ./start.sh auth rotate session
+./start.sh auth rotate bitrix-widget
 ```
 
 ### Operator Web Console (BeeUI-backed, UI-6/UI-7)
@@ -380,10 +382,25 @@ web:
         token_env: BEEAGENT_WEB_ADMIN2_TOKEN
 ```
 
-Реальные secrets живут только в env:
+Реальные internal secrets живут только в env:
 
 - `BEEAGENT_WEB_SESSION_SECRET` — HMAC secret для session cookie
-- `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` — admin token для входа
+- `BEEAGENT_WEB_ADMIN1_TOKEN` — token для входа `admin1`
+- `BEEAGENT_WEB_ADMIN2_TOKEN` — token для входа `admin2`
+- `BITRIX_ROP_WIDGET_TOKEN` — internal Bearer token для BeeAgent read-only Bitrix widget API
+
+Следующие внешние credentials не генерируются автоматически и должны быть заполнены вручную:
+
+- `TELEGRAM_BOT_TOKEN`
+- `CHAT_ID`
+- `OPENAI_API_KEY`
+- `BITRIX_WEBHOOK_URL`
+- `ROP_MAILBOX_USERNAME`
+- `ROP_MAILBOX_PASSWORD`
+- `ROP_AI_OPENAI_API_KEY`
+- `ROP_AI_DEEPSEEK_API_KEY`
+- `ROP_AI_LMSTUDIO_API_KEY`
+- `ROP_AI_API_KEY`
 
 `web.auth.enabled: false` (default) сохраняет current dev behavior. При `web.auth.enabled: true`:
 
@@ -398,11 +415,11 @@ web:
 
 - `start.sh` создаёт `.env` из `.env.example`, если `.env` отсутствует;
 - ручной `cp .env.example .env` по-прежнему допустим;
-- `config/start.py` вызывает `ensure_web_auth_env(...)` до `load_settings(...)`;
-- при `web.auth.enabled=true` отсутствующие или пустые auth env values генерируются автоматически;
-- `BEEAGENT_WEB_SESSION_SECRET` генерируется через `secrets.token_urlsafe(64)`;
-- principal tokens генерируются через `secrets.token_urlsafe(32)`;
+- `config/start.py` при старте синхронизирует отсутствующие ключи из `.env.example` в `.env`;
+- startup bootstrap в `src/beeagent_module/core/env_sync.py` сохраняет существующие непустые значения и не перезаписывает их;
+- отсутствующие или пустые internal env values (`BEEAGENT_WEB_SESSION_SECRET`, `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN`, `BITRIX_ROP_WIDGET_TOKEN`) генерируются автоматически;
 - реальные значения пишутся только в `.env` / runtime env, не в `settings.yml`;
+- внешние credentials остаются пустыми placeholders, пока оператор не заполнит их вручную;
 - на POSIX для `.env` выставляется `chmod 0600`;
 - в stdout печатается только masked вывод вида `KEY=<generated>`, реальные значения не печатаются.
 
@@ -414,14 +431,18 @@ web:
 ./start.sh auth rotate all
 ./start.sh auth rotate all --logout-all
 ./start.sh auth rotate session
+./start.sh auth rotate bitrix-widget
 ```
 
 - single principal меняет только token этого principal;
-- `all` меняет tokens всех principals;
-- `all --logout-all` меняет tokens и session secret;
+- `all` меняет только tokens всех principals/admins;
+- `all` не меняет `BITRIX_ROP_WIDGET_TOKEN`;
+- `all --logout-all` меняет tokens principals/admins и session secret;
 - `session` меняет только session secret;
+- `bitrix-widget` меняет только `BITRIX_ROP_WIDGET_TOKEN`;
 - после rotation нужен restart web app;
 - session secret value не печатается;
+- widget token value не печатается;
 - при rotation principal token печатается один раз, его нужно сохранить для входа.
 
 ##### Roles
@@ -821,13 +842,18 @@ cp .env.example .env
 ```
 
 Ручной `cp .env.example .env` остаётся допустимым, но `start.sh` сам создаёт `.env`, если файла нет.
-При `web.auth.enabled=true` auth secrets могут быть сгенерированы автоматически при старте.
+При старте отсутствующие ключи из `.env.example` дописываются в существующий `.env`, existing values не перезаписываются.
+Internal secrets генерируются автоматически, если отсутствуют или пустые.
 
 Оператору всё равно нужно вручную заполнить реальные значения для внешних credentials:
 
 - `TELEGRAM_BOT_TOKEN`
 - `CHAT_ID`
 - `OPENAI_API_KEY` (если включён LLM)
+- `BITRIX_WEBHOOK_URL`
+- `ROP_MAILBOX_USERNAME`
+- `ROP_MAILBOX_PASSWORD`
+- `ROP_AI_OPENAI_API_KEY`, `ROP_AI_DEEPSEEK_API_KEY`, `ROP_AI_LMSTUDIO_API_KEY`, `ROP_AI_API_KEY`
 - credentials для Telegram / Bitrix / OpenAI и других внешних интеграций.
 
 ### 2. Запуск
@@ -893,6 +919,7 @@ uv run pytest -q
 - `./start.sh auth rotate all`;
 - `./start.sh auth rotate all --logout-all`;
 - `./start.sh auth rotate session`;
+- `./start.sh auth rotate bitrix-widget`;
 - тесты;
 - прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
 
@@ -1242,6 +1269,8 @@ AI assist не является самостоятельной ROP business logi
 
 - секреты хранятся в env, а не в репозитории;
 - auth secrets должны жить только в env / `.env`, а не в `config/settings.yml`;
+- `.env` синхронизируется из `.env.example` без перезаписи существующих значений;
+- internal secrets генерируются только в `.env` / runtime env;
 - на POSIX `.env` получает `chmod 0600`;
 - session secret никогда не печатается;
 - новые обязательные ключи должны валидироваться fail-fast;
@@ -1259,8 +1288,11 @@ AI assist не является самостоятельной ROP business logi
 - event detail routes должны оставаться read-only;
 - `/rop/events/{event_id}` не должен запускать module/capability/mailbox/CRM actions;
 - Bitrix widget API должен оставаться read-only и artifact-backed;
+- `BITRIX_ROP_WIDGET_TOKEN` — это internal BeeAgent API auth, а не Bitrix webhook credential;
 - widget token должен жить только в env; имя env берётся из `bitrix.widget.token_env`;
+- widget token можно ротировать через `./start.sh auth rotate bitrix-widget`;
 - widget API не должен вызывать Bitrix REST и не должен выполнять CRM/Bitrix/mailbox write-back;
+- external credentials никогда не генерируются автоматически;
 - `rop.ai_assist` disabled by default;
 - AI env values не пишутся в logs/artifacts;
 - при `enabled: true` и `dry_run: false` env валидируются fail-fast;

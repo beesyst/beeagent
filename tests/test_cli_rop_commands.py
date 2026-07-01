@@ -12,6 +12,7 @@ from beeagent_module.core.cli import (
     RopCliError,
     _apply_source_overrides,
     _tsv_columns,
+    _validate_mailbox_env_for_sources,
     create_rop_parser,
     handle_rop_dashboard,
     handle_rop_evaluate_review,
@@ -411,6 +412,52 @@ class TestRopCliRun:
         assert intake_meta["source_count"] == 2
         assert intake_meta["loaded_source_count"] == 1
         assert intake_meta["degraded_source_count"] == 1
+
+    def test_rop_run_degraded_without_normalized_raises_primary_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            cli_module,
+            "run_rop_batch_case",
+            lambda **kwargs: {
+                "run_id": "test-cli-run-degraded",
+                "status": "degraded",
+                "module_status": "error",
+                "summary": "source loading degraded",
+                "source": {"reason": "source_not_loaded"},
+                "operator_text": "ROP operator run v0",
+            },
+        )
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id="test-cli-run-degraded",
+        )
+
+        with pytest.raises(RopCliError) as exc_info:
+            handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        msg = str(exc_info.value)
+        assert "status=degraded" in msg
+        assert "module_status=error" in msg
+        assert "source_not_loaded" in msg
+        assert "normalized_events.json not found" not in msg
 
     def test_rop_run_missing_source_id_raises_error(self, tmp_path: Path) -> None:
         import argparse
@@ -1320,3 +1367,124 @@ class TestRopEvaluateReview:
 
         with pytest.raises(RopCliError, match="Invalid run_id"):
             handle_rop_evaluate_review(args, logger=_null_logger())
+
+
+class TestMailboxEnvValidation:
+    def _mailbox_settings(self) -> dict:
+        return {
+            "rop": {
+                "sources": [
+                    {
+                        "source_id": "hotline_mailbox",
+                        "source_type": "mailbox_readonly",
+                        "source_role": "technical_aggregator",
+                        "client_id": "welding",
+                        "display_name": "Welding Hotline mailbox",
+                        "enabled": True,
+                        "authority": "read_only",
+                        "items_max": 20,
+                        "mailbox": {
+                            "host": "mail.example.com",
+                            "port": 993,
+                            "use_ssl": True,
+                            "folder": "welding",
+                            "username_env": "ROP_MAILBOX_USERNAME",
+                            "password_env": "ROP_MAILBOX_PASSWORD",
+                        },
+                    },
+                ],
+            },
+        }
+
+    def _sample_settings(self) -> dict:
+        return {
+            "rop": {
+                "sources": [
+                    {
+                        "source_id": "rop_batch_sample",
+                        "source_type": "json_batch",
+                        "source_role": "batch_sample",
+                        "client_id": "welding",
+                        "display_name": "Sample",
+                        "enabled": True,
+                        "authority": "read_only",
+                        "items_max": 10,
+                        "batch": {
+                            "path": "storage/mock/test.json",
+                            "period": "2026-05",
+                        },
+                    },
+                ],
+            },
+        }
+
+    def test_missing_mailbox_credentials_fail_before_pipeline_and_list_env_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "")
+
+        settings = self._mailbox_settings()
+
+        with pytest.raises(RopCliError) as exc_info:
+            _validate_mailbox_env_for_sources(settings)
+
+        msg = str(exc_info.value)
+        assert "Missing required env for ROP source hotline_mailbox" in msg
+        assert "ROP_MAILBOX_USERNAME" in msg
+        assert "ROP_MAILBOX_PASSWORD" in msg
+        assert "Add values to .env and retry." in msg
+
+    def test_missing_mailbox_credentials_do_not_produce_normalized_events_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = self._mailbox_settings()
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "")
+        monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session")
+        monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "test-token1")
+        monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "test-token2")
+
+        args = argparse.Namespace(
+            source_id="hotline_mailbox",
+            all_sources=False,
+            items_max=10,
+            period=None,
+            run_id="test-missing-creds",
+        )
+
+        with pytest.raises(RopCliError) as exc_info:
+            handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        msg = str(exc_info.value)
+        assert "Missing required env for ROP source hotline_mailbox" in msg
+        assert "ROP_MAILBOX_USERNAME" in msg
+        assert "ROP_MAILBOX_PASSWORD" in msg
+        assert "Add values to .env and retry." in msg
+        assert "normalized_events.json not found" not in msg
+        assert "ROP run completed but review TSV export failed" not in msg
+
+    def test_valid_mailbox_env_passes_validation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ROP_MAILBOX_USERNAME", "user")
+        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "pass")
+
+        _validate_mailbox_env_for_sources(self._mailbox_settings())
+
+    def test_sample_source_does_not_require_mailbox_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ROP_MAILBOX_USERNAME", raising=False)
+        monkeypatch.delenv("ROP_MAILBOX_PASSWORD", raising=False)
+
+        _validate_mailbox_env_for_sources(self._sample_settings())

@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from beeagent_module.cli.auth import ensure_auth_env
+from beeagent_module.core.env_sync import ensure_bootstrap_env
 
 AUTH_ENABLED_YAML = """
 web:
@@ -24,6 +25,12 @@ web:
         username: admin2
         role: admin
         token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+bitrix:
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
 """
 
 AUTH_DISABLED_YAML = """
@@ -46,6 +53,7 @@ web:
 SESSION_ENV = "BEEAGENT_WEB_SESSION_SECRET"
 ADMIN1_ENV = "BEEAGENT_WEB_ADMIN1_TOKEN"
 ADMIN2_ENV = "BEEAGENT_WEB_ADMIN2_TOKEN"
+WIDGET_ENV = "BITRIX_ROP_WIDGET_TOKEN"
 
 
 @pytest.fixture
@@ -91,6 +99,7 @@ def _clear_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(SESSION_ENV, raising=False)
     monkeypatch.delenv(ADMIN1_ENV, raising=False)
     monkeypatch.delenv(ADMIN2_ENV, raising=False)
+    monkeypatch.delenv(WIDGET_ENV, raising=False)
 
 
 def test_auth_disabled_returns_empty_and_does_not_create_env(
@@ -98,7 +107,7 @@ def test_auth_disabled_returns_empty_and_does_not_create_env(
 ) -> None:
     _clear_auth_env(monkeypatch)
 
-    generated = ensure_auth_env(
+    generated = ensure_bootstrap_env(
         project_root=disabled_project,
         settings_path=_settings_path(disabled_project),
         env_path=_env_path(disabled_project),
@@ -114,7 +123,7 @@ def test_auth_enabled_creates_missing_env_values(
 ) -> None:
     _clear_auth_env(monkeypatch)
 
-    generated = ensure_auth_env(
+    generated = ensure_bootstrap_env(
         project_root=enabled_project,
         settings_path=_settings_path(enabled_project),
         env_path=_env_path(enabled_project),
@@ -122,10 +131,11 @@ def test_auth_enabled_creates_missing_env_values(
     )
 
     env_map = _env_map(_env_path(enabled_project))
-    assert set(generated) == {SESSION_ENV, ADMIN1_ENV, ADMIN2_ENV}
+    assert set(generated) == {SESSION_ENV, ADMIN1_ENV, ADMIN2_ENV, WIDGET_ENV}
     assert env_map[SESSION_ENV] == generated[SESSION_ENV]
     assert env_map[ADMIN1_ENV] == generated[ADMIN1_ENV]
     assert env_map[ADMIN2_ENV] == generated[ADMIN2_ENV]
+    assert env_map[WIDGET_ENV] == generated[WIDGET_ENV]
 
 
 def test_existing_values_are_preserved_by_default(
@@ -138,13 +148,14 @@ def test_existing_values_are_preserved_by_default(
                 f"{SESSION_ENV}=existing-session",
                 f"{ADMIN1_ENV}=existing-admin1",
                 f"{ADMIN2_ENV}=existing-admin2",
+                f"{WIDGET_ENV}=existing-widget",
             ]
         )
         + "\n",
         encoding="utf-8",
     )
 
-    generated = ensure_auth_env(
+    generated = ensure_bootstrap_env(
         project_root=enabled_project,
         settings_path=_settings_path(enabled_project),
         env_path=_env_path(enabled_project),
@@ -156,6 +167,7 @@ def test_existing_values_are_preserved_by_default(
         SESSION_ENV: "existing-session",
         ADMIN1_ENV: "existing-admin1",
         ADMIN2_ENV: "existing-admin2",
+        WIDGET_ENV: "existing-widget",
     }
 
 
@@ -164,11 +176,14 @@ def test_empty_env_values_are_replaced(
 ) -> None:
     _clear_auth_env(monkeypatch)
     _env_path(enabled_project).write_text(
-        "\n".join([f"{SESSION_ENV}=", f"{ADMIN1_ENV}=", f"{ADMIN2_ENV}="]) + "\n",
+        "\n".join(
+            [f"{SESSION_ENV}=", f"{ADMIN1_ENV}=", f"{ADMIN2_ENV}=", f"{WIDGET_ENV}="]
+        )
+        + "\n",
         encoding="utf-8",
     )
 
-    generated = ensure_auth_env(
+    generated = ensure_bootstrap_env(
         project_root=enabled_project,
         settings_path=_settings_path(enabled_project),
         env_path=_env_path(enabled_project),
@@ -179,6 +194,33 @@ def test_empty_env_values_are_replaced(
     assert env_map[SESSION_ENV] == generated[SESSION_ENV]
     assert env_map[ADMIN1_ENV] == generated[ADMIN1_ENV]
     assert env_map[ADMIN2_ENV] == generated[ADMIN2_ENV]
+    assert env_map[WIDGET_ENV] == generated[WIDGET_ENV]
+
+
+def test_external_credentials_are_not_generated(
+    enabled_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_auth_env(monkeypatch)
+    _env_path(enabled_project).write_text(
+        "BITRIX_WEBHOOK_URL=\n"
+        "OPENAI_API_KEY=\n"
+        "ROP_MAILBOX_USERNAME=\n"
+        "ROP_MAILBOX_PASSWORD=\n",
+        encoding="utf-8",
+    )
+
+    ensure_bootstrap_env(
+        project_root=enabled_project,
+        settings_path=_settings_path(enabled_project),
+        env_path=_env_path(enabled_project),
+        quiet=True,
+    )
+
+    env_map = _env_map(_env_path(enabled_project))
+    assert env_map["BITRIX_WEBHOOK_URL"] == ""
+    assert env_map["OPENAI_API_KEY"] == ""
+    assert env_map["ROP_MAILBOX_USERNAME"] == ""
+    assert env_map["ROP_MAILBOX_PASSWORD"] == ""
 
 
 def test_rotate_admin1_changes_only_admin1(
@@ -191,6 +233,7 @@ def test_rotate_admin1_changes_only_admin1(
                 f"{SESSION_ENV}=session-old",
                 f"{ADMIN1_ENV}=admin1-old",
                 f"{ADMIN2_ENV}=admin2-old",
+                f"{WIDGET_ENV}=widget-old",
             ]
         )
         + "\n",
@@ -209,6 +252,7 @@ def test_rotate_admin1_changes_only_admin1(
     assert set(generated) == {ADMIN1_ENV}
     assert env_map[SESSION_ENV] == "session-old"
     assert env_map[ADMIN2_ENV] == "admin2-old"
+    assert env_map[WIDGET_ENV] == "widget-old"
     assert env_map[ADMIN1_ENV] == generated[ADMIN1_ENV]
     assert env_map[ADMIN1_ENV] != "admin1-old"
 
@@ -223,6 +267,7 @@ def test_rotate_admin2_changes_only_admin2(
                 f"{SESSION_ENV}=session-old",
                 f"{ADMIN1_ENV}=admin1-old",
                 f"{ADMIN2_ENV}=admin2-old",
+                f"{WIDGET_ENV}=widget-old",
             ]
         )
         + "\n",
@@ -241,6 +286,7 @@ def test_rotate_admin2_changes_only_admin2(
     assert set(generated) == {ADMIN2_ENV}
     assert env_map[SESSION_ENV] == "session-old"
     assert env_map[ADMIN1_ENV] == "admin1-old"
+    assert env_map[WIDGET_ENV] == "widget-old"
     assert env_map[ADMIN2_ENV] == generated[ADMIN2_ENV]
     assert env_map[ADMIN2_ENV] != "admin2-old"
 
@@ -255,6 +301,7 @@ def test_rotate_session_changes_only_session(
                 f"{SESSION_ENV}=session-old",
                 f"{ADMIN1_ENV}=admin1-old",
                 f"{ADMIN2_ENV}=admin2-old",
+                f"{WIDGET_ENV}=widget-old",
             ]
         )
         + "\n",
@@ -273,6 +320,7 @@ def test_rotate_session_changes_only_session(
     assert set(generated) == {SESSION_ENV}
     assert env_map[ADMIN1_ENV] == "admin1-old"
     assert env_map[ADMIN2_ENV] == "admin2-old"
+    assert env_map[WIDGET_ENV] == "widget-old"
     assert env_map[SESSION_ENV] == generated[SESSION_ENV]
     assert env_map[SESSION_ENV] != "session-old"
 
@@ -287,6 +335,7 @@ def test_rotate_all_changes_all_auth_values(
                 f"{SESSION_ENV}=session-old",
                 f"{ADMIN1_ENV}=admin1-old",
                 f"{ADMIN2_ENV}=admin2-old",
+                f"{WIDGET_ENV}=widget-old",
             ]
         )
         + "\n",
@@ -306,6 +355,7 @@ def test_rotate_all_changes_all_auth_values(
     assert env_map[SESSION_ENV] == generated[SESSION_ENV]
     assert env_map[ADMIN1_ENV] == generated[ADMIN1_ENV]
     assert env_map[ADMIN2_ENV] == generated[ADMIN2_ENV]
+    assert env_map[WIDGET_ENV] == "widget-old"
     assert env_map[SESSION_ENV] != "session-old"
     assert env_map[ADMIN1_ENV] != "admin1-old"
     assert env_map[ADMIN2_ENV] != "admin2-old"
@@ -331,7 +381,7 @@ def test_env_chmod_is_0600_on_posix(
 ) -> None:
     _clear_auth_env(monkeypatch)
 
-    ensure_auth_env(
+    ensure_bootstrap_env(
         project_root=enabled_project,
         settings_path=_settings_path(enabled_project),
         env_path=_env_path(enabled_project),
@@ -350,7 +400,7 @@ def test_generated_values_are_not_written_to_logs_or_storage(
     (enabled_project / "logs").mkdir()
     (enabled_project / "storage").mkdir()
 
-    generated = ensure_auth_env(
+    generated = ensure_bootstrap_env(
         project_root=enabled_project,
         settings_path=_settings_path(enabled_project),
         env_path=_env_path(enabled_project),
