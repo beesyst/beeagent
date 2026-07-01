@@ -34,6 +34,12 @@ web:
         username: admin2
         role: admin
         token_env: BEEAGENT_WEB_ADMIN2_TOKEN
+bitrix:
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
 """
 
 AUTH_DISABLED_YAML = """
@@ -56,6 +62,7 @@ web:
 SESSION_SECRET_ENV_NAME = "BEEAGENT_WEB_SESSION_SECRET"
 ADMIN1_ENV = "BEEAGENT_WEB_ADMIN1_TOKEN"
 ADMIN2_ENV = "BEEAGENT_WEB_ADMIN2_TOKEN"
+WIDGET_ENV = "BITRIX_ROP_WIDGET_TOKEN"
 PRINCIPAL_TOKEN_ENVS = [ADMIN1_ENV, ADMIN2_ENV]
 
 UNRELATED_ENV = (
@@ -68,6 +75,7 @@ INITIAL_ENV = (
     f"{SESSION_SECRET_ENV_NAME}=old-session-secret\n"
     f"{ADMIN1_ENV}=old-token-1\n"
     f"{ADMIN2_ENV}=old-token-2\n"
+    f"{WIDGET_ENV}=old-widget-token\n"
 )
 
 
@@ -107,7 +115,8 @@ def tmp_project_with_empty_env(tmp_path: Path) -> Path:
     raw = yaml.safe_load(SAMPLE_YAML)
     (cfg_dir / "settings.yml").write_text(yaml.dump(raw), encoding="utf-8")
     env_content = (
-        f"{UNRELATED_ENV}{SESSION_SECRET_ENV_NAME}=\n{ADMIN1_ENV}=\n{ADMIN2_ENV}=\n"
+        f"{UNRELATED_ENV}{SESSION_SECRET_ENV_NAME}=\n"
+        f"{ADMIN1_ENV}=\n{ADMIN2_ENV}=\n{WIDGET_ENV}=\n"
     )
     env = tmp_path / ".env"
     env.write_text(env_content, encoding="utf-8")
@@ -300,6 +309,14 @@ class TestRotateAll:
         content = env_path.read_text(encoding="utf-8")
         assert "old-session-secret" in content
 
+    def test_rotate_all_does_not_change_widget_token(
+        self, tmp_project: Path, auth_cfg: dict
+    ) -> None:
+        env_path = tmp_project / ".env"
+        _do_rotate(auth_cfg, tmp_project, "all", logout_all=False)
+        content = env_path.read_text(encoding="utf-8")
+        assert "old-widget-token" in content
+
     def test_rotate_all_logout_all_changes_everything(
         self, tmp_project: Path, auth_cfg: dict
     ) -> None:
@@ -351,6 +368,46 @@ class TestRotateSession:
         assert "Warning" in stdout
 
 
+class TestRotateBitrixWidget:
+    def test_rotate_bitrix_widget_changes_only_widget_token(
+        self, tmp_project: Path, auth_cfg: dict
+    ) -> None:
+        env_path = tmp_project / ".env"
+        cfg = {**auth_cfg, "widget_token_env": WIDGET_ENV}
+
+        _do_rotate(cfg, tmp_project, "bitrix-widget", logout_all=False)
+
+        content = env_path.read_text(encoding="utf-8")
+        assert "old-widget-token" not in content
+        assert "old-session-secret" in content
+        assert "old-token-1" in content
+        assert "old-token-2" in content
+
+    def test_rotate_bitrix_widget_does_not_print_actual_token(
+        self, tmp_project: Path, auth_cfg: dict, capsys: Any
+    ) -> None:
+        cfg = {**auth_cfg, "widget_token_env": WIDGET_ENV}
+
+        _do_rotate(cfg, tmp_project, "bitrix-widget", logout_all=False)
+
+        stdout = capsys.readouterr().out
+        token = _env_value_from_file(tmp_project / ".env", WIDGET_ENV)
+        assert token not in stdout
+        assert f"{WIDGET_ENV}=<generated>" in stdout
+        assert "Restart required for the running web app/widget API" in stdout
+
+    def test_rotate_bitrix_widget_missing_token_env_fails(
+        self, tmp_project: Path, auth_cfg: dict, capsys: Any
+    ) -> None:
+        cfg = dict(auth_cfg)
+
+        code = _do_rotate(cfg, tmp_project, "bitrix-widget", logout_all=False)
+
+        stderr = capsys.readouterr().err
+        assert code == 1
+        assert "Error: bitrix.widget.token_env is not configured" in stderr
+
+
 class TestUnsupportedFlags:
     def test_logout_all_with_single_principal_fails(
         self, tmp_project: Path, auth_cfg: dict
@@ -399,6 +456,14 @@ class TestHandleAuthCli:
         env_content = (tmp_project / ".env").read_text(encoding="utf-8")
         assert "old-session-secret" not in env_content
         assert "old-token-1" in env_content
+
+    def test_auth_rotate_bitrix_widget(self, tmp_project: Path) -> None:
+        handle_auth_cli(["rotate", "bitrix-widget"], tmp_project)
+        env_content = (tmp_project / ".env").read_text(encoding="utf-8")
+        assert "old-widget-token" not in env_content
+        assert "old-session-secret" in env_content
+        assert "old-token-1" in env_content
+        assert "old-token-2" in env_content
 
     def test_no_args_returns_error(self, tmp_project: Path) -> None:
         code = handle_auth_cli([], tmp_project)
@@ -470,6 +535,7 @@ class TestEnsureWebAuthEnv:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         env_path = tmp_project_no_env / ".env"
         assert not env_path.exists()
         ensure_web_auth_env(
@@ -480,6 +546,7 @@ class TestEnsureWebAuthEnv:
         assert "BEEAGENT_WEB_ADMIN1_TOKEN=" in content
         assert "BEEAGENT_WEB_ADMIN2_TOKEN=" in content
         assert "BEEAGENT_WEB_SESSION_SECRET=" in content
+        assert "BITRIX_ROP_WIDGET_TOKEN=" in content
 
     def test_bootstrap_fills_empty_env_keys_in_place(
         self, tmp_project_with_empty_env: Path, monkeypatch: Any
@@ -487,6 +554,7 @@ class TestEnsureWebAuthEnv:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         env_path = tmp_project_with_empty_env / ".env"
         ensure_web_auth_env(
             tmp_project_with_empty_env,
@@ -502,6 +570,8 @@ class TestEnsureWebAuthEnv:
         assert len(admin1_lines) == 1
         val = admin1_lines[0].split("=", 1)[1]
         assert val != ""
+        widget_val = _env_value_from_file(env_path, WIDGET_ENV)
+        assert widget_val != ""
 
     def test_bootstrap_does_not_overwrite_existing_env(self, tmp_project: Path) -> None:
         ensure_web_auth_env(tmp_project, tmp_project / "config" / "settings.yml")
@@ -509,6 +579,7 @@ class TestEnsureWebAuthEnv:
         assert "old-token-1" in content
         assert "old-token-2" in content
         assert "old-session-secret" in content
+        assert "old-widget-token" in content
 
     def test_bootstrap_preserves_unrelated_values(
         self, tmp_project_no_env: Path, monkeypatch: Any
@@ -516,6 +587,7 @@ class TestEnsureWebAuthEnv:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         env_path = tmp_project_no_env / ".env"
         env_path.write_text("UNRELATED=keep-me\n", encoding="utf-8")
         ensure_web_auth_env(
@@ -528,6 +600,7 @@ class TestEnsureWebAuthEnv:
         self, tmp_project_no_env: Path, monkeypatch: Any
     ) -> None:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         ensure_web_auth_env(
             tmp_project_no_env, tmp_project_no_env / "config" / "settings.yml"
         )
@@ -539,6 +612,7 @@ class TestEnsureWebAuthEnv:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         ensure_web_auth_env(
             tmp_project_no_env, tmp_project_no_env / "config" / "settings.yml"
         )
@@ -569,6 +643,7 @@ class TestEnsureWebAuthEnv:
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN1_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
         monkeypatch.delenv("BEEAGENT_WEB_SESSION_SECRET", raising=False)
+        monkeypatch.delenv("BITRIX_ROP_WIDGET_TOKEN", raising=False)
         ensure_web_auth_env(
             tmp_project_no_env, tmp_project_no_env / "config" / "settings.yml"
         )

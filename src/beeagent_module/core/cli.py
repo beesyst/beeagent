@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,8 @@ def handle_rop_run(
         logger=logger,
     )
 
+    _validate_mailbox_env_for_sources(effective_settings)
+
     run_id = args.run_id
 
     logger.info(
@@ -98,23 +101,35 @@ def handle_rop_run(
         print("\n" + operator_text + "\n")
 
         effective_run_id = str(result.get("run_id") or run_id or "")
-        try:
-            tsv_output_path = _export_review_tsv_for_run(
-                storage_dir=storage_dir,
-                run_id=effective_run_id,
-                logger=logger,
-            )
-        except Exception as exc:
-            logger.error(
-                "ROP CLI: review TSV export failed for run_id=%s: %s",
-                effective_run_id,
-                exc,
-            )
-            raise RopCliError(
-                f"ROP run completed but review TSV export failed: {exc}"
-            ) from exc
 
-        print("Paste this TSV into Google Sheets for human review.")
+        normalized_path_for_tsv = (
+            storage_dir / "runs" / effective_run_id / "normalized_events.json"
+        )
+        if normalized_path_for_tsv.exists():
+            try:
+                tsv_output_path = _export_review_tsv_for_run(
+                    storage_dir=storage_dir,
+                    run_id=effective_run_id,
+                    logger=logger,
+                )
+                print("Paste this TSV into Google Sheets for human review.")
+            except Exception as exc:
+                logger.error(
+                    "ROP CLI: review TSV export failed for run_id=%s: %s",
+                    effective_run_id,
+                    exc,
+                )
+                raise RopCliError(
+                    f"ROP run completed but review TSV export failed: {exc}"
+                ) from exc
+        else:
+            logger.warning(
+                "ROP CLI: review TSV export skipped: "
+                "normalized events artifact missing for run_id=%s",
+                effective_run_id,
+            )
+            if _result_requires_run_failure(result):
+                raise RopCliError(_build_run_failure_message(result))
 
         try:
             state = build_rop_current_state(
@@ -390,6 +405,64 @@ def _apply_source_overrides(
     return effective
 
 
+def _validate_mailbox_env_for_sources(
+    effective_settings: dict,
+) -> None:
+    sources = effective_settings.get("rop", {}).get("sources", [])
+    enabled = [s for s in sources if s.get("enabled", False)]
+
+    for source in enabled:
+        if source.get("source_type") != "mailbox_readonly":
+            continue
+
+        sid = str(source.get("source_id") or "unknown")
+        mailbox_cfg = source.get("mailbox")
+        if not isinstance(mailbox_cfg, dict):
+            raise RopCliError(
+                f"Invalid config for enabled ROP source {sid}:\n"
+                "- mailbox\n\n"
+                "mailbox_readonly sources require mailbox.username_env and "
+                "mailbox.password_env in config."
+            )
+
+        missing_config: list[str] = []
+        username_env_raw = mailbox_cfg.get("username_env")
+        password_env_raw = mailbox_cfg.get("password_env")
+        username_env = (
+            username_env_raw.strip() if isinstance(username_env_raw, str) else ""
+        )
+        password_env = (
+            password_env_raw.strip() if isinstance(password_env_raw, str) else ""
+        )
+
+        if not username_env:
+            missing_config.append("mailbox.username_env")
+        if not password_env:
+            missing_config.append("mailbox.password_env")
+
+        if missing_config:
+            config_list = "\n".join(f"- {name}" for name in missing_config)
+            raise RopCliError(
+                f"Invalid config for enabled ROP source {sid}:\n"
+                f"{config_list}\n\n"
+                "mailbox_readonly sources require these config values before run."
+            )
+
+        missing: list[str] = []
+        for env_name in (username_env, password_env):
+            val = os.environ.get(env_name, "").strip()
+            if not val:
+                missing.append(env_name)
+
+        if missing:
+            env_list = "\n".join(f"- {name}" for name in missing)
+            raise RopCliError(
+                f"Missing required env for ROP source {sid}:\n"
+                f"{env_list}\n\n"
+                "Add values to .env and retry."
+            )
+
+
 def _export_review_tsv_for_run(
     storage_dir: Any,
     run_id: str,
@@ -470,6 +543,36 @@ def _export_review_tsv_for_run(
         len(tsv_rows),
     )
     return tsv_output_path.as_posix()
+
+
+def _result_requires_run_failure(result: dict[str, Any]) -> bool:
+    status = str(result.get("status") or "").strip().lower()
+    module_status = str(result.get("module_status") or "").strip().lower()
+    return status in {"degraded", "error"} or module_status in {"degraded", "error"}
+
+
+def _build_run_failure_message(result: dict[str, Any]) -> str:
+    status = str(result.get("status") or "unknown")
+    module_status = str(result.get("module_status") or "unknown")
+    summary = str(result.get("summary") or "ROP run did not complete successfully")
+
+    reason = ""
+    source = result.get("source")
+    if isinstance(source, dict):
+        reason = str(source.get("reason") or "").strip()
+    if not reason:
+        reason = str(result.get("reason") or "").strip()
+
+    if reason:
+        return (
+            f"ROP run degraded: status={status} module_status={module_status} "
+            f"reason={reason} summary={summary}"
+        )
+
+    return (
+        f"ROP run degraded: status={status} module_status={module_status} "
+        f"summary={summary}"
+    )
 
 
 def _build_summary_text(summary_data: dict[str, Any]) -> str:
