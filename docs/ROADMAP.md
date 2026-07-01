@@ -6700,6 +6700,799 @@ SCA is not required unless dependencies change.
 - `pyproject.toml.version` unchanged;
 - `beeagent-rop` unchanged.
 
+### Итерация 32 — ROP Customer Delivery MVP: evaluation gate, routing map, recommendations and Bitrix widget API
+
+**Статус:** DONE
+
+#### Goal
+
+Собрать финальный customer-delivery слой для ROP MVP: BeeAgent должен уметь оценить качество классификации по reviewed TSV, построить context/routing evidence, сформировать read-only/draft-only рекомендации, показать их в Web UI и отдать через защищённый Bitrix widget API без CRM/mailbox write-back.
+
+Целевой flow:
+
+```text
+ROP run artifacts
+→ context enrichment
+→ evaluation gate
+→ Bitrix match scoring
+→ routing map
+→ rop_recommendations.json
+→ Web UI recommendations tab
+→ Bitrix widget API
+→ customer acceptance / real-mail review
+```
+
+#### Почему это нужно
+
+После It31 BeeAgent уже умеет:
+
+```text
+mailbox/json source
+→ normalized events with bounded body preview
+→ thread context
+→ beeagent-rop classification
+→ AI assist evidence
+→ Bitrix reconciliation
+→ action drafts
+→ ROP dashboard
+→ event-level review workbench
+```
+
+Но для сдачи заказчику всё ещё не хватает delivery layer:
+
+- нет формального quality gate по reviewed TSV;
+- нет отдельного `rop_evaluation.json`, который показывает, достигли ли мы acceptance targets;
+- existing-deal письма при слабом контексте могут выглядеть как `irrelevant/ignore`, хотя должны уходить в `manual_review` или AI fallback;
+- Bitrix matching всё ещё требует финального scoring/threshold contract, чтобы один sender с несколькими лидами/сделками не превращал всё в `ambiguous`;
+- нет единого routing map:
+
+```text
+case_type + case_subtype + recommended_queue + correct_action + bitrix_match_status
+→ queue/category/action draft/recommendation
+```
+
+- нет customer-facing recommendations artifact;
+- Web UI показывает evidence, но не имеет отдельной вкладки с ценными рекомендациями;
+- Bitrix пока не получает read-only widget payload с рекомендациями.
+
+Итерация закрывает именно сдачный слой:
+
+```text
+что обработано
+что классифицировано
+что спорно
+что нужно проверить РОПу
+куда это должно попасть как draft routing
+что видно в Web UI
+что видно в Bitrix widget API
+```
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+- email-derived and CRM-derived operational data exposed through new Web/API surfaces;
+- Bitrix widget token/auth boundary;
+- AI provider profile/env handling;
+- artifact parsing/serialization;
+- routing/recommendation artifacts may influence future CRM actions;
+- strict read-only/draft-only boundary must be preserved.
+
+#### Scope
+
+**Включено:**
+
+##### 1. Classification evaluation gate
+
+Добавить CLI command:
+
+```bash
+./start.sh rop evaluate-review --run-id <run_id>
+```
+
+и/или:
+
+```bash
+./start.sh rop evaluate-review --tsv storage/runs/<run_id>/rop_review_table.tsv
+```
+
+Создать artifact:
+
+```text
+storage/runs/<run_id>/rop_evaluation.json
+```
+
+Метрики:
+
+```text
+case_type_accuracy
+case_subtype_accuracy
+recommended_queue_accuracy
+correct_action_accuracy
+should_rop_see_accuracy
+fallback_rate
+ai_fallback_rate
+manual_review_rate
+critical_false_negative_rate
+existing_deal_as_irrelevant_count
+bitrix_ambiguous_rate
+```
+
+Rules:
+
+- evaluator must be tolerant to missing optional human columns;
+- missing human labels produce `not_evaluable` metric state, not crash;
+- acceptance target is reported in artifact, not hidden in tests;
+- quality target is a readiness gate, not a hardcoded runtime rule.
+
+Acceptance target:
+
+```text
+case_type_accuracy >= 0.90
+critical_false_negative_rate <= 0.05
+existing_deal_as_irrelevant_count == 0
+  or all such cases are routed to manual_review / AI fallback
+```
+
+##### 2. Context enrichment artifact
+
+Добавить artifact:
+
+```text
+storage/runs/<run_id>/rop_context_enrichment.json
+```
+
+Он должен объединять safe evidence:
+
+```text
+event
+thread_context
+previous_event_classification
+Bitrix candidate context
+sender history within current run
+subject/thread similarity
+source metadata
+```
+
+Rules:
+
+- BeeAgent does not overwrite module-owned classification silently;
+- if classifier says `irrelevant`, but thread/Bitrix/sender evidence indicates possible existing deal, delivery layer must route the event to `manual_review` or AI fallback;
+- final recommendation/action must not become `ignore` when existing-deal evidence is present;
+- all overrides must be explicit and traceable as delivery safety routing, not hidden classification mutation.
+
+##### 3. Bitrix ambiguity scoring hardening
+
+Усилить existing Bitrix reconciliation scoring so `ambiguous` is not the default for all emails from one sender.
+
+Allowed scoring signals:
+
+```text
+sender email exact
+phone exact
+thread_id / previous entity
+subject similarity
+deal title similarity
+date window
+active/open stage boost
+closed/lost stage penalty
+source_role
+case_subtype
+```
+
+Rules:
+
+```text
+score >= strong_threshold + clear winner
+→ matched_lead / matched_deal
+
+weak_threshold <= score < strong_threshold
+→ weak_match
+
+several close candidates
+→ ambiguous
+
+several strong candidates
+→ duplicate_candidate
+
+no candidate + connector ok
+→ not_found
+
+connector failed
+→ connector_degraded / error
+```
+
+Required invariant:
+
+```text
+not_found != connector failure
+weak_match != matched
+ambiguous != matched
+missing Bitrix artifact != not_found
+```
+
+If thresholds become configurable, source of truth must be:
+
+```text
+config/settings.yml -> bitrix.reconciliation.scoring
+```
+
+and keys must be validated fail-fast.
+
+##### 4. AI provider profiles
+
+Replace or extend current `rop.ai_assist` contract with explicit provider profiles:
+
+```yaml
+rop:
+  ai_assist:
+    enabled: false
+    profile: openai
+    max_events_per_run: 20
+    request_timeout_seconds: 30
+    min_ai_confidence: 0.70
+    dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+```
+
+Rules:
+
+- default disabled;
+- when enabled and not dry-run, selected profile envs must fail fast if missing;
+- no hidden fallback to generic `llm.*`;
+- no provider secrets in logs/artifacts/API/HTML;
+- all providers are openai-compatible transport profiles;
+- AI runs only for eligible fallback/manual-review/ambiguous/weak/low-confidence cases;
+- confident deterministic results must not trigger AI;
+- AI output must remain structured, validated and non-executing;
+- AI cannot execute or request CRM/mailbox/Bitrix write-back;
+- merge must use public `beeagent-rop` contract if available;
+- if public merge is unavailable, deterministic result is preserved and degraded status is recorded.
+
+##### 5. ROP routing map
+
+Добавить config/artifact-backed routing map.
+
+Source of truth:
+
+```yaml
+rop:
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
+```
+
+Create/update interface artifact:
+
+```text
+storage/interfaces/rop_routing_map.json
+```
+
+Routing input:
+
+```text
+case_type
+case_subtype
+recommended_queue
+correct_action
+bitrix_match_status
+bitrix_match_quality
+safe_to_use_as_target
+context_enrichment flags
+```
+
+Routing examples:
+
+```text
+new_lead + not_found
+→ queue=sales
+→ action=create_lead_draft
+→ target_category=sales
+
+new_lead + tender
+→ queue=tender
+→ action=create_tender_lead_draft
+→ target_category=tenders
+
+existing_deal + logistics + safe matched deal
+→ queue=logistics
+→ action=attach_to_deal_draft
+
+existing_deal + invoice
+→ queue=finance
+→ action=attach_finance_note_draft
+
+weak_match / ambiguous / duplicate_candidate
+→ queue=manual_review
+→ action=choose_correct_entity
+
+possible_existing_deal_but_context_weak
+→ queue=manual_review
+→ action=manual_review_required
+```
+
+Rules:
+
+- routing is draft-only;
+- no CRM write-back;
+- no mailbox action;
+- no hidden client-specific hardcoding outside config and explicit ROP delivery mapping.
+
+##### 6. Recommendations artifact
+
+Создать artifact:
+
+```text
+storage/runs/<run_id>/rop_recommendations.json
+```
+
+Recommended CLI command:
+
+```bash
+./start.sh rop recommendations --run-id <run_id>
+```
+
+Recommendation item shape:
+
+```json
+{
+  "event_id": "evt-001",
+  "title": "Review new request",
+  "summary": "Client requested pricing for welding equipment.",
+  "recommended_action": "create_lead_draft",
+  "recommended_queue": "sales",
+  "target_bitrix_category": "sales",
+  "priority": "high",
+  "reason": "New classified request was not found in Bitrix.",
+  "confidence": 0.91,
+  "ai_used": false,
+  "bitrix_status": "not_found",
+  "safe_to_execute": false,
+  "requires_human_confirmation": true,
+  "evidence_links": []
+}
+```
+
+Allowed recommendation actions:
+
+```text
+create_lead_draft
+create_tender_lead_draft
+attach_to_existing_deal
+attach_logistics_note
+attach_finance_note
+attach_procurement_note
+choose_correct_bitrix_entity
+check_duplicate
+ignore
+manual_review_required
+check_bitrix_connector
+```
+
+Rules:
+
+- `safe_to_execute=false` for every item in It32;
+- `requires_human_confirmation=true` for every non-ignore item;
+- recommendations must be derived from artifacts/routing map, not from new CRM calls;
+- missing Bitrix evidence must produce `unreconciled/manual_review`, not `not_found`.
+
+##### 7. Bitrix widget API
+
+Добавить read-only endpoints:
+
+```text
+GET /api/bitrix/rop/widget
+GET /api/bitrix/rop/widget/events
+GET /api/bitrix/rop/widget/events/{event_id}
+```
+
+Config:
+
+```yaml
+bitrix:
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
+```
+
+Rules:
+
+- default disabled;
+- when enabled, `BITRIX_ROP_WIDGET_TOKEN` must exist;
+- token must be provided through header, not logged query params;
+- no token value in logs/artifacts/API/HTML;
+- routes read existing artifacts only;
+- routes must not call Bitrix REST API;
+- routes must not mutate storage;
+- routes must not execute module/capability/AI/mailbox actions;
+- if `web.auth.enabled=true`, existing auth boundary remains for normal Web/API routes; widget token is the explicit integration boundary for widget endpoints.
+
+Expected widget payload:
+
+```json
+{
+  "ok": true,
+  "read_only": true,
+  "data": {
+    "summary": {
+      "high_priority": 4,
+      "needs_review": 7,
+      "lost_in_bitrix": 3,
+      "ambiguous": 2,
+      "ai_assisted": 5
+    },
+    "items": [
+      {
+        "event_id": "evt-001",
+        "priority": "high",
+        "sender": "client@example.com",
+        "subject": "Request for welding machine",
+        "summary": "Client asks for a quotation.",
+        "recommended_action": "create_lead_draft",
+        "recommended_queue": "sales",
+        "target_bitrix_category": "sales",
+        "bitrix_status": "not_found",
+        "confidence": 0.91,
+        "ai_used": false,
+        "reason": "New request was not found in Bitrix.",
+        "detail_url": "/api/bitrix/rop/widget/events/evt-001"
+      }
+    ]
+  },
+  "warnings": [],
+  "meta": {}
+}
+```
+
+##### 8. Web UI recommendations parity
+
+Добавить вкладку:
+
+```text
+/rop?tab=recommendations
+```
+
+Update `config/beeui.yml` page tabs if needed.
+
+Web UI must show the same recommendation data as Bitrix widget:
+
+```text
+title
+summary
+recommended_action
+recommended_queue
+target_bitrix_category
+priority
+confidence
+ai_used
+bitrix_status
+reason
+detail link
+evidence links
+safe_to_execute
+requires_human_confirmation
+```
+
+Rules:
+
+- Web UI remains read-only;
+- no POST/action route;
+- no config editing;
+- no widget token rendering;
+- no raw `.eml`;
+- no raw attachment content.
+
+#### Не включено
+
+Не делать в It32:
+
+```text
+automatic crm.item.add
+automatic crm.item.update
+automatic timeline comments
+automatic Bitrix tasks
+mailbox delete/archive/reply/mark-as-read
+web-triggered ROP run
+operator POST actions
+saving human review decisions
+OCR
+PDF/DOCX/XLSX deep parsing
+React frontend
+legacy web removal
+SQLAdmin
+1C
+manager scoring
+production listener
+```
+
+Write-back remains only draft/read-only:
+
+```text
+safe_to_execute=false
+requires_human_confirmation=true
+```
+
+#### Deliverable
+
+BeeAgent can build a customer-delivery read-only recommendation layer:
+
+```bash
+./start.sh rop evaluate-review --run-id <run_id>
+./start.sh rop recommendations --run-id <run_id>
+./start.sh rop dashboard --period 7d --run-id <run_id>
+./start.sh rop mvp-pack --period 7d --run-id <run_id>
+```
+
+Expected artifacts:
+
+```text
+storage/runs/<run_id>/rop_context_enrichment.json
+storage/runs/<run_id>/rop_evaluation.json
+storage/runs/<run_id>/rop_recommendations.json
+storage/interfaces/rop_routing_map.json
+```
+
+Updated artifacts/read-models:
+
+```text
+storage/runs/<run_id>/bitrix_reconciliation.json
+storage/runs/<run_id>/rop_action_drafts.json
+storage/runs/<run_id>/rop_current_state.json
+storage/interfaces/rop_dashboard.json
+storage/runs/<run_id>/rop_mvp_pack.json
+storage/runs/<run_id>/rop_mvp_report.md
+```
+
+New API:
+
+```text
+/api/bitrix/rop/widget
+/api/bitrix/rop/widget/events
+/api/bitrix/rop/widget/events/{event_id}
+```
+
+New Web tab:
+
+```text
+/rop?tab=recommendations
+```
+
+#### Config / contract impact
+
+Expected config changes:
+
+```text
+config/settings.yml -> rop.ai_assist profile/profiles
+config/settings.yml -> rop.routing
+config/settings.yml -> bitrix.widget
+optional config/settings.yml -> bitrix.reconciliation.scoring
+config/beeui.yml -> ROP recommendations tab
+```
+
+New required config keys must be validated fail-fast in:
+
+```text
+src/beeagent_module/core/settings.py
+```
+
+Artifact contract changes:
+
+```text
+storage/runs/<run_id>/rop_context_enrichment.json
+storage/runs/<run_id>/rop_evaluation.json
+storage/runs/<run_id>/rop_recommendations.json
+storage/interfaces/rop_routing_map.json
+```
+
+CLI/runtime changes:
+
+```text
+./start.sh rop evaluate-review
+./start.sh rop recommendations
+```
+
+API/UI changes:
+
+```text
+GET /api/bitrix/rop/widget
+GET /api/bitrix/rop/widget/events
+GET /api/bitrix/rop/widget/events/{event_id}
+GET /rop?tab=recommendations
+```
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or bitrix or ai or widget or ui"
+```
+
+Targeted tests:
+
+```text
+evaluate-review creates rop_evaluation.json
+evaluate-review handles missing optional human columns
+evaluation calculates case_type_accuracy
+evaluation calculates critical_false_negative_rate
+evaluation detects existing_deal_as_irrelevant_count
+context enrichment creates rop_context_enrichment.json
+possible existing deal is not routed to ignore
+existing_deal weak context goes to manual_review or AI fallback eligibility
+Bitrix strong candidate selects clear winner
+Bitrix weak candidate becomes weak_match
+Bitrix several close candidates become ambiguous
+Bitrix connector failure is not not_found
+ambiguous is not default for same sender
+OpenAI profile config validates
+DeepSeek profile config validates
+LM Studio profile config validates
+selected AI profile missing env fails fast when enabled and not dry-run
+AI runs only for eligible events
+AI invalid output is rejected/degraded
+AI cannot request write-back execution
+routing map config validates
+storage/interfaces/rop_routing_map.json is created
+rop_recommendations.json is created
+recommendations are read-only/draft-only
+safe_to_execute is false
+requires_human_confirmation is true for non-ignore recommendations
+Bitrix widget disabled returns safe disabled response
+Bitrix widget enabled requires token
+Bitrix widget rejects missing/invalid token
+Bitrix widget payload works
+Bitrix widget event detail works
+Web UI recommendations tab renders
+Widget/Web UI use same recommendation source data
+GET routes do not mutate storage
+no CRM write method called
+no mailbox destructive action called
+```
+
+Smoke:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id rop_batch_sample \
+  --items-max 20 \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop reconcile-bitrix \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop action-drafts \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop current \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop dashboard \
+  --period 7d \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop recommendations \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop evaluate-review \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py rop mvp-pack \
+  --period 7d \
+  --run-id smoke-it32-delivery
+
+uv run python config/start.py web \
+  --host 127.0.0.1 \
+  --port 8780 \
+  --no-open
+```
+
+Manual:
+
+```text
+GET /rop?tab=recommendations&run_id=smoke-it32-delivery
+GET /api/bitrix/rop/widget
+GET /api/bitrix/rop/widget/events
+GET /api/bitrix/rop/widget/events/<event_id>
+```
+
+Security/static checks:
+
+```bash
+rg -n "crm\.item\.add|crm\.item\.update|crm\.item\.delete|crm\.timeline|task\.item\.add" src tests || true
+
+rg -n "BITRIX_WEBHOOK|BITRIX_ROP_WIDGET_TOKEN|ROP_AI_.*KEY|OPENAI_API_KEY|password|secret|token" \
+  logs storage/runs storage/interfaces || true
+
+rg -n "raw_eml|message/rfc822|attachment_content|content_bytes|payload_bytes" \
+  storage/runs storage/interfaces src tests || true
+
+git diff -- pyproject.toml uv.lock
+```
+
+SAST required.
+
+SCA only if dependencies change.
+
+DAST-style route/API misuse checks required for:
+
+```text
+/rop?tab=recommendations
+/api/bitrix/rop/widget
+/api/bitrix/rop/widget/events
+/api/bitrix/rop/widget/events/{event_id}
+```
+
+IAST not required.
+
+Fuzzing optional for malformed reviewed TSV / malformed recommendation artifacts.
+
+#### DoD
+
+- `rop_evaluation.json` is created;
+- evaluation reports acceptance/readiness metrics;
+- evaluation distinguishes not-evaluable metrics from failed metrics;
+- existing-deal-as-irrelevant risk is visible and routed to manual review / AI fallback eligibility;
+- `rop_context_enrichment.json` is created;
+- Bitrix scoring no longer treats all same-sender candidates as `ambiguous` by default;
+- weak Bitrix candidates are not treated as safe matched targets;
+- AI provider profiles exist and validate fail-fast;
+- AI remains disabled by default;
+- AI runs only for eligible events;
+- AI output cannot execute or request write-back;
+- routing map is config/artifact-backed;
+- `storage/interfaces/rop_routing_map.json` is created;
+- `rop_recommendations.json` is created;
+- recommendations are visible in Web UI;
+- recommendations are available through Bitrix widget API;
+- widget endpoints are protected by token/auth boundary;
+- widget routes read existing artifacts only;
+- no CRM/mailbox/Bitrix mutation exists;
+- no POST/write/operator action route is added;
+- no raw `.eml` / raw attachment content / secrets appear in logs/artifacts/API/HTML;
+- `beeagent-rop` is not changed unless a public contract blocker is explicitly documented;
+- BeeAgent core does not contain ROP classification rules;
+- docs are updated;
+- tests and required security checks are completed;
+- `pyproject.toml.version` is not changed.
+
 ---
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

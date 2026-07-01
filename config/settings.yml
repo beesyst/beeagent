@@ -96,14 +96,46 @@ rop:
     body_chars_max: 4000
   ai_assist:
     enabled: false
-    provider: openai_compatible
-    model_env: ROP_AI_MODEL
-    api_key_env: ROP_AI_API_KEY
-    base_url_env: ROP_AI_BASE_URL
+    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
   attachments: # настройки для извлечения вложений из событий ROP
     enabled: true # true/false - включить/выключить извлечение вложений из событий ROP
     chars_max: 500 # макс. число символов для извлечения из одного вложения
@@ -163,3 +195,8 @@ bitrix:
     enabled: false # true/false - включить/выключить reconciliation по умолчанию
     candidate_limit: 20 # максимальное число кандидатов на одно событие
     window_date: 180 # окно поиска по дате события (дней назад)
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50

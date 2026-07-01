@@ -23,9 +23,6 @@ from beeagent_module.interfaces.ui.artifacts import (
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
-from beeagent_module.interfaces.ui.rop_event_detail import (
-    build_rop_event_detail_page_model,
-)
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
@@ -35,6 +32,9 @@ from beeagent_module.interfaces.ui.read_model import (
     build_rop_page_layout,
     build_run_detail,
     build_runs_list,
+)
+from beeagent_module.interfaces.ui.rop_event_detail import (
+    build_rop_event_detail_page_model,
 )
 
 
@@ -236,6 +236,7 @@ class BeeAgentUiAdapter:
                         "bitrix",
                         "threads",
                         "ai_assist",
+                        "recommendations",
                     }
                 )
                 if tab not in allowed_tabs:

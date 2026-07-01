@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
@@ -327,6 +328,7 @@ _PUBLIC_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/health"),
     re.compile(r"^/static/"),
     re.compile(r"^/auth/"),
+    re.compile(r"^/api/bitrix/rop/widget(?:/|$)"),
 ]
 
 
@@ -848,8 +850,380 @@ def _register_custom_routes(
         finally:
             reset_current_locale(token)
 
+    _register_bitrix_widget_routes(app, adapter, logger)
+
     logger.info(
         "BeeAgent custom routes registered: "
         "/health, /api/modules, /api/rop/dashboard, "
-        "/api/rop/events/{event_id}, /rop/events/{event_id}"
+        "/api/rop/events/{event_id}, /rop/events/{event_id}, "
+        "/api/bitrix/rop/widget, /api/bitrix/rop/widget/events, "
+        "/api/bitrix/rop/widget/events/{event_id}"
     )
+
+
+def _register_bitrix_widget_routes(
+    app: FastAPI,
+    adapter: BeeAgentUiAdapter,
+    logger: logging.Logger,
+) -> None:
+    @app.get("/api/bitrix/rop/widget", include_in_schema=False)
+    async def bitrix_rop_widget(request: Request) -> JSONResponse:
+        settings = getattr(app.state, "beeagent_settings", {})
+        widget_cfg = settings.get("bitrix", {}).get("widget", {})
+        widget_enabled = (
+            widget_cfg.get("enabled", False) if isinstance(widget_cfg, dict) else False
+        )
+
+        if not widget_enabled:
+            return _ok_json(
+                {
+                    "summary": {
+                        "high_priority": 0,
+                        "needs_review": 0,
+                        "lost_in_bitrix": 0,
+                        "ambiguous": 0,
+                        "ai_assisted": 0,
+                    },
+                    "items": [],
+                },
+                meta={
+                    "widget_disabled": True,
+                    "message": "Bitrix widget API is disabled in config",
+                },
+            )
+
+        token_env = widget_cfg.get("token_env", "BITRIX_ROP_WIDGET_TOKEN")
+        expected_token = os.environ.get(token_env, "")
+        if not expected_token:
+            return _error_json(
+                "widget_config_error",
+                "Widget token env not configured",
+                status_code=503,
+            )
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return _error_json(
+                "unauthorized",
+                "Missing or invalid Authorization header",
+                status_code=401,
+            )
+
+        import hmac
+
+        provided_token = auth_header[7:]
+        if not hmac.compare_digest(provided_token, expected_token):
+            return _error_json(
+                "unauthorized",
+                "Invalid widget token",
+                status_code=401,
+            )
+
+        storage_dir = getattr(app.state, "beeagent_storage_dir", None)
+        if storage_dir is None:
+            return _error_json("server_error", "Storage unavailable", status_code=503)
+
+        run_id = request.query_params.get("run_id")
+        if not run_id:
+            runs_dir = storage_dir / "runs"
+            if runs_dir.is_dir():
+                run_dirs = sorted(
+                    (d for d in runs_dir.iterdir() if d.is_dir()),
+                    key=lambda d: d.stat().st_mtime,
+                    reverse=True,
+                )
+                if run_dirs:
+                    run_id = run_dirs[0].name
+
+        if not run_id:
+            return _ok_json(
+                {
+                    "summary": {
+                        "high_priority": 0,
+                        "needs_review": 0,
+                        "lost_in_bitrix": 0,
+                        "ambiguous": 0,
+                        "ai_assisted": 0,
+                    },
+                    "items": [],
+                },
+                warnings=[{"code": "no_runs", "message": "No runs available"}],
+            )
+
+        try:
+            from beeui_module.adapters.ids import validate_run_id
+
+            validate_run_id(run_id)
+        except Exception:
+            return _error_json("invalid_run_id", "Invalid run_id", status_code=400)
+
+        max_items = widget_cfg.get("max_items", 50)
+
+        rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
+        if not rec_path.exists():
+            return _ok_json(
+                {
+                    "summary": {
+                        "high_priority": 0,
+                        "needs_review": 0,
+                        "lost_in_bitrix": 0,
+                        "ambiguous": 0,
+                        "ai_assisted": 0,
+                    },
+                    "items": [],
+                },
+                warnings=[
+                    {
+                        "code": "no_recommendations",
+                        "message": f"No recommendations for run {run_id}",
+                    }
+                ],
+            )
+
+        import json as json_mod
+
+        try:
+            rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
+        except json_mod.JSONDecodeError, OSError:
+            return _error_json(
+                "malformed_artifact",
+                "Failed to read recommendations artifact",
+                status_code=500,
+            )
+
+        if not isinstance(rec_data, dict):
+            return _error_json(
+                "malformed_artifact",
+                "Invalid recommendations artifact format",
+                status_code=500,
+            )
+
+        items_raw = rec_data.get("items", [])
+        if not isinstance(items_raw, list):
+            items_raw = []
+
+        serializable_items: list[dict[str, Any]] = []
+        summary = {
+            "high_priority": 0,
+            "needs_review": 0,
+            "lost_in_bitrix": 0,
+            "ambiguous": 0,
+            "ai_assisted": 0,
+        }
+
+        for item in items_raw[:max_items]:
+            priority = str(item.get("priority", "medium"))
+            if priority == "high":
+                summary["high_priority"] += 1
+            if item.get("requires_human_confirmation"):
+                summary["needs_review"] += 1
+            if item.get("bitrix_status") == "not_found":
+                summary["lost_in_bitrix"] += 1
+            if item.get("bitrix_status") == "ambiguous":
+                summary["ambiguous"] += 1
+            if item.get("ai_used"):
+                summary["ai_assisted"] += 1
+
+            event_id = str(item.get("event_id", ""))
+            evidence_links = item.get("evidence_links", [])
+            if not isinstance(evidence_links, list):
+                evidence_links = []
+
+            safe_item = {
+                "event_id": event_id,
+                "title": str(item.get("title", "")),
+                "priority": str(item.get("priority", "")),
+                "sender": str(item.get("sender", "")),
+                "subject": str(item.get("subject", "")),
+                "summary": str(item.get("summary", "")),
+                "recommended_action": str(item.get("recommended_action", "")),
+                "recommended_queue": str(item.get("recommended_queue", "")),
+                "target_bitrix_category": str(item.get("target_bitrix_category", "")),
+                "bitrix_status": str(item.get("bitrix_status", "")),
+                "confidence": float(item.get("confidence", 0.0))
+                if isinstance(item.get("confidence"), (int, float))
+                else 0.0,
+                "ai_used": bool(item.get("ai_used")),
+                "reason": str(item.get("reason", "")),
+                "safe_to_execute": bool(item.get("safe_to_execute", False)),
+                "requires_human_confirmation": bool(
+                    item.get("requires_human_confirmation", False)
+                ),
+                "evidence_links": [
+                    str(link) for link in evidence_links if isinstance(link, str)
+                ],
+                "detail_url": (
+                    f"/api/bitrix/rop/widget/events/{quote(event_id, safe='')}"
+                    f"?run_id={quote(run_id, safe='')}"
+                ),
+            }
+            serializable_items.append(safe_item)
+
+        widget_data = {
+            "summary": summary,
+            "items": serializable_items,
+        }
+
+        return _ok_json(
+            widget_data,
+            meta={
+                "run_id": run_id,
+                "read_only": True,
+            },
+        )
+
+    @app.get("/api/bitrix/rop/widget/events", include_in_schema=False)
+    async def bitrix_rop_widget_events(request: Request) -> JSONResponse:
+        return await bitrix_rop_widget(request)
+
+    @app.get("/api/bitrix/rop/widget/events/{event_id}", include_in_schema=False)
+    async def bitrix_rop_widget_event_detail(
+        request: Request,
+        event_id: str,
+    ) -> JSONResponse:
+        settings = getattr(app.state, "beeagent_settings", {})
+        widget_cfg = settings.get("bitrix", {}).get("widget", {})
+        widget_enabled = (
+            widget_cfg.get("enabled", False) if isinstance(widget_cfg, dict) else False
+        )
+
+        if not widget_enabled:
+            return _error_json(
+                "widget_disabled",
+                "Bitrix widget API is disabled in config",
+                status_code=503,
+            )
+
+        token_env = widget_cfg.get("token_env", "BITRIX_ROP_WIDGET_TOKEN")
+        expected_token = os.environ.get(token_env, "")
+        if not expected_token:
+            return _error_json(
+                "widget_config_error",
+                "Widget token env not configured",
+                status_code=503,
+            )
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return _error_json(
+                "unauthorized",
+                "Missing or invalid Authorization header",
+                status_code=401,
+            )
+
+        import hmac
+
+        provided_token = auth_header[7:]
+        if not hmac.compare_digest(provided_token, expected_token):
+            return _error_json(
+                "unauthorized",
+                "Invalid widget token",
+                status_code=401,
+            )
+
+        storage_dir = getattr(app.state, "beeagent_storage_dir", None)
+        if storage_dir is None:
+            return _error_json("server_error", "Storage unavailable", status_code=503)
+
+        run_id = request.query_params.get("run_id")
+        if not run_id:
+            runs_dir = storage_dir / "runs"
+            if runs_dir.is_dir():
+                run_dirs = sorted(
+                    (d for d in runs_dir.iterdir() if d.is_dir()),
+                    key=lambda d: d.stat().st_mtime,
+                    reverse=True,
+                )
+                if run_dirs:
+                    run_id = run_dirs[0].name
+
+        if not run_id:
+            return _error_json("missing_run_id", "run_id is required", status_code=400)
+
+        try:
+            from beeui_module.adapters.ids import validate_run_id
+
+            validate_run_id(run_id)
+        except Exception:
+            return _error_json("invalid_run_id", "Invalid run_id", status_code=400)
+
+        if _is_path_traversal(event_id):
+            return _error_json("invalid_event_id", "Invalid event_id", status_code=400)
+
+        rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
+        if not rec_path.exists():
+            return _error_json(
+                "not_found",
+                f"No recommendations for run {run_id}",
+                status_code=404,
+            )
+
+        import json as json_mod
+
+        try:
+            rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
+        except json_mod.JSONDecodeError, OSError:
+            return _error_json(
+                "malformed_artifact",
+                "Failed to read recommendations artifact",
+                status_code=500,
+            )
+
+        if not isinstance(rec_data, dict):
+            return _error_json(
+                "malformed_artifact",
+                "Invalid recommendations artifact format",
+                status_code=500,
+            )
+
+        items_raw = rec_data.get("items", [])
+        if not isinstance(items_raw, list):
+            items_raw = []
+
+        for item in items_raw:
+            if str(item.get("event_id", "")) == event_id:
+                evidence_links = item.get("evidence_links", [])
+                if not isinstance(evidence_links, list):
+                    evidence_links = []
+
+                safe_item = {
+                    "event_id": str(item.get("event_id", "")),
+                    "title": str(item.get("title", "")),
+                    "summary": str(item.get("summary", "")),
+                    "priority": str(item.get("priority", "")),
+                    "sender": str(item.get("sender", "")),
+                    "subject": str(item.get("subject", "")),
+                    "recommended_action": str(item.get("recommended_action", "")),
+                    "recommended_queue": str(item.get("recommended_queue", "")),
+                    "target_bitrix_category": str(
+                        item.get("target_bitrix_category", "")
+                    ),
+                    "bitrix_status": str(item.get("bitrix_status", "")),
+                    "confidence": float(item.get("confidence", 0.0))
+                    if isinstance(item.get("confidence"), (int, float))
+                    else 0.0,
+                    "ai_used": bool(item.get("ai_used")),
+                    "reason": str(item.get("reason", "")),
+                    "safe_to_execute": bool(item.get("safe_to_execute", False)),
+                    "requires_human_confirmation": bool(
+                        item.get("requires_human_confirmation")
+                    ),
+                    "evidence_links": [
+                        str(link) for link in evidence_links if isinstance(link, str)
+                    ],
+                }
+                return _ok_json(
+                    safe_item,
+                    meta={
+                        "run_id": run_id,
+                        "read_only": True,
+                    },
+                )
+
+        return _error_json(
+            "not_found",
+            f"Event {event_id} not found in recommendations for run {run_id}",
+            status_code=404,
+        )
+
+    logger.info("Bitrix widget API routes registered")

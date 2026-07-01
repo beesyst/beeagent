@@ -18,6 +18,7 @@ from beeagent_module.core.mailbox_selection import (
 from beeagent_module.core.module_registry import ModuleRegistry, build_registry
 from beeagent_module.core.module_runtime import execute_module_case
 from beeagent_module.core.rop_ai_assist import (
+    resolve_ai_profile,
     run_ai_assist_for_event,
     write_ai_assist_artifacts,
 )
@@ -966,6 +967,11 @@ def run_rop_batch_case(
 
         ai_cfg = settings.get("rop", {}).get("ai_assist", {})
         ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
+        effective_ai_cfg = (
+            resolve_ai_profile(ai_cfg)
+            if ai_enabled and isinstance(ai_cfg, dict)
+            else {}
+        )
 
         ai_requests: list[dict[str, Any]] = []
         ai_decisions: list[dict[str, Any]] = []
@@ -993,7 +999,7 @@ def run_rop_batch_case(
 
                 assist_result = run_ai_assist_for_event(
                     event=event,
-                    ai_cfg=ai_cfg,
+                    ai_cfg=effective_ai_cfg,
                     thread_context=tc,
                     min_ai_confidence=min_conf,
                     logger=logger,

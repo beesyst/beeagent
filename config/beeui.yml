@@ -128,6 +128,11 @@ pages:
             en: Bitrix
             ru: Битрикс
           href: /rop?tab=bitrix
+        - id: recommendations
+          title:
+            en: Recommendations
+            ru: Рекомендации
+          href: /rop?tab=recommendations
     blocks: []
 
   - id: runs

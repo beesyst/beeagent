@@ -11,8 +11,10 @@ from beeagent_module.core.cli import (
     handle_rop_action_drafts,
     handle_rop_current,
     handle_rop_dashboard,
+    handle_rop_evaluate_review,
     handle_rop_export_review,
     handle_rop_mvp_pack,
+    handle_rop_recommendations,
     handle_rop_reconcile_bitrix,
     handle_rop_run,
     handle_rop_summary,
@@ -153,6 +155,10 @@ def _handle_rop_cli(
             handle_rop_mvp_pack(args, settings=settings, logger=logger)
         elif args.rop_command == "action-drafts":
             handle_rop_action_drafts(args, logger=logger)
+        elif args.rop_command == "evaluate-review":
+            handle_rop_evaluate_review(args, logger=logger)
+        elif args.rop_command == "recommendations":
+            handle_rop_recommendations(args, settings=settings, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)

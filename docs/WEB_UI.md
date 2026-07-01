@@ -41,6 +41,13 @@
 - existing artifacts в `storage/`
   - `storage/runs/<run_id>/...`
   - `storage/interfaces/modules.json`
+- `config/settings.yml`
+  - `bitrix.widget`
+  - `rop.routing`
+- `storage/runs/<run_id>/rop_recommendations.json`
+  - source for recommendations tab and Bitrix widget payload
+- `storage/interfaces/rop_routing_map.json`
+  - source for routing map evidence / routing contract
 
 UI не хранит отдельный runtime state и не создаёт второй source of truth.
 
@@ -67,6 +74,9 @@ UI не хранит отдельный runtime state и не создаёт в�
 - auth boundary реализован через BeeUI session/role layer;
 - нет non-auth operator POST/write actions и runtime control endpoints;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
+- recommendations tab является частью ROP dashboard;
+- recommendations tab читает delivery recommendations из `rop_recommendations.json`;
+- recommendations tab отделён от legacy deterministic dashboard recommendations;
 - локализация UI: en по умолчанию, ru через `?lang=ru`, конфигурация в `config/beeui.yml`;
 - product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
 - `/rop` рендерится как BeeUI generic adapter custom page;
@@ -101,7 +111,8 @@ CLI overrides:
 - `/health` — health check
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
-- `/rop` — ROP operator dashboard
+- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, ai_assist, sources, attachments, evidence, bitrix, recommendations)
+- `/rop?tab=recommendations` — read-only, artifact-backed ROP recommendations tab
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
 - `/runs/{run_id}/artifacts/{artifact_id}` — browser artifact detail route, BeeUI-owned HTML
@@ -129,6 +140,99 @@ Query parameters:
 - `/api/rop/events/{event_id}` — ROP event detail read-only JSON envelope
 - `/api/runs/{run_id}/artifacts`
 - `/api/runs/{run_id}/artifacts/{artifact_id}`
+- `/api/bitrix/rop/widget` — Bitrix widget summary (read-only, token-protected)
+- `/api/bitrix/rop/widget/events` — Bitrix widget events (alias for widget)
+- `/api/bitrix/rop/widget/events/{event_id}` — Bitrix widget event detail (read-only, token-protected)
+
+## ROP recommendations tab contract
+
+`/rop?tab=recommendations` — read-only, artifact-backed вкладка ROP dashboard.
+
+Источник данных:
+
+- `storage/runs/<run_id>/rop_recommendations.json`
+
+Recommendations tab читает delivery recommendations из `rop_recommendations.json`.
+Она не должна использовать legacy deterministic dashboard recommendations как основной источник данных.
+
+Доступные поля в текущем scope:
+
+- `event_id`
+- `sender`
+- `subject`
+- `title`
+- `summary`
+- `recommended_action`
+- `recommended_queue`
+- `target_bitrix_category`
+- `priority`
+- `reason`
+- `confidence`
+- `ai_used`
+- `bitrix_status`
+- `safe_to_execute`
+- `requires_human_confirmation`
+- `evidence_links`
+- `detail_url`
+
+Contract constraints:
+
+- `safe_to_execute` в текущем scope должен оставаться `false`;
+- UI не создаёт POST/write actions;
+- UI не должен выполнять CRM/Bitrix/mailbox/module mutations;
+- non-ignore recommendations требуют human confirmation.
+
+## Bitrix widget API contract
+
+Routes:
+
+- `GET /api/bitrix/rop/widget`
+- `GET /api/bitrix/rop/widget/events`
+- `GET /api/bitrix/rop/widget/events/{event_id}`
+
+Config source of truth:
+
+- `config/settings.yml`
+  - `bitrix.widget.enabled`
+  - `bitrix.widget.token_env`
+  - `bitrix.widget.default_period`
+  - `bitrix.widget.max_items`
+
+Auth:
+
+- route-level `Authorization: Bearer <token>`;
+- token value читается из env variable, имя которой задаётся через `bitrix.widget.token_env`;
+- widget routes не защищаются BeeUI session auth, потому что это integration boundary для Bitrix embedding;
+- при `bitrix.widget.enabled=true` routes всё равно защищены widget Bearer token.
+
+Behavior:
+
+- read-only;
+- artifact-backed;
+- читает `storage/runs/<run_id>/rop_recommendations.json`;
+- не вызывает Bitrix REST;
+- не делает CRM/Bitrix/mailbox/module/capability mutations;
+- summary/list route при `bitrix.widget.enabled=false` возвращает safe disabled envelope;
+- detail route при disabled widget возвращает unavailable/error envelope.
+
+List/detail payload в текущем scope должен включать:
+
+- `title`
+- `priority`
+- `sender`
+- `subject`
+- `summary`
+- `recommended_action`
+- `recommended_queue`
+- `target_bitrix_category`
+- `bitrix_status`
+- `confidence`
+- `ai_used`
+- `reason`
+- `safe_to_execute`
+- `requires_human_confirmation`
+- `evidence_links`
+- `detail_url`
 
 ## Auth mode (UI-7)
 
@@ -203,6 +307,7 @@ API routes:
 - `/health` — public sanitized health check (без details runtime state)
 - `/static/*` — public static assets
 - `/auth/*` — auth routes owned by BeeUI (login/logout/CSRF)
+- `/api/bitrix/rop/widget*` — integration boundary, не требует BeeUI session cookie, но при enabled widget требует route-level Bearer token
 
 ### Unauthenticated response
 
@@ -488,6 +593,7 @@ Browser route показывает bounded/redacted artifact preview через 
 | `rop_ai_assist_results_json`      | `rop_ai_assist_results.json`                          |
 
 UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
+It32 artifacts `rop_context_enrichment.json`, `rop_recommendations.json` и `rop_evaluation.json` в текущей реализации не входят в generic artifact allowlist. Recommendations tab и widget API читают `rop_recommendations.json` через read-model/widget code, а не через browser artifact viewer.
 
 ROP dashboard поддерживает period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
 
@@ -741,7 +847,8 @@ Backward-compatible поля сохранены:
 - `sources`: source health details;
 - `attachments`: attachment processing summary;
 - `evidence`: allowlisted evidence links;
-- `bitrix`: read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state.
+- `bitrix`: read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state;
+- `recommendations`: delivery recommendations из `rop_recommendations.json`.
 
 BeeAgent не держит manual HTML builders/templates для `/rop`.
 
@@ -755,6 +862,7 @@ Web Console должен соблюдать:
 - no mailbox/CRM/module/capability execution from GET routes;
 - no web-triggered module/capability/mailbox/CRM execution;
 - no web-triggered `rop run`;
+- no widget-triggered execution;
 - no raw `.eml` rendering;
 - no `message/rfc822` attachment rendering;
 - no attachment content rendering;
@@ -854,7 +962,10 @@ Sanitization rules:
 - DB-backed user management;
 - POST/write actions;
 - CRM/mailbox actions;
+- CRM/Bitrix write-back;
 - web-triggered ROP run;
+- widget-triggered execution;
+- save-human-decision UI flow;
 - production deployment hardening;
 - attachment parsing/OCR;
 - full attachment-aware dashboard with per-file detail viewer;

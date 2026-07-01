@@ -14,6 +14,7 @@ from beeagent_module.core.cli import (
     _tsv_columns,
     create_rop_parser,
     handle_rop_dashboard,
+    handle_rop_evaluate_review,
     handle_rop_export_review,
     handle_rop_mvp_pack,
     handle_rop_run,
@@ -679,9 +680,9 @@ class TestRopCliExportReview:
 
 
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_35_fields(self) -> None:
+    def test_tsv_columns_order_has_41_fields(self) -> None:
         columns = _tsv_columns()
-        assert len(columns) == 35
+        assert len(columns) == 41
         expected_order = [
             "event_id",
             "source_id",
@@ -694,6 +695,10 @@ class TestRopTsvEnriched:
             "body_short",
             "attachments",
             "bot_case_type",
+            "bot_case_subtype",
+            "bot_recommended_queue",
+            "bot_should_rop_see",
+            "bot_correct_action",
             "bot_reason_code",
             "bot_priority",
             "bot_confidence",
@@ -709,7 +714,10 @@ class TestRopTsvEnriched:
             "action_queue",
             "action_draft_id",
             "human_case_type",
-            "should_rop_see",
+            "human_case_subtype",
+            "human_recommended_queue",
+            "human_should_rop_see",
+            "human_correct_action",
             "bitrix_status",
             "notes",
             "bitrix_lead_id",
@@ -717,7 +725,6 @@ class TestRopTsvEnriched:
             "bitrix_responsible",
             "is_duplicate",
             "duplicate_of",
-            "correct_action",
         ]
         assert columns == expected_order
 
@@ -1151,7 +1158,10 @@ class TestRopTsvEnriched:
         assert row["bot_priority"] == ""
         assert row["bot_reasoning"] == ""
         assert row["human_case_type"] == ""
-        assert row["should_rop_see"] == ""
+        assert row["human_case_subtype"] == ""
+        assert row["human_recommended_queue"] == ""
+        assert row["human_should_rop_see"] == ""
+        assert row["human_correct_action"] == ""
         assert row["bitrix_status"] == ""
         assert row["bitrix_lead_id"] == ""
         assert row["bitrix_deal_id"] == ""
@@ -1159,7 +1169,6 @@ class TestRopTsvEnriched:
         assert row["is_duplicate"] == ""
         assert row["duplicate_of"] == ""
         assert row["notes"] == ""
-        assert row["correct_action"] == ""
 
     def test_tsv_bitrix_placeholders_empty(
         self,
@@ -1282,3 +1291,32 @@ class TestRopTsvEnriched:
         assert "From: test@example.com" not in tsv_content
         assert "This should not be exported" not in tsv_content
         assert "secret.txt (text/plain, 100)" in tsv_content
+
+
+class TestRopEvaluateReview:
+    def test_rejects_invalid_run_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: Path("/tmp"))
+
+        args = argparse.Namespace(run_id="../etc/passwd", tsv=None)
+
+        with pytest.raises(RopCliError, match="Invalid run_id"):
+            handle_rop_evaluate_review(args, logger=_null_logger())
+
+    def test_rejects_path_traversal_with_valid_charset(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: Path("/tmp"))
+
+        args = argparse.Namespace(run_id="safe..unsafe", tsv=None)
+
+        with pytest.raises(RopCliError, match="Invalid run_id"):
+            handle_rop_evaluate_review(args, logger=_null_logger())

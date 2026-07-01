@@ -58,6 +58,21 @@ REQUIRED_KEYS = (
     ("web", "auth", "mode"),
     ("web", "auth", "session_secret_env"),
     ("web", "auth", "principals"),
+    ("rop", "ai_assist", "profile"),
+    ("rop", "ai_assist", "profiles"),
+    ("rop", "routing"),
+    ("bitrix", "widget", "enabled"),
+    ("bitrix", "widget", "token_env"),
+    ("bitrix", "widget", "default_period"),
+    ("bitrix", "widget", "max_items"),
+)
+_REQUIRED_ROP_ROUTING_QUEUES: tuple[str, ...] = (
+    "sales",
+    "tender",
+    "logistics",
+    "finance",
+    "procurement",
+    "manual_review",
 )
 
 
@@ -281,6 +296,7 @@ def validate_settings(settings: dict) -> None:
 
     _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
+    _validate_rop_routing_settings(settings)
 
     input_sources = _get_nested_value(settings, ("rop", "sources"))
     if not isinstance(input_sources, list):
@@ -393,6 +409,7 @@ def validate_settings(settings: dict) -> None:
     _validate_rop_dashboard_settings(settings)
 
     _validate_bitrix_settings(settings)
+    _validate_bitrix_widget_settings(settings)
 
     _validate_web_auth_settings(settings)
 
@@ -563,25 +580,77 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
             "Unsupported old rop.ai_assist config keys: " + ", ".join(found_old_keys)
         )
 
+    unsupported_transport_keys = {
+        "provider",
+        "model_env",
+        "api_key_env",
+        "base_url_env",
+    }
+    found_transport_keys = sorted(unsupported_transport_keys.intersection(ai_cfg))
+    if found_transport_keys:
+        raise RuntimeError(
+            "Unsupported top-level rop.ai_assist transport keys: "
+            + ", ".join(found_transport_keys)
+        )
+
     if not isinstance(ai_cfg.get("enabled"), bool):
         raise RuntimeError("Invalid type for rop.ai_assist.enabled, expected bool")
 
-    provider = ai_cfg.get("provider")
-    if not isinstance(provider, str) or not provider.strip():
+    profile_name = ai_cfg.get("profile")
+    if not isinstance(profile_name, str) or not profile_name.strip():
         raise RuntimeError(
-            "Invalid or missing rop.ai_assist.provider, expected non-empty string"
-        )
-    if provider != "openai_compatible":
-        raise RuntimeError(
-            "Unsupported rop.ai_assist.provider, expected 'openai_compatible'"
+            "Invalid or missing rop.ai_assist.profile, expected non-empty string"
         )
 
-    for key in ("model_env", "api_key_env", "base_url_env"):
-        value = ai_cfg.get(key)
+    profiles = ai_cfg.get("profiles")
+    if not isinstance(profiles, dict):
+        raise RuntimeError("Invalid type for rop.ai_assist.profiles, expected mapping")
+
+    _SUPPORTED_PROFILES = {"openai", "deepseek", "lmstudio", "custom"}
+    if profile_name not in _SUPPORTED_PROFILES:
+        raise RuntimeError(
+            f"Unsupported rop.ai_assist.profile '{profile_name}', "
+            f"expected one of: {sorted(_SUPPORTED_PROFILES)}"
+        )
+
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        raise RuntimeError(
+            f"Missing rop.ai_assist.profiles.{profile_name}, expected mapping"
+        )
+
+    if profile.get("provider") != "openai_compatible":
+        raise RuntimeError(
+            f"Unsupported rop.ai_assist.profiles.{profile_name}.provider, "
+            "expected 'openai_compatible'"
+        )
+
+    for env_key in ("base_url_env", "api_key_env", "model_env"):
+        value = profile.get(env_key)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
-                f"Invalid or missing rop.ai_assist.{key}, expected non-empty string"
+                f"Invalid or missing rop.ai_assist.profiles.{profile_name}.{env_key}, "
+                "expected non-empty string"
             )
+
+    for other_name in _SUPPORTED_PROFILES - {profile_name}:
+        other = profiles.get(other_name)
+        if not isinstance(other, dict):
+            raise RuntimeError(
+                f"Missing rop.ai_assist.profiles.{other_name}, expected mapping"
+            )
+        if other.get("provider") != "openai_compatible":
+            raise RuntimeError(
+                f"Unsupported rop.ai_assist.profiles.{other_name}.provider, "
+                "expected 'openai_compatible'"
+            )
+        for env_key in ("base_url_env", "api_key_env", "model_env"):
+            value = other.get(env_key)
+            if not isinstance(value, str) or not value.strip():
+                raise RuntimeError(
+                    f"Invalid or missing rop.ai_assist.profiles.{other_name}.{env_key}, "
+                    "expected non-empty string"
+                )
 
     events_max = ai_cfg.get("events_max")
     if not isinstance(events_max, int) or events_max <= 0:
@@ -604,7 +673,7 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
     if ai_cfg.get("enabled") and not dry_run:
         missing_env_vars: list[str] = []
         for key in ("model_env", "api_key_env", "base_url_env"):
-            env_name = ai_cfg[key]
+            env_name = profile[key]
             if not os.getenv(env_name, "").strip():
                 missing_env_vars.append(env_name)
 
@@ -748,6 +817,82 @@ def _validate_bitrix_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid bitrix.reconciliation.window_date, expected int > 0"
         )
+
+
+def _validate_rop_routing_settings(settings: dict) -> None:
+    routing_cfg = _get_nested_value(settings, ("rop", "routing"))
+    if routing_cfg is None:
+        return
+    if not isinstance(routing_cfg, dict):
+        raise RuntimeError("Invalid type for rop.routing, expected mapping")
+
+    queues = routing_cfg.get("queues")
+    if not isinstance(queues, dict) or not queues:
+        raise RuntimeError(
+            "Invalid or missing rop.routing.queues, expected non-empty mapping"
+        )
+
+    missing_queues = [
+        queue_name
+        for queue_name in _REQUIRED_ROP_ROUTING_QUEUES
+        if queue_name not in queues
+    ]
+    if missing_queues:
+        raise RuntimeError(
+            "Missing required rop.routing.queues: " + ", ".join(missing_queues)
+        )
+
+    for queue_name, queue_cfg in queues.items():
+        if not isinstance(queue_cfg, dict):
+            raise RuntimeError(
+                f"Invalid type for rop.routing.queues.{queue_name}, expected mapping"
+            )
+        bitrix_category = queue_cfg.get("bitrix_category")
+        if not isinstance(bitrix_category, str) or not bitrix_category.strip():
+            raise RuntimeError(
+                f"Invalid or missing rop.routing.queues.{queue_name}.bitrix_category, "
+                "expected non-empty string"
+            )
+
+
+def _validate_bitrix_widget_settings(settings: dict) -> None:
+    widget_cfg = _get_nested_value(settings, ("bitrix", "widget"))
+    if widget_cfg is None:
+        return
+    if not isinstance(widget_cfg, dict):
+        raise RuntimeError("Invalid type for bitrix.widget, expected mapping")
+
+    if not isinstance(widget_cfg.get("enabled"), bool):
+        raise RuntimeError("Invalid type for bitrix.widget.enabled, expected bool")
+
+    token_env = widget_cfg.get("token_env")
+    if not isinstance(token_env, str) or not token_env.strip():
+        raise RuntimeError(
+            "Invalid or missing bitrix.widget.token_env, expected non-empty string"
+        )
+
+    default_period = widget_cfg.get("default_period")
+    if not isinstance(default_period, str) or not default_period.strip():
+        raise RuntimeError(
+            "Invalid or missing bitrix.widget.default_period, expected non-empty string"
+        )
+    if default_period not in _ALLOWED_DASHBOARD_PERIODS:
+        raise RuntimeError(
+            f"Invalid bitrix.widget.default_period '{default_period}', "
+            f"expected one of: {sorted(_ALLOWED_DASHBOARD_PERIODS)}"
+        )
+
+    max_items = widget_cfg.get("max_items")
+    if not isinstance(max_items, int) or max_items <= 0:
+        raise RuntimeError("Invalid bitrix.widget.max_items, expected int > 0")
+
+    if widget_cfg.get("enabled"):
+        token_value = os.getenv(token_env, "")
+        if not token_value:
+            raise RuntimeError(
+                f"Missing required env var '{token_env}' "
+                f"when bitrix.widget.enabled=true"
+            )
 
 
 def _get_nested_value(settings: dict, key_path: tuple[str, ...]):

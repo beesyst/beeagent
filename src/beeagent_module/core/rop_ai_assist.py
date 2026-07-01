@@ -10,6 +10,28 @@ from urllib import request
 _AI_ASSIST_PROVIDER = "openai_compatible"
 
 
+def resolve_ai_profile(ai_cfg: dict[str, Any]) -> dict[str, Any]:
+    profile_name = ai_cfg.get("profile", "")
+    profiles = ai_cfg.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise RuntimeError("rop.ai_assist.profiles must be a mapping")
+    if not isinstance(profile_name, str) or not profile_name:
+        raise RuntimeError("rop.ai_assist.profile must be configured")
+
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        raise RuntimeError(f"Unknown rop.ai_assist.profile: {profile_name}")
+
+    return {
+        "provider": profile["provider"],
+        "model_env": profile["model_env"],
+        "api_key_env": profile["api_key_env"],
+        "base_url_env": profile["base_url_env"],
+        "request_timeout": ai_cfg.get("request_timeout", 30),
+        "dry_run": ai_cfg.get("dry_run", False),
+    }
+
+
 def _build_assist_prompt(
     event: dict[str, Any],
     thread_context: dict[str, Any] | None,
@@ -180,16 +202,16 @@ def _call_ai_provider(
     prompt: str,
     logger: logging.Logger,
 ) -> str | None:
-    provider = ai_cfg.get("provider", "openai_compatible")
+    provider = ai_cfg["provider"]
     if provider != _AI_ASSIST_PROVIDER:
         logger.warning(
             "ai_assist: unsupported provider=%s, expected openai_compatible", provider
         )
         return None
 
-    api_key_env = ai_cfg.get("api_key_env", "ROP_AI_API_KEY")
-    model_env = ai_cfg.get("model_env", "ROP_AI_MODEL")
-    base_url_env = ai_cfg.get("base_url_env", "ROP_AI_BASE_URL")
+    api_key_env = ai_cfg["api_key_env"]
+    model_env = ai_cfg["model_env"]
+    base_url_env = ai_cfg["base_url_env"]
     timeout = int(ai_cfg["request_timeout"])
     dry_run = ai_cfg.get("dry_run", False)
 
@@ -264,8 +286,8 @@ def _build_request_artifact(
     ai_cfg: dict[str, Any],
     thread_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    provider = ai_cfg.get("provider", "openai_compatible")
-    model_env = ai_cfg.get("model_env", "ROP_AI_MODEL")
+    provider = ai_cfg["provider"]
+    model_env = ai_cfg["model_env"]
     model = os.getenv(model_env, "").strip() or f"env:{model_env}"
 
     return {
