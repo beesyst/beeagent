@@ -1003,16 +1003,18 @@ rop:
       authority: "read_only"
       items_max: 10
       mailbox:
-        host: "imap.example.com"
+        host_env: "ROP_MAILBOX_HOST"
         port: 993
         use_ssl: true
-        folder: "INBOX"
+        folder_env: "ROP_MAILBOX_FOLDER"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
 ```
 
-Для `mailbox_readonly` в config хранятся только имена env-переменных.
-Сами credentials должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
+Для `mailbox_readonly` в config хранятся имена env-переменных.
+`ROP_MAILBOX_HOST` должен содержать IMAP host, например `web01.srv.welding.kz`, без `https://` и без `/webmail`.
+`ROP_MAILBOX_FOLDER` задаёт mailbox folder, например `INBOX` или `welding`.
+`ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
 
 Обязательный source profile contract для каждого `rop.sources[]`:
 

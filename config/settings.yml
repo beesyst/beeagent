@@ -163,10 +163,10 @@ rop:
       authority: "read_only" # mailbox smoke не должен выполнять destructive actions
       items_max: 20 # максимальное число писем для одного smoke-run
       mailbox:
-        host: "web01.srv.welding.kz" # IMAP host без секретов
+        host_env: "ROP_MAILBOX_HOST" # имя env переменной с IMAP host
         port: 993 # IMAP port
         use_ssl: true # использовать IMAP over SSL
-        folder: "welding" # mailbox folder для чтения
+        folder_env: "ROP_MAILBOX_FOLDER" # имя env переменной с mailbox folder
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
   dashboard:
