@@ -727,9 +727,9 @@ class TestRopCliExportReview:
 
 
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_41_fields(self) -> None:
+    def test_tsv_columns_order_has_51_fields(self) -> None:
         columns = _tsv_columns()
-        assert len(columns) == 41
+        assert len(columns) == 51
         expected_order = [
             "event_id",
             "source_id",
@@ -739,6 +739,16 @@ class TestRopTsvEnriched:
             "client_id",
             "sender",
             "subject",
+            "clean_subject",
+            "transport_labels",
+            "spam_label_present",
+            "reply_label_present",
+            "forwarded_wrapper",
+            "original_sender",
+            "original_recipient",
+            "original_message_date",
+            "date_source",
+            "x_email_id",
             "body_short",
             "attachments",
             "bot_case_type",

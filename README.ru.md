@@ -1169,6 +1169,22 @@ AI assist не является самостоятельной ROP business logi
 
 Эти поля используются для ROP event detail review page и API. Они не должны содержать raw `.eml` или attachment content.
 
+После It33 `normalized_events.json` также содержит forwarded mailbox normalization поля:
+
+- `clean_subject` — тема письма без технических префиксов (`[AUTO-FWD]`, `FWD:`, `FW:`, `RE:`, `*** SPAM ***`)
+- `transport_labels` — список transport-меток (`["auto_fwd", "fwd", "spam", "re"]`), не business labels
+- `spam_label_present` — присутствует ли `*** SPAM ***` в теме
+- `reply_label_present` — присутствует ли `RE:` в теме
+- `forwarded_wrapper` — обнаружен ли forwarded wrapper в теле письма
+- `original_sender` — оригинальный отправитель из forwarded wrapper
+- `original_recipient` — оригинальный получатель из forwarded wrapper
+- `original_message_date` — оригинальная дата из forwarded wrapper
+- `date_source` — источник даты (`original_forwarded_date`, `mailbox_header`, `fallback_order`)
+- `x_email_id` — ID из forwarded wrapper
+
+Эти поля передаются в `beeagent-rop` `lead_classification` payload и используются классификатором как weak transport signals.
+BeeAgent не принимает business-решений на основе transport labels.
+
 `classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
 После It30 `classified_events.json` также сохраняет optional ROP business fields, если они возвращены модулем или public merge contract:
 
@@ -1188,41 +1204,51 @@ AI assist не является самостоятельной ROP business logi
 
 **Base columns:**
 
-| Column                | Source            | Description                                                                         |
-| --------------------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `event_id`            | normalized_events | Уникальный ID события                                                               |
-| `source_id`           | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                 |
-| `source_type`         | intake_metadata   | Тип источника (`json_batch`, `mailbox_readonly`)                                    |
-| `source_role`         | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)  |
-| `source_display_name` | intake_metadata   | Человекочитаемое имя источника для UI/оператора                                     |
-| `client_id`           | intake_metadata   | Клиент/тенант, к которому привязан источник                                         |
-| `sender`              | normalized_events | Email отправителя письма                                                            |
-| `subject`             | normalized_events | Тема письма                                                                         |
-| `body_short`          | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |
-| `attachments`         | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" ) |
-| `bot_case_type`       | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)   |
-| `bot_case_subtype`    | classified_events | Подтип кейса, если доступен                                                         |
-| `bot_recommended_queue` | classified_events | Очередь, предложенная ботом                                                         |
-| `bot_should_rop_see`  | classified_events | Bot-level visibility hint для ROP                                                   |
-| `bot_correct_action`  | classified_events | Bot-level suggested correct action                                                  |
-| `bot_reason_code`     | classified_events | Код причины решения бота                                                            |
-| `bot_priority`        | classified_events | Приоритет (high, medium, low)                                                       |
-| `bot_confidence`      | classified_events | Confidence score (0.0 – 1.0)                                                        |
-| `bot_is_fallback`     | classified_events | Fallback решение (true/false)                                                       |
-| `bot_reasoning`       | classified_events | Объяснение решения бота (если доступно)                                             |
-| `human_case_type`     | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                               |
-| `human_case_subtype`  | rop_review        | Ручное переопределение case_subtype                                                 |
-| `human_recommended_queue` | rop_review    | Очередь, выбранная человеком                                                        |
-| `human_should_rop_see` | rop_review       | Человек указал, что ROP должен это видеть (yes/no/maybe)                            |
-| `human_correct_action` | rop_review       | Правильное действие для quality gate                                                |
-| `bitrix_status`       | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                           |
-| `notes`               | rop_review        | Заметки оператора                                                                   |
-| `bitrix_lead_id`      | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                       |
-| `bitrix_deal_id`      | rop_review        | Bitrix deal ID (зарезервировано для будущего)                                       |
-| `bitrix_responsible`  | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                               |
-| `is_duplicate`        | rop_review        | Это дубликат (true/false)                                                           |
-| `duplicate_of`        | rop_review        | ID оригинального события (если дубликат)                                            |
-| `should_rop_see` / `correct_action` | compatibility | Legacy human aliases могут встречаться в reviewed TSV и поддерживаются для evaluate-review |
+| Column                              | Source            | Description                                                                                |
+| ----------------------------------- | ----------------- | ------------------------------------------------------------------------------------------ |
+| `event_id`                          | normalized_events | Уникальный ID события                                                                      |
+| `source_id`                         | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                        |
+| `source_type`                       | intake_metadata   | Тип источника (`json_batch`, `mailbox_readonly`)                                           |
+| `source_role`                       | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)         |
+| `source_display_name`               | intake_metadata   | Человекочитаемое имя источника для UI/оператора                                            |
+| `client_id`                         | intake_metadata   | Клиент/тенант, к которому привязан источник                                                |
+| `sender`                            | normalized_events | Email отправителя письма                                                                   |
+| `subject`                           | normalized_events | Тема письма (raw-safe display field)                                                       |
+| `clean_subject`                     | normalized_events | Тема письма без технических transport-префиксов                                            |
+| `transport_labels`                  | normalized_events | Список transport-меток через запятую (auto_fwd, fwd, re, spam)                             |
+| `spam_label_present`                | normalized_events | Присутствует ли **_ SPAM _** в теме                                                        |
+| `reply_label_present`               | normalized_events | Присутствует ли RE: в теме                                                                 |
+| `forwarded_wrapper`                 | normalized_events | Обнаружен ли forwarded wrapper в теле письма                                               |
+| `original_sender`                   | normalized_events | Оригинальный отправитель из forwarded wrapper                                              |
+| `original_recipient`                | normalized_events | Оригинальный получатель из forwarded wrapper                                               |
+| `original_message_date`             | normalized_events | Оригинальная дата из forwarded wrapper                                                     |
+| `date_source`                       | normalized_events | Источник даты события (original_forwarded_date, mailbox_header, fallback_order)            |
+| `x_email_id`                        | normalized_events | X-Email-ID из forwarded wrapper                                                            |
+| `body_short`                        | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                         |
+| `attachments`                       | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" )        |
+| `bot_case_type`                     | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)          |
+| `bot_case_subtype`                  | classified_events | Подтип кейса, если доступен                                                                |
+| `bot_recommended_queue`             | classified_events | Очередь, предложенная ботом                                                                |
+| `bot_should_rop_see`                | classified_events | Bot-level visibility hint для ROP                                                          |
+| `bot_correct_action`                | classified_events | Bot-level suggested correct action                                                         |
+| `bot_reason_code`                   | classified_events | Код причины решения бота                                                                   |
+| `bot_priority`                      | classified_events | Приоритет (high, medium, low)                                                              |
+| `bot_confidence`                    | classified_events | Confidence score (0.0 – 1.0)                                                               |
+| `bot_is_fallback`                   | classified_events | Fallback решение (true/false)                                                              |
+| `bot_reasoning`                     | classified_events | Объяснение решения бота (если доступно)                                                    |
+| `human_case_type`                   | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                                      |
+| `human_case_subtype`                | rop_review        | Ручное переопределение case_subtype                                                        |
+| `human_recommended_queue`           | rop_review        | Очередь, выбранная человеком                                                               |
+| `human_should_rop_see`              | rop_review        | Человек указал, что ROP должен это видеть (yes/no/maybe)                                   |
+| `human_correct_action`              | rop_review        | Правильное действие для quality gate                                                       |
+| `bitrix_status`                     | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                                  |
+| `notes`                             | rop_review        | Заметки оператора                                                                          |
+| `bitrix_lead_id`                    | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                              |
+| `bitrix_deal_id`                    | rop_review        | Bitrix deal ID (зарезервировано для будущего)                                              |
+| `bitrix_responsible`                | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                                      |
+| `is_duplicate`                      | rop_review        | Это дубликат (true/false)                                                                  |
+| `duplicate_of`                      | rop_review        | ID оригинального события (если дубликат)                                                   |
+| `should_rop_see` / `correct_action` | compatibility     | Legacy human aliases могут встречаться в reviewed TSV и поддерживаются для evaluate-review |
 
 Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
 

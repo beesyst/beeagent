@@ -958,6 +958,16 @@ def _tsv_columns() -> list[str]:
         "client_id",
         "sender",
         "subject",
+        "clean_subject",
+        "transport_labels",
+        "spam_label_present",
+        "reply_label_present",
+        "forwarded_wrapper",
+        "original_sender",
+        "original_recipient",
+        "original_message_date",
+        "date_source",
+        "x_email_id",
         "body_short",
         "attachments",
         "bot_case_type",
@@ -1084,6 +1094,30 @@ def _build_review_tsv_rows(
             "client_id": _safe_tsv_value(classified_evt.get("client_id", "")),
             "sender": _safe_tsv_value(normalized_evt.get("sender", "")),
             "subject": _safe_tsv_value(normalized_evt.get("subject", "")),
+            "clean_subject": _safe_tsv_value(normalized_evt.get("clean_subject", "")),
+            "transport_labels": _safe_tsv_value(
+                ",".join(normalized_evt.get("transport_labels", []))
+            ),
+            "spam_label_present": _safe_tsv_value(
+                str(normalized_evt.get("spam_label_present", False)).lower()
+            ),
+            "reply_label_present": _safe_tsv_value(
+                str(normalized_evt.get("reply_label_present", False)).lower()
+            ),
+            "forwarded_wrapper": _safe_tsv_value(
+                str(normalized_evt.get("forwarded_wrapper", False)).lower()
+            ),
+            "original_sender": _safe_tsv_value(
+                normalized_evt.get("original_sender", "")
+            ),
+            "original_recipient": _safe_tsv_value(
+                normalized_evt.get("original_recipient", "")
+            ),
+            "original_message_date": _safe_tsv_value(
+                normalized_evt.get("original_message_date", "")
+            ),
+            "date_source": _safe_tsv_value(normalized_evt.get("date_source", "")),
+            "x_email_id": _safe_tsv_value(normalized_evt.get("x_email_id", "")),
             "body_short": body_short,
             "attachments": _safe_tsv_value(attachments_summary),
             "bot_case_type": _safe_tsv_value(classified_evt.get("case_type", "")),

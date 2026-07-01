@@ -66,6 +66,18 @@ _AI_MERGED_OUTPUT_KEYS = frozenset(
         "correct_action",
     }
 )
+_NORMALIZED_EVENT_CONTEXT_KEYS = (
+    "clean_subject",
+    "transport_labels",
+    "spam_label_present",
+    "reply_label_present",
+    "forwarded_wrapper",
+    "original_sender",
+    "original_recipient",
+    "original_message_date",
+    "date_source",
+    "x_email_id",
+)
 
 
 def run_rop_operator_case(
@@ -419,7 +431,7 @@ def _make_fallback_event(
     event: dict[str, Any],
     source_id: str | None,
 ) -> dict[str, Any]:
-    return {
+    fallback_event = {
         "event_id": event.get("event_id"),
         "source_id": event.get("source_id") or source_id,
         "source_type": event.get("source_type"),
@@ -439,12 +451,23 @@ def _make_fallback_event(
         "original_event_id": event.get("event_id"),
         "reasoning": "Per-event classification failed; event was converted to controlled fallback item.",
     }
+    for key in _NORMALIZED_EVENT_CONTEXT_KEYS:
+        if key in event:
+            fallback_event[key] = event.get(key)
+    return fallback_event
 
 
 def _is_blocked_email_attachment(att: dict[str, Any]) -> bool:
     filename = str(att.get("filename") or "").strip().lower()
     content_type = str(att.get("content_type") or "").strip().lower()
     return filename.endswith(".eml") or content_type == "message/rfc822"
+
+
+def _normalize_optional_iso_datetime(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
@@ -457,15 +480,25 @@ def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
         "attachment_extraction_refs",
         "attachment_refusal_reasons",
         "body",
+        "clean_subject",
+        "date_source",
         "event_id",
+        "forwarded_wrapper",
         "language_hint",
         "message_id",
+        "original_message_date",
+        "original_recipient",
+        "original_sender",
         "raw_metadata",
         "received_at",
+        "reply_label_present",
         "sender",
         "source",
+        "spam_label_present",
         "subject",
         "thread_id",
+        "transport_labels",
+        "x_email_id",
     }
     allowed_attachment_keys = {
         "attachment_id",
@@ -503,6 +536,11 @@ def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
                 filtered["body"] = preview_value
                 break
 
+    if "received_at" in filtered:
+        filtered["received_at"] = _normalize_optional_iso_datetime(
+            filtered.get("received_at")
+        )
+
     return filtered
 
 
@@ -531,6 +569,10 @@ def _attach_classification_trace(
         "attachment_refusal_reasons",
     ):
         if key not in enriched:
+            enriched[key] = source_event.get(key)
+
+    for key in _NORMALIZED_EVENT_CONTEXT_KEYS:
+        if key not in enriched and key in source_event:
             enriched[key] = source_event.get(key)
 
     return enriched
@@ -1119,6 +1161,37 @@ def run_rop_batch_case(
                 else 0
             )
 
+            forwarded_wrapper_count = sum(
+                1 for e in normalized_events if e.get("forwarded_wrapper")
+            )
+            spam_label_count = sum(
+                1 for e in normalized_events if e.get("spam_label_present")
+            )
+            transport_label_count = sum(
+                1
+                for e in normalized_events
+                if isinstance(e.get("transport_labels"), list)
+                and len(e.get("transport_labels", [])) > 0
+            )
+            original_date_used_count = sum(
+                1
+                for e in normalized_events
+                if e.get("date_source") == "original_forwarded_date"
+            )
+            date_fallback_count = sum(
+                1 for e in normalized_events if e.get("_date_fallback")
+            )
+
+            classification_diagnostics["forwarded_wrapper_count"] = (
+                forwarded_wrapper_count
+            )
+            classification_diagnostics["spam_label_count"] = spam_label_count
+            classification_diagnostics["transport_label_count"] = transport_label_count
+            classification_diagnostics["original_date_used_count"] = (
+                original_date_used_count
+            )
+            classification_diagnostics["date_fallback_count"] = date_fallback_count
+
             case_subtype_counts: dict[str, int] = {}
             recommended_queue_counts: dict[str, int] = {}
             correct_action_counts: dict[str, int] = {}
@@ -1217,6 +1290,11 @@ def run_rop_batch_case(
         classification_diagnostics.setdefault("case_subtype_counts", {})
         classification_diagnostics.setdefault("recommended_queue_counts", {})
         classification_diagnostics.setdefault("correct_action_counts", {})
+        classification_diagnostics.setdefault("forwarded_wrapper_count", 0)
+        classification_diagnostics.setdefault("spam_label_count", 0)
+        classification_diagnostics.setdefault("transport_label_count", 0)
+        classification_diagnostics.setdefault("original_date_used_count", 0)
+        classification_diagnostics.setdefault("date_fallback_count", 0)
 
     operator_summary = {
         "run_id": effective_run_id,
