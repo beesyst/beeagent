@@ -361,6 +361,50 @@ ROP dashboard использует current-state для вкладки Bitrix / 
 Артефакт: `storage/interfaces/rop_dashboard.json` с полями `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.  
 Dashboard автоматически обновляется после `rop run`, `rop current` и `reconcile-bitrix`.
 
+**`./start.sh rop action-drafts`** — сгенерировать ROP action draft артефакты из Bitrix reconciliation:
+
+```bash
+./start.sh rop action-drafts --run-id <run_id>
+```
+
+Создаёт `rop_action_drafts.json` в `storage/runs/<run_id>/` с draft action items. Действия read-only/draft-only, no CRM write-back.
+
+**`./start.sh rop evaluate-review`** — оценить качество классификации по reviewed TSV:
+
+```bash
+./start.sh rop evaluate-review --run-id <run_id>
+./start.sh rop evaluate-review --tsv storage/runs/<run_id>/rop_review_table.tsv
+```
+
+Создаёт `rop_evaluation.json` в `storage/runs/<run_id>/`. Рассчитывает метрики: `case_type_accuracy`, `critical_false_negative_rate`, `existing_deal_as_irrelevant_count` и др. 
+Missing optional human columns → `not_evaluable`, не ошибка.
+
+**`./start.sh rop recommendations`** — построить read-only/draft-only рекомендации:
+
+```bash
+./start.sh rop recommendations --run-id <run_id>
+```
+
+Создаёт:
+- `storage/interfaces/rop_routing_map.json` — routing map из `config/settings.yml → rop.routing`;
+- `storage/runs/<run_id>/rop_context_enrichment.json` — per-event enrichment evidence;
+- `storage/runs/<run_id>/rop_recommendations.json` — рекомендации.
+
+Рекомендации: `safe_to_execute=false`, `requires_human_confirmation=true` для non-ignore items.
+
+#### Bitrix widget API (It32)
+
+Read-only endpoints:
+
+```text
+GET /api/bitrix/rop/widget
+GET /api/bitrix/rop/widget/events
+GET /api/bitrix/rop/widget/events/{event_id}
+```
+
+Требуется токен через `Authorization: Bearer <token>` при `bitrix.widget.enabled=true`.
+Токен задаётся через env `BITRIX_ROP_WIDGET_TOKEN`.
+
 #### CLI overrides — в памяти только
 
 CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не меняют** `config/settings.yml`:

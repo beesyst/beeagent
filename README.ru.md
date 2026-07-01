@@ -191,6 +191,21 @@ BeeAgent уже прошёл этап **module platform v0**:
 - RU локализацию detail link: `Подробнее`;
 - сохранение границ: no raw `.eml`, no attachment content, no mailbox/CRM/Bitrix mutations.
 
+Итерация 32 добавила:
+
+- `./start.sh rop evaluate-review --run-id <run_id>`;
+- `storage/runs/<run_id>/rop_evaluation.json` — classification quality gate;
+- `storage/runs/<run_id>/rop_context_enrichment.json` — per-event context evidence;
+- `storage/runs/<run_id>/rop_recommendations.json` — read-only/draft-only recommendations;
+- `storage/interfaces/rop_routing_map.json` — config-driven routing map;
+- AI provider profiles: openai, deepseek, lmstudio, custom;
+- Web UI recommendations tab `/rop?tab=recommendations`;
+- Bitrix widget API:
+  - `GET /api/bitrix/rop/widget`;
+  - `GET /api/bitrix/rop/widget/events`;
+  - `GET /api/bitrix/rop/widget/events/{event_id}`;
+- конфиг `bitrix.widget` и `rop.routing`.
+
 Текущий фокус:
 
 1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;
@@ -232,8 +247,11 @@ run:
 ./start.sh rop run [--source-id SOURCE | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id ID]
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
+./start.sh rop evaluate-review --run-id ID
+./start.sh rop evaluate-review --tsv storage/runs/ID/rop_review_table.tsv
 ./start.sh rop reconcile-bitrix --run-id ID
 ./start.sh rop action-drafts --run-id ID
+./start.sh rop recommendations --run-id ID
 
 # ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
@@ -287,6 +305,9 @@ JSON API маршруты:
 - `/api/modules`
 - `/api/rop/dashboard` (UI-6 enriched read-only payload)
 - `/api/rop/events/<event_id>` — read-only JSON envelope для ROP event detail, требует `?run_id=<run_id>`
+- `/api/bitrix/rop/widget` — read-only Bitrix widget summary API
+- `/api/bitrix/rop/widget/events` — alias for widget summary
+- `/api/bitrix/rop/widget/events/<event_id>` — read-only Bitrix widget detail API
 
 Browser artifact маршруты:
 
@@ -308,7 +329,7 @@ API artifact маршруты:
 
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
-- HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
+- HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix, Recommendations. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
 - вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
 - при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
@@ -435,6 +456,11 @@ web:
 # Обычно не требуется, потому что rop run уже создаёт rop_review_table.tsv автоматически.
 ./start.sh rop export-review --run-id live-review-2026-05-15 --format tsv
 
+# Построить quality gate по reviewed TSV.
+# Команда пишет storage/runs/<run_id>/rop_evaluation.json.
+./start.sh rop evaluate-review --run-id live-review-2026-05-15
+./start.sh rop evaluate-review --tsv storage/runs/live-review-2026-05-15/rop_review_table.tsv
+
 # Построить current-state index для готового run.
 ./start.sh rop current --run-id live-review-2026-05-15
 
@@ -446,6 +472,9 @@ web:
 
 # Построить action drafts после reconciliation.
 ./start.sh rop action-drafts --run-id live-review-2026-05-15
+
+# Построить context enrichment, routing map и delivery recommendations.
+./start.sh rop recommendations --run-id live-review-2026-05-15
 
 # Собрать MVP handoff/readiness pack.
 ./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
@@ -762,6 +791,9 @@ configured source(s)
 → classified_events.json
 → rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если AI assist включён
 → bitrix_reconciliation.json (optional read-only evidence)
+→ rop_context_enrichment.json
+→ storage/interfaces/rop_routing_map.json
+→ rop_recommendations.json
 → rop_action_drafts.json (optional draft-only artifact)
 → rop_current_state.json / interfaces current index
 → rop_dashboard.json
@@ -770,6 +802,8 @@ configured source(s)
 → rop_mvp_pack.json / rop_mvp_report.md
 → rop_review_table.tsv, если flow запущен через ROP CLI
 ```
+
+`rop_evaluation.json` создаётся отдельно командой `rop evaluate-review`, если для run уже есть reviewed TSV.
 
 Для multi-source run `source_diagnostics.json` и `intake_metadata.json` содержат aggregate block и `sources[]` с per-source rollup.
 
@@ -990,17 +1024,39 @@ rop:
 rop:
   ai_assist:
     enabled: false
-    provider: openai_compatible
-    model_env: ROP_AI_MODEL
-    api_key_env: ROP_AI_API_KEY
-    base_url_env: ROP_AI_BASE_URL
+    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
 ```
 
-Если `enabled: true` и `dry_run: false`, BeeAgent fail-fast проверяет наличие env vars из `model_env`, `api_key_env`, `base_url_env`.
+Выбранный provider profile задаётся через `rop.ai_assist.profile`.
+BeeAgent берёт transport env names только из выбранного `rop.ai_assist.profiles.<profile>`.
+Старые top-level transport keys под `rop.ai_assist` (`provider`, `model_env`, `api_key_env`, `base_url_env`) считаются invalid config.
+
+Если `enabled: true` и `dry_run: false`, BeeAgent fail-fast проверяет наличие env vars из выбранного `profiles.<profile>`.
 
 AI assist не является самостоятельной ROP business logic. BeeAgent строит bounded request/result artifacts, а применение AI result выполняется только через public `beeagent-rop` case `ai_assist_merge`. Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
 
@@ -1048,6 +1104,9 @@ AI assist не является самостоятельной ROP business logi
 - `storage/runs/<run_id>/rop_ai_assist_requests.json`
 - `storage/runs/<run_id>/rop_ai_assist_decisions.json`
 - `storage/runs/<run_id>/rop_ai_assist_results.json`
+- `storage/runs/<run_id>/rop_context_enrichment.json`
+- `storage/runs/<run_id>/rop_recommendations.json`
+- `storage/runs/<run_id>/rop_evaluation.json`, если выполнена команда `rop evaluate-review`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
 - `storage/runs/<run_id>/rop_current_state.json`
@@ -1062,6 +1121,7 @@ AI assist не является самостоятельной ROP business logi
 - `storage/interfaces/rop_latest.json`
 - `storage/interfaces/rop_index.json`
 - `storage/interfaces/rop_dashboard.json`
+- `storage/interfaces/rop_routing_map.json`
 
 Для multi-source run:
 
@@ -1095,7 +1155,7 @@ AI assist не является самостоятельной ROP business logi
 
 **Структура `rop_review_table.tsv` (v1):**
 
-Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` и `rop action-drafts` TSV расширяется Bitrix/action columns. Суммарно актуальный TSV может содержать 35 tab-separated колонок.
+Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` и `rop action-drafts` TSV расширяется Bitrix/action columns. Число колонок stage-dependent и не должно считаться фиксированным контрактом.
 
 **Base columns:**
 
@@ -1112,13 +1172,20 @@ AI assist не является самостоятельной ROP business logi
 | `body_short`          | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                  |
 | `attachments`         | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" ) |
 | `bot_case_type`       | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)   |
+| `bot_case_subtype`    | classified_events | Подтип кейса, если доступен                                                         |
+| `bot_recommended_queue` | classified_events | Очередь, предложенная ботом                                                         |
+| `bot_should_rop_see`  | classified_events | Bot-level visibility hint для ROP                                                   |
+| `bot_correct_action`  | classified_events | Bot-level suggested correct action                                                  |
 | `bot_reason_code`     | classified_events | Код причины решения бота                                                            |
 | `bot_priority`        | classified_events | Приоритет (high, medium, low)                                                       |
 | `bot_confidence`      | classified_events | Confidence score (0.0 – 1.0)                                                        |
 | `bot_is_fallback`     | classified_events | Fallback решение (true/false)                                                       |
 | `bot_reasoning`       | classified_events | Объяснение решения бота (если доступно)                                             |
 | `human_case_type`     | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                               |
-| `should_rop_see`      | rop_review        | Человек указал, что ROP должен это видеть (yes/no/maybe)                            |
+| `human_case_subtype`  | rop_review        | Ручное переопределение case_subtype                                                 |
+| `human_recommended_queue` | rop_review    | Очередь, выбранная человеком                                                        |
+| `human_should_rop_see` | rop_review       | Человек указал, что ROP должен это видеть (yes/no/maybe)                            |
+| `human_correct_action` | rop_review       | Правильное действие для quality gate                                                |
 | `bitrix_status`       | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                           |
 | `notes`               | rop_review        | Заметки оператора                                                                   |
 | `bitrix_lead_id`      | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                       |
@@ -1126,7 +1193,7 @@ AI assist не является самостоятельной ROP business logi
 | `bitrix_responsible`  | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                               |
 | `is_duplicate`        | rop_review        | Это дубликат (true/false)                                                           |
 | `duplicate_of`        | rop_review        | ID оригинального события (если дубликат)                                            |
-| `correct_action`      | rop_review        | Правильное действие (для корректировки обучения)                                    |
+| `should_rop_see` / `correct_action` | compatibility | Legacy human aliases могут встречаться в reviewed TSV и поддерживаются для evaluate-review |
 
 Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
 
@@ -1191,11 +1258,17 @@ AI assist не является самостоятельной ROP business logi
 - body preview должен быть bounded через `rop.email_preview.body_chars_max`;
 - event detail routes должны оставаться read-only;
 - `/rop/events/{event_id}` не должен запускать module/capability/mailbox/CRM actions;
+- Bitrix widget API должен оставаться read-only и artifact-backed;
+- widget token должен жить только в env; имя env берётся из `bitrix.widget.token_env`;
+- widget API не должен вызывать Bitrix REST и не должен выполнять CRM/Bitrix/mailbox write-back;
 - `rop.ai_assist` disabled by default;
 - AI env values не пишутся в logs/artifacts;
 - при `enabled: true` и `dry_run: false` env валидируются fail-fast;
 - AI output не должен напрямую выполнять CRM/mailbox/Bitrix actions;
-- write-back/action instructions from AI output must be rejected or preserved as non-executed evidence.
+- write-back/action instructions from AI output must be rejected or preserved as non-executed evidence;
+- recommendations должны оставаться read-only/draft-only;
+- `safe_to_execute=false` в текущем scope;
+- для non-ignore recommendations требуется human confirmation.
 
 ## Статус проекта
 
@@ -1231,6 +1304,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP bounded AI assist execution v0** — DONE;
 - **ROP public AI merge boundary** — DONE;
 - **ROP Review Workbench event details** — DONE;
+- **ROP review quality gate** — DONE;
+- **ROP context enrichment** — DONE;
+- **ROP routing map** — DONE;
+- **ROP delivery recommendations** — DONE;
+- **ROP Bitrix widget API** — DONE;
+- **ROP recommendations Web UI tab** — DONE;
 - **ROP MVP handoff/readiness pack** — DONE.
 
 Первый реальный модуль:
@@ -1248,6 +1327,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
+- BeeAgent может выполнять `evaluate-review` по reviewed TSV и пишет `rop_evaluation.json`;
+- BeeAgent строит `rop_context_enrichment.json`, `storage/interfaces/rop_routing_map.json` и `rop_recommendations.json`;
 - ROP Queue ведёт на read-only event detail page `/rop/events/{event_id}?run_id=...`;
 - BeeAgent отдаёт JSON detail через `/api/rop/events/{event_id}?run_id=...`;
 - event detail HTML рендерится через BeeUI generic detail renderer;
@@ -1263,6 +1344,11 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent может строить Bitrix reconciliation artifact без CRM write-back;
 - Bitrix match quality gate не считает weak/unsafe matches безопасными target;
 - action drafts создаются как read-only/draft-only artifact, без выполнения действий в Bitrix;
+- BeeAgent строит delivery recommendations как read-only/draft-only слой в BeeAgent, а не в `beeagent-rop`;
+- Web Console показывает `/rop?tab=recommendations` поверх `rop_recommendations.json`;
+- BeeAgent отдаёт protected read-only Bitrix widget API;
+- recommendations остаются `safe_to_execute=false`, а non-ignore items требуют human confirmation;
+- It32 delivery/readiness layer находится в BeeAgent, а `beeagent-rop` остаётся владельцем domain classification / `ai_assist_merge` boundary;
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
 - controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts уже входят в scope;

@@ -12,6 +12,7 @@ from beeagent_module.core.rop_ai_assist import (
     _is_event_eligible_for_ai_assist,
     _parse_ai_response,
     _validate_ai_output,
+    resolve_ai_profile,
     run_ai_assist_for_event,
     write_ai_assist_artifacts,
 )
@@ -84,6 +85,46 @@ def _valid_settings() -> dict:
             "email_preview": {
                 "body_chars_max": 4000,
             },
+            "ai_assist": {
+                "enabled": False,
+                "profile": "openai",
+                "events_max": 20,
+                "request_timeout": 30,
+                "ai_confidence_min": 0.70,
+                "dry_run": False,
+                "profiles": {
+                    "openai": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_OPENAI_BASE_URL",
+                        "api_key_env": "ROP_AI_OPENAI_API_KEY",
+                        "model_env": "ROP_AI_OPENAI_MODEL",
+                    },
+                    "deepseek": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
+                        "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
+                        "model_env": "ROP_AI_DEEPSEEK_MODEL",
+                    },
+                    "lmstudio": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
+                        "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
+                        "model_env": "ROP_AI_LMSTUDIO_MODEL",
+                    },
+                    "custom": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_BASE_URL",
+                        "api_key_env": "ROP_AI_API_KEY",
+                        "model_env": "ROP_AI_MODEL",
+                    },
+                },
+            },
+            "routing": {
+                "queues": {
+                    "sales": {"bitrix_category": "sales"},
+                    "manual_review": {"bitrix_category": "manual_review"},
+                },
+            },
             "attachments": {
                 "enabled": True,
                 "chars_max": 500,
@@ -120,6 +161,12 @@ def _valid_settings() -> dict:
                 "candidate_limit": 20,
                 "window_date": 180,
             },
+            "widget": {
+                "enabled": False,
+                "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+                "default_period": "7d",
+                "max_items": 50,
+            },
         },
     }
 
@@ -127,14 +174,37 @@ def _valid_settings() -> dict:
 def _default_ai_cfg() -> dict:
     return {
         "enabled": False,
-        "provider": "openai_compatible",
-        "model_env": "ROP_AI_MODEL",
-        "api_key_env": "ROP_AI_API_KEY",
-        "base_url_env": "ROP_AI_BASE_URL",
+        "profile": "openai",
         "events_max": 20,
         "request_timeout": 30,
         "ai_confidence_min": 0.70,
         "dry_run": True,
+        "profiles": {
+            "openai": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_OPENAI_BASE_URL",
+                "api_key_env": "ROP_AI_OPENAI_API_KEY",
+                "model_env": "ROP_AI_OPENAI_MODEL",
+            },
+            "deepseek": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
+                "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
+                "model_env": "ROP_AI_DEEPSEEK_MODEL",
+            },
+            "lmstudio": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
+                "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
+                "model_env": "ROP_AI_LMSTUDIO_MODEL",
+            },
+            "custom": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_BASE_URL",
+                "api_key_env": "ROP_AI_API_KEY",
+                "model_env": "ROP_AI_MODEL",
+            },
+        },
     }
 
 
@@ -149,22 +219,63 @@ def test_ai_enabled_missing_env_fail_fast(monkeypatch: pytest.MonkeyPatch) -> No
     settings = _valid_settings()
     settings["rop"]["ai_assist"] = {
         "enabled": True,
-        "provider": "openai_compatible",
-        "model_env": "ROP_AI_MODEL",
-        "api_key_env": "ROP_AI_API_KEY",
-        "base_url_env": "ROP_AI_BASE_URL",
+        "profile": "openai",
         "events_max": 20,
         "request_timeout": 30,
         "ai_confidence_min": 0.70,
         "dry_run": False,
+        "profiles": {
+            "openai": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_OPENAI_BASE_URL",
+                "api_key_env": "ROP_AI_OPENAI_API_KEY",
+                "model_env": "ROP_AI_OPENAI_MODEL",
+            },
+            "deepseek": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
+                "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
+                "model_env": "ROP_AI_DEEPSEEK_MODEL",
+            },
+            "lmstudio": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
+                "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
+                "model_env": "ROP_AI_LMSTUDIO_MODEL",
+            },
+            "custom": {
+                "provider": "openai_compatible",
+                "base_url_env": "ROP_AI_BASE_URL",
+                "api_key_env": "ROP_AI_API_KEY",
+                "model_env": "ROP_AI_MODEL",
+            },
+        },
     }
 
-    monkeypatch.delenv("ROP_AI_MODEL", raising=False)
-    monkeypatch.delenv("ROP_AI_API_KEY", raising=False)
-    monkeypatch.delenv("ROP_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("ROP_AI_OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("ROP_AI_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ROP_AI_OPENAI_BASE_URL", raising=False)
 
     with pytest.raises(RuntimeError, match="Missing required ROP AI assist env vars"):
         validate_settings(settings)
+
+
+def test_ai_top_level_transport_keys_rejected() -> None:
+    from beeagent_module.core.settings import _validate_rop_ai_assist_settings
+
+    with pytest.raises(
+        RuntimeError, match="Unsupported top-level rop.ai_assist transport keys"
+    ):
+        _validate_rop_ai_assist_settings(
+            {
+                "rop": {
+                    "ai_assist": {
+                        **_default_ai_cfg(),
+                        "provider": "openai_compatible",
+                    }
+                }
+            }
+        )
 
 
 def test_eligible_fallback_event_creates_ai_request() -> None:
@@ -272,7 +383,7 @@ def test_validate_ai_output_blocked_write_back_action() -> None:
 
 def test_invalid_ai_output_degraded_path() -> None:
     event = {"event_id": "evt-001", "case_type": "unknown", "is_fallback": True}
-    cfg = _default_ai_cfg()
+    cfg = resolve_ai_profile(_default_ai_cfg())
     result = run_ai_assist_for_event(
         event=event,
         ai_cfg=cfg,
@@ -305,7 +416,7 @@ def test_provider_failure_preserves_deterministic_result(
         "is_fallback": True,
     }
 
-    cfg = dict(_default_ai_cfg())
+    cfg = resolve_ai_profile(_default_ai_cfg())
     cfg["dry_run"] = False
 
     result = run_ai_assist_for_event(
@@ -374,7 +485,7 @@ def test_build_assist_prompt_no_secrets() -> None:
 
 
 def test_dry_run_returns_placeholder() -> None:
-    cfg = dict(_default_ai_cfg())
+    cfg = resolve_ai_profile(_default_ai_cfg())
     cfg["dry_run"] = True
     prompt = "test"
     result = _call_ai_provider(cfg, prompt, _null_logger())

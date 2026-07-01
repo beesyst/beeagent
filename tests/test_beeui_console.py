@@ -363,11 +363,11 @@ def _build_settings() -> dict:
     }
 
 
-def _client(storage_dir: Path) -> TestClient:
+def _client(storage_dir: Path, settings: dict[str, Any] | None = None) -> TestClient:
     from beeagent_module.interfaces.ui.app import build_beeui_app
 
     app = build_beeui_app(
-        settings=_build_settings(),
+        settings=settings or _build_settings(),
         logger=_logger(),
         storage_dir=storage_dir,
     )
@@ -3614,6 +3614,50 @@ def _build_full_settings() -> dict:
             "email_preview": {
                 "body_chars_max": 4000,
             },
+            "ai_assist": {
+                "enabled": False,
+                "profile": "openai",
+                "events_max": 20,
+                "request_timeout": 30,
+                "ai_confidence_min": 0.70,
+                "dry_run": False,
+                "profiles": {
+                    "openai": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_OPENAI_BASE_URL",
+                        "api_key_env": "ROP_AI_OPENAI_API_KEY",
+                        "model_env": "ROP_AI_OPENAI_MODEL",
+                    },
+                    "deepseek": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
+                        "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
+                        "model_env": "ROP_AI_DEEPSEEK_MODEL",
+                    },
+                    "lmstudio": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
+                        "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
+                        "model_env": "ROP_AI_LMSTUDIO_MODEL",
+                    },
+                    "custom": {
+                        "provider": "openai_compatible",
+                        "base_url_env": "ROP_AI_BASE_URL",
+                        "api_key_env": "ROP_AI_API_KEY",
+                        "model_env": "ROP_AI_MODEL",
+                    },
+                },
+            },
+            "routing": {
+                "queues": {
+                    "sales": {"bitrix_category": "sales"},
+                    "tender": {"bitrix_category": "tenders"},
+                    "logistics": {"bitrix_category": "logistics"},
+                    "finance": {"bitrix_category": "finance"},
+                    "procurement": {"bitrix_category": "procurement"},
+                    "manual_review": {"bitrix_category": "manual_review"},
+                },
+            },
             "attachments": {
                 "enabled": False,
                 "chars_max": 100,
@@ -3626,4 +3670,229 @@ def _build_full_settings() -> dict:
                 "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
             },
         },
+        "bitrix": {
+            "enabled": False,
+            "webhook_env": "BITRIX_WEBHOOK_URL",
+            "timeout": 10,
+            "page_size": 50,
+            "pages_max": 3,
+            "types_entity": [1, 2, 3, 4],
+            "reconciliation": {
+                "enabled": False,
+                "candidate_limit": 20,
+                "window_date": 180,
+            },
+            "widget": {
+                "enabled": False,
+                "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+                "default_period": "7d",
+                "max_items": 50,
+            },
+        },
     }
+
+
+def test_rop_recommendations_tab_matches_widget_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-rec-tab")
+    recommendations = {
+        "run_id": "run-rec-tab",
+        "status": "ok",
+        "read_only": True,
+        "draft_only": True,
+        "safe_to_execute": False,
+        "aggregate": {
+            "event_count": 1,
+            "recommendation_count": 1,
+            "ignore_count": 0,
+            "manual_review_count": 0,
+            "actionable_count": 1,
+        },
+        "items": [
+            {
+                "event_id": "evt-1",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "title": "Review new request",
+                "summary": "Review the request details.",
+                "recommended_action": "create_lead_draft",
+                "recommended_queue": "sales",
+                "target_bitrix_category": "sales",
+                "priority": "high",
+                "reason": "No Bitrix entity found.",
+                "confidence": 0.91,
+                "ai_used": False,
+                "bitrix_status": "not_found",
+                "safe_to_execute": False,
+                "requires_human_confirmation": True,
+                "evidence_links": [
+                    "/api/runs/run-rec-tab/artifacts/classified_events_json"
+                ],
+            }
+        ],
+        "warnings": [],
+    }
+    (run_dir / "rop_recommendations.json").write_text(
+        json.dumps(recommendations), encoding="utf-8"
+    )
+
+    settings = _build_settings()
+    settings["bitrix"] = {
+        "widget": {
+            "enabled": True,
+            "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+            "default_period": "7d",
+            "max_items": 50,
+        }
+    }
+    monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
+    client = _client(storage_dir, settings=settings)
+
+    html_response = client.get(
+        "/rop", params={"tab": "recommendations", "run_id": "run-rec-tab"}
+    )
+    assert html_response.status_code == 200
+    assert "No recommendations" not in html_response.text
+    assert "Review new request" in html_response.text
+    assert "evt-1" in html_response.text
+    assert "create_lead_draft" in html_response.text
+    assert "sales" in html_response.text
+    assert "not_found" in html_response.text
+    assert "0.91" in html_response.text
+    assert "Evidence" in html_response.text
+    assert "/rop/events/evt-1?run_id=run-rec-tab" in html_response.text
+
+    widget_response = client.get(
+        "/api/bitrix/rop/widget",
+        params={"run_id": "run-rec-tab"},
+        headers={"Authorization": "Bearer widget-token"},
+    )
+    assert widget_response.status_code == 200
+    widget_items = widget_response.json()["data"]["items"]
+    assert [item["event_id"] for item in widget_items] == ["evt-1"]
+    assert widget_items[0]["title"] == "Review new request"
+    assert widget_items[0]["sender"] == "test@example.com"
+    assert widget_items[0]["subject"] == "Test"
+    assert widget_items[0]["safe_to_execute"] is False
+    assert widget_items[0]["requires_human_confirmation"] is True
+    assert widget_items[0]["evidence_links"] == [
+        "/api/runs/run-rec-tab/artifacts/classified_events_json"
+    ]
+    assert widget_items[0]["detail_url"].endswith(
+        "/api/bitrix/rop/widget/events/evt-1?run_id=run-rec-tab"
+    )
+
+    detail_response = client.get(
+        "/api/bitrix/rop/widget/events/evt-1",
+        params={"run_id": "run-rec-tab"},
+        headers={"Authorization": "Bearer widget-token"},
+    )
+    assert detail_response.status_code == 200
+    detail_item = detail_response.json()["data"]
+    assert detail_item["sender"] == "test@example.com"
+    assert detail_item["subject"] == "Test"
+    assert detail_item["evidence_links"] == [
+        "/api/runs/run-rec-tab/artifacts/classified_events_json"
+    ]
+
+
+def test_widget_api_allows_bearer_without_beeui_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-widget-auth")
+    (run_dir / "rop_recommendations.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-widget-auth",
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "title": "Widget item",
+                        "summary": "Summary",
+                        "sender": "sender@example.com",
+                        "subject": "Subject",
+                        "recommended_action": "create_lead_draft",
+                        "recommended_queue": "sales",
+                        "target_bitrix_category": "sales",
+                        "priority": "high",
+                        "reason": "Reason",
+                        "confidence": 0.95,
+                        "ai_used": False,
+                        "bitrix_status": "not_found",
+                        "safe_to_execute": False,
+                        "requires_human_confirmation": True,
+                        "evidence_links": [
+                            "/api/runs/run-widget-auth/artifacts/classified_events_json"
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = _build_auth_settings(enabled=True)
+    settings["bitrix"] = {
+        "widget": {
+            "enabled": True,
+            "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+            "default_period": "7d",
+            "max_items": 50,
+        }
+    }
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
+
+    client = _client(storage_dir, settings=settings)
+    response = client.get(
+        "/api/bitrix/rop/widget",
+        params={"run_id": "run-widget-auth"},
+        headers={"Authorization": "Bearer widget-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"][0]["event_id"] == "evt-1"
+
+
+def test_widget_api_rejects_missing_or_invalid_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-widget-401")
+    (run_dir / "rop_recommendations.json").write_text(
+        json.dumps({"run_id": "run-widget-401", "items": []}),
+        encoding="utf-8",
+    )
+
+    settings = _build_auth_settings(enabled=True)
+    settings["bitrix"] = {
+        "widget": {
+            "enabled": True,
+            "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+            "default_period": "7d",
+            "max_items": 50,
+        }
+    }
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
+
+    client = _client(storage_dir, settings=settings)
+    missing = client.get("/api/bitrix/rop/widget", params={"run_id": "run-widget-401"})
+    invalid = client.get(
+        "/api/bitrix/rop/widget",
+        params={"run_id": "run-widget-401"},
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+
+    assert missing.status_code == 401
+    assert invalid.status_code == 401

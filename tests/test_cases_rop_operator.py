@@ -2002,14 +2002,12 @@ def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"]["ai_assist"] = {
         "enabled": True,
-        "provider": "openai_compatible",
-        "model_env": "ROP_AI_MODEL",
-        "api_key_env": "ROP_AI_API_KEY",
-        "base_url_env": "ROP_AI_BASE_URL",
+        "profile": "openai",
         "events_max": 20,
         "request_timeout": 30,
         "ai_confidence_min": 0.40,
         "dry_run": True,
+        "profiles": settings["rop"]["ai_assist"]["profiles"],
     }
 
     batch_file = tmp_path / "batch_ai_unavailable.json"

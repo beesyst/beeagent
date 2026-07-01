@@ -107,7 +107,69 @@ rop:
       - 30d
       - 365d
       - all
+  ai_assist:
+    enabled: false
+    profile: openai
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
   sources: []
+bitrix:
+  enabled: false
+  webhook_env: BITRIX_WEBHOOK_URL
+  timeout: 10
+  page_size: 50
+  pages_max: 3
+  types_entity:
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false
+    candidate_limit: 20
+    window_date: 180
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -233,6 +295,48 @@ rop:
       - 30d
       - 365d
       - all
+  ai_assist:
+    enabled: false
+    profile: openai
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -249,6 +353,28 @@ rop:
         folder: "INBOX"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
+
+bitrix:
+  enabled: false
+  webhook_env: BITRIX_WEBHOOK_URL
+  timeout: 10
+  page_size: 50
+  pages_max: 3
+  types_entity:
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false
+    candidate_limit: 20
+    window_date: 180
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
+
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -361,6 +487,48 @@ rop:
       - 30d
       - 365d
       - all
+  ai_assist:
+    enabled: false
+    profile: openai
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -377,6 +545,28 @@ rop:
         folder: "INBOX"
         username_env: ""
         password_env: "ROP_MAILBOX_PASSWORD"
+
+bitrix:
+  enabled: false
+  webhook_env: BITRIX_WEBHOOK_URL
+  timeout: 10
+  page_size: 50
+  pages_max: 3
+  types_entity:
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false
+    candidate_limit: 20
+    window_date: 180
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
+
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -501,6 +691,48 @@ rop:
       - 30d
       - 365d
       - all
+  ai_assist:
+    enabled: false
+    profile: openai
+    events_max: 20
+    request_timeout: 30
+    ai_confidence_min: 0.70
+    dry_run: false
+    profiles:
+      openai:
+        provider: openai_compatible
+        base_url_env: ROP_AI_OPENAI_BASE_URL
+        api_key_env: ROP_AI_OPENAI_API_KEY
+        model_env: ROP_AI_OPENAI_MODEL
+      deepseek:
+        provider: openai_compatible
+        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
+        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        model_env: ROP_AI_DEEPSEEK_MODEL
+      lmstudio:
+        provider: openai_compatible
+        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
+        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        model_env: ROP_AI_LMSTUDIO_MODEL
+      custom:
+        provider: openai_compatible
+        base_url_env: ROP_AI_BASE_URL
+        api_key_env: ROP_AI_API_KEY
+        model_env: ROP_AI_MODEL
+  routing:
+    queues:
+      sales:
+        bitrix_category: sales
+      tender:
+        bitrix_category: tenders
+      logistics:
+        bitrix_category: logistics
+      finance:
+        bitrix_category: finance
+      procurement:
+        bitrix_category: procurement
+      manual_review:
+        bitrix_category: manual_review
   sources:
     - source_id: "hotline"
       source_type: "mailbox_readonly"
@@ -517,6 +749,26 @@ rop:
         folder: "INBOX"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
+bitrix:
+  enabled: false
+  webhook_env: BITRIX_WEBHOOK_URL
+  timeout: 10
+  page_size: 50
+  pages_max: 3
+  types_entity:
+    - 1
+    - 2
+    - 3
+    - 4
+  reconciliation:
+    enabled: false
+    candidate_limit: 20
+    window_date: 180
+  widget:
+    enabled: false
+    token_env: BITRIX_ROP_WIDGET_TOKEN
+    default_period: "7d"
+    max_items: 50
     """.strip()
         + "\n"
     )

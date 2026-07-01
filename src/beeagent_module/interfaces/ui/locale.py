@@ -210,6 +210,18 @@ _LABELS_EN: dict[str, str] = {
     "Some leads had no source timestamp; dashboard used run time for period filtering.": "Some leads had no source timestamp; dashboard used run time for period filtering.",
     "One or more sources reported degraded intake health.": "One or more sources reported degraded intake health.",
     "Review diagnostics for data quality notes.": "Review diagnostics for data quality notes.",
+    "Total recommendations": "Total recommendations",
+    "Actionable": "Actionable",
+    "Manual review": "Manual review",
+    "Ignore": "Ignore",
+    "Safe to execute": "Safe to execute",
+    "Action": "Action",
+    "Queue": "Queue",
+    "AI used": "AI used",
+    "Needs confirmation": "Needs confirmation",
+    "Recommendation Items": "Recommendation Items",
+    "No recommendations": "No recommendations",
+    "Run rop recommendations --run-id <id> to generate": "Run rop recommendations --run-id <id> to generate",
 }
 _LABELS_RU: dict[str, str] = {
     "Dashboard": "Дашборд",
@@ -421,6 +433,18 @@ _LABELS_RU: dict[str, str] = {
     "Manual review required": "Требуется ручная проверка",
     "Evidence artifacts": "Артефакты доказательств",
     "Back to queue": "Назад к очереди",
+    "Total recommendations": "Всего рекомендаций",
+    "Actionable": "К действию",
+    "Manual review": "Ручная проверка",
+    "Ignore": "Пропустить",
+    "Safe to execute": "Безопасно выполнить",
+    "Action": "Действие",
+    "Queue": "Очередь",
+    "AI used": "AI исп.",
+    "Needs confirmation": "Требует подтверждения",
+    "Recommendation Items": "Рекомендации",
+    "No recommendations": "Нет рекомендаций",
+    "Run rop recommendations --run-id <id> to generate": "Запустите rop recommendations --run-id <id> для генерации",
 }
 
 _CURRENT_LOCALE: ContextVar[str] = ContextVar("beeagent_ui_locale", default="en")

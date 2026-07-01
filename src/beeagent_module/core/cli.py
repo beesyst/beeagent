@@ -4,20 +4,46 @@ import argparse
 import csv
 import json
 import logging
+import re
+from pathlib import Path
 from typing import Any
 
+from beeagent_module.cases.rop_context_enrichment import (
+    build_context_enrichment,
+    write_context_enrichment_artifact,
+)
 from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
+)
+from beeagent_module.cases.rop_evaluation import (
+    evaluate_reviewed_tsv,
+    write_evaluation_artifact,
 )
 from beeagent_module.cases.rop_mvp_pack import (
     build_rop_mvp_pack,
     write_mvp_pack_artifacts,
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
+from beeagent_module.cases.rop_recommendations import (
+    build_recommendations,
+    build_routing_map,
+)
 from beeagent_module.core.paths import get_project_root, get_storage_dir
 
 REVIEW_BODY_SHORT_MAX_CHARS = 500
+_SAFE_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def _validate_cli_run_id(run_id: str) -> None:
+    if not isinstance(run_id, str):
+        raise RopCliError("Invalid run_id")
+
+    if not _SAFE_RUN_ID_RE.fullmatch(run_id):
+        raise RopCliError(f"Invalid run_id: {run_id}")
+
+    if ".." in run_id:
+        raise RopCliError(f"Invalid run_id: {run_id}")
 
 
 class RopCliError(Exception):
@@ -603,6 +629,181 @@ def _build_attachment_summary(attachments: Any) -> str:
     return _safe_tsv_value("; ".join(summaries))
 
 
+def handle_rop_evaluate_review(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+
+    if args.tsv:
+        tsv_path = Path(args.tsv)
+        if not tsv_path.is_absolute():
+            project_root = get_project_root()
+            tsv_path = (project_root / tsv_path).resolve()
+        run_id = args.run_id or "direct-tsv-evaluation"
+        _validate_cli_run_id(run_id)
+    elif args.run_id:
+        run_id = args.run_id
+        _validate_cli_run_id(run_id)
+        tsv_path = storage_dir / "runs" / run_id / "rop_review_table.tsv"
+        if not tsv_path.exists():
+            raise RopCliError(
+                f"rop_review_table.tsv not found for run_id={run_id}. "
+                "Run rop run first, or provide --tsv path."
+            )
+    else:
+        raise RopCliError("Either --run-id or --tsv is required for evaluate-review")
+
+    logger.info(
+        "ROP CLI: evaluating reviewed TSV: run_id=%s path=%s",
+        run_id,
+        tsv_path,
+    )
+
+    try:
+        artifact = evaluate_reviewed_tsv(
+            tsv_path=tsv_path,
+            run_id=run_id,
+            logger=logger,
+        )
+        eval_path = write_evaluation_artifact(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            artifact=artifact,
+            logger=logger,
+        )
+
+        print(f"\nEvaluation artifact written: {eval_path}")
+        print(f"Status: {artifact['status']}")
+        print(f"Acceptance: {artifact['acceptance']['acceptance_status']}")
+
+        metrics = artifact.get("metrics", {})
+        for metric_name in (
+            "case_type_accuracy",
+            "case_subtype_accuracy",
+            "recommended_queue_accuracy",
+            "correct_action_accuracy",
+            "fallback_rate",
+            "critical_false_negative_rate",
+            "existing_deal_as_irrelevant_count",
+        ):
+            value = metrics.get(metric_name)
+            display = f"{value:.4f}" if isinstance(value, float) else str(value)
+            print(f"  {metric_name}: {display}")
+
+        not_evaluable = metrics.get("not_evaluable", {})
+        if not_evaluable:
+            print("Not evaluable metrics:")
+            for key, info in not_evaluable.items():
+                print(f"  {key}: {info.get('count', 0)} events")
+
+        for check in artifact["acceptance"].get("checks", []):
+            status_icon = (
+                "PASS"
+                if check["passed"]
+                else ("N/A" if check["passed"] is None else "FAIL")
+            )
+            print(f"  [{status_icon}] {check['target']}: {check['value']}")
+
+        logger.info(
+            "ROP CLI: evaluate-review completed: run_id=%s status=%s",
+            run_id,
+            artifact["status"],
+        )
+
+    except Exception as exc:
+        logger.error("ROP CLI: evaluate-review failed: %s", exc)
+        raise RopCliError(f"evaluate-review failed: {exc}") from exc
+
+
+def handle_rop_recommendations(
+    args: argparse.Namespace,
+    settings: dict,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+
+    logger.info("ROP CLI: building recommendations for run_id=%s", run_id)
+
+    try:
+        routing_map = build_routing_map(
+            settings=settings,
+            storage_dir=storage_dir,
+            logger=logger,
+        )
+        logger.info(
+            "ROP CLI: routing map built: queues=%d entries=%d",
+            len(routing_map.get("queues", {})),
+            len(routing_map.get("routing_entries", [])),
+        )
+
+        context_enrichment = build_context_enrichment(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            logger=logger,
+        )
+        write_context_enrichment_artifact(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            artifact=context_enrichment,
+            logger=logger,
+        )
+        logger.info(
+            "ROP CLI: context enrichment built: events=%d enriched=%d",
+            context_enrichment.get("aggregate", {}).get("event_count", 0),
+            context_enrichment.get("aggregate", {}).get("enriched_count", 0),
+        )
+
+        recommendations = build_recommendations(
+            storage_dir=storage_dir,
+            run_id=run_id,
+            settings=settings,
+            logger=logger,
+        )
+
+        print(f"\nRecommendations artifact written for run_id={run_id}")
+        agg = recommendations.get("aggregate", {})
+        print(f"  total:           {agg.get('recommendation_count', 0)}")
+        print(f"  actionable:      {agg.get('actionable_count', 0)}")
+        print(f"  manual_review:   {agg.get('manual_review_count', 0)}")
+        print(f"  ignore:          {agg.get('ignore_count', 0)}")
+        print(f"  safe_to_execute: {recommendations.get('safe_to_execute', False)}")
+
+        logger.info(
+            "ROP CLI: recommendations completed: run_id=%s items=%d",
+            run_id,
+            len(recommendations.get("items", [])),
+        )
+
+        try:
+            from beeagent_module.cases.rop_dashboard import (
+                build_rop_dashboard,
+                write_rop_dashboard,
+            )
+
+            dashboard = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=_dashboard_default_period(settings),
+                logger=logger,
+                run_id=run_id,
+            )
+            write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: dashboard build failed after recommendations: %s",
+                exc,
+            )
+
+    except Exception as exc:
+        logger.error("ROP CLI: recommendations failed: %s", exc)
+        raise RopCliError(f"recommendations failed: {exc}") from exc
+
+
 def _tsv_columns() -> list[str]:
     return [
         "event_id",
@@ -616,6 +817,10 @@ def _tsv_columns() -> list[str]:
         "body_short",
         "attachments",
         "bot_case_type",
+        "bot_case_subtype",
+        "bot_recommended_queue",
+        "bot_should_rop_see",
+        "bot_correct_action",
         "bot_reason_code",
         "bot_priority",
         "bot_confidence",
@@ -631,7 +836,10 @@ def _tsv_columns() -> list[str]:
         "action_queue",
         "action_draft_id",
         "human_case_type",
-        "should_rop_see",
+        "human_case_subtype",
+        "human_recommended_queue",
+        "human_should_rop_see",
+        "human_correct_action",
         "bitrix_status",
         "notes",
         "bitrix_lead_id",
@@ -639,7 +847,6 @@ def _tsv_columns() -> list[str]:
         "bitrix_responsible",
         "is_duplicate",
         "duplicate_of",
-        "correct_action",
     ]
 
 
@@ -717,6 +924,11 @@ def _build_review_tsv_rows(
         recommended_next_step = action_draft_item.get("recommended_next_step", "")
         action_queue = action_draft_item.get("queue", "")
 
+        bot_should_rop_see = classified_evt.get("should_rop_see")
+        bot_should_rop_see_value = (
+            str(bot_should_rop_see).lower() if bot_should_rop_see is not None else ""
+        )
+
         row = {
             "event_id": _safe_tsv_value(event_id),
             "source_id": _safe_tsv_value(classified_evt.get("source_id", "")),
@@ -731,6 +943,14 @@ def _build_review_tsv_rows(
             "body_short": body_short,
             "attachments": _safe_tsv_value(attachments_summary),
             "bot_case_type": _safe_tsv_value(classified_evt.get("case_type", "")),
+            "bot_case_subtype": _safe_tsv_value(classified_evt.get("case_subtype", "")),
+            "bot_recommended_queue": _safe_tsv_value(
+                classified_evt.get("recommended_queue", "")
+            ),
+            "bot_should_rop_see": _safe_tsv_value(bot_should_rop_see_value),
+            "bot_correct_action": _safe_tsv_value(
+                classified_evt.get("correct_action", "")
+            ),
             "bot_reason_code": _safe_tsv_value(classified_evt.get("reason_code", "")),
             "bot_priority": _safe_tsv_value(bot_priority),
             "bot_confidence": _safe_tsv_value(classified_evt.get("confidence", "")),
@@ -750,15 +970,21 @@ def _build_review_tsv_rows(
             "action_queue": _safe_tsv_value(action_queue),
             "action_draft_id": _safe_tsv_value(action_draft_id),
             "human_case_type": "",
-            "should_rop_see": "",
+            "human_case_subtype": "",
+            "human_recommended_queue": "",
+            "human_should_rop_see": "",
+            "human_correct_action": "",
+            "bitrix_status": "",
             "notes": "",
+            "bitrix_lead_id": _safe_tsv_value(bitrix_lead_id),
+            "bitrix_deal_id": _safe_tsv_value(bitrix_deal_id),
+            "bitrix_responsible": _safe_tsv_value(bitrix_responsible),
             "is_duplicate": (
                 _safe_tsv_value(str(is_duplicate).lower())
                 if is_duplicate is not None
                 else ""
             ),
             "duplicate_of": _safe_tsv_value(duplicate_of),
-            "correct_action": "",
         }
         rows.append(row)
 
@@ -1213,6 +1439,34 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="run_id to generate action drafts for",
+    )
+
+    evaluate_parser = subparsers.add_parser(
+        "evaluate-review",
+        help="Evaluate classification quality from reviewed TSV",
+    )
+    evaluate_parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="run_id to evaluate (reads rop_review_table.tsv from run dir)",
+    )
+    evaluate_parser.add_argument(
+        "--tsv",
+        type=str,
+        default=None,
+        help="Direct path to reviewed TSV file",
+    )
+
+    recommendations_parser = subparsers.add_parser(
+        "recommendations",
+        help="Build ROP recommendations artifact from existing run artifacts",
+    )
+    recommendations_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to build recommendations for",
     )
 
     return parser
