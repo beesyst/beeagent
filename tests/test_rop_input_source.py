@@ -446,14 +446,14 @@ def _mailbox_source(items_max: int = 10) -> dict:
             "use_ssl": True,
             "folder": "INBOX",
             "username_env": "ROP_MAILBOX_USERNAME",
-            "password_env": "ROP_MAILBOX_PASSWORD",
+            "password_env": "ROP_MAIL_BOX_PASSWORD",
         },
     }
 
 
 def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
     raw_message = b"From: Sender <lead@example.com>\nTo: hotline@example.com\nCc: cc@example.com\nSubject: Need welding help\nDate: Thu, 08 May 2026 10:30:00 +0000\nMessage-ID: <mail-1@example.com>\nContent-Type: multipart/mixed; boundary=sep\n\n--sep\nContent-Type: text/plain; charset=utf-8\n\nNeed hotline callback.\n--sep\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=brief.pdf\n\nPDFDATA\n--sep--\n"
 
     events, metadata, diagnostics = load_mailbox_readonly(
@@ -488,7 +488,7 @@ def test_load_mailbox_readonly_missing_credentials_degraded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("ROP_MAILBOX_USERNAME", raising=False)
-    monkeypatch.delenv("ROP_MAILBOX_PASSWORD", raising=False)
+    monkeypatch.delenv("ROP_MAIL_BOX_PASSWORD", raising=False)
 
     with pytest.raises(RuntimeError, match="credentials missing") as exc_info:
         load_mailbox_readonly(
@@ -506,7 +506,7 @@ def test_load_mailbox_readonly_skips_malformed_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
 
     malformed = b"bad-mail-without-headers"
     valid = b"From: lead@example.com\nTo: hotline@example.com\nSubject: Hello\nMessage-ID: <mail-2@example.com>\nContent-Type: text/plain; charset=utf-8\n\nHello"
@@ -528,7 +528,7 @@ def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
 
     long_html = (
         "<html><body><script>bad()</script><p>" + ("A" * 260) + "</p></body></html>"
@@ -562,7 +562,7 @@ def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
 
 def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
     message = b"From: lead@example.com\nTo: hotline@example.com\nSubject: Hello\nMessage-ID: <mail-3@example.com>\nContent-Type: text/plain; charset=utf-8\n\nHello"
 
     events, metadata, diagnostics = load_rop_source(
@@ -682,6 +682,7 @@ class TestForwardedWrapperExtraction:
         body = "Email: gina.shi@morrowwelding.com\nSome other text"
         fields = _extract_forwarded_wrapper_fields(body)
         assert fields["forwarded_wrapper"] is False
+        assert fields["form_email"] == ""
         assert fields["original_sender"] == ""
 
     def test_extracts_original_recipient(self) -> None:
@@ -712,7 +713,9 @@ class TestForwardedWrapperExtraction:
             "X-Email-ID: bounded-id-12345\n"
         )
         fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["form_email"] == "gina.shi@morrowwelding.com"
         assert fields["original_sender"] == "gina.shi@morrowwelding.com"
+        assert fields["original_sender_email"] == "gina.shi@morrowwelding.com"
         assert fields["original_recipient"] == "online@welding.kz"
         assert fields["original_message_date"] == "2026-06-09T03:54:27+00:00"
         assert fields["date_source"] == "original_forwarded_date"
@@ -722,7 +725,9 @@ class TestForwardedWrapperExtraction:
     def test_empty_body_returns_defaults(self) -> None:
         fields = _extract_forwarded_wrapper_fields("")
         assert fields["forwarded_wrapper"] is False
+        assert fields["form_email"] == ""
         assert fields["original_sender"] == ""
+        assert fields["original_sender_email"] == ""
         assert fields["date_source"] == ""
 
     def test_malformed_date_degrades_gracefully(self) -> None:
@@ -741,7 +746,9 @@ class TestForwardedWrapperExtraction:
         body = "--- Forwarded Message ---\nEmail: test@example.com"
         fields = _extract_forwarded_wrapper_fields(body)
         assert fields["forwarded_wrapper"] is True
+        assert fields["form_email"] == "test@example.com"
         assert fields["original_sender"] == "test@example.com"
+        assert fields["original_sender_email"] == "test@example.com"
 
     def test_two_extracted_fields_create_forwarded_wrapper_without_marker(self) -> None:
         body = (
@@ -750,7 +757,9 @@ class TestForwardedWrapperExtraction:
         )
         fields = _extract_forwarded_wrapper_fields(body)
         assert fields["forwarded_wrapper"] is True
+        assert fields["form_email"] == "gina.shi@morrowwelding.com"
         assert fields["original_sender"] == "gina.shi@morrowwelding.com"
+        assert fields["original_sender_email"] == "gina.shi@morrowwelding.com"
         assert fields["original_recipient"] == "online@welding.kz"
 
 
@@ -834,7 +843,9 @@ class TestSanitizeBatchItemNormalization:
         }
         result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
         assert result["forwarded_wrapper"] is True
+        assert result["form_email"] == "gina.shi@morrowwelding.com"
         assert result["original_sender"] == "gina.shi@morrowwelding.com"
+        assert result["original_sender_email"] == "gina.shi@morrowwelding.com"
         assert result["original_recipient"] == "online@welding.kz"
         assert result["original_message_date"] == "2026-06-09T03:54:27+00:00"
         assert result["date_source"] == "original_forwarded_date"
@@ -855,7 +866,9 @@ class TestSanitizeBatchItemNormalization:
         }
         result = _sanitize_batch_item(item, email_preview_body_chars_max=32)
         assert result["forwarded_wrapper"] is False
+        assert result["form_email"] == ""
         assert result["original_sender"] == ""
+        assert result["original_sender_email"] == ""
         assert result["original_recipient"] == ""
         assert result["original_message_date"] == ""
         assert result["date_source"] == "fallback_order"
@@ -879,7 +892,9 @@ class TestSanitizeBatchItemNormalization:
         }
         result = _sanitize_batch_item(item, email_preview_body_chars_max=200)
         assert result["forwarded_wrapper"] is True
+        assert result["form_email"] == "gina.shi@morrowwelding.com"
         assert result["original_sender"] == "gina.shi@morrowwelding.com"
+        assert result["original_sender_email"] == "gina.shi@morrowwelding.com"
         assert result["original_recipient"] == "online@welding.kz"
         assert result["original_message_date"] == "2026-06-09T03:54:27+00:00"
         assert result["date_source"] == "original_forwarded_date"
@@ -910,7 +925,7 @@ class TestNormalizedEventFields:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: wrapper@example.com\n"
             "To: hotline@example.com\n"
@@ -943,7 +958,9 @@ class TestNormalizedEventFields:
         assert evt["spam_label_present"] is True
         assert evt["reply_label_present"] is False
         assert evt["forwarded_wrapper"] is True
+        assert evt["form_email"] == "gina.shi@morrowwelding.com"
         assert evt["original_sender"] == "gina.shi@morrowwelding.com"
+        assert evt["original_sender_email"] == "gina.shi@morrowwelding.com"
         assert evt["original_recipient"] == "online@welding.kz"
         assert evt["original_message_date"] == "2026-06-09T03:54:27+00:00"
         assert evt["received_at"] == "2026-05-08T10:30:00+00:00"
@@ -956,7 +973,7 @@ class TestNormalizedEventFields:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: test@example.com\n"
             "To: hotline@example.com\n"
@@ -985,7 +1002,7 @@ class TestNormalizedEventFields:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: wrapper@example.com\n"
             "To: hotline@example.com\n"
@@ -1015,12 +1032,15 @@ class TestNormalizedEventFields:
         assert evt["date_source"] == "original_forwarded_date"
         assert evt["received_at"] is None
         assert evt["_date_fallback"] is False
+        assert evt["form_email"] == "gina.shi@morrowwelding.com"
+        assert evt["original_sender"] == "gina.shi@morrowwelding.com"
+        assert evt["original_sender_email"] == "gina.shi@morrowwelding.com"
 
     def test_normalized_event_date_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: test@example.com\n"
             "To: hotline@example.com\n"
@@ -1049,7 +1069,7 @@ class TestNormalizedEventFields:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: test@example.com\n"
             "To: hotline@example.com\n"
@@ -1082,7 +1102,7 @@ class TestNoRawEmlNoAttachmentNoSecrets:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: test@example.com\n"
             "To: hotline@example.com\n"
@@ -1133,7 +1153,7 @@ class TestNoRawEmlNoAttachmentNoSecrets:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
-        monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+        monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
             "From: test@example.com\n"
             "To: hotline@example.com\n"
@@ -1156,3 +1176,125 @@ class TestNoRawEmlNoAttachmentNoSecrets:
         evt_json = json.dumps(evt)
         assert "secret" not in evt_json.lower()
         assert "BITRIX_WEBHOOK" not in evt_json
+
+
+class TestIt33ForwardedWrapperSeparation:
+    def test_email_does_not_override_original_sender(self) -> None:
+        body = (
+            "Email: galina.okruzhko@welding.kz\n"
+            "Оригинальный отправитель: WARUITE <dawson_yude@163.com>\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["form_email"] == "galina.okruzhko@welding.kz"
+        assert fields["original_sender"] == "WARUITE <dawson_yude@163.com>"
+        assert fields["original_sender_email"] == "dawson_yude@163.com"
+
+    def test_dawson_like_forwarded_wrapper(self) -> None:
+        body = (
+            "--- Original Message ---\n"
+            "Email: galina.okruzhko@welding.kz\n"
+            "Оригинальный отправитель: WARUITE <dawson_yude@163.com>\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["form_email"] == "galina.okruzhko@welding.kz"
+        assert fields["original_sender"] == "WARUITE <dawson_yude@163.com>"
+        assert fields["original_sender_email"] == "dawson_yude@163.com"
+        assert fields["forwarded_wrapper"] is True
+
+    def test_usova_like_forwarded_wrapper(self) -> None:
+        body = (
+            "--- Original Message ---\n"
+            "Email: ekaterina.astanina@welding.kz\n"
+            "Оригинальный отправитель: Усова Анна Николаевна <usova@mir-svarki.ru>\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["form_email"] == "ekaterina.astanina@welding.kz"
+        assert "Усова Анна Николаевна" in fields["original_sender"]
+        assert fields["original_sender_email"] == "usova@mir-svarki.ru"
+        assert fields["forwarded_wrapper"] is True
+
+    def test_fallback_form_email_to_original_sender(self) -> None:
+        body = (
+            "--- Original Message ---\n"
+            "Email: galina.okruzhko@welding.kz\n"
+            "Оригинальный адрес получения: online@welding.kz\n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["form_email"] == "galina.okruzhko@welding.kz"
+        assert fields["original_sender"] == "galina.okruzhko@welding.kz"
+        assert fields["original_sender_email"] == "galina.okruzhko@welding.kz"
+        assert fields["forwarded_wrapper"] is True
+
+    def test_weak_evidence_single_email_only(self) -> None:
+        body = "Email: galina.okruzhko@welding.kz\nSome other text"
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is False
+        assert fields["form_email"] == ""
+        assert fields["original_sender"] == ""
+        assert fields["original_sender_email"] == ""
+
+    def test_malformed_original_sender_no_crash(self) -> None:
+        body = (
+            "--- Original Message ---\n"
+            "Email: test@example.com\n"
+            "Оригинальный отправитель: \n"
+        )
+        fields = _extract_forwarded_wrapper_fields(body)
+        assert fields["forwarded_wrapper"] is True
+        assert fields["form_email"] == "test@example.com"
+        assert fields["original_sender"] == "test@example.com"
+        assert fields["original_sender_email"] == "test@example.com"
+
+    def test_no_crash_on_invalid_email_in_sender(self) -> None:
+        fields = _extract_forwarded_wrapper_fields(
+            "--- Forwarded Message ---\n"
+            "Email: x@y\n"
+            "Оригинальный отправитель: just text without email\n"
+        )
+        assert fields["forwarded_wrapper"] is True
+        assert fields["original_sender_email"] == ""
+
+
+class TestIt33BatchSanitization:
+    def test_fills_form_email_from_forwarded_body(self) -> None:
+        item = {
+            "event_id": "e1",
+            "sender": "wrapper@example.com",
+            "subject": "FWD: Test",
+            "body": (
+                "--- Original Message ---\n"
+                "Email: galina.okruzhko@welding.kz\n"
+                "Оригинальный отправитель: WARUITE <dawson_yude@163.com>\n"
+            ),
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["form_email"] == "galina.okruzhko@welding.kz"
+        assert result["original_sender"] == "WARUITE <dawson_yude@163.com>"
+        assert result["original_sender_email"] == "dawson_yude@163.com"
+
+    def test_preserves_valid_pre_normalized_values(self) -> None:
+        item = {
+            "event_id": "e1",
+            "sender": "wrapper@example.com",
+            "subject": "FWD: Test",
+            "body": "Email: wrong@example.com\n",
+            "form_email": "prefilled@example.com",
+            "original_sender": "Prefilled <prefilled@example.com>",
+            "original_sender_email": "prefilled@example.com",
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert result["form_email"] == "prefilled@example.com"
+        assert result["original_sender"] == "Prefilled <prefilled@example.com>"
+        assert result["original_sender_email"] == "prefilled@example.com"
+
+    def test_no_blocked_keys_leak(self) -> None:
+        item = {
+            "event_id": "e1",
+            "raw_eml": "should not be here",
+            "attachment_content": "nope",
+            "content_bytes": "no",
+        }
+        result = _sanitize_batch_item(item, email_preview_body_chars_max=4000)
+        assert "raw_eml" not in result
+        assert "attachment_content" not in result
+        assert "content_bytes" not in result
