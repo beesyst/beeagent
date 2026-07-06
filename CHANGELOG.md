@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.4](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.3...beeagent-v0.43.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **rop:** correct forwarded original sender extraction ([#143](https://github.com/beesyst/beeagent/issues/143)) ([8ab99fd](https://github.com/beesyst/beeagent/commit/8ab99fdf33b93c8e3fae03db0566c9d6a8d0e1d3))
+
 ## [0.43.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.2...beeagent-v0.43.3) (2026-07-01)
 
 
