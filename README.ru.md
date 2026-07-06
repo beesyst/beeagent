@@ -1176,7 +1176,9 @@ AI assist не является самостоятельной ROP business logi
 - `spam_label_present` — присутствует ли `*** SPAM ***` в теме
 - `reply_label_present` — присутствует ли `RE:` в теме
 - `forwarded_wrapper` — обнаружен ли forwarded wrapper в теле письма
-- `original_sender` — оригинальный отправитель из forwarded wrapper
+- `form_email` — Email из поля `Email:` в forwarded wrapper (контактная форма отправителя)
+- `original_sender` — оригинальный отправитель из поля `Оригинальный отправитель:` или fallback на `form_email`
+- `original_sender_email` — извлечённый email из `original_sender` (через `email.utils.getaddresses`)
 - `original_recipient` — оригинальный получатель из forwarded wrapper
 - `original_message_date` — оригинальная дата из forwarded wrapper
 - `date_source` — источник даты (`original_forwarded_date`, `mailbox_header`, `fallback_order`)

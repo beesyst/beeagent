@@ -416,9 +416,16 @@ _TRANSPORT_PREFIXES: tuple[tuple[str, str], ...] = (
     ("RE:", "re"),
     ("*** SPAM ***", "spam"),
 )
-
-_FORWARDED_SENDER_RE = re.compile(
-    r"^(?:Email|От\s*кого|Оригинальный\s*отправитель)\s*:\s*(.+)",
+_FORWARDED_FORM_EMAIL_RE = re.compile(
+    r"^Email\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_ORIGINAL_SENDER_RE = re.compile(
+    r"^Оригинальный\s*отправитель\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_FORWARDED_FROM_RE = re.compile(
+    r"^От\s*кого\s*:\s*(.+)",
     re.IGNORECASE,
 )
 _FORWARDED_RECIPIENT_RE = re.compile(
@@ -494,12 +501,27 @@ def _extract_transport_labels(subject: Any) -> list[str]:
     return labels
 
 
+def _extract_email_from_sender(sender_display: str) -> str:
+    if not isinstance(sender_display, str) or not sender_display.strip():
+        return ""
+    try:
+        pairs = getaddresses([sender_display])
+        for _name, addr in pairs:
+            if addr and "@" in addr:
+                return addr.strip()
+    except TypeError, ValueError, IndexError:
+        pass
+    return ""
+
+
 def _extract_forwarded_wrapper_fields(
     body_text: str,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
+        "form_email": "",
         "original_sender": "",
+        "original_sender_email": "",
         "original_recipient": "",
         "original_message_date": "",
         "date_source": "",
@@ -523,7 +545,19 @@ def _extract_forwarded_wrapper_fields(
             marker_found = True
             continue
 
-        match = _FORWARDED_SENDER_RE.match(stripped)
+        match = _FORWARDED_FORM_EMAIL_RE.match(stripped)
+        if match and not result["form_email"]:
+            result["form_email"] = _sanitize_text(match.group(1))
+            found_any = True
+            continue
+
+        match = _FORWARDED_ORIGINAL_SENDER_RE.match(stripped)
+        if match and not result["original_sender"]:
+            result["original_sender"] = _sanitize_text(match.group(1))
+            found_any = True
+            continue
+
+        match = _FORWARDED_FROM_RE.match(stripped)
         if match and not result["original_sender"]:
             result["original_sender"] = _sanitize_text(match.group(1))
             found_any = True
@@ -553,13 +587,21 @@ def _extract_forwarded_wrapper_fields(
 
     if not _has_forwarded_wrapper_evidence(marker_found, result):
         result["forwarded_wrapper"] = False
+        result["form_email"] = ""
         result["original_sender"] = ""
+        result["original_sender_email"] = ""
         result["original_recipient"] = ""
         result["original_message_date"] = ""
         result["date_source"] = ""
         result["x_email_id"] = ""
     else:
         result["forwarded_wrapper"] = True
+        if not result["original_sender"] and result["form_email"]:
+            result["original_sender"] = result["form_email"]
+        if result["original_sender"]:
+            result["original_sender_email"] = _extract_email_from_sender(
+                result["original_sender"]
+            )
     return result
 
 
@@ -570,12 +612,15 @@ def _has_forwarded_wrapper_evidence(
     if marker_found:
         return True
     forwarded_field_keys = (
+        "form_email",
         "original_sender",
         "original_recipient",
         "original_message_date",
         "x_email_id",
     )
     count = sum(1 for k in forwarded_field_keys if fields.get(k))
+    if count == 1 and fields.get("form_email"):
+        return False
     return count >= 2
 
 
@@ -708,7 +753,9 @@ def _normalize_mailbox_message(
         "spam_label_present": spam_label_present,
         "reply_label_present": reply_label_present,
         "forwarded_wrapper": forwarded_fields["forwarded_wrapper"],
+        "form_email": forwarded_fields["form_email"],
         "original_sender": forwarded_fields["original_sender"],
+        "original_sender_email": forwarded_fields["original_sender_email"],
         "original_recipient": forwarded_fields["original_recipient"],
         "original_message_date": original_message_date,
         "date_source": date_source,
@@ -1177,7 +1224,9 @@ def _sanitize_batch_item(
 
     for key in (
         "forwarded_wrapper",
+        "form_email",
         "original_sender",
+        "original_sender_email",
         "original_recipient",
         "original_message_date",
         "date_source",
@@ -1190,6 +1239,15 @@ def _sanitize_batch_item(
             continue
         if not isinstance(value, str) or not value:
             sanitized[key] = forwarded_fields[key]
+
+    original_sender = sanitized.get("original_sender")
+    original_sender_email = sanitized.get("original_sender_email")
+    if (
+        isinstance(original_sender, str)
+        and original_sender
+        and (not isinstance(original_sender_email, str) or not original_sender_email)
+    ):
+        sanitized["original_sender_email"] = _extract_email_from_sender(original_sender)
 
     _od = sanitized.get("original_message_date", "")
     if _od:

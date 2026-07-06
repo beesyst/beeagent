@@ -102,6 +102,13 @@ def handle_rop_run(
 
         effective_run_id = str(result.get("run_id") or run_id or "")
 
+        if _result_requires_run_failure(result):
+            logger.warning(
+                "ROP CLI: review TSV export skipped because run degraded: run_id=%s",
+                effective_run_id,
+            )
+            raise RopCliError(_build_run_failure_message(result))
+
         normalized_path_for_tsv = (
             storage_dir / "runs" / effective_run_id / "normalized_events.json"
         )
@@ -128,8 +135,6 @@ def handle_rop_run(
                 "normalized events artifact missing for run_id=%s",
                 effective_run_id,
             )
-            if _result_requires_run_failure(result):
-                raise RopCliError(_build_run_failure_message(result))
 
         try:
             state = build_rop_current_state(
@@ -963,7 +968,9 @@ def _tsv_columns() -> list[str]:
         "spam_label_present",
         "reply_label_present",
         "forwarded_wrapper",
+        "form_email",
         "original_sender",
+        "original_sender_email",
         "original_recipient",
         "original_message_date",
         "date_source",
@@ -1107,8 +1114,12 @@ def _build_review_tsv_rows(
             "forwarded_wrapper": _safe_tsv_value(
                 str(normalized_evt.get("forwarded_wrapper", False)).lower()
             ),
+            "form_email": _safe_tsv_value(normalized_evt.get("form_email", "")),
             "original_sender": _safe_tsv_value(
                 normalized_evt.get("original_sender", "")
+            ),
+            "original_sender_email": _safe_tsv_value(
+                normalized_evt.get("original_sender_email", "")
             ),
             "original_recipient": _safe_tsv_value(
                 normalized_evt.get("original_recipient", "")
