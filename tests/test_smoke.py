@@ -109,32 +109,17 @@ rop:
       - all
   ai_assist:
     enabled: false
-    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
-    profiles:
-      openai:
-        provider: openai_compatible
-        base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
-        model_env: ROP_AI_OPENAI_MODEL
-      deepseek:
-        provider: openai_compatible
-        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
-        model_env: ROP_AI_DEEPSEEK_MODEL
-      lmstudio:
-        provider: openai_compatible
-        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
-        model_env: ROP_AI_LMSTUDIO_MODEL
-      custom:
-        provider: openai_compatible
-        base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
-        model_env: ROP_AI_MODEL
+    adjudicator:
+      enabled: false
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 20
+      prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
       sales:
@@ -150,6 +135,35 @@ rop:
       manual_review:
         bitrix_category: manual_review
   sources: []
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-mini"
+    deepseek:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+    lmstudio:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: LMSTUDIO_API_KEY
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+    custom:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: CUSTOM_AI_API_KEY
+      base_url: "https://example.test/v1"
+      model: "custom-model"
 bitrix:
   enabled: false
   webhook_env: BITRIX_WEBHOOK_URL
@@ -297,32 +311,17 @@ rop:
       - all
   ai_assist:
     enabled: false
-    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
-    profiles:
-      openai:
-        provider: openai_compatible
-        base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
-        model_env: ROP_AI_OPENAI_MODEL
-      deepseek:
-        provider: openai_compatible
-        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
-        model_env: ROP_AI_DEEPSEEK_MODEL
-      lmstudio:
-        provider: openai_compatible
-        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
-        model_env: ROP_AI_LMSTUDIO_MODEL
-      custom:
-        provider: openai_compatible
-        base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
-        model_env: ROP_AI_MODEL
+    adjudicator:
+      enabled: false
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 20
+      prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
       sales:
@@ -353,6 +352,36 @@ rop:
         folder: "INBOX"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
+
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-mini"
+    deepseek:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+    lmstudio:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: LMSTUDIO_API_KEY
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+    custom:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: CUSTOM_AI_API_KEY
+      base_url: "https://example.test/v1"
+      model: "custom-model"
 
 bitrix:
   enabled: false
@@ -489,32 +518,17 @@ rop:
       - all
   ai_assist:
     enabled: false
-    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
-    profiles:
-      openai:
-        provider: openai_compatible
-        base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
-        model_env: ROP_AI_OPENAI_MODEL
-      deepseek:
-        provider: openai_compatible
-        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
-        model_env: ROP_AI_DEEPSEEK_MODEL
-      lmstudio:
-        provider: openai_compatible
-        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
-        model_env: ROP_AI_LMSTUDIO_MODEL
-      custom:
-        provider: openai_compatible
-        base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
-        model_env: ROP_AI_MODEL
+    adjudicator:
+      enabled: false
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 20
+      prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
       sales:
@@ -545,6 +559,36 @@ rop:
         folder: "INBOX"
         username_env: ""
         password_env: "ROP_MAILBOX_PASSWORD"
+
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-mini"
+    deepseek:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+    lmstudio:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: LMSTUDIO_API_KEY
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+    custom:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: CUSTOM_AI_API_KEY
+      base_url: "https://example.test/v1"
+      model: "custom-model"
 
 bitrix:
   enabled: false
@@ -693,32 +737,17 @@ rop:
       - all
   ai_assist:
     enabled: false
-    profile: openai
     events_max: 20
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
-    profiles:
-      openai:
-        provider: openai_compatible
-        base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
-        model_env: ROP_AI_OPENAI_MODEL
-      deepseek:
-        provider: openai_compatible
-        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
-        model_env: ROP_AI_DEEPSEEK_MODEL
-      lmstudio:
-        provider: openai_compatible
-        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
-        model_env: ROP_AI_LMSTUDIO_MODEL
-      custom:
-        provider: openai_compatible
-        base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
-        model_env: ROP_AI_MODEL
+    adjudicator:
+      enabled: false
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 20
+      prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
       sales:
@@ -749,6 +778,36 @@ rop:
         folder: "INBOX"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
+
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-mini"
+    deepseek:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+    lmstudio:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: LMSTUDIO_API_KEY
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+    custom:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: CUSTOM_AI_API_KEY
+      base_url: "https://example.test/v1"
+      model: "custom-model"
 bitrix:
   enabled: false
   webhook_env: BITRIX_WEBHOOK_URL

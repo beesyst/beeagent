@@ -28,6 +28,11 @@ os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
 
 
+@pytest.fixture(autouse=True)
+def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_cli_rop")
     logger.addHandler(logging.NullHandler())
@@ -727,9 +732,9 @@ class TestRopCliExportReview:
 
 
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_53_fields(self) -> None:
+    def test_tsv_columns_order_has_67_fields(self) -> None:
         columns = _tsv_columns()
-        assert len(columns) == 53
+        assert len(columns) == 67
         expected_order = [
             "event_id",
             "source_id",
@@ -784,8 +789,126 @@ class TestRopTsvEnriched:
             "bitrix_responsible",
             "is_duplicate",
             "duplicate_of",
+            "ai_used",
+            "ai_provider",
+            "ai_model",
+            "ai_status",
+            "ai_confidence",
+            "ai_reason",
+            "ai_risk_flags",
+            "ai_error",
+            "deterministic_case_type",
+            "deterministic_case_subtype",
+            "deterministic_recommended_queue",
+            "deterministic_correct_action",
+            "deterministic_confidence",
+            "deterministic_reason_code",
         ]
         assert columns == expected_order
+
+    def test_tsv_ai_columns_come_from_results_artifact_and_keep_deterministic_snapshot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-ai-tsv-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "sender": "test@example.com",
+                "subject": "Test",
+                "body": "Test body",
+            }
+        ]
+        classified_events = [
+            {
+                "event_id": "evt-001",
+                "source_id": "test",
+                "case_type": "new_lead",
+                "case_subtype": "tender",
+                "recommended_queue": "tender",
+                "should_rop_see": True,
+                "correct_action": "review_tender",
+                "reason_code": "deterministic_fallback",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "deterministic_case_type": "unknown",
+                "deterministic_case_subtype": None,
+                "deterministic_recommended_queue": "manual_review",
+                "deterministic_correct_action": "manual_review",
+                "deterministic_confidence": 0.2,
+                "deterministic_reason_code": "deterministic_fallback",
+                "original_event_id": "evt-001",
+            }
+        ]
+        adjudicator_results = {
+            "results": [
+                {
+                    "event_id": "evt-001",
+                    "ai_used": True,
+                    "ai_provider": "openai_responses",
+                    "ai_model": "gpt-5.4-mini",
+                    "ai_status": "ok",
+                    "ai_confidence": 0.91,
+                    "ai_reason": "Clear RFQ content",
+                    "ai_risk_flags": ["marketing_conflict"],
+                    "ai_error": "",
+                    "deterministic_case_type": "unknown",
+                    "deterministic_case_subtype": None,
+                    "deterministic_recommended_queue": "manual_review",
+                    "deterministic_correct_action": "manual_review",
+                    "deterministic_confidence": 0.2,
+                    "deterministic_reason_code": "deterministic_fallback",
+                    "final_case_type": "new_lead",
+                    "final_case_subtype": "tender",
+                    "final_recommended_queue": "tender",
+                    "final_correct_action": "review_tender",
+                    "final_should_rop_see": True,
+                    "merge_reason": "validated_ai_adjudicator_output",
+                    "errors": [],
+                }
+            ]
+        }
+
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized_events),
+            encoding="utf-8",
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified_events),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_ai_adjudicator_results.json").write_text(
+            json.dumps(adjudicator_results),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-ai-tsv-run", format="tsv")
+        handle_rop_export_review(args, logger=_null_logger())
+
+        with (run_dir / "rop_review_table.tsv").open("r", encoding="utf-8") as file:
+            row = next(csv.DictReader(file, delimiter="\t"))
+
+        assert row["bot_case_type"] == "new_lead"
+        assert row["ai_used"] == "true"
+        assert row["ai_provider"] == "openai_responses"
+        assert row["ai_model"] == "gpt-5.4-mini"
+        assert row["ai_status"] == "ok"
+        assert row["ai_confidence"] == "0.91"
+        assert row["ai_reason"] == "Clear RFQ content"
+        assert row["ai_risk_flags"] == "marketing_conflict"
+        assert row["deterministic_case_type"] == "unknown"
+        assert row["deterministic_recommended_queue"] == "manual_review"
+        assert row["deterministic_reason_code"] == "deterministic_fallback"
 
     def test_tsv_body_short_is_bounded(
         self,

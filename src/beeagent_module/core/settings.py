@@ -58,8 +58,9 @@ REQUIRED_KEYS = (
     ("web", "auth", "mode"),
     ("web", "auth", "session_secret_env"),
     ("web", "auth", "principals"),
-    ("rop", "ai_assist", "profile"),
-    ("rop", "ai_assist", "profiles"),
+    ("ai", "prompts", "path"),
+    ("ai", "prompts", "store"),
+    ("ai", "profiles"),
     ("rop", "routing"),
     ("bitrix", "widget", "enabled"),
     ("bitrix", "widget", "token_env"),
@@ -73,6 +74,9 @@ _REQUIRED_ROP_ROUTING_QUEUES: tuple[str, ...] = (
     "finance",
     "procurement",
     "manual_review",
+)
+_SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
+    {"openai_responses", "openai_compatible"}
 )
 
 
@@ -294,8 +298,11 @@ def validate_settings(settings: dict) -> None:
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
 
+    _validate_ai_prompts_settings(settings)
+    _validate_ai_profiles_settings(settings)
     _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
+    _validate_rop_ai_adjudicator_settings(settings)
     _validate_rop_routing_settings(settings)
 
     input_sources = _get_nested_value(settings, ("rop", "sources"))
@@ -578,6 +585,96 @@ def _validate_rop_email_preview_settings(settings: dict) -> None:
         )
 
 
+def _validate_ai_prompts_settings(settings: dict) -> None:
+    prompts_cfg = _get_nested_value(settings, ("ai", "prompts"))
+    if not isinstance(prompts_cfg, dict):
+        raise RuntimeError("Invalid type for ai.prompts, expected mapping")
+
+    prompts_path = prompts_cfg.get("path")
+    if not isinstance(prompts_path, str) or not prompts_path.strip():
+        raise RuntimeError(
+            "Invalid or missing ai.prompts.path, expected non-empty string"
+        )
+
+    if not Path(prompts_path).exists():
+        raise RuntimeError(f"Prompts file not found: {prompts_path}")
+
+    if not isinstance(prompts_cfg.get("store"), bool):
+        raise RuntimeError("Invalid type for ai.prompts.store, expected bool")
+
+
+def _validate_ai_profiles_settings(settings: dict) -> None:
+    profiles_cfg = _get_nested_value(settings, ("ai", "profiles"))
+    if not isinstance(profiles_cfg, dict) or not profiles_cfg:
+        raise RuntimeError("Invalid or missing ai.profiles, expected non-empty mapping")
+
+    for profile_name, profile_cfg in profiles_cfg.items():
+        if not isinstance(profile_cfg, dict):
+            raise RuntimeError(
+                f"Invalid type for ai.profiles.{profile_name}, expected mapping"
+            )
+
+        if not isinstance(profile_cfg.get("enabled"), bool):
+            raise RuntimeError(
+                f"Invalid type for ai.profiles.{profile_name}.enabled, expected bool"
+            )
+
+        provider = profile_cfg.get("provider")
+        if not isinstance(provider, str) or not provider.strip():
+            raise RuntimeError(
+                f"Invalid or missing ai.profiles.{profile_name}.provider, expected non-empty string"
+            )
+        if provider not in _SUPPORTED_AI_PROVIDERS:
+            raise RuntimeError(
+                f"Unsupported ai.profiles.{profile_name}.provider '{provider}', expected one of: {sorted(_SUPPORTED_AI_PROVIDERS)}"
+            )
+
+        for key in ("api_key_env", "base_url", "model"):
+            value = profile_cfg.get(key)
+            if not isinstance(value, str):
+                raise RuntimeError(
+                    f"Invalid type for ai.profiles.{profile_name}.{key}, expected string"
+                )
+
+
+def _require_one_enabled_ai_profile(
+    settings: dict,
+    *,
+    reason: str,
+    require_api_key: bool,
+) -> dict:
+    profiles_cfg = _get_nested_value(settings, ("ai", "profiles"))
+    if not isinstance(profiles_cfg, dict) or not profiles_cfg:
+        raise RuntimeError("Invalid or missing ai.profiles, expected non-empty mapping")
+
+    enabled_profiles = [
+        (profile_name, profile_cfg)
+        for profile_name, profile_cfg in profiles_cfg.items()
+        if isinstance(profile_cfg, dict) and profile_cfg.get("enabled") is True
+    ]
+    if len(enabled_profiles) != 1:
+        raise RuntimeError(
+            f"Exactly one ai.profiles.*.enabled must be true when {reason}"
+        )
+
+    profile_name, profile_cfg = enabled_profiles[0]
+    for key in ("provider", "api_key_env", "base_url", "model"):
+        value = profile_cfg.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(
+                f"Invalid or missing ai.profiles.{profile_name}.{key}, expected non-empty string when {reason}"
+            )
+
+    if require_api_key:
+        api_key_env = profile_cfg["api_key_env"]
+        if not os.getenv(api_key_env, "").strip():
+            raise RuntimeError(
+                f"Missing required env var '{api_key_env}' when {reason}"
+            )
+
+    return profile_cfg
+
+
 def _validate_rop_ai_assist_settings(settings: dict) -> None:
     ai_cfg = _get_nested_value(settings, ("rop", "ai_assist"))
     if ai_cfg is None:
@@ -612,62 +709,6 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
     if not isinstance(ai_cfg.get("enabled"), bool):
         raise RuntimeError("Invalid type for rop.ai_assist.enabled, expected bool")
 
-    profile_name = ai_cfg.get("profile")
-    if not isinstance(profile_name, str) or not profile_name.strip():
-        raise RuntimeError(
-            "Invalid or missing rop.ai_assist.profile, expected non-empty string"
-        )
-
-    profiles = ai_cfg.get("profiles")
-    if not isinstance(profiles, dict):
-        raise RuntimeError("Invalid type for rop.ai_assist.profiles, expected mapping")
-
-    _SUPPORTED_PROFILES = {"openai", "deepseek", "lmstudio", "custom"}
-    if profile_name not in _SUPPORTED_PROFILES:
-        raise RuntimeError(
-            f"Unsupported rop.ai_assist.profile '{profile_name}', "
-            f"expected one of: {sorted(_SUPPORTED_PROFILES)}"
-        )
-
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        raise RuntimeError(
-            f"Missing rop.ai_assist.profiles.{profile_name}, expected mapping"
-        )
-
-    if profile.get("provider") != "openai_compatible":
-        raise RuntimeError(
-            f"Unsupported rop.ai_assist.profiles.{profile_name}.provider, "
-            "expected 'openai_compatible'"
-        )
-
-    for env_key in ("base_url_env", "api_key_env", "model_env"):
-        value = profile.get(env_key)
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError(
-                f"Invalid or missing rop.ai_assist.profiles.{profile_name}.{env_key}, "
-                "expected non-empty string"
-            )
-
-    for other_name in _SUPPORTED_PROFILES - {profile_name}:
-        other = profiles.get(other_name)
-        if not isinstance(other, dict):
-            raise RuntimeError(
-                f"Missing rop.ai_assist.profiles.{other_name}, expected mapping"
-            )
-        if other.get("provider") != "openai_compatible":
-            raise RuntimeError(
-                f"Unsupported rop.ai_assist.profiles.{other_name}.provider, "
-                "expected 'openai_compatible'"
-            )
-        for env_key in ("base_url_env", "api_key_env", "model_env"):
-            value = other.get(env_key)
-            if not isinstance(value, str) or not value.strip():
-                raise RuntimeError(
-                    f"Invalid or missing rop.ai_assist.profiles.{other_name}.{env_key}, "
-                    "expected non-empty string"
-                )
-
     events_max = ai_cfg.get("events_max")
     if not isinstance(events_max, int) or events_max <= 0:
         raise RuntimeError("Invalid rop.ai_assist.events_max, expected int > 0")
@@ -686,18 +727,12 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
     if not isinstance(dry_run, bool):
         raise RuntimeError("Invalid type for rop.ai_assist.dry_run, expected bool")
 
-    if ai_cfg.get("enabled") and not dry_run:
-        missing_env_vars: list[str] = []
-        for key in ("model_env", "api_key_env", "base_url_env"):
-            env_name = profile[key]
-            if not os.getenv(env_name, "").strip():
-                missing_env_vars.append(env_name)
-
-        if missing_env_vars:
-            raise RuntimeError(
-                "Missing required ROP AI assist env vars: "
-                + ", ".join(sorted(missing_env_vars))
-            )
+    if ai_cfg.get("enabled"):
+        _require_one_enabled_ai_profile(
+            settings,
+            reason="rop.ai_assist.enabled=true",
+            require_api_key=not dry_run,
+        )
 
 
 _ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(
@@ -908,6 +943,74 @@ def _validate_bitrix_widget_settings(settings: dict) -> None:
             raise RuntimeError(
                 f"Missing required env var '{token_env}' "
                 f"when bitrix.widget.enabled=true"
+            )
+
+
+def _validate_rop_ai_adjudicator_settings(settings: dict) -> None:
+    adj_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
+    if adj_cfg is None:
+        return
+    if not isinstance(adj_cfg, dict):
+        raise RuntimeError(
+            "Invalid type for rop.ai_assist.adjudicator, expected mapping"
+        )
+
+    if not isinstance(adj_cfg.get("enabled"), bool):
+        raise RuntimeError(
+            "Invalid type for rop.ai_assist.adjudicator.enabled, expected bool"
+        )
+
+    ai_assist_cfg = _get_nested_value(settings, ("rop", "ai_assist"))
+    if not isinstance(ai_assist_cfg, dict):
+        raise RuntimeError("Invalid type for rop.ai_assist, expected mapping")
+    if adj_cfg.get("enabled") and ai_assist_cfg.get("enabled") is not True:
+        raise RuntimeError(
+            "Invalid rop.ai_assist config: rop.ai_assist.adjudicator.enabled requires rop.ai_assist.enabled: true"
+        )
+
+    timeout = adj_cfg.get("timeout")
+    if not isinstance(timeout, int) or timeout <= 0:
+        raise RuntimeError(
+            "Invalid rop.ai_assist.adjudicator.timeout, expected int > 0"
+        )
+
+    max_chars = adj_cfg.get("input_chars_max")
+    if not isinstance(max_chars, int) or max_chars <= 0:
+        raise RuntimeError(
+            "Invalid rop.ai_assist.adjudicator.input_chars_max, expected int > 0"
+        )
+
+    min_conf = adj_cfg.get("confidence_accept_min")
+    if not isinstance(min_conf, (int, float)):
+        raise RuntimeError(
+            "Invalid rop.ai_assist.adjudicator.confidence_accept_min, expected float"
+        )
+    if min_conf < 0.0 or min_conf > 1.0:
+        raise RuntimeError(
+            "Invalid rop.ai_assist.adjudicator.confidence_accept_min, expected 0.0..1.0"
+        )
+
+    max_events = adj_cfg.get("events_max")
+    if not isinstance(max_events, int) or max_events <= 0:
+        raise RuntimeError(
+            "Invalid rop.ai_assist.adjudicator.events_max, expected int > 0"
+        )
+
+    prompt_key = adj_cfg.get("prompt_key")
+    if not isinstance(prompt_key, str) or not prompt_key.strip():
+        raise RuntimeError(
+            "Invalid or missing rop.ai_assist.adjudicator.prompt_key, expected non-empty string"
+        )
+
+    if adj_cfg.get("enabled"):
+        profile_cfg = _require_one_enabled_ai_profile(
+            settings,
+            reason="rop.ai_assist.adjudicator.enabled=true",
+            require_api_key=True,
+        )
+        if profile_cfg.get("provider") != "openai_responses":
+            raise RuntimeError(
+                "Invalid ai.profiles config for rop.ai_assist.adjudicator.enabled=true, expected openai_responses"
             )
 
 

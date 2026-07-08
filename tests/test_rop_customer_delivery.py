@@ -372,92 +372,92 @@ def test_recommendations_ignore_requires_no_confirmation(tmp_path, caplog):
 
 
 def test_ai_profile_resolution():
-    ai_cfg = {
-        "enabled": False,
-        "profile": "openai",
+    ai_settings = {
         "profiles": {
             "openai": {
-                "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_OPENAI_BASE_URL",
-                "api_key_env": "ROP_AI_OPENAI_API_KEY",
-                "model_env": "ROP_AI_OPENAI_MODEL",
+                "enabled": True,
+                "provider": "openai_responses",
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-5.4-mini",
             },
             "deepseek": {
+                "enabled": False,
                 "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
-                "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
-                "model_env": "ROP_AI_DEEPSEEK_MODEL",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
             },
             "lmstudio": {
+                "enabled": False,
                 "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
-                "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
-                "model_env": "ROP_AI_LMSTUDIO_MODEL",
+                "api_key_env": "LMSTUDIO_API_KEY",
+                "base_url": "http://127.0.0.1:1234/v1",
+                "model": "local-model",
             },
             "custom": {
+                "enabled": False,
                 "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_BASE_URL",
-                "api_key_env": "ROP_AI_API_KEY",
-                "model_env": "ROP_AI_MODEL",
+                "api_key_env": "CUSTOM_AI_API_KEY",
+                "base_url": "https://example.test/v1",
+                "model": "custom-model",
             },
-        },
+        }
     }
 
-    resolved = resolve_ai_profile(ai_cfg)
-    assert resolved["provider"] == "openai_compatible"
-    assert resolved["model_env"] == "ROP_AI_OPENAI_MODEL"
-    assert resolved["api_key_env"] == "ROP_AI_OPENAI_API_KEY"
-    assert resolved["base_url_env"] == "ROP_AI_OPENAI_BASE_URL"
+    resolved = resolve_ai_profile(
+        {
+            "enabled": False,
+            "events_max": 20,
+            "request_timeout": 30,
+            "ai_confidence_min": 0.70,
+            "dry_run": False,
+        },
+        ai_settings,
+    )
+    assert resolved["provider"] == "openai_responses"
+    assert resolved["model"] == "gpt-5.4-mini"
+    assert resolved["api_key_env"] == "OPENAI_API_KEY"
+    assert resolved["base_url"] == "https://api.openai.com/v1"
 
-    ai_cfg_profile = dict(ai_cfg)
-    ai_cfg_profile["profile"] = "deepseek"
-    resolved2 = resolve_ai_profile(ai_cfg_profile)
-    assert resolved2["model_env"] == "ROP_AI_DEEPSEEK_MODEL"
 
-    ai_cfg_custom = dict(ai_cfg)
-    ai_cfg_custom["profile"] = "custom"
-    resolved3 = resolve_ai_profile(ai_cfg_custom)
-    assert resolved3["model_env"] == "ROP_AI_MODEL"
-
-
-def test_settings_validation_fail_on_missing_profile():
+def test_settings_validation_requires_exactly_one_enabled_profile():
     from beeagent_module.core.settings import _validate_rop_ai_assist_settings
 
     ai_cfg = {
-        "enabled": False,
-        "profile": "nonexistent",
-        "profiles": {
-            "openai": {
-                "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_OPENAI_BASE_URL",
-                "api_key_env": "ROP_AI_OPENAI_API_KEY",
-                "model_env": "ROP_AI_OPENAI_MODEL",
-            },
-            "deepseek": {
-                "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
-                "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
-                "model_env": "ROP_AI_DEEPSEEK_MODEL",
-            },
-            "lmstudio": {
-                "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
-                "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
-                "model_env": "ROP_AI_LMSTUDIO_MODEL",
-            },
-            "custom": {
-                "provider": "openai_compatible",
-                "base_url_env": "ROP_AI_BASE_URL",
-                "api_key_env": "ROP_AI_API_KEY",
-                "model_env": "ROP_AI_MODEL",
-            },
-        },
+        "enabled": True,
+        "events_max": 20,
+        "request_timeout": 30,
+        "ai_confidence_min": 0.70,
+        "dry_run": True,
     }
 
     import pytest
 
-    with pytest.raises(RuntimeError, match="Unsupported rop.ai_assist.profile"):
-        _validate_rop_ai_assist_settings({"rop": {"ai_assist": ai_cfg}})
+    with pytest.raises(RuntimeError, match="Exactly one ai.profiles"):
+        _validate_rop_ai_assist_settings(
+            {
+                "rop": {"ai_assist": ai_cfg},
+                "ai": {
+                    "profiles": {
+                        "openai": {
+                            "enabled": False,
+                            "provider": "openai_responses",
+                            "api_key_env": "OPENAI_API_KEY",
+                            "base_url": "https://api.openai.com/v1",
+                            "model": "gpt-5.4-mini",
+                        },
+                        "deepseek": {
+                            "enabled": False,
+                            "provider": "openai_compatible",
+                            "api_key_env": "DEEPSEEK_API_KEY",
+                            "base_url": "https://api.deepseek.com/v1",
+                            "model": "deepseek-chat",
+                        },
+                    }
+                },
+            }
+        )
 
 
 def test_settings_validation_rejects_top_level_ai_transport_keys():
@@ -473,38 +473,11 @@ def test_settings_validation_rejects_top_level_ai_transport_keys():
                 "rop": {
                     "ai_assist": {
                         "enabled": False,
-                        "profile": "openai",
                         "provider": "openai_compatible",
                         "events_max": 20,
                         "request_timeout": 30,
                         "ai_confidence_min": 0.70,
                         "dry_run": False,
-                        "profiles": {
-                            "openai": {
-                                "provider": "openai_compatible",
-                                "base_url_env": "ROP_AI_OPENAI_BASE_URL",
-                                "api_key_env": "ROP_AI_OPENAI_API_KEY",
-                                "model_env": "ROP_AI_OPENAI_MODEL",
-                            },
-                            "deepseek": {
-                                "provider": "openai_compatible",
-                                "base_url_env": "ROP_AI_DEEPSEEK_BASE_URL",
-                                "api_key_env": "ROP_AI_DEEPSEEK_API_KEY",
-                                "model_env": "ROP_AI_DEEPSEEK_MODEL",
-                            },
-                            "lmstudio": {
-                                "provider": "openai_compatible",
-                                "base_url_env": "ROP_AI_LMSTUDIO_BASE_URL",
-                                "api_key_env": "ROP_AI_LMSTUDIO_API_KEY",
-                                "model_env": "ROP_AI_LMSTUDIO_MODEL",
-                            },
-                            "custom": {
-                                "provider": "openai_compatible",
-                                "base_url_env": "ROP_AI_BASE_URL",
-                                "api_key_env": "ROP_AI_API_KEY",
-                                "model_env": "ROP_AI_MODEL",
-                            },
-                        },
                     }
                 }
             }

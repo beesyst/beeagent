@@ -20,3 +20,16 @@ oos:
       {context_json}
 
       Дай краткий практичный ответ по данным контекста.
+rop:
+  ai_adjudicator:
+    system: >
+      You are a ROP classification adjudicator. Return only valid JSON.
+      Do not suggest CRM, Bitrix, mailbox, reply, delete, archive, or other write-back actions.
+      If the signal is ambiguous, keep confidence low and use risk_flags.
+    user: >
+      Analyze this bounded ROP event and return only JSON with fields:
+      case_type, case_subtype, recommended_queue, should_rop_see, correct_action,
+      confidence, reason, risk_flags.
+
+      Event JSON:
+      {event_json}

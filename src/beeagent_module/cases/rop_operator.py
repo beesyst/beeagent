@@ -17,6 +17,10 @@ from beeagent_module.core.mailbox_selection import (
 )
 from beeagent_module.core.module_registry import ModuleRegistry, build_registry
 from beeagent_module.core.module_runtime import execute_module_case
+from beeagent_module.core.rop_ai_adjudicator import (
+    run_adjudicator_batch,
+    write_adjudicator_artifacts,
+)
 from beeagent_module.core.rop_ai_assist import (
     resolve_ai_profile,
     run_ai_assist_for_event,
@@ -77,6 +81,13 @@ _NORMALIZED_EVENT_CONTEXT_KEYS = (
     "original_message_date",
     "date_source",
     "x_email_id",
+)
+_AI_ADJUDICATOR_FINAL_KEYS = (
+    "case_type",
+    "case_subtype",
+    "recommended_queue",
+    "correct_action",
+    "should_rop_see",
 )
 
 
@@ -681,6 +692,10 @@ def run_rop_batch_case(
     ai_invalid_count = 0
     ai_degraded_count = 0
     ai_enabled = False
+    adj_requested_count = 0
+    adj_used_count = 0
+    adj_degraded_count = 0
+    adj_enabled = False
 
     try:
         input_sources: list[dict] = settings.get("rop", {}).get("sources", [])
@@ -1009,9 +1024,17 @@ def run_rop_batch_case(
 
         ai_cfg = settings.get("rop", {}).get("ai_assist", {})
         ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
+        adj_cfg = (
+            ai_cfg.get("adjudicator", {})
+            if isinstance(ai_cfg, dict)
+            and isinstance(ai_cfg.get("adjudicator", {}), dict)
+            else {}
+        )
+        adj_config_enabled = bool(adj_cfg.get("enabled", False))
+        legacy_ai_assist_enabled = bool(ai_enabled and not adj_config_enabled)
         effective_ai_cfg = (
-            resolve_ai_profile(ai_cfg)
-            if ai_enabled and isinstance(ai_cfg, dict)
+            resolve_ai_profile(ai_cfg, settings.get("ai", {}))
+            if legacy_ai_assist_enabled and isinstance(ai_cfg, dict)
             else {}
         )
 
@@ -1019,7 +1042,7 @@ def run_rop_batch_case(
         ai_decisions: list[dict[str, Any]] = []
         ai_results: list[dict[str, Any]] = []
 
-        if ai_enabled:
+        if legacy_ai_assist_enabled:
             min_conf = float(ai_cfg["ai_confidence_min"])
             events_max = int(ai_cfg["events_max"])
 
@@ -1085,7 +1108,7 @@ def run_rop_batch_case(
             decisions=ai_decisions,
             results=ai_results,
             counters={
-                "ai_assist_enabled": 1 if ai_enabled else 0,
+                "ai_assist_enabled": 1 if legacy_ai_assist_enabled else 0,
                 "ai_assist_requested_count": ai_requested_count,
                 "ai_assist_used_count": ai_used_count,
                 "ai_assist_invalid_count": ai_invalid_count,
@@ -1095,11 +1118,40 @@ def run_rop_batch_case(
         )
         artifact_refs.extend(ai_refs)
 
-        classification_diagnostics["ai_assist_enabled"] = ai_enabled
+        classification_diagnostics["ai_assist_enabled"] = legacy_ai_assist_enabled
         classification_diagnostics["ai_assist_requested_count"] = ai_requested_count
         classification_diagnostics["ai_assist_used_count"] = ai_used_count
         classification_diagnostics["ai_assist_invalid_count"] = ai_invalid_count
         classification_diagnostics["ai_assist_degraded_count"] = ai_degraded_count
+
+        adj_requests, adj_decisions, adj_results, adj_counters = run_adjudicator_batch(
+            events=enriched_classified,
+            settings=settings,
+            logger=logger,
+        )
+        adj_requested_count = adj_counters.get("adjudicator_eligible_count", 0)
+        adj_used_count = adj_counters.get("adjudicator_used_count", 0)
+        adj_degraded_count = adj_counters.get("adjudicator_degraded_count", 0)
+        adj_enabled = bool(adj_counters.get("adjudicator_enabled", 0))
+
+        adj_refs = write_adjudicator_artifacts(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            requests=adj_requests,
+            decisions=adj_decisions,
+            results=adj_results,
+            counters=adj_counters,
+            logger=logger,
+        )
+        artifact_refs.extend(adj_refs)
+
+        classification_diagnostics["ai_adjudicator_enabled"] = adj_enabled
+        classification_diagnostics["ai_adjudicator_eligible_count"] = (
+            adj_requested_count
+        )
+        classification_diagnostics["ai_adjudicator_used_count"] = adj_used_count
+        classification_diagnostics["ai_adjudicator_degraded_count"] = adj_degraded_count
+        _apply_ai_adjudicator_results(enriched_classified, adj_results)
 
         classified_path = run_dir / "classified_events.json"
         classified_path.write_text(
@@ -1287,6 +1339,16 @@ def run_rop_batch_case(
         classification_diagnostics.setdefault(
             "ai_assist_degraded_count", ai_degraded_count
         )
+        classification_diagnostics.setdefault("ai_adjudicator_enabled", adj_enabled)
+        classification_diagnostics.setdefault(
+            "ai_adjudicator_eligible_count", adj_requested_count
+        )
+        classification_diagnostics.setdefault(
+            "ai_adjudicator_used_count", adj_used_count
+        )
+        classification_diagnostics.setdefault(
+            "ai_adjudicator_degraded_count", adj_degraded_count
+        )
         classification_diagnostics.setdefault("case_subtype_counts", {})
         classification_diagnostics.setdefault("recommended_queue_counts", {})
         classification_diagnostics.setdefault("correct_action_counts", {})
@@ -1369,6 +1431,14 @@ def _enrich_classified_events(
         enriched_event["recommended_queue"] = event.get("recommended_queue")
         enriched_event["should_rop_see"] = event.get("should_rop_see")
         enriched_event["correct_action"] = event.get("correct_action")
+        enriched_event["deterministic_case_type"] = event.get("case_type", "unknown")
+        enriched_event["deterministic_case_subtype"] = event.get("case_subtype")
+        enriched_event["deterministic_recommended_queue"] = event.get(
+            "recommended_queue"
+        )
+        enriched_event["deterministic_correct_action"] = event.get("correct_action")
+        enriched_event["deterministic_confidence"] = event.get("confidence", 0.0)
+        enriched_event["deterministic_reason_code"] = event.get("reason_code", "")
 
         eid = event.get("event_id", "")
         tc = context_map.get(eid)
@@ -1504,3 +1574,43 @@ def _apply_public_merged_event(
 
     event["ai_assist_status"] = "ok"
     event["ai_assist_used"] = True
+
+
+def _apply_ai_adjudicator_results(
+    events: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+) -> None:
+    accepted_statuses = {"ok", "manual_review_degrade"}
+    results_by_event_id = {
+        result.get("event_id", ""): result
+        for result in results
+        if isinstance(result, dict) and result.get("event_id")
+    }
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+
+        result = results_by_event_id.get(event.get("event_id", ""))
+        if not isinstance(result, dict):
+            continue
+        if result.get("ai_status") not in accepted_statuses:
+            continue
+
+        for key in _AI_ADJUDICATOR_FINAL_KEYS:
+            final_key = f"final_{key}"
+            if final_key in result:
+                event[key] = result[final_key]
+
+        event["ai_adjudicator_used"] = bool(result.get("ai_used", False))
+        event["ai_adjudicator_status"] = result.get("ai_status", "")
+        event["ai_adjudicator_confidence"] = result.get("ai_confidence")
+        event["ai_adjudicator_reason"] = result.get("ai_reason", "")
+        event["ai_adjudicator_risk_flags"] = list(result.get("ai_risk_flags", []))
+        event["ai_adjudicator_merge_reason"] = result.get("merge_reason", "")
+        if result.get("ai_confidence") is not None:
+            event["confidence"] = result["ai_confidence"]
+        if result.get("merge_reason"):
+            event["reason_code"] = result["merge_reason"]
+        if result.get("ai_reason"):
+            event["reasoning"] = result["ai_reason"]
