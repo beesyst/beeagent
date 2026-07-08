@@ -103,17 +103,6 @@ def _valid_settings() -> dict:
         "scheduler": {"enabled": False, "interval": 100, "start_run": True},
         "approval": {"reject_reason": "Rejected"},
         "promo": {"stock_min": 10, "units_max": 2},
-        "recommendations": {"enabled": True, "items_max": 10},
-        "llm": {
-            "enabled": True,
-            "provider": "openai",
-            "model": "gpt-5-nano",
-            "api_key_env": "OPENAI_API_KEY",
-            "api_url": "https://api.openai.com/v1/responses",
-            "prompts_path": "config/prompts.yml",
-            "assistant": {"prompts_key": "oos.llm_assistant_qa", "items_max": 5},
-            "throttling": {"timeout": 60, "retries": 2},
-        },
         "i18n": {"lang": "ru", "path": "config/i18n/ru.yml"},
         "quiz": {"enabled": False, "path": "config/quiz/pharmacy_quiz.json"},
         "modules": {

@@ -4,14 +4,8 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from beeagent_module.cases.oos import (
-    approve_last_run_case,
-    get_last_report_case,
-    run_oos_case,
-)
 from beeagent_module.cases.promo import run_promo_case
 from beeagent_module.cases.quiz import (
     get_last_quiz_case,
@@ -20,15 +14,10 @@ from beeagent_module.cases.quiz import (
 )
 from beeagent_module.cases.rop_operator import run_rop_operator_case
 from beeagent_module.core.i18n import load_translations, t
-from beeagent_module.core.llm import answer_oos_report_question
 from beeagent_module.core.paths import get_storage_dir
 from beeagent_module.core.secrets import load_secrets
 
-BUTTON_RUN_OOS = "run_oos"
 BUTTON_RUN_PROMO = "run_promo"
-BUTTON_SHOW_REPORT = "show_report"
-BUTTON_APPROVE_TASKS = "approve_tasks"
-BUTTON_REJECT_TASKS = "reject_tasks"
 BUTTON_QUIZ_ANSWER_PREFIX = "quiz_answer_"
 
 
@@ -97,24 +86,16 @@ def _build_application(
     application.bot_data["telemetry_path"] = (
         storage_dir / "telemetry" / "telegram_updates.jsonl"
     )
-    application.bot_data["last_report_path"] = (
-        storage_dir / "reports" / "last_oos_report.md"
-    )
     application.bot_data["logger"] = logger
     application.bot_data["translations"] = translations
 
     application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(CommandHandler("help", handle_help))
-    application.add_handler(CommandHandler("run_oos", handle_run_oos))
     application.add_handler(CommandHandler("run_promo", handle_run_promo))
     application.add_handler(CommandHandler("run_rop", handle_run_rop))
-    application.add_handler(CommandHandler("last", handle_last))
     application.add_handler(CommandHandler("quiz_pharmacy", handle_quiz_pharmacy))
     application.add_handler(CommandHandler("last_quiz", handle_last_quiz))
     application.add_handler(CallbackQueryHandler(handle_menu_button))
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_assistant_question)
-    )
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
 
     return application
@@ -140,15 +121,8 @@ async def _start_scheduler_if_enabled(application: Any) -> None:
     if application.bot_data.get("scheduler_task") is not None:
         return
 
-    stop_event = asyncio.Event()
-    scheduler_task = asyncio.create_task(_scheduler_loop(application, stop_event))
-    application.bot_data["scheduler_stop_event"] = stop_event
-    application.bot_data["scheduler_task"] = scheduler_task
-
     logger.info(
-        "scheduler started interval=%s start_run=%s",
-        scheduler_cfg["interval"],
-        scheduler_cfg["start_run"],
+        "scheduler enabled but no active telegram scheduled jobs are configured"
     )
 
 
@@ -169,54 +143,10 @@ async def _stop_scheduler(application: Any) -> None:
 
 
 async def _scheduler_loop(application: Any, stop_event: asyncio.Event) -> None:
-    settings = application.bot_data["settings"]
-    scheduler_cfg = settings["scheduler"]
-    interval = scheduler_cfg["interval"]
-
-    if scheduler_cfg["start_run"]:
-        await _run_scheduled_oos_tick(application)
-
-    while not stop_event.is_set():
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval)
-        except TimeoutError:
-            pass
-
-        if stop_event.is_set():
-            break
-
-        await _run_scheduled_oos_tick(application)
-
-
-async def _run_scheduled_oos_tick(application: Any) -> None:
-    settings = application.bot_data["settings"]
     logger: logging.Logger = application.bot_data["logger"]
-    storage_dir = application.bot_data["storage_dir"]
-    chat_id = application.bot_data["chat_id"]
-
-    try:
-        result = run_oos_case(
-            settings=settings,
-            storage_dir=storage_dir,
-            logger=logger,
-            trigger="scheduled",
-        )
-    except Exception:
-        logger.exception("scheduled run failed")
-        return
-
-    text = t(
-        application.bot_data["translations"],
-        "telegram.scheduler.new_run",
-        run_id=result["run_id"],
-        alerts=result["alerts_count"],
-        tasks=result["tasks_count"],
-    )
-
-    try:
-        await application.bot.send_message(chat_id=chat_id, text=text)
-    except Exception:
-        logger.exception("failed to send scheduled notification")
+    _ = application
+    await stop_event.wait()
+    logger.info("scheduler stopped")
 
 
 async def handle_start(update: Any, context: Any) -> None:
@@ -246,19 +176,6 @@ async def handle_help(update: Any, context: Any) -> None:
         return
 
     await message.reply_text(_t(context, "telegram.help"))
-
-
-async def handle_run_oos(update: Any, context: Any) -> None:
-    await _track_update_event(update, context, event_type="run_oos")
-
-    if not await _ensure_allowlist(update, context):
-        return
-
-    message = update.effective_message
-    if message is None:
-        return
-
-    await _run_oos_and_reply(message, context)
 
 
 async def handle_run_promo(update: Any, context: Any) -> None:
@@ -302,25 +219,6 @@ async def handle_run_rop(update: Any, context: Any) -> None:
         payload=demo_payload,
     )
     await message.reply_text(str(result["operator_text"]))
-
-
-async def handle_last(update: Any, context: Any) -> None:
-    await _track_update_event(update, context, event_type="last")
-
-    if not await _ensure_allowlist(update, context):
-        return
-
-    message = update.effective_message
-    if message is None:
-        return
-
-    storage_dir = context.bot_data["storage_dir"]
-    report_text = get_last_report_case(storage_dir)
-    if report_text is None:
-        await message.reply_text(_t(context, "telegram.no_reports"))
-        return
-
-    await message.reply_text(report_text)
 
 
 async def handle_quiz_pharmacy(update: Any, context: Any) -> None:
@@ -420,30 +318,8 @@ async def handle_menu_button(
     if reply is None:
         return
 
-    if query.data == BUTTON_RUN_OOS:
-        await _run_oos_and_reply(message, context)
-        return
-
     if query.data == BUTTON_RUN_PROMO:
         await _run_promo_and_reply(message, context)
-        return
-
-    if query.data == BUTTON_SHOW_REPORT:
-        storage_dir = context.bot_data["storage_dir"]
-        report_text = get_last_report_case(storage_dir)
-        if report_text is None:
-            await reply(_t(context, "telegram.no_reports"))
-            return
-
-        await reply(report_text)
-        return
-
-    if query.data == BUTTON_APPROVE_TASKS:
-        await _approve_or_reject_tasks(message, context, decision="approved")
-        return
-
-    if query.data == BUTTON_REJECT_TASKS:
-        await _approve_or_reject_tasks(message, context, decision="rejected")
         return
 
     if query.data and query.data.startswith(BUTTON_QUIZ_ANSWER_PREFIX):
@@ -469,59 +345,6 @@ async def handle_unknown_command(
     await message.reply_text(_t(context, "telegram.unknown"))
 
 
-async def handle_assistant_question(update: Any, context: Any) -> None:
-    await _track_update_event(update, context, event_type="assistant_question")
-
-    if not await _ensure_allowlist(update, context):
-        return
-
-    message = update.effective_message
-    if message is None:
-        return
-
-    question = (message.text or "").strip()
-    if not question:
-        await message.reply_text(_t(context, "telegram.assistant.ask_prompt"))
-        return
-
-    settings = context.bot_data["settings"]
-    llm_cfg = settings["llm"]
-    assistant_cfg = llm_cfg["assistant"]
-    logger: logging.Logger = context.bot_data["logger"]
-    storage_dir = context.bot_data["storage_dir"]
-
-    if not llm_cfg["enabled"]:
-        await message.reply_text(_t(context, "telegram.assistant.ai_disabled"))
-        return
-
-    context_payload, error_key = _build_oos_assistant_context(
-        storage_dir=storage_dir,
-        max_context_items=int(assistant_cfg["items_max"]),
-        logger=logger,
-    )
-    if error_key is not None:
-        await message.reply_text(_t(context, error_key))
-        return
-
-    if context_payload is None:
-        await message.reply_text(_t(context, "telegram.assistant.data_unavailable"))
-        return
-
-    answer = answer_oos_report_question(
-        llm_cfg=llm_cfg,
-        question=question,
-        context_payload=context_payload,
-        prompts_key=str(assistant_cfg["prompts_key"]),
-        logger=logger,
-    )
-
-    if not isinstance(answer, str) or not answer.strip():
-        await message.reply_text(_t(context, "telegram.assistant.no_answer"))
-        return
-
-    await message.reply_text(answer)
-
-
 def _build_main_menu(translations: dict[str, Any] | None = None):
     try:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -534,53 +357,12 @@ def _build_main_menu(translations: dict[str, Any] | None = None):
     keyboard = [
         [
             InlineKeyboardButton(
-                t(translations, "telegram.menu.run_oos"),
-                callback_data=BUTTON_RUN_OOS,
-            )
-        ],
-        [
-            InlineKeyboardButton(
                 t(translations, "telegram.menu.run_promo"),
                 callback_data=BUTTON_RUN_PROMO,
             )
         ],
-        [
-            InlineKeyboardButton(
-                t(translations, "telegram.menu.show_report"),
-                callback_data=BUTTON_SHOW_REPORT,
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                t(translations, "telegram.menu.approve"),
-                callback_data=BUTTON_APPROVE_TASKS,
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                t(translations, "telegram.menu.reject"),
-                callback_data=BUTTON_REJECT_TASKS,
-            )
-        ],
     ]
     return InlineKeyboardMarkup(keyboard)
-
-
-async def _run_oos_and_reply(message: Any, context: Any) -> None:
-    settings = context.bot_data["settings"]
-    logger: logging.Logger = context.bot_data["logger"]
-    storage_dir = context.bot_data["storage_dir"]
-
-    result = run_oos_case(
-        settings=settings,
-        storage_dir=storage_dir,
-        logger=logger,
-        trigger="manual",
-    )
-
-    report_text = result["report_text"]
-
-    await message.reply_text(report_text)
 
 
 async def _run_promo_and_reply(message: Any, context: Any) -> None:
@@ -598,17 +380,6 @@ async def _run_promo_and_reply(message: Any, context: Any) -> None:
     report_text = result["report_text"]
 
     await message.reply_text(report_text)
-
-
-async def _approve_or_reject_tasks(
-    message: Any,
-    context: Any,
-    decision: str,
-) -> None:
-    settings = context.bot_data["settings"]
-    storage_dir = context.bot_data["storage_dir"]
-    result_text = approve_last_run_case(settings, storage_dir, decision)
-    await message.reply_text(result_text)
 
 
 async def _ensure_allowlist(
@@ -644,129 +415,6 @@ def _t(context: Any, key: str, **vars: Any) -> str:
         context.bot_data["translations"] = translations
 
     return t(translations, key, **vars)
-
-
-def _read_json_artifact(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def _build_oos_assistant_context(
-    storage_dir: Path,
-    max_context_items: int,
-    logger: logging.Logger,
-) -> tuple[dict[str, Any] | None, str | None]:
-    last_run_path = storage_dir / "reports" / "last_run.json"
-    if not last_run_path.exists():
-        return None, "telegram.assistant.no_last_run"
-
-    try:
-        last_run_payload = _read_json_artifact(last_run_path)
-    except Exception:
-        logger.exception("failed to read last_run.json")
-        return None, "telegram.assistant.data_unavailable"
-
-    if not isinstance(last_run_payload, dict):
-        return None, "telegram.assistant.data_unavailable"
-
-    run_id = last_run_payload.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        return None, "telegram.assistant.data_unavailable"
-
-    run_dir = storage_dir / "runs" / run_id
-    run_json_path = run_dir / "run.json"
-    recommendations_path = run_dir / "recommendations.json"
-    alerts_path = run_dir / "alerts.json"
-    tasks_path = run_dir / "tasks_draft.json"
-
-    if not run_json_path.exists() or not recommendations_path.exists():
-        return None, "telegram.assistant.data_unavailable"
-
-    try:
-        run_payload = _read_json_artifact(run_json_path)
-        recommendations_payload = _read_json_artifact(recommendations_path)
-    except Exception:
-        logger.exception("failed to read run artifacts run_id=%s", run_id)
-        return None, "telegram.assistant.data_unavailable"
-
-    if not isinstance(run_payload, dict) or not isinstance(
-        recommendations_payload, list
-    ):
-        return None, "telegram.assistant.data_unavailable"
-
-    if not recommendations_payload:
-        return None, "telegram.assistant.insufficient_data"
-
-    compact_recommendations: list[dict[str, Any]] = []
-    required_metric_keys = ("stock_on_hand", "units_7d", "days_of_cover")
-
-    for rec in recommendations_payload[:max_context_items]:
-        if not isinstance(rec, dict):
-            continue
-
-        metrics = rec.get("metrics")
-        if not isinstance(metrics, dict):
-            continue
-
-        if not all(metric_key in metrics for metric_key in required_metric_keys):
-            continue
-
-        action = rec.get("action")
-        reason = rec.get("reason")
-        effect = rec.get("effect")
-        confidence = rec.get("confidence")
-        if not all(
-            isinstance(value, str) and value
-            for value in (action, reason, effect, confidence)
-        ):
-            continue
-
-        compact_metrics = {
-            metric_key: metrics[metric_key] for metric_key in required_metric_keys
-        }
-        compact_recommendations.append(
-            {
-                "action": action,
-                "reason": reason,
-                "metrics": compact_metrics,
-                "effect": effect,
-                "confidence": confidence,
-            }
-        )
-
-    if not compact_recommendations:
-        return None, "telegram.assistant.insufficient_data"
-
-    try:
-        alerts_count = int(run_payload.get("alerts_count", 0))
-    except TypeError, ValueError:
-        alerts_count = 0
-
-    try:
-        tasks_count = int(run_payload.get("tasks_count", 0))
-    except TypeError, ValueError:
-        tasks_count = 0
-
-    try:
-        if alerts_path.exists():
-            alerts_payload = _read_json_artifact(alerts_path)
-            if isinstance(alerts_payload, list):
-                alerts_count = len(alerts_payload)
-        if tasks_path.exists():
-            tasks_payload = _read_json_artifact(tasks_path)
-            if isinstance(tasks_payload, list):
-                tasks_count = len(tasks_payload)
-    except Exception:
-        logger.warning("failed to read optional artifacts for run_id=%s", run_id)
-
-    context_payload = {
-        "run_id": run_id,
-        "dataset_id": run_payload.get("dataset_id"),
-        "alerts_count": alerts_count,
-        "tasks_count": tasks_count,
-        "recommendations": compact_recommendations,
-    }
-    return context_payload, None
 
 
 async def _track_update_event(

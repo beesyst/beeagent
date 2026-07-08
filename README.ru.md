@@ -50,7 +50,7 @@
 - сохранять allowlist-based artifact access, bounded previews и sanitization;
 - поддерживать approval / reject в demo-потоке;
 - хранить step timings / basic observability;
-- держать несколько demo-agents (`oos`, `promo`, `quiz`);
+- держать несколько bounded demo/runtime paths (`promo`, `quiz`, `rop`);
 - выдавать explainable recommendations поверх deterministic path;
 - иметь internal module contract v0 для внешних доменных модулей;
 - загружать package-based модули через config-driven registry;
@@ -394,13 +394,12 @@ web:
 - `TELEGRAM_BOT_TOKEN`
 - `CHAT_ID`
 - `OPENAI_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `LMSTUDIO_API_KEY`
+- `CUSTOM_AI_API_KEY`
 - `BITRIX_WEBHOOK_URL`
 - `ROP_MAILBOX_USERNAME`
 - `ROP_MAILBOX_PASSWORD`
-- `ROP_AI_OPENAI_API_KEY`
-- `ROP_AI_DEEPSEEK_API_KEY`
-- `ROP_AI_LMSTUDIO_API_KEY`
-- `ROP_AI_API_KEY`
 
 `web.auth.enabled: false` (default) сохраняет current dev behavior. При `web.auth.enabled: true`:
 
@@ -849,11 +848,13 @@ Internal secrets генерируются автоматически, если �
 
 - `TELEGRAM_BOT_TOKEN`
 - `CHAT_ID`
-- `OPENAI_API_KEY` (если включён LLM)
+- `OPENAI_API_KEY` для включённого `ai.profiles.openai`
+- `DEEPSEEK_API_KEY` для включённого `ai.profiles.deepseek`
+- `LMSTUDIO_API_KEY` для включённого `ai.profiles.lmstudio`
+- `CUSTOM_AI_API_KEY` для включённого `ai.profiles.custom`
 - `BITRIX_WEBHOOK_URL`
 - `ROP_MAILBOX_USERNAME`
 - `ROP_MAILBOX_PASSWORD`
-- `ROP_AI_OPENAI_API_KEY`, `ROP_AI_DEEPSEEK_API_KEY`, `ROP_AI_LMSTUDIO_API_KEY`, `ROP_AI_API_KEY`
 - credentials для Telegram / Bitrix / OpenAI и других внешних интеграций.
 
 ### 2. Запуск
@@ -942,12 +943,11 @@ uv run pytest -q
 - `scheduler`
 - `approval`
 - `promo`
-- `recommendations`
-- `llm`
 - `i18n`
 - `quiz`
 - `modules`
 - `rop`
+- `ai`
 
 `run.mode` сейчас выбирает runtime/transport, а не доменный модуль:
 
@@ -1045,47 +1045,63 @@ rop:
 
 ### ROP AI assist
 
-`rop.ai_assist` — BeeAgent-owned bounded AI assist config.
+`ai` — единый source of truth для BeeAgent AI provider/model/prompt config.
 
-По умолчанию AI assist выключен:
+Provider profiles и prompts задаются один раз на верхнем уровне:
+
+```yaml
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-nano"
+    deepseek:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+    lmstudio:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: LMSTUDIO_API_KEY
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+    custom:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: CUSTOM_AI_API_KEY
+      base_url: ""
+      model: ""
+```
+
+ROP-specific adjudicator config живёт отдельно под `rop.ai_assist`, но не дублирует provider/prompt settings:
 
 ```yaml
 rop:
   ai_assist:
-    enabled: false
-    profile: openai
-    events_max: 20
+    enabled: true
+    events_max: 100
     request_timeout: 30
     ai_confidence_min: 0.70
     dry_run: false
-    profiles:
-      openai:
-        provider: openai_compatible
-        base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
-        model_env: ROP_AI_OPENAI_MODEL
-      deepseek:
-        provider: openai_compatible
-        base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
-        model_env: ROP_AI_DEEPSEEK_MODEL
-      lmstudio:
-        provider: openai_compatible
-        base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
-        model_env: ROP_AI_LMSTUDIO_MODEL
-      custom:
-        provider: openai_compatible
-        base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
-        model_env: ROP_AI_MODEL
+    adjudicator:
+      enabled: true
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 100
+      prompt_key: "rop.ai_adjudicator"
 ```
 
-Выбранный provider profile задаётся через `rop.ai_assist.profile`.
-BeeAgent берёт transport env names только из выбранного `rop.ai_assist.profiles.<profile>`.
-Старые top-level transport keys под `rop.ai_assist` (`provider`, `model_env`, `api_key_env`, `base_url_env`) считаются invalid config.
-
-Если `enabled: true` и `dry_run: false`, BeeAgent fail-fast проверяет наличие env vars из выбранного `profiles.<profile>`.
+Если `rop.ai_assist.adjudicator.enabled: true`, BeeAgent использует `ai.prompts.path`, `rop.ai_assist.adjudicator.prompt_key` и ровно один включённый `ai.profiles.*`.
+Для `openai` нужен `OPENAI_API_KEY`, для `deepseek` — `DEEPSEEK_API_KEY`, для `lmstudio` — `LMSTUDIO_API_KEY`, для `custom` — `CUSTOM_AI_API_KEY`.
 
 AI assist не является самостоятельной ROP business logic. BeeAgent строит bounded request/result artifacts, а применение AI result выполняется только через public `beeagent-rop` case `ai_assist_merge`. Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
 

@@ -3596,17 +3596,6 @@ def _build_full_settings() -> dict:
         "scheduler": {"enabled": False, "interval": 100, "start_run": True},
         "approval": {"reject_reason": "R"},
         "promo": {"stock_min": 1, "units_max": 1},
-        "recommendations": {"enabled": False, "items_max": 1},
-        "llm": {
-            "enabled": False,
-            "provider": "openai",
-            "model": "gpt",
-            "api_key_env": "K",
-            "api_url": "https://x",
-            "prompts_path": "p.yml",
-            "assistant": {"prompts_key": "k", "items_max": 1},
-            "throttling": {"timeout": 10, "retries": 1},
-        },
         "i18n": {"lang": "ru", "path": "i18n.yml"},
         "quiz": {"enabled": False, "path": "q.json"},
         "modules": {"registry": []},
@@ -3671,14 +3660,14 @@ def _build_full_settings() -> dict:
             },
         },
         "ai": {
-            "prompts": {"path": "config/prompts.yml", "store": False},
+            "prompts": {"path": "p.yml", "store": False},
             "profiles": {
                 "openai": {
                     "enabled": True,
                     "provider": "openai_responses",
-                    "api_key_env": "OPENAI_API_KEY",
-                    "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-5.4-mini",
+                    "api_key_env": "K",
+                    "base_url": "https://x",
+                    "model": "gpt",
                 },
                 "deepseek": {
                     "enabled": False,

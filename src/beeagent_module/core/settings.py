@@ -29,18 +29,6 @@ REQUIRED_KEYS = (
     ("approval", "reject_reason"),
     ("promo", "stock_min"),
     ("promo", "units_max"),
-    ("recommendations", "enabled"),
-    ("recommendations", "items_max"),
-    ("llm", "enabled"),
-    ("llm", "provider"),
-    ("llm", "model"),
-    ("llm", "api_key_env"),
-    ("llm", "api_url"),
-    ("llm", "prompts_path"),
-    ("llm", "assistant", "prompts_key"),
-    ("llm", "assistant", "items_max"),
-    ("llm", "throttling", "timeout"),
-    ("llm", "throttling", "retries"),
     ("i18n", "lang"),
     ("i18n", "path"),
     ("quiz", "enabled"),
@@ -206,66 +194,6 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for promo.units_max, expected int")
     if promo_units_max < 0:
         raise RuntimeError("Invalid value for promo.units_max, expected >= 0")
-
-    if not isinstance(
-        _get_nested_value(settings, ("recommendations", "enabled")), bool
-    ):
-        raise RuntimeError("Invalid type for recommendations.enabled, expected bool")
-
-    recommendations_items_max = _get_nested_value(
-        settings, ("recommendations", "items_max")
-    )
-    if not isinstance(recommendations_items_max, int):
-        raise RuntimeError("Invalid type for recommendations.items_max, expected int")
-    if recommendations_items_max <= 0:
-        raise RuntimeError("Invalid value for recommendations.items_max, expected > 0")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "enabled")), bool):
-        raise RuntimeError("Invalid type for llm.enabled, expected bool")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "provider")), str):
-        raise RuntimeError("Invalid type for llm.provider, expected string")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "model")), str):
-        raise RuntimeError("Invalid type for llm.model, expected string")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "api_key_env")), str):
-        raise RuntimeError("Invalid type for llm.api_key_env, expected string")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "api_url")), str):
-        raise RuntimeError("Invalid type for llm.api_url, expected string")
-
-    if not isinstance(_get_nested_value(settings, ("llm", "prompts_path")), str):
-        raise RuntimeError("Invalid type for llm.prompts_path, expected string")
-
-    if not isinstance(
-        _get_nested_value(settings, ("llm", "assistant", "prompts_key")), str
-    ):
-        raise RuntimeError(
-            "Invalid type for llm.assistant.prompts_key, expected string"
-        )
-
-    assistant_items_max = _get_nested_value(settings, ("llm", "assistant", "items_max"))
-    if not isinstance(assistant_items_max, int):
-        raise RuntimeError("Invalid type for llm.assistant.items_max, expected int")
-    if assistant_items_max <= 0:
-        raise RuntimeError("Invalid value for llm.assistant.items_max, expected > 0")
-
-    throttling_timeout = _get_nested_value(settings, ("llm", "throttling", "timeout"))
-    if not isinstance(throttling_timeout, int):
-        raise RuntimeError("Invalid type for llm.throttling.timeout, expected int")
-    if throttling_timeout <= 0:
-        raise RuntimeError("Invalid value for llm.throttling.timeout, expected > 0")
-
-    throttling_retries = _get_nested_value(settings, ("llm", "throttling", "retries"))
-    if not isinstance(throttling_retries, int):
-        raise RuntimeError("Invalid type for llm.throttling.retries, expected int")
-    if throttling_retries < 0:
-        raise RuntimeError("Invalid value for llm.throttling.retries, expected >= 0")
-
-    llm_provider = _get_nested_value(settings, ("llm", "provider"))
-    if llm_provider != "openai":
-        raise RuntimeError("Unsupported llm.provider, expected 'openai'")
 
     if not isinstance(_get_nested_value(settings, ("i18n", "lang")), str):
         raise RuntimeError("Invalid type for i18n.lang, expected string")

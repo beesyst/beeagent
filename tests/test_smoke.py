@@ -60,24 +60,6 @@ promo:
   stock_min: 1
   units_max: 0
 
-recommendations:
-  enabled: true
-  items_max: 10
-
-llm:
-  enabled: false
-  provider: "openai"
-  model: "gpt-4o-mini"
-  api_key_env: "OPENAI_API_KEY"
-  api_url: "https://api.openai.com/v1/responses"
-  prompts_path: "config/prompts.yml"
-  assistant:
-    prompts_key: "oos.llm_assistant_qa"
-    items_max: 5
-  throttling:
-    timeout: 60
-    retries: 2
-
 i18n:
   lang: "ru"
   path: "config/i18n/ru.yml"
@@ -261,24 +243,6 @@ approval:
 promo:
   stock_min: 1
   units_max: 0
-
-recommendations:
-  enabled: true
-  items_max: 10
-
-llm:
-  enabled: false
-  provider: "openai"
-  model: "gpt-4o-mini"
-  api_key_env: "OPENAI_API_KEY"
-  api_url: "https://api.openai.com/v1/responses"
-  prompts_path: "config/prompts.yml"
-  assistant:
-    prompts_key: "oos.llm_assistant_qa"
-    items_max: 5
-  throttling:
-    timeout: 60
-    retries: 2
 
 i18n:
   lang: "ru"
@@ -468,24 +432,6 @@ approval:
 promo:
   stock_min: 1
   units_max: 0
-
-recommendations:
-  enabled: true
-  items_max: 10
-
-llm:
-  enabled: false
-  provider: "openai"
-  model: "gpt-4o-mini"
-  api_key_env: "OPENAI_API_KEY"
-  api_url: "https://api.openai.com/v1/responses"
-  prompts_path: "config/prompts.yml"
-  assistant:
-    prompts_key: "oos.llm_assistant_qa"
-    items_max: 5
-  throttling:
-    timeout: 60
-    retries: 2
 
 i18n:
   lang: "ru"
@@ -687,24 +633,6 @@ approval:
 promo:
   stock_min: 1
   units_max: 0
-
-recommendations:
-  enabled: true
-  items_max: 10
-
-llm:
-  enabled: false
-  provider: "openai"
-  model: "gpt-4o-mini"
-  api_key_env: "OPENAI_API_KEY"
-  api_url: "https://api.openai.com/v1/responses"
-  prompts_path: "config/prompts.yml"
-  assistant:
-    prompts_key: "oos.llm_assistant_qa"
-    items_max: 5
-  throttling:
-    timeout: 60
-    retries: 2
 
 i18n:
   lang: "ru"

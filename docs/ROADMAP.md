@@ -212,7 +212,7 @@ ROADMAP не дублирует полные правила процесса и 
 
 Включено:
 
-- команды `/start`, `/help`, `/run_oos`, `/last`;
+- команды `/start`, `/help`, plus legacy demo report commands;
 - inline-кнопки;
 - allowlist.
 
@@ -223,7 +223,7 @@ ROADMAP не дублирует полные правила процесса и 
 
 #### Реализовано
 
-- команды: `/start`, `/help`, `/run_oos`, `/last`
+- команды: `/start`, `/help`, plus legacy demo report commands
 - inline-кнопки: `Run OOS Scan`, `Show Report`
 - allowlist (один `chat_id` в config)
 
@@ -295,7 +295,7 @@ Demo-агенты могут работать на воспроизводимы�
 
 - одинаковый seed даёт одинаковый результат;
 - mock dataset создаётся и читается одной функцией;
-- `/run_oos` создаёт dataset artifact.
+- demo scan command создаёт dataset artifact.
 
 ### Итерация 3 — LangGraph workflow v0 (OOS detector, dry-run)
 
@@ -340,12 +340,12 @@ Demo-агенты могут работать на воспроизводимы�
 #### Checks
 
 - `bash start.sh`
-- `/run_oos`
+- demo scan command
 - artifact inspection
 
 #### DoD
 
-- `/run_oos` создаёт `run_id`, пишет артефакты и возвращает отчёт;
+- demo scan command создаёт `run_id`, пишет артефакты и возвращает отчёт;
 - empty data scenario обрабатывается без падения.
 
 ### Итерация 4 — Approval v0 + export
@@ -723,13 +723,13 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 #### Checks
 
 - `bash start.sh`
-- `/run_oos`
+- demo scan command
 - fallback LLM off
 - `pytest -q`
 
 #### DoD
 
-- `/run_oos` выдаёт отчёт с рекомендациями;
+- demo scan command выдаёт отчёт с рекомендациями;
 - recommendation artifacts создаются;
 - trace и logs расширены под recommendation path.
 
@@ -5735,7 +5735,7 @@ rop:
     enabled: false
     provider: openai_compatible
     model_env: ROP_AI_MODEL
-    api_key_env: ROP_AI_API_KEY
+    api_key_env: CUSTOM_AI_API_KEY
     base_url_env: ROP_AI_BASE_URL
     max_events_per_run: 20
     request_timeout_seconds: 30
@@ -6042,7 +6042,7 @@ Optional AI smoke only with explicit test env:
 
 ```bash
 ROP_AI_MODEL="test-model"
-ROP_AI_API_KEY="test-key"
+CUSTOM_AI_API_KEY="test-key"
 ROP_AI_BASE_URL="http://127.0.0.1:<fake-provider-port>"
 uv run python config/start.py rop run \
   --source-id rop_batch_sample \
@@ -6053,7 +6053,7 @@ uv run python config/start.py rop run \
 Security checks:
 
 ```bash
-grep -R "ROP_AI_API_KEY\|OPENAI_API_KEY\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+grep -R "CUSTOM_AI_API_KEY\|OPENAI_API_KEY\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
   logs storage/runs/smoke-it30-rop-execution storage/interfaces -n || true
 ```
 
@@ -6662,7 +6662,7 @@ Security/static checks:
 ```bash
 rg -n "raw_eml|message/rfc822|attachment_content|content_bytes|payload_bytes" src/beeagent_module/interfaces/ui tests || true
 
-rg -n "BITRIX_WEBHOOK|ROP_AI_API_KEY|OPENAI_API_KEY|password|secret|token" logs storage/runs storage/interfaces || true
+rg -n "BITRIX_WEBHOOK|CUSTOM_AI_API_KEY|OPENAI_API_KEY|password|secret|token" logs storage/runs storage/interfaces || true
 
 rg -n "POST|delete|archive|mark-as-read|reply|write-back|crm\.item\.add|crm\.item\.update|timeline" src/beeagent_module/interfaces/ui tests || true
 
@@ -6940,22 +6940,22 @@ rop:
       openai:
         provider: openai_compatible
         base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
+        api_key_env: OPENAI_API_KEY
         model_env: ROP_AI_OPENAI_MODEL
       deepseek:
         provider: openai_compatible
         base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        api_key_env: DEEPSEEK_API_KEY
         model_env: ROP_AI_DEEPSEEK_MODEL
       lmstudio:
         provider: openai_compatible
         base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        api_key_env: LMSTUDIO_API_KEY
         model_env: ROP_AI_LMSTUDIO_MODEL
       custom:
         provider: openai_compatible
         base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
+        api_key_env: CUSTOM_AI_API_KEY
         model_env: ROP_AI_MODEL
 ```
 

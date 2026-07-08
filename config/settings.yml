@@ -58,24 +58,6 @@ promo:
   stock_min: 10 # минимальный остаток для promo-кандидатов
   units_max: 2 # максимальные продажи за период
 
-recommendations:
-  enabled: true # true/false - включить/выключить рекомендации для OOS
-  items_max: 10 # максимальное число рекомендаций в отчете
-
-llm:
-  enabled: true # true/false - включить/выключить LLM summary
-  provider: "openai" # провайдер LLM (пока один)
-  model: "gpt-5-nano" # модель LLM (пример)
-  api_key_env: "OPENAI_API_KEY" # имя переменной окружения с ключом
-  api_url: "https://api.openai.com/v1/responses" # URL endpoint для LLM API
-  prompts_path: "config/prompts.yml" # путь к YAML с промптами
-  assistant:
-    prompts_key: "oos.llm_assistant_qa" # ключ prompt в config/prompts.yml
-    items_max: 5 # максимум рекомендаций, которые передаются в Q&A контекст
-  throttling:
-    timeout: 60 # timeout LLM request in seconds
-    retries: 2 # retries on TimeoutError
-
 i18n:
   lang: "ru" # язык локализации
   path: "config/i18n/ru.yml" # путь к YAML с переводами

@@ -213,6 +213,44 @@ class TestPromptBuilding:
         assert "OPENAI_API_KEY" not in prompt
         assert "raw_eml" not in prompt
 
+    def test_adjudicator_prompt_preserves_user_template_with_event_json(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        prompts_path = tmp_path / "prompts.yml"
+        prompts_path.write_text(
+            """
+rop:
+  ai_adjudicator:
+    system: "System prompt"
+    user: >
+      Analyze this bounded ROP event.
+
+      Event JSON:
+      {event_json}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg={"path": str(prompts_path), "store": False},
+            event={
+                "event_id": "evt-prompt",
+                "sender": "lead@example.com",
+                "subject": "Need welding quote",
+                "case_type": "new_lead",
+                "confidence": 0.5,
+                "is_fallback": True,
+            },
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+
+        assert "Analyze this bounded ROP event." in prompt
+        assert "Template variables JSON" not in prompt
+        assert '"event_id": "evt-prompt"' in prompt
+
     def test_prompt_sanitizes_html_and_base64_like_text(self) -> None:
         event = _sample_eligible_event()
         event["sender"] = "<b>sender@example.com</b>"

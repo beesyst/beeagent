@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
-from beeagent_module.core.llm import _build_prompt_messages_by_key
+import yaml
+
+from beeagent_module.core.paths import get_project_root
 
 _SUPPORTED_AI_PROVIDERS = frozenset({"openai_responses"})
 _DATA_BASE64_RE = re.compile(
@@ -74,6 +76,74 @@ _RISKY_REASON_CODE_PARTS = (
     "low_signal",
     "existing_deal_reference_signal",
 )
+
+
+class _SafeDict(dict):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _resolve_config_path(path: str) -> Path:
+    path_value = Path(path)
+    if path_value.is_absolute():
+        return path_value
+    return get_project_root() / path_value
+
+
+def _get_nested_prompt_value(payload: dict[str, Any], key_path: tuple[str, ...]) -> Any:
+    current: Any = payload
+    for key in key_path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _load_prompts(path: str) -> dict[str, Any]:
+    file_path = _resolve_config_path(path)
+    if not file_path.exists():
+        raise RuntimeError(f"Prompts file not found: {file_path}")
+
+    with file_path.open("r", encoding="utf-8") as file:
+        content = yaml.safe_load(file)
+
+    if not isinstance(content, dict):
+        raise RuntimeError("Prompts file must contain a top-level mapping")
+
+    return content
+
+
+def _build_prompt_messages_by_key(
+    prompts_path: str,
+    prompt_key: str,
+    template_vars: dict[str, Any],
+) -> tuple[str, str]:
+    if not isinstance(prompts_path, str) or not prompts_path:
+        raise RuntimeError("Invalid ai.prompts.path, expected non-empty string")
+
+    prompts = _load_prompts(prompts_path)
+    prompt_payload = _get_nested_prompt_value(prompts, tuple(prompt_key.split(".")))
+    if not isinstance(prompt_payload, dict):
+        raise RuntimeError(f"Prompt key not found in prompts file: {prompt_key}")
+
+    system_template = prompt_payload.get("system")
+    user_template = prompt_payload.get("user")
+    if not isinstance(system_template, str) or not system_template:
+        raise RuntimeError(f"Prompt '{prompt_key}.system' must be a non-empty string")
+    if not isinstance(user_template, str) or not user_template:
+        raise RuntimeError(f"Prompt '{prompt_key}.user' must be a non-empty string")
+
+    template_vars_used = set(re.findall(r"{([a-zA-Z_][a-zA-Z0-9_]*)}", user_template))
+    missing_vars = sorted(template_vars_used.difference(template_vars))
+    if missing_vars:
+        raise RuntimeError(
+            f"Prompt '{prompt_key}.user' references unknown variables: "
+            + ", ".join(missing_vars)
+        )
+
+    user_prompt = user_template.format_map(_SafeDict(**template_vars))
+
+    return system_template, user_prompt
 
 
 def _resolve_adj_config(settings: dict) -> dict[str, Any]:
@@ -271,7 +341,7 @@ def _build_adjudicator_prompt(
 ) -> str:
     event_json = json.dumps(_build_prompt_event_payload(event), ensure_ascii=False)
     system_prompt, user_prompt = _build_prompt_messages_by_key(
-        llm_cfg={"prompts_path": prompts_cfg["path"]},
+        prompts_path=prompts_cfg["path"],
         prompt_key=prompt_key,
         template_vars={"event_json": event_json},
     )

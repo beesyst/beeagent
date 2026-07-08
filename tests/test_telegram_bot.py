@@ -11,19 +11,11 @@ from typing import Any
 
 from beeagent_module.core.i18n import load_translations
 from beeagent_module.ui.telegram_bot import (
-    BUTTON_APPROVE_TASKS,
-    BUTTON_REJECT_TASKS,
-    BUTTON_RUN_OOS,
-    BUTTON_SHOW_REPORT,
+    BUTTON_RUN_PROMO,
     _build_application,
-    _build_oos_assistant_context,
-    _run_scheduled_oos_tick,
     _scheduler_loop,
     _start_scheduler_if_enabled,
-    handle_assistant_question,
-    handle_last,
     handle_menu_button,
-    handle_run_oos,
     handle_run_promo,
     handle_run_rop,
     handle_start,
@@ -81,7 +73,6 @@ def make_context(
             "chat_id": chat_id,
             "telemetry_enabled": telemetry_enabled,
             "telemetry_path": tmp_path / "telemetry" / "telegram_updates.jsonl",
-            "last_report_path": tmp_path / "reports" / "last_oos_report.md",
             "logger": logging.getLogger("test.telegram"),
             "settings": {
                 "mock": {
@@ -102,29 +93,13 @@ def make_context(
                     "interval": 60,
                     "start_run": False,
                 },
-                "approval": {
-                    "reject_reason": "Rejected by operator",
-                },
                 "promo": {
                     "stock_min": 10,
                     "units_max": 2,
                 },
-                "recommendations": {
+                "quiz": {
                     "enabled": True,
-                    "items_max": 10,
-                },
-                "llm": {
-                    "enabled": False,
-                    "provider": "openai",
-                    "model": "gpt-4o-mini",
-                    "api_key_env": "OPENAI_API_KEY",
-                    "api_url": "https://api.openai.com/v1/responses",
-                    "prompts_path": "config/prompts.yml",
-                    "assistant": {
-                        "prompts_key": "oos.llm_assistant_qa",
-                        "items_max": 5,
-                    },
-                    "throttling": {"timeout": 60, "retries": 2},
+                    "path": "config/quiz/pharmacy_quiz.json",
                 },
                 "i18n": {
                     "lang": "ru",
@@ -183,91 +158,6 @@ def test_start_denies_non_admin(tmp_path: Path) -> None:
     assert update.effective_message.replies[-1] == "Доступ запрещен: только admin chat."
 
 
-def test_run_oos_then_last_report(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-
-    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=10)
-    run_async_handler(handle_run_oos, run_update, context)
-
-    last_update = make_message_update(chat_id=1, text="/last", update_id=11)
-    run_async_handler(handle_last, last_update, context)
-
-    assert "📊 Отчёт OOS" in run_update.effective_message.replies[-1]
-    assert "🚨 Алерты:" in last_update.effective_message.replies[-1]
-    assert "Tasks status:" in last_update.effective_message.replies[-1]
-
-
-def test_buttons_call_same_handlers(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-
-    run_button_update = make_callback_update(chat_id=1, callback_data=BUTTON_RUN_OOS)
-    run_async_handler(handle_menu_button, run_button_update, context)
-
-    show_button_update = make_callback_update(
-        chat_id=1, callback_data=BUTTON_SHOW_REPORT
-    )
-    run_async_handler(handle_menu_button, show_button_update, context)
-
-    assert run_button_update.callback_query.answered is True
-    assert show_button_update.callback_query.answered is True
-    assert "📊 Отчёт OOS" in run_button_update.effective_message.replies[-1]
-    assert "📊 Отчёт OOS" in show_button_update.effective_message.replies[-1]
-
-
-def test_approve_tasks_button(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-
-    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=30)
-    run_async_handler(handle_run_oos, run_update, context)
-
-    approve_update = make_callback_update(
-        chat_id=1,
-        callback_data=BUTTON_APPROVE_TASKS,
-        update_id=31,
-    )
-    run_async_handler(handle_menu_button, approve_update, context)
-
-    assert "Tasks approved" in approve_update.effective_message.replies[-1]
-
-
-def test_reject_tasks_button(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-
-    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=40)
-    run_async_handler(handle_run_oos, run_update, context)
-
-    reject_update = make_callback_update(
-        chat_id=1,
-        callback_data=BUTTON_REJECT_TASKS,
-        update_id=41,
-    )
-    run_async_handler(handle_menu_button, reject_update, context)
-
-    assert "Tasks rejected" in reject_update.effective_message.replies[-1]
-
-
-def test_last_report_includes_reject_reason(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-
-    run_update = make_message_update(chat_id=1, text="/run_oos", update_id=50)
-    run_async_handler(handle_run_oos, run_update, context)
-
-    reject_update = make_callback_update(
-        chat_id=1,
-        callback_data=BUTTON_REJECT_TASKS,
-        update_id=51,
-    )
-    run_async_handler(handle_menu_button, reject_update, context)
-
-    last_update = make_message_update(chat_id=1, text="/last", update_id=52)
-    run_async_handler(handle_last, last_update, context)
-
-    assert (
-        "Reject reason: Rejected by operator"
-        in last_update.effective_message.replies[-1]
-    )
-
-
 def test_unknown_command_does_not_crash(tmp_path: Path) -> None:
     update = make_message_update(chat_id=1, text="/abc", update_id=20)
     context = make_context(tmp_path=tmp_path, chat_id=1)
@@ -305,94 +195,26 @@ def test_scheduler_not_started_when_disabled(tmp_path: Path) -> None:
     assert "scheduler_task" not in app.bot_data
 
 
-def test_scheduler_tick_uses_scheduled_trigger(tmp_path: Path, monkeypatch) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-    app = FakeApp(bot_data=context.bot_data)
-    called: dict[str, Any] = {}
-
-    def fake_run_oos_case(
-        settings: dict,
-        storage_dir: Path,
-        logger: logging.Logger,
-        trigger: str,
-    ) -> dict[str, Any]:
-        _ = settings, storage_dir, logger
-        called["trigger"] = trigger
-        return {
-            "run_id": "run-test",
-            "alerts_count": 2,
-            "tasks_count": 2,
-            "report_text": "ok",
-        }
-
-    monkeypatch.setattr(
-        "beeagent_module.ui.telegram_bot.run_oos_case",
-        fake_run_oos_case,
-    )
-
-    asyncio.run(_run_scheduled_oos_tick(app))
-
-    assert called["trigger"] == "scheduled"
-    assert app.bot.sent_messages[0]["chat_id"] == 1
-    assert "Готов новый запуск run-test" in app.bot.sent_messages[0]["text"]
-
-
-def test_scheduler_loop_continues_after_case_error(
+def test_scheduler_enabled_without_active_jobs_does_not_create_task(
     tmp_path: Path,
-    monkeypatch,
-    caplog,
 ) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
-    context.bot_data["settings"]["scheduler"] = {
-        "enabled": True,
-        "interval": 1,
-        "start_run": True,
-    }
+    context.bot_data["settings"]["scheduler"]["enabled"] = True
+    app = FakeApp(bot_data=context.bot_data)
+
+    asyncio.run(_start_scheduler_if_enabled(app))
+
+    assert "scheduler_task" not in app.bot_data
+    assert "scheduler_stop_event" not in app.bot_data
+
+
+def test_scheduler_loop_stops_cleanly(tmp_path: Path) -> None:
+    context = make_context(tmp_path=tmp_path, chat_id=1)
     app = FakeApp(bot_data=context.bot_data)
     stop_event = asyncio.Event()
-    call_count = {"value": 0}
+    stop_event.set()
 
-    def fake_run_oos_case(
-        settings: dict,
-        storage_dir: Path,
-        logger: logging.Logger,
-        trigger: str,
-    ) -> dict[str, Any]:
-        _ = settings, storage_dir, logger, trigger
-        call_count["value"] += 1
-        if call_count["value"] == 1:
-            raise RuntimeError("boom")
-        stop_event.set()
-        return {
-            "run_id": "run-ok",
-            "alerts_count": 1,
-            "tasks_count": 1,
-            "report_text": "ok",
-        }
-
-    async def fast_wait_for(awaitable: Any, timeout: float) -> Any:
-        _ = timeout
-        task = asyncio.create_task(awaitable)
-        await asyncio.sleep(0)
-        if task.done():
-            return task.result()
-        task.cancel()
-        raise TimeoutError()
-
-    monkeypatch.setattr(
-        "beeagent_module.ui.telegram_bot.run_oos_case",
-        fake_run_oos_case,
-    )
-    monkeypatch.setattr(
-        "beeagent_module.ui.telegram_bot.asyncio.wait_for",
-        fast_wait_for,
-    )
-
-    with caplog.at_level(logging.ERROR):
-        asyncio.run(_scheduler_loop(app, stop_event))
-
-    assert call_count["value"] == 2
-    assert "scheduled run failed" in caplog.text
+    asyncio.run(_scheduler_loop(app, stop_event))
 
 
 def test_run_promo_returns_report(tmp_path: Path) -> None:
@@ -404,147 +226,14 @@ def test_run_promo_returns_report(tmp_path: Path) -> None:
     assert "Promo Scan Report" in promo_update.effective_message.replies[-1]
 
 
-def test_build_oos_assistant_context_from_artifacts(tmp_path: Path) -> None:
-    run_id = "run-qa-test"
-    reports_dir = tmp_path / "reports"
-    run_dir = tmp_path / "runs" / run_id
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    (reports_dir / "last_run.json").write_text(
-        json.dumps({"run_id": run_id}),
-        encoding="utf-8",
-    )
-    (run_dir / "run.json").write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "dataset_id": "seed-1",
-                "alerts_count": 2,
-                "tasks_count": 2,
-            }
-        ),
-        encoding="utf-8",
-    )
-    (run_dir / "recommendations.json").write_text(
-        json.dumps(
-            [
-                {
-                    "action": "restock_shelf",
-                    "reason": "reason_stock_positive_not_visible",
-                    "metrics": {
-                        "stock_on_hand": 5,
-                        "units_7d": 7,
-                        "days_of_cover": 5.0,
-                    },
-                    "effect": "restock_shelf",
-                    "confidence": "high",
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    payload, error_key = _build_oos_assistant_context(
-        storage_dir=tmp_path,
-        max_context_items=5,
-        logger=logging.getLogger("test.telegram"),
-    )
-
-    assert error_key is None
-    assert payload is not None
-    assert payload["run_id"] == run_id
-    assert payload["alerts_count"] == 2
-    assert payload["tasks_count"] == 2
-    assert len(payload["recommendations"]) == 1
-
-
-def test_assistant_question_returns_llm_answer(tmp_path: Path, monkeypatch) -> None:
+def test_run_promo_button_calls_handler(tmp_path: Path) -> None:
     context = make_context(tmp_path=tmp_path, chat_id=1)
-    context.bot_data["settings"]["llm"]["enabled"] = True
+    update = make_callback_update(chat_id=1, callback_data=BUTTON_RUN_PROMO)
 
-    run_id = "run-qa-ok"
-    reports_dir = tmp_path / "reports"
-    run_dir = tmp_path / "runs" / run_id
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_async_handler(handle_menu_button, update, context)
 
-    (reports_dir / "last_run.json").write_text(
-        json.dumps({"run_id": run_id}),
-        encoding="utf-8",
-    )
-    (run_dir / "run.json").write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "dataset_id": "seed-1",
-                "alerts_count": 1,
-                "tasks_count": 1,
-            }
-        ),
-        encoding="utf-8",
-    )
-    (run_dir / "recommendations.json").write_text(
-        json.dumps(
-            [
-                {
-                    "action": "restock_shelf",
-                    "reason": "reason_stock_positive_not_visible",
-                    "metrics": {
-                        "stock_on_hand": 3,
-                        "units_7d": 9,
-                        "days_of_cover": 2.33,
-                    },
-                    "effect": "restock_shelf",
-                    "confidence": "high",
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    called: dict[str, Any] = {}
-
-    def fake_answer_oos_report_question(
-        llm_cfg: dict[str, Any],
-        question: str,
-        context_payload: dict[str, Any],
-        prompts_key: str,
-        logger: logging.Logger | None = None,
-    ) -> str:
-        _ = llm_cfg, logger
-        called["question"] = question
-        called["context"] = context_payload
-        called["prompts_key"] = prompts_key
-        return "Ответ по данным последнего run"
-
-    monkeypatch.setattr(
-        "beeagent_module.ui.telegram_bot.answer_oos_report_question",
-        fake_answer_oos_report_question,
-    )
-
-    update = make_message_update(
-        chat_id=1, text="Какой приоритет действий?", update_id=70
-    )
-    run_async_handler(handle_assistant_question, update, context)
-
-    assert called["question"] == "Какой приоритет действий?"
-    assert called["context"]["run_id"] == run_id
-    assert called["prompts_key"] == "oos.llm_assistant_qa"
-    assert update.effective_message.replies[-1] == "Ответ по данным последнего run"
-
-
-def test_assistant_question_without_last_run_returns_hint(tmp_path: Path) -> None:
-    context = make_context(tmp_path=tmp_path, chat_id=1)
-    context.bot_data["settings"]["llm"]["enabled"] = True
-
-    update = make_message_update(chat_id=1, text="Что делать дальше?", update_id=71)
-    run_async_handler(handle_assistant_question, update, context)
-
-    assert (
-        update.effective_message.replies[-1]
-        == "Нет последнего отчёта OOS. Сначала выполните /run_oos."
-    )
+    assert update.callback_query.answered is True
+    assert "Promo Scan Report" in update.effective_message.replies[-1]
 
 
 def test_run_rop_returns_operator_text(tmp_path: Path, monkeypatch) -> None:
@@ -666,3 +355,4 @@ def test_build_application_registers_run_rop_command(monkeypatch) -> None:
         if getattr(handler, "command", None) is not None
     ]
     assert "run_rop" in commands
+    assert "last" not in commands

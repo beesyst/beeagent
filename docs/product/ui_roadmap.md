@@ -2317,7 +2317,7 @@ Security/static checks:
 
 ```bash
 rg -n "raw_eml|raw_message|attachment_content|content_bytes|payload_bytes|message/rfc822" src/beeagent_module/interfaces/ui tests || true
-rg -n "ROP_AI_API_KEY|OPENAI_API_KEY|password|secret|token" storage/runs storage/interfaces logs || true
+rg -n "CUSTOM_AI_API_KEY|OPENAI_API_KEY|password|secret|token" storage/runs storage/interfaces logs || true
 rg -n "beeagent_rop\.(domain|services|cases)" src/beeagent_module || true
 rg -n "POST|delete|archive|mark-as-read|reply|write-back" src/beeagent_module/interfaces/ui tests || true
 git diff -- pyproject.toml uv.lock
