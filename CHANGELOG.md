@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.4...beeagent-v0.44.0) (2026-07-09)
+
+
+### Features
+
+* **rop:** add OpenAI adjudicator for ambiguous classifications ([#146](https://github.com/beesyst/beeagent/issues/146)) ([7b13021](https://github.com/beesyst/beeagent/commit/7b130212ca510630a6b6937444aba93fdd5f1323))
+
 ## [0.43.4](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.3...beeagent-v0.43.4) (2026-07-06)
 
 
