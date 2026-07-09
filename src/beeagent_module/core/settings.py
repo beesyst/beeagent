@@ -67,12 +67,8 @@ _SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
     {"openai_responses", "openai_compatible"}
 )
 _ROP_AI_ADJUDICATOR_ENV = "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED"
-_ENV_TRUE_VALUES: frozenset[str] = frozenset(
-    {"1", "true", "yes", "on", "enabled"}
-)
-_ENV_FALSE_VALUES: frozenset[str] = frozenset(
-    {"0", "false", "no", "off", "disabled"}
-)
+_ENV_TRUE_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on", "enabled"})
+_ENV_FALSE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off", "disabled"})
 
 
 def load_settings(settings_path: Path) -> dict:
@@ -389,9 +385,7 @@ def get_rop_ai_adjudicator_runtime_state(settings: dict) -> dict[str, bool]:
         }
     return {
         "enabled": adj_cfg.get("enabled") is True,
-        "env_override_present": bool(
-            adj_cfg.get("_env_override_present", False)
-        ),
+        "env_override_present": bool(adj_cfg.get("_env_override_present", False)),
         "yaml_enabled": adj_cfg.get("_yaml_enabled", False) is True,
     }
 

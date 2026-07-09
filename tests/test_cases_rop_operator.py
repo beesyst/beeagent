@@ -1384,6 +1384,12 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
                 "source": "email",
                 "sender": "preview@example.com",
                 "subject": "[AUTO-FWD] FWD: *** SPAM *** Preview only",
+                "attachments": [
+                    {
+                        "filename": "spec.pdf",
+                        "content_type": "application/pdf",
+                    }
+                ],
                 "body_preview": (
                     "--- Original Message ---\n"
                     "Email: gina.shi@morrowwelding.com\n"
@@ -1491,7 +1497,25 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
         assert classified_events[0]["spam_label_present"] is True
         assert classified_events[0]["reply_label_present"] is False
         assert classified_events[0]["forwarded_wrapper"] is True
+        assert classified_events[0]["sender"] == "preview@example.com"
+        assert (
+            classified_events[0]["subject"]
+            == "[AUTO-FWD] FWD: *** SPAM *** Preview only"
+        )
+        assert (
+            "Safe preview text for classification"
+            in classified_events[0]["body_preview"]
+        )
+        assert classified_events[0]["attachments"] == [
+            {
+                "filename": "spec.pdf",
+                "content_type": "application/pdf",
+            }
+        ]
         assert classified_events[0]["original_sender"] == "gina.shi@morrowwelding.com"
+        assert classified_events[0]["original_sender_email"] == (
+            "gina.shi@morrowwelding.com"
+        )
         assert classified_events[0]["original_recipient"] == "online@welding.kz"
         assert (
             classified_events[0]["original_message_date"] == "2026-06-09T03:54:27+00:00"
@@ -1664,6 +1688,9 @@ def test_rop_batch_per_event_classification_failure(
         assert fallback["spam_label_present"] is True
         assert fallback["reply_label_present"] is False
         assert fallback["forwarded_wrapper"] is True
+        assert fallback["sender"] == "bad@example.com"
+        assert fallback["subject"] == "[AUTO-FWD] FWD: *** SPAM *** Bad"
+        assert fallback["body_preview"]
         assert fallback["original_sender"] == "bad-origin@example.com"
         assert fallback["original_recipient"] == "online@welding.kz"
         assert fallback["original_message_date"] == "2026-06-09T03:54:27+00:00"
@@ -3068,6 +3095,55 @@ def test_ai_adjudicator_manual_review_degrade_updates_classified_events() -> Non
     assert events[0]["ai_adjudicator_status"] == "manual_review_degrade"
     assert events[0]["reason_code"] == "ai_low_confidence_manual_review"
     assert events[0]["reasoning"] == "Looks risky"
+
+
+def test_ai_adjudicator_low_confidence_preserve_keeps_deterministic_result() -> None:
+    from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
+
+    events = [
+        {
+            "event_id": "evt-preserve-ignore",
+            "case_type": "irrelevant",
+            "case_subtype": "newsletter_bulk",
+            "recommended_queue": "ignore",
+            "correct_action": "ignore",
+            "should_rop_see": False,
+            "confidence": 0.93,
+            "reason_code": "bulk_newsletter_ignore",
+            "reasoning": "Deterministic ignore.",
+        }
+    ]
+    results = [
+        {
+            "event_id": "evt-preserve-ignore",
+            "ai_used": True,
+            "ai_status": "low_confidence_preserve",
+            "ai_confidence": 0.31,
+            "ai_reason": "Low-confidence AI still sees non-actionable bulk content.",
+            "ai_risk_flags": ["newsletter_bulk"],
+            "merge_reason": "ai_low_confidence_safe_ignore_preserved",
+            "final_case_type": "irrelevant",
+            "final_case_subtype": "newsletter_bulk",
+            "final_recommended_queue": "ignore",
+            "final_correct_action": "ignore",
+            "final_should_rop_see": False,
+        }
+    ]
+
+    _apply_ai_adjudicator_results(events, results)
+
+    assert events[0]["case_type"] == "irrelevant"
+    assert events[0]["recommended_queue"] == "ignore"
+    assert events[0]["correct_action"] == "ignore"
+    assert events[0]["should_rop_see"] is False
+    assert events[0]["confidence"] == 0.93
+    assert events[0]["reason_code"] == "bulk_newsletter_ignore"
+    assert events[0]["reasoning"] == "Deterministic ignore."
+    assert events[0]["ai_adjudicator_status"] == "low_confidence_preserve"
+    assert (
+        events[0]["ai_adjudicator_merge_reason"]
+        == "ai_low_confidence_safe_ignore_preserved"
+    )
 
 
 def test_no_direct_beeagent_rop_imports() -> None:

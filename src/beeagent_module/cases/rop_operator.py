@@ -86,6 +86,16 @@ _NORMALIZED_EVENT_CONTEXT_KEYS = (
     "date_source",
     "x_email_id",
 )
+_AI_ADJUDICATOR_CONTEXT_KEYS = (
+    "sender",
+    "subject",
+    "body_preview",
+    "text_preview",
+    "body",
+    "attachments",
+    "form_email",
+    "original_sender_email",
+)
 _AI_ADJUDICATOR_FINAL_KEYS = (
     "case_type",
     "case_subtype",
@@ -424,6 +434,10 @@ def _attach_existing_classification_trace(
     if not enriched.get("source_id"):
         enriched["source_id"] = source_id
 
+    for key in _AI_ADJUDICATOR_CONTEXT_KEYS:
+        if key not in enriched:
+            enriched[key] = None
+
     for key in (
         "source_type",
         "source_role",
@@ -469,6 +483,11 @@ def _make_fallback_event(
     for key in _NORMALIZED_EVENT_CONTEXT_KEYS:
         if key in event:
             fallback_event[key] = event.get(key)
+
+    for key in _AI_ADJUDICATOR_CONTEXT_KEYS:
+        if key in event:
+            fallback_event[key] = event.get(key)
+
     return fallback_event
 
 
@@ -589,6 +608,17 @@ def _attach_classification_trace(
     for key in _NORMALIZED_EVENT_CONTEXT_KEYS:
         if key not in enriched and key in source_event:
             enriched[key] = source_event.get(key)
+
+    for key in _AI_ADJUDICATOR_CONTEXT_KEYS:
+        if key not in enriched and key in source_event:
+            enriched[key] = source_event.get(key)
+
+    if not enriched.get("body_preview"):
+        for preview_key in ("body_preview", "text_preview", "body"):
+            preview_value = source_event.get(preview_key)
+            if isinstance(preview_value, str) and preview_value.strip():
+                enriched["body_preview"] = preview_value
+                break
 
     return enriched
 
@@ -1583,7 +1613,7 @@ def _apply_ai_adjudicator_results(
     events: list[dict[str, Any]],
     results: list[dict[str, Any]],
 ) -> None:
-    accepted_statuses = {"ok", "manual_review_degrade"}
+    accepted_statuses = {"ok", "manual_review_degrade", "low_confidence_preserve"}
     results_by_event_id = {
         result.get("event_id", ""): result
         for result in results
@@ -1600,20 +1630,21 @@ def _apply_ai_adjudicator_results(
         if result.get("ai_status") not in accepted_statuses:
             continue
 
-        for key in _AI_ADJUDICATOR_FINAL_KEYS:
-            final_key = f"final_{key}"
-            if final_key in result:
-                event[key] = result[final_key]
-
         event["ai_adjudicator_used"] = bool(result.get("ai_used", False))
         event["ai_adjudicator_status"] = result.get("ai_status", "")
         event["ai_adjudicator_confidence"] = result.get("ai_confidence")
         event["ai_adjudicator_reason"] = result.get("ai_reason", "")
         event["ai_adjudicator_risk_flags"] = list(result.get("ai_risk_flags", []))
         event["ai_adjudicator_merge_reason"] = result.get("merge_reason", "")
-        if result.get("ai_confidence") is not None:
-            event["confidence"] = result["ai_confidence"]
-        if result.get("merge_reason"):
-            event["reason_code"] = result["merge_reason"]
-        if result.get("ai_reason"):
-            event["reasoning"] = result["ai_reason"]
+        if result.get("ai_status") != "low_confidence_preserve":
+            for key in _AI_ADJUDICATOR_FINAL_KEYS:
+                final_key = f"final_{key}"
+                if final_key in result:
+                    event[key] = result[final_key]
+
+            if result.get("ai_confidence") is not None:
+                event["confidence"] = result["ai_confidence"]
+            if result.get("merge_reason"):
+                event["reason_code"] = result["merge_reason"]
+            if result.get("ai_reason"):
+                event["reasoning"] = result["ai_reason"]

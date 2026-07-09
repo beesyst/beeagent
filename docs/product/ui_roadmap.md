@@ -2776,7 +2776,427 @@ DAST-style route misuse checks required for protected HTML/API routes, artifact 
 - `pyproject.toml.version` is unchanged.
 - Tests and docs are updated.
 
-### Итерация UI-8 — Remove legacy BeeAgent web after BeeUI MVP parity
+### Итерация UI-8 — ROP final decision read-model + recommendations + Bitrix widget payload MVP
+
+**Статус:** PLANNED
+
+#### Goal
+
+Перевести BeeUI-backed ROP console и Bitrix widget payload на финальную модель решений: deterministic classifier и AI adjudicator формируют готовое `final_decision`, Web UI показывает понятную очередь и рекомендации, а Bitrix widget получает тот же read-model без отдельной бизнес-логики.
+
+#### Почему это нужно
+
+После UI-7 Web Console защищена auth boundary и уже пригодна как private operator console. Но текущий ROP UI всё ещё частично показывает устаревшую модель:
+
+```text
+AI Assist tab читает legacy rop_ai_assist, хотя текущий источник правды — rop_ai_adjudicator.
+Recommendations tab пустой, если отдельно не запускать rop recommendations.
+Queue tab показывает список событий, но не финальную рабочую модель решения.
+Bitrix tab/widget не получает полноценный final decision payload.
+```
+
+По 100-run acceptance classifier/AI этап достаточно стабилен:
+
+```text
+loaded=100
+normalized=100
+classified=100
+failed=0
+ai_adjudicator eligible=29
+ai_adjudicator used=29
+ai_adjudicator degraded=21
+run status=ok
+```
+
+Дальше не нужно возвращаться в classifier loop. Нужно сделать operator-facing слой:
+
+```text
+classified_events
++ rop_ai_adjudicator_results
++ routing config
+→ final_decision projection
+→ recommendations
+→ Web UI
+→ Bitrix widget payload
+```
+
+Главное product-правило:
+
+```text
+РОП не подтверждает классификацию вручную.
+BeeAgent показывает финальное решение и флаги внимания.
+РОП управляет рабочей очередью, а не выбирает sales/tender/logistics/ignore с нуля.
+```
+
+#### Depends on
+
+* UI-7 — BeeUI-backed auth boundary for BeeAgent console;
+* BeeAgent ROP AI adjudicator artifacts:
+
+  * `rop_ai_adjudicator_requests.json`;
+  * `rop_ai_adjudicator_decisions.json`;
+  * `rop_ai_adjudicator_results.json`;
+* existing ROP artifacts:
+
+  * `classified_events.json`;
+  * `operator_summary.json`;
+  * `rop_current_state.json`;
+  * `rop_recommendations.json`, if already generated;
+* existing Bitrix widget config:
+
+  * `config/settings.yml` → `bitrix.widget`.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+* меняется operator-visible read-model;
+* добавляется/нормализуется artifact contract;
+* расширяется UI/API/widget payload;
+* используются email-derived, AI-derived and recommendation-derived данные;
+* Bitrix widget boundary должен оставаться token-protected/read-only;
+* нужно подтвердить отсутствие raw email, attachment content, secrets, provider tokens and CRM write-back.
+
+SCA не требуется, если зависимости не меняются.
+
+#### Scope
+
+**Включено:**
+
+* добавить current AI adjudicator artifacts в ROP artifact allowlist:
+
+```text
+rop_ai_adjudicator_requests_json
+rop_ai_adjudicator_decisions_json
+rop_ai_adjudicator_results_json
+```
+
+mapping:
+
+```text
+rop_ai_adjudicator_requests_json  -> rop_ai_adjudicator_requests.json
+rop_ai_adjudicator_decisions_json -> rop_ai_adjudicator_decisions.json
+rop_ai_adjudicator_results_json   -> rop_ai_adjudicator_results.json
+```
+
+* сделать `rop_ai_adjudicator_results.json` current source of truth для AI tab/read-model;
+* legacy `rop_ai_assist_*` оставить только как legacy evidence/fallback;
+* исправить AI tab:
+
+  * не показывать “AI assistant not used”, если `rop_ai_adjudicator_results.json` существует и содержит результаты;
+  * показывать adjudicator summary, status counts, model counts and per-event decisions;
+* исправить AI counters в read-model/API:
+
+  * `ai_adjudicator_eligible`;
+  * `ai_adjudicator_used`;
+  * `ai_adjudicator_ok`;
+  * `ai_adjudicator_degraded`;
+  * `ai_adjudicator_low_confidence_preserve`;
+  * `ai_adjudicator_manual_review_degrade`;
+  * `ai_adjudicator_errors`;
+* добавить normalized final decision projection для каждого classified event:
+
+```text
+final_case_type
+final_case_subtype
+final_queue
+final_action
+final_decision_source
+final_confidence
+needs_attention
+attention_reason
+automation_allowed
+bitrix_write_allowed
+```
+
+* для MVP всегда выставлять:
+
+```text
+bitrix_write_allowed = false
+```
+
+* `automation_allowed` разрешает только внутреннюю routing/display автоматизацию, не CRM/mailbox mutations;
+* низкая уверенность AI не должна превращаться в ручную классификацию РОПом:
+
+  * сохранять финальную очередь из AI или deterministic/fallback policy;
+  * выставлять `needs_attention=true`;
+  * объяснять причину в `attention_reason`;
+* `manual_review` использовать только как technical exception/fallback, если нет безопасной финальной очереди;
+* добавить artifact-level projection, если это не создаёт дублирование source of truth:
+
+```text
+storage/runs/<run_id>/rop_final_decisions.json
+```
+
+* структура `rop_final_decisions.json`:
+
+```json
+{
+  "run_id": "mvp-ai-acceptance-final-100",
+  "policy_version": "rop_final_decision_v1",
+  "source_artifacts": [
+    "classified_events.json",
+    "rop_ai_adjudicator_results.json"
+  ],
+  "counters": {
+    "total": 100,
+    "ai_adjudicator_used": 29,
+    "needs_attention": 0,
+    "bitrix_write_allowed": 0
+  },
+  "decisions": []
+}
+```
+
+* если `rop_final_decisions.json` отсутствует у старого run, UI может построить projection on read из existing artifacts и показать warning;
+* auto-generate/update `rop_recommendations.json` after ROP run, если существующий recommendations builder уже есть;
+* recommendations tab должен использовать actual recommendation artifact/read-model, а не показывать “run rop recommendations manually” для свежего run;
+* обновить queue tab:
+
+  * показывать `final_queue`, `final_action`, `final_decision_source`, `final_confidence`, `needs_attention`, `bitrix_status`;
+  * “Open” должен вести на event detail:
+
+```text
+/rop/events/{event_id}?run_id=<run_id>&lang=ru
+```
+
+а не на `classified_events_json`;
+
+* обновить event detail:
+
+  * показать final decision;
+  * показать deterministic before AI;
+  * показать AI adjudicator decision/reason/status;
+  * показать attention flags;
+  * показать safe recommendations;
+  * показать evidence links;
+* обновить overview metrics:
+
+  * processed;
+  * AI decided;
+  * new leads;
+  * tenders;
+  * logistics;
+  * finance;
+  * ignored;
+  * needs attention;
+  * errors;
+* убрать/переименовать misleading counter “168 actions required” для 100-email run;
+* обновить Bitrix widget payload routes так, чтобы они читали тот же final decision/recommendations read-model:
+
+  * `/api/bitrix/rop/widget`;
+  * `/api/bitrix/rop/widget/events`;
+  * `/api/bitrix/rop/widget/events/{event_id}`;
+* widget payload должен оставаться:
+
+  * read-only;
+  * token-protected through existing `bitrix.widget.token_env`;
+  * без Bitrix REST calls;
+  * без CRM/mailbox/module/capability mutations;
+* widget payload должен включать:
+
+  * `final_queue`;
+  * `final_action`;
+  * `final_decision_source`;
+  * `final_confidence`;
+  * `needs_attention`;
+  * `attention_reason`;
+  * `recommended_action`;
+  * `target_bitrix_category`;
+  * `safe_to_execute`;
+  * `requires_human_confirmation`;
+  * `bitrix_write_allowed`;
+  * `detail_url`;
+* `safe_to_execute` в текущем scope должен оставаться `false` для non-ignore/write-like actions;
+* `requires_human_confirmation` должен оставаться `true` для потенциальных CRM/write-like actions;
+* update docs:
+
+  * `docs/product/ui_roadmap.md`;
+  * `docs/WEB_UI.md`;
+  * `README.ru.md` / `docs/DEV_GUIDE.md`, если меняется usage/smoke flow.
+
+**Не включено:**
+
+* изменения в `beeagent-rop`;
+* новые deterministic classifier rules;
+* изменение OpenAI prompt без прямого read-model bug;
+* 300-run acceptance;
+* CRM/Bitrix write-back;
+* `crm.item.add`;
+* `crm.item.update`;
+* `crm.timeline.comment.add`;
+* mailbox delete/archive/reply/mark-as-read;
+* web-triggered ROP run;
+* widget-triggered ROP run;
+* operator POST actions;
+* auth/RBAC changes;
+* Bitrix placement install;
+* `placement.bind`;
+* OAuth/OIDC Bitrix app lifecycle;
+* separate frontend;
+* dependency changes;
+* удаление legacy `src/beeagent_module/web`.
+
+#### Deliverable
+
+После итерации Web UI и Bitrix widget payload используют одну финальную модель решений.
+
+Оператор видит:
+
+```text
+1. Что BeeAgent решил по каждому письму.
+2. Кто принял решение: deterministic или AI adjudicator.
+3. Почему решение принято.
+4. Какая финальная очередь.
+5. Какое рекомендованное действие.
+6. Где нужна повышенная внимательность.
+7. Почему Bitrix write-back пока запрещён.
+8. Какие artifacts подтверждают вывод.
+```
+
+Bitrix widget получает тот же payload без собственной бизнес-логики.
+
+#### Expected artifacts read
+
+```text
+storage/runs/<run_id>/classified_events.json
+storage/runs/<run_id>/rop_ai_adjudicator_requests.json
+storage/runs/<run_id>/rop_ai_adjudicator_decisions.json
+storage/runs/<run_id>/rop_ai_adjudicator_results.json
+storage/runs/<run_id>/operator_summary.json
+storage/runs/<run_id>/rop_current_state.json
+storage/runs/<run_id>/rop_recommendations.json
+storage/runs/<run_id>/bitrix_reconciliation.json
+```
+
+#### Expected artifacts written
+
+If the run path is updated in scope:
+
+```text
+storage/runs/<run_id>/rop_final_decisions.json
+storage/runs/<run_id>/rop_recommendations.json
+```
+
+`rop_recommendations.json` may be reused if existing implementation already writes it.
+
+No raw email, raw attachment content, env values, provider tokens, Bitrix webhook URL or mailbox password may be written to these artifacts.
+
+#### Expected `/api/rop/dashboard` payload extension
+
+```json
+{
+  "ai_adjudicator_summary": {
+    "evidence_available": true,
+    "eligible_count": 29,
+    "used_count": 29,
+    "ok_count": 8,
+    "degraded_count": 21,
+    "low_confidence_preserve_count": 0,
+    "manual_review_degrade_count": 21,
+    "error_count": 0,
+    "status_counts": {},
+    "model_counts": {}
+  },
+  "final_decision_summary": {
+    "total": 100,
+    "deterministic_count": 71,
+    "ai_adjudicator_count": 29,
+    "fallback_policy_count": 0,
+    "needs_attention_count": 21,
+    "bitrix_write_allowed_count": 0
+  },
+  "final_decisions": []
+}
+```
+
+Existing UI-6 fields must remain available where practical.
+
+#### Expected HTML behavior
+
+`GET /rop?tab=ai_assist&lang=ru` shows current AI adjudicator evidence.
+
+`GET /rop?tab=queue&lang=ru` shows final decision queue, not artifact links.
+
+`GET /rop/events/{event_id}?run_id=<run_id>&lang=ru` shows event detail with final decision, deterministic evidence, AI adjudicator evidence and recommendations.
+
+`GET /rop?tab=recommendations&lang=ru` shows generated recommendations for the selected run when artifact exists.
+
+#### Expected Bitrix widget API behavior
+
+`GET /api/bitrix/rop/widget` returns read-only final decision/recommendation summary.
+
+`GET /api/bitrix/rop/widget/events` returns bounded event list for widget.
+
+`GET /api/bitrix/rop/widget/events/{event_id}` returns event detail payload.
+
+Routes remain token-protected through `bitrix.widget.token_env`.
+
+No Bitrix REST call is made from these routes.
+
+#### Checks
+
+* `uv run pytest -q`;
+* targeted ROP final decision tests;
+* targeted AI adjudicator read-model tests;
+* targeted recommendations tests;
+* targeted widget payload tests;
+* `uv run python config/start.py routes`;
+
+Route/API smoke:
+
+```text
+/rop
+/rop?lang=ru
+/rop?tab=queue&lang=ru
+/rop?tab=ai_assist&lang=ru
+/rop?tab=recommendations&lang=ru
+/rop/events/<event_id>?run_id=<run_id>&lang=ru
+/api/rop/dashboard?run_id=<run_id>
+/api/rop/events/<event_id>?run_id=<run_id>
+/api/bitrix/rop/widget
+/api/bitrix/rop/widget/events
+/api/bitrix/rop/widget/events/<event_id>
+```
+
+Security/static checks:
+
+```bash
+rg -n "raw_eml|raw_message|attachment_content|content_bytes|payload_bytes|message/rfc822" src/beeagent_module/interfaces/ui tests || true
+rg -n "BEEAGENT_WEB_|OPENAI_API_KEY|CUSTOM_AI_API_KEY|BITRIX_WEBHOOK|ROP_MAILBOX_PASSWORD|password|secret|token" storage/runs storage/interfaces logs || true
+rg -n "crm.item.add|crm.item.update|timeline.comment|mailbox delete|archive|mark-as-read|reply|write-back" src tests || true
+rg -n "beeagent_rop\.(domain|services|cases)" src/beeagent_module || true
+git diff -- pyproject.toml uv.lock
+```
+
+#### DoD
+
+* ROP AI tab uses `rop_ai_adjudicator_*` as current source of truth.
+* Legacy `rop_ai_assist_*` is not primary AI status.
+* ROP dashboard exposes normalized final decision fields.
+* Queue tab links to event detail, not artifact viewer.
+* Recommendations tab is populated from run artifact/read-model when available.
+* Fresh ROP runs generate or update recommendation/final-decision artifacts if runtime path is in scope.
+* Bitrix widget API uses the same final decision/recommendations read-model.
+* Widget routes remain read-only and token-protected.
+* `bitrix_write_allowed` is always false for MVP.
+* No CRM/Bitrix/mailbox/module/capability write action is added.
+* No raw `.eml`, raw attachment content, provider secret, env value, Bitrix webhook or mailbox password appears in HTML/API/logs/artifacts.
+* Missing/malformed adjudicator/recommendation artifacts produce warnings, not crashes.
+* `beeagent-rop` unchanged.
+* Dependencies unchanged unless explicitly justified.
+* `pyproject.toml.version` unchanged.
+* Tests and docs updated.
+
+#### Status notes
+
+To be filled after PR.
+
+### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI MVP parity
 
 **Статус:** PLANNED
 
@@ -2947,7 +3367,7 @@ src/beeagent_module/
 
 ## Этап 2 — ROP operator dashboards on BeeUI
 
-### Итерация UI-9 — Attachment-aware ROP dashboard
+### Итерация UI-10 — Attachment-aware ROP dashboard
 
 **Статус:** PLANNED
 
@@ -3040,7 +3460,7 @@ src/beeagent_module/
 - UI remains artifact-only/read-only;
 - source artifacts remain traceable.
 
-### Итерация UI-10 — ROP Bitrix reconciliation dashboard
+### Итерация UI-11 — ROP Bitrix reconciliation dashboard
 
 **Статус:** PLANNED
 
@@ -3117,7 +3537,7 @@ ROP dashboard показывает CRM-read-only reconciliation поверх art
 
 ## Этап 3 — Stable backend API
 
-### Итерация UI-11 — Stable BeeAgent Web API contract v1
+### Итерация UI-12 — Stable BeeAgent Web API contract v1
 
 **Статус:** PLANNED
 
@@ -3191,7 +3611,7 @@ Future frontend or standalone BeeUI can consume BeeAgent API without reading fil
 
 ## Этап 4 — Auth and customer-safe access
 
-### Итерация UI-12 — Web auth boundary v0
+### Итерация UI-13 — Web auth boundary v0
 
 **Статус:** PLANNED
 
@@ -3269,7 +3689,7 @@ Web Console can require auth before showing runs/dashboard/API.
 
 ## Этап 5 — Operator Control Panel
 
-### Итерация UI-13 — Operator Web Control Panel v0
+### Итерация UI-14 — Operator Web Control Panel v0
 
 **Статус:** PLANNED
 
@@ -3368,7 +3788,7 @@ Operator can use Web Control Panel for bounded BeeAgent actions without hidden e
 
 ## Этап 6 — Admin/support surfaces
 
-### Итерация UI-14 — Support/Admin diagnostics v0
+### Итерация UI-15 — Support/Admin diagnostics v0
 
 **Статус:** PLANNED
 
@@ -3429,7 +3849,7 @@ Internal support can inspect diagnostics and audit trail without browsing `stora
 
 ## Этап 7 — Deferred product/admin platform
 
-### Итерация UI-15 — SQLAdmin evaluation for DB-backed admin only
+### Итерация UI-16 — SQLAdmin evaluation for DB-backed admin only
 
 **Статус:** DEFERRED
 
@@ -3445,7 +3865,7 @@ Deferred until DB-backed models exist.
 
 Current runtime source of truth is file-based artifacts and config, so SQLAdmin is not useful for current ROP dashboard/control panel.
 
-## Итерация UI-13 — Standalone BeeUI / separate frontend readiness
+## Итерация UI-16 — Standalone BeeUI / separate frontend readiness
 
 **Статус:** DEFERRED
 

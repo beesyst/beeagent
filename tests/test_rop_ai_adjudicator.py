@@ -10,6 +10,7 @@ import pytest
 
 from beeagent_module.core.rop_ai_adjudicator import (
     _build_adjudicator_prompt,
+    _build_openai_response_format,
     _build_request_artifact,
     _is_event_eligible_for_adjudicator,
     _parse_ai_response,
@@ -175,6 +176,59 @@ def _sample_hr_newsletter_false_positive_event() -> dict:
     }
 
 
+def _sample_safe_ignore_event() -> dict:
+    return {
+        "event_id": "evt-safe-ignore",
+        "case_type": "irrelevant",
+        "case_subtype": "newsletter_bulk",
+        "recommended_queue": "ignore",
+        "correct_action": "ignore",
+        "should_rop_see": False,
+        "confidence": 0.93,
+        "is_fallback": False,
+        "reason_code": "bulk_newsletter_ignore",
+        "sender": "updates@example.com",
+        "subject": "Monthly newsletter",
+        "body_preview": "View in browser. Unsubscribe. Webinar schedule.",
+        "clean_subject": "Monthly newsletter",
+        "transport_labels": ["bulk"],
+        "spam_label_present": False,
+        "reply_label_present": False,
+        "forwarded_wrapper": False,
+        "attachments": [],
+        "ai_assist_eligible": True,
+    }
+
+
+def _sample_logistics_existing_deal_event() -> dict:
+    return {
+        "event_id": "evt-logistics",
+        "case_type": "existing_deal",
+        "case_subtype": "shipment_follow_up",
+        "recommended_queue": "logistics",
+        "correct_action": "attach_to_deal",
+        "should_rop_see": True,
+        "confidence": 0.92,
+        "is_fallback": False,
+        "reason_code": "existing_deal_shipment_continuation",
+        "sender": "ops@example.com",
+        "subject": "Shipment ETA and customs documents",
+        "body_preview": "Please check delivery ETA, customs clearance and packing list.",
+        "clean_subject": "Shipment ETA and customs documents",
+        "transport_labels": ["reply"],
+        "spam_label_present": False,
+        "reply_label_present": True,
+        "forwarded_wrapper": False,
+        "attachments": [
+            {
+                "filename": "packing-list.pdf",
+                "content_type": "application/pdf",
+            }
+        ],
+        "ai_assist_eligible": True,
+    }
+
+
 class TestEligibility:
     def test_fallback_is_eligible(self) -> None:
         assert _is_event_eligible_for_adjudicator(_sample_eligible_event()) is True
@@ -212,6 +266,9 @@ class TestPromptBuilding:
         assert "fallback_low_signal" in prompt
         assert "OPENAI_API_KEY" not in prompt
         assert "raw_eml" not in prompt
+        assert "body_preview" in prompt
+        assert "attachment_filenames" in prompt
+        assert "attachment_mime_types" in prompt
 
     def test_adjudicator_prompt_preserves_user_template_with_event_json(
         self,
@@ -317,14 +374,42 @@ class TestValidation:
     def test_invalid_taxonomy_adds_errors(self) -> None:
         validated = _validate_ai_output(
             {
-                "case_type": "alien_invasion",
+                "case_type": "logistics",
                 "recommended_queue": "mars",
                 "correct_action": "launch_missiles",
+                "should_rop_see": "yes",
                 "confidence": 0.95,
                 "risk_flags": [],
             }
         )
         assert validated["errors"]
+        assert "invalid case_type: logistics" in validated["errors"]
+        assert "invalid should_rop_see: yes" in validated["errors"]
+
+    def test_unknown_risk_flags_are_dropped_without_fatal_error(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "newsletter_bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.82,
+                "reason": "Looks like non-actionable bulk content.",
+                "risk_flags": [
+                    "newsletter_bulk",
+                    "forwarded_wrapper_present",
+                    "missing_body_preview",
+                ],
+            }
+        )
+        assert validated["errors"] == []
+        assert validated["risk_flags"] == ["newsletter_bulk"]
+        assert validated["dropped_risk_flags"] == [
+            "forwarded_wrapper_present",
+            "missing_body_preview",
+        ]
+        assert validated["warnings"]
 
 
 class TestProviderCall:
@@ -360,6 +445,117 @@ class TestProviderCall:
                 logger=_null_logger(),
             )
         assert result is None
+
+    def test_provider_uses_strict_json_schema_payload(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self) -> "_FakeResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "output": [
+                            {
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": '{"case_type":"irrelevant"}',
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        def _fake_urlopen(req, timeout: int):
+            captured["timeout"] = timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse()
+
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event={
+                **_sample_eligible_event(),
+                "body_preview": "",
+                "body_short": "Need quote for 100 units",
+                "attachment_filenames": ["spec.pdf"],
+                "attachment_mime_types": ["application/pdf"],
+                "original_sender": "Original <orig@example.com>",
+            },
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+
+        with patch(
+            "beeagent_module.core.rop_ai_adjudicator.request.urlopen",
+            _fake_urlopen,
+        ):
+            result = call_openai_responses_api(
+                prompt=prompt,
+                provider="openai_responses",
+                model="gpt-5.4-mini",
+                api_key="sk-test",
+                base_url="https://api.openai.com/v1",
+                timeout_seconds=7,
+                logger=_null_logger(),
+            )
+
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+
+        text_config = payload["text"]
+        assert isinstance(text_config, dict)
+
+        format_config = text_config["format"]
+        assert isinstance(format_config, dict)
+
+        input_payload = payload["input"]
+        assert isinstance(input_payload, str)
+
+        assert result == '{"case_type":"irrelevant"}'
+        assert captured["timeout"] == 7
+        assert format_config["type"] == "json_schema"
+        assert format_config["strict"] is True
+        assert '"body_preview": "Need quote for 100 units"' in input_payload
+        assert '"attachment_filenames": ["spec.pdf"]' in input_payload
+        assert '"attachment_mime_types": ["application/pdf"]' in input_payload
+        assert '"original_sender": "Original orig@example.com"' in input_payload
+
+
+class TestSchemaContract:
+    def test_response_schema_has_only_allowed_enums(self) -> None:
+        fmt = _build_openai_response_format()
+        schema = fmt["schema"]["properties"]
+
+        assert fmt["type"] == "json_schema"
+        assert fmt["name"] == "rop_ai_adjudicator_decision"
+        assert schema["case_type"]["enum"] == [
+            "existing_deal",
+            "irrelevant",
+            "new_lead",
+        ]
+        assert schema["recommended_queue"]["enum"] == [
+            "finance",
+            "ignore",
+            "logistics",
+            "manual_review",
+            "procurement",
+            "sales",
+            "tender",
+        ]
+        assert schema["correct_action"]["enum"] == [
+            "attach_to_deal",
+            "check_bitrix",
+            "ignore",
+            "manual_review",
+            "review_new_lead",
+            "review_tender",
+        ]
 
 
 class TestAdjudicatorForEvent:
@@ -512,6 +708,45 @@ class TestAdjudicatorForEvent:
         assert result["result"]["merge_reason"] == "ai_low_confidence_manual_review"
         assert result["result"]["ai_error"]
 
+    def test_low_confidence_safe_ignore_is_preserved(self) -> None:
+        def _return_low_conf_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "newsletter_bulk",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.31,
+                    "reason": "Bulk newsletter with no customer request.",
+                    "risk_flags": ["newsletter_bulk", "ambiguous_sender_identity"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_low_conf_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_safe_ignore_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["decision"]["status"] == "low_confidence_preserve"
+        assert result["result"]["ai_status"] == "low_confidence_preserve"
+        assert result["result"]["final_case_type"] == "irrelevant"
+        assert result["result"]["final_recommended_queue"] == "ignore"
+        assert result["result"]["final_correct_action"] == "ignore"
+        assert (
+            result["result"]["merge_reason"]
+            == "ai_low_confidence_safe_ignore_preserved"
+        )
+        assert result["result"]["ai_risk_flags"] == ["newsletter_bulk"]
+        assert result["result"]["dropped_risk_flags"] == ["ambiguous_sender_identity"]
+
     def test_invalid_json_does_not_crash(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
             with patch(
@@ -534,9 +769,10 @@ class TestAdjudicatorForEvent:
         def _return_invalid_taxonomy(**kwargs: object) -> str:
             return json.dumps(
                 {
-                    "case_type": "alien_invasion",
-                    "recommended_queue": "mars",
-                    "correct_action": "launch_missiles",
+                    "case_type": "logistics",
+                    "recommended_queue": "logistics",
+                    "correct_action": "attach_to_deal",
+                    "should_rop_see": True,
                     "confidence": 0.95,
                     "reason": "Bad taxonomy",
                     "risk_flags": [],
@@ -549,14 +785,14 @@ class TestAdjudicatorForEvent:
                 _return_invalid_taxonomy,
             ):
                 result = run_adjudicator_for_event(
-                    event=_sample_eligible_event(),
+                    event=_sample_supplier_spam_false_positive_event(),
                     adj_cfg=_minimal_adj_cfg(),
                     profile_cfg=_minimal_profile_cfg(),
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
         assert result["result"]["ai_status"] == "manual_review_degrade"
-        assert result["result"]["final_case_type"] == "unknown"
+        assert result["result"]["final_case_type"] == "existing_deal"
         assert result["result"]["final_recommended_queue"] == "manual_review"
         assert result["result"]["errors"]
 
@@ -590,6 +826,138 @@ class TestAdjudicatorForEvent:
         assert result["result"]["final_recommended_queue"] == "manual_review"
         assert result["result"]["final_correct_action"] == "manual_review"
         assert result["result"]["merge_reason"] == "ai_validation_error_manual_review"
+
+    def test_unknown_risk_flags_do_not_force_manual_review_degrade(self) -> None:
+        def _return_valid_with_unknown_flags(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "tender",
+                    "recommended_queue": "tender",
+                    "should_rop_see": True,
+                    "correct_action": "review_tender",
+                    "confidence": 0.89,
+                    "reason": "Clear RFQ content.",
+                    "risk_flags": [
+                        "marketing_conflict",
+                        "forwarded_wrapper_present",
+                    ],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_valid_with_unknown_flags,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_eligible_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["decision"]["status"] == "ok"
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["ai_risk_flags"] == ["marketing_conflict"]
+        assert result["result"]["dropped_risk_flags"] == ["forwarded_wrapper_present"]
+
+    def test_supplier_false_positive_can_resolve_to_ignore(self) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "supplier_offer",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.93,
+                    "reason": "Supplier outreach with no customer demand.",
+                    "risk_flags": ["supplier_outreach"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_supplier_spam_false_positive_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "irrelevant"
+        assert result["result"]["final_recommended_queue"] == "ignore"
+        assert result["result"]["final_correct_action"] == "ignore"
+        assert result["result"]["merge_reason"] == "ai_resolved_risky_false_positive"
+
+    def test_newsletter_false_positive_can_resolve_to_ignore(self) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "newsletter_bulk",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.91,
+                    "reason": "Newsletter and seminar invitation with no actionable business signal.",
+                    "risk_flags": ["newsletter_bulk"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_hr_newsletter_false_positive_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "irrelevant"
+        assert result["result"]["final_recommended_queue"] == "ignore"
+        assert result["result"]["final_correct_action"] == "ignore"
+
+    def test_clear_logistics_evidence_is_not_ignored(self) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "bulk",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.94,
+                    "reason": "Looks noisy.",
+                    "risk_flags": [],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_logistics_existing_deal_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
 
 
 class TestAdjudicatorBatch:
@@ -819,9 +1187,12 @@ class TestArtifacts:
         assert preview["sender"] == "lead@example.com"
         assert preview["subject"] == "Need quote"
         assert preview["clean_subject"] == "Need quote"
+        assert preview["body_preview"] == "Visible text"
         assert preview["attachment_filenames"] == ["spec.pdf"]
         assert preview["attachment_mime_types"] == ["text/plain"]
         assert preview["body_preview_chars"] == len("Visible text")
+        assert preview["conflict_signals"]
+        assert artifact["response_format"]["type"] == "json_schema"
 
         assert "<b>" not in serialized
         assert "<div>" not in serialized

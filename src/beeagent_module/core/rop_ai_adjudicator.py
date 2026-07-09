@@ -22,6 +22,10 @@ _DATA_BASE64_RE = re.compile(
     re.IGNORECASE,
 )
 _LONG_BASE64_RE = re.compile(r"\b(?:[A-Za-z0-9+/]{80,}={0,2})\b")
+_EMAIL_BRACKET_RE = re.compile(
+    r"<([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})>",
+    re.IGNORECASE,
+)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 _SUPPLIER_OR_PRODUCT_MARKERS = frozenset(
@@ -66,6 +70,77 @@ _NEWSLETTER_HR_LEGAL_TRAINING_MARKERS = frozenset(
         "заявка на участие",
     }
 )
+_CUSTOMER_REQUEST_MARKERS = frozenset(
+    {
+        "rfq",
+        "request for quotation",
+        "request for quote",
+        "need quote",
+        "please quote",
+        "please send quote",
+        "pricing request",
+        "quotation request",
+        "quote request",
+        "bid invitation",
+        "price quote",
+        "customer request",
+        "purchase order",
+        "po ",
+        "тендер",
+        "запрос котировок",
+        "коммерческое предложение",
+    }
+)
+_TENDER_MARKERS = frozenset(
+    {
+        "tender",
+        "rfq",
+        "request for quotation",
+        "request for quote",
+        "bid invitation",
+        "invitation to bid",
+        "тендер",
+        "запрос котировок",
+    }
+)
+_LOGISTICS_MARKERS = frozenset(
+    {
+        "shipment",
+        "delivery",
+        "customs",
+        "transport",
+        "warehouse",
+        "container",
+        "bill of lading",
+        "packing list",
+        "awb",
+        "tracking",
+        "eta",
+        "etd",
+        "отгруз",
+        "доставк",
+        "тамож",
+        "перевоз",
+        "склад",
+    }
+)
+_FINANCE_MARKERS = frozenset(
+    {
+        "invoice",
+        "reconciliation",
+        "statement of account",
+        "payment",
+        "accounting",
+        "act of",
+        "tax invoice",
+        "счет",
+        "счёт",
+        "сверк",
+        "оплат",
+        "акт",
+        "бухгалтер",
+    }
+)
 _DANGEROUS_DETERMINISTIC_ACTIONS = frozenset(
     {
         "attach_to_deal",
@@ -74,12 +149,113 @@ _DANGEROUS_DETERMINISTIC_ACTIONS = frozenset(
         "review_tender",
     }
 )
+_RISKY_DETERMINISTIC_QUEUES = frozenset(
+    {
+        "sales",
+        "tender",
+        "logistics",
+        "finance",
+        "procurement",
+    }
+)
 _RISKY_REASON_CODE_PARTS = (
     "fallback",
     "ambiguous",
     "low_signal",
     "existing_deal_reference_signal",
 )
+_VALID_CASE_TYPES = frozenset({"new_lead", "existing_deal", "irrelevant"})
+_VALID_QUEUES = frozenset(
+    {
+        "sales",
+        "tender",
+        "logistics",
+        "finance",
+        "procurement",
+        "manual_review",
+        "ignore",
+    }
+)
+_VALID_ACTIONS = frozenset(
+    {
+        "review_new_lead",
+        "review_tender",
+        "attach_to_deal",
+        "check_bitrix",
+        "manual_review",
+        "ignore",
+    }
+)
+_VALID_RISK_FLAGS = frozenset(
+    {
+        "marketing_conflict",
+        "spam_rfq_conflict",
+        "supplier_outreach",
+        "low_signal",
+        "ambiguous_bitrix",
+        "newsletter_bulk",
+        "finance_sales_conflict",
+        "business_ignore_conflict",
+        "attachment_mismatch",
+    }
+)
+_MAX_CASE_SUBTYPE_LENGTH = 80
+_MAX_REASON_LENGTH = 600
+_MAX_RISK_FLAGS = 8
+_MAX_RISK_FLAG_LENGTH = 64
+_MAX_CONFLICT_SIGNALS = 12
+_ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "case_type",
+        "case_subtype",
+        "recommended_queue",
+        "correct_action",
+        "should_rop_see",
+        "confidence",
+        "reason",
+        "risk_flags",
+    ],
+    "properties": {
+        "case_type": {
+            "type": "string",
+            "enum": sorted(_VALID_CASE_TYPES),
+        },
+        "case_subtype": {
+            "type": "string",
+            "maxLength": _MAX_CASE_SUBTYPE_LENGTH,
+        },
+        "recommended_queue": {
+            "type": "string",
+            "enum": sorted(_VALID_QUEUES),
+        },
+        "correct_action": {
+            "type": "string",
+            "enum": sorted(_VALID_ACTIONS),
+        },
+        "should_rop_see": {
+            "type": "boolean",
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+        "reason": {
+            "type": "string",
+            "maxLength": _MAX_REASON_LENGTH,
+        },
+        "risk_flags": {
+            "type": "array",
+            "maxItems": _MAX_RISK_FLAGS,
+            "items": {
+                "type": "string",
+                "maxLength": _MAX_RISK_FLAG_LENGTH,
+            },
+        },
+    },
+}
 
 
 class _SafeDict(dict):
@@ -186,16 +362,226 @@ def _sanitize_prompt_text(value: Any, max_chars: int) -> str:
     text = str(value)
     text = _DATA_BASE64_RE.sub(" ", text)
     text = _LONG_BASE64_RE.sub(" ", text)
+    text = _EMAIL_BRACKET_RE.sub(r" \1 ", text)
     text = _HTML_TAG_RE.sub(" ", text)
     text = _WHITESPACE_RE.sub(" ", text).strip()
     return text[:max_chars]
 
 
+def _sanitize_prompt_list(
+    values: Any,
+    *,
+    max_items: int,
+    item_chars: int,
+) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    cleaned: list[str] = []
+    for value in values:
+        if len(cleaned) >= max_items:
+            break
+        if value is None:
+            continue
+        item = _sanitize_prompt_text(value, item_chars)
+        if item:
+            cleaned.append(item)
+    return cleaned
+
+
+def _sanitize_output_text(value: Any, max_chars: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return _WHITESPACE_RE.sub(" ", value).strip()[:max_chars]
+
+
+def _extract_attachment_metadata(event: dict[str, Any]) -> tuple[list[str], list[str]]:
+    attachments = event.get("attachments")
+    if not isinstance(attachments, list):
+        attachments = []
+
+    filenames = [
+        _sanitize_prompt_text(attachment.get("filename", ""), 200)
+        for attachment in attachments
+        if isinstance(attachment, dict) and attachment.get("filename")
+    ]
+    mime_types = [
+        _sanitize_prompt_text(attachment.get("content_type", ""), 200)
+        for attachment in attachments
+        if isinstance(attachment, dict) and attachment.get("content_type")
+    ]
+
+    if not filenames:
+        filenames = _sanitize_prompt_list(
+            event.get("attachment_filenames"),
+            max_items=20,
+            item_chars=200,
+        )
+    if not mime_types:
+        mime_types = _sanitize_prompt_list(
+            event.get("attachment_mime_types"),
+            max_items=20,
+            item_chars=200,
+        )
+
+    return filenames, mime_types
+
+
+def _event_signal_map(event: dict[str, Any]) -> dict[str, bool]:
+    text = _event_text_for_marker_scan(event)
+    return {
+        "spam": bool(event.get("spam_label_present", False)),
+        "reply": bool(event.get("reply_label_present", False)),
+        "forwarded": bool(event.get("forwarded_wrapper", False)),
+        "supplier_outreach": _contains_any_marker(text, _SUPPLIER_OR_PRODUCT_MARKERS),
+        "newsletter_bulk": _contains_any_marker(
+            text,
+            _NEWSLETTER_HR_LEGAL_TRAINING_MARKERS,
+        ),
+        "customer_request": _contains_any_marker(text, _CUSTOMER_REQUEST_MARKERS),
+        "tender": _contains_any_marker(text, _TENDER_MARKERS),
+        "logistics": _contains_any_marker(text, _LOGISTICS_MARKERS),
+        "finance": _contains_any_marker(text, _FINANCE_MARKERS),
+    }
+
+
+def _has_actionable_business_evidence(event: dict[str, Any]) -> bool:
+    signal_map = _event_signal_map(event)
+    return any(
+        signal_map[key]
+        for key in ("customer_request", "tender", "logistics", "finance")
+    )
+
+
+def _has_false_positive_markers(event: dict[str, Any]) -> bool:
+    signal_map = _event_signal_map(event)
+    return (
+        signal_map["supplier_outreach"]
+        or signal_map["newsletter_bulk"]
+        or signal_map["spam"]
+    )
+
+
+def _deterministic_is_safe_ignore(event: dict[str, Any]) -> bool:
+    return (
+        _deterministic_value(event, "case_type", "") == "irrelevant"
+        and _deterministic_value(event, "recommended_queue", "") == "ignore"
+        and _deterministic_value(event, "correct_action", "") == "ignore"
+    )
+
+
+def _has_conflict_marker_combinations(event: dict[str, Any]) -> bool:
+    signal_map = _event_signal_map(event)
+    deterministic_case_type = _deterministic_value(event, "case_type", "unknown")
+    deterministic_queue = _deterministic_value(event, "recommended_queue", "")
+
+    if signal_map["spam"] and (signal_map["customer_request"] or signal_map["tender"]):
+        return True
+
+    if signal_map["newsletter_bulk"] and deterministic_case_type in {
+        "existing_deal",
+        "new_lead",
+    }:
+        return True
+
+    if signal_map["supplier_outreach"] and (
+        deterministic_case_type == "existing_deal"
+        or deterministic_queue == "procurement"
+    ):
+        return True
+
+    if signal_map["finance"] and (
+        deterministic_case_type == "new_lead" or deterministic_queue == "sales"
+    ):
+        return True
+
+    if _deterministic_is_safe_ignore(event) and _has_actionable_business_evidence(
+        event
+    ):
+        return True
+
+    return False
+
+
+def _build_conflict_signals(event: dict[str, Any]) -> list[str]:
+    signal_map = _event_signal_map(event)
+    deterministic_confidence = _deterministic_value(event, "confidence", 0.0)
+    if not isinstance(deterministic_confidence, (int, float)):
+        deterministic_confidence = 0.0
+
+    signals: list[str] = []
+    if signal_map["spam"]:
+        signals.append("spam_label_present")
+    if signal_map["reply"]:
+        signals.append("reply_label_present")
+    if signal_map["forwarded"]:
+        signals.append("forwarded_wrapper")
+    if signal_map["supplier_outreach"]:
+        signals.append("supplier_outreach")
+    if signal_map["newsletter_bulk"]:
+        signals.append("newsletter_bulk")
+    if signal_map["customer_request"]:
+        signals.append("customer_request")
+    if signal_map["tender"]:
+        signals.append("tender_marker")
+    if signal_map["logistics"]:
+        signals.append("logistics_marker")
+    if signal_map["finance"]:
+        signals.append("finance_marker")
+    if event.get("is_fallback", False):
+        signals.append("deterministic_fallback")
+    if (
+        _deterministic_value(event, "correct_action", "")
+        in _DANGEROUS_DETERMINISTIC_ACTIONS
+    ):
+        signals.append("deterministic_risky_action")
+    if (
+        _deterministic_value(event, "recommended_queue", "")
+        in _RISKY_DETERMINISTIC_QUEUES
+    ):
+        signals.append("deterministic_risky_queue")
+    if float(deterministic_confidence) < 0.60:
+        signals.append("deterministic_low_confidence")
+
+    deduped: list[str] = []
+    for signal in signals:
+        if signal not in deduped:
+            deduped.append(signal)
+        if len(deduped) >= _MAX_CONFLICT_SIGNALS:
+            break
+    return deduped
+
+
+def _build_bitrix_match_summary(event: dict[str, Any]) -> dict[str, Any] | None:
+    summary: dict[str, Any] = {}
+    for key in (
+        "bitrix_match_summary",
+        "bitrix_match_status",
+        "bitrix_match_quality",
+        "bitrix_confidence",
+        "safe_to_use_as_target",
+    ):
+        value = event.get(key)
+        if value in (None, "", []):
+            continue
+        if isinstance(value, str):
+            summary[key] = _sanitize_prompt_text(value, 200)
+        elif isinstance(value, (int, float, bool)):
+            summary[key] = value
+
+    return summary or None
+
+
 def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    attachment_filenames, attachment_mime_types = _extract_attachment_metadata(event)
+
     return {
         "event_id": event.get("event_id", ""),
         "source_id": event.get("source_id", ""),
         "sender": _sanitize_prompt_text(event.get("sender") or "", 200),
+        "original_sender": _sanitize_prompt_text(
+            event.get("original_sender") or "",
+            200,
+        ),
         "original_sender_email": _sanitize_prompt_text(
             event.get("original_sender_email") or event.get("original_sender") or "",
             200,
@@ -205,27 +591,24 @@ def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
             event.get("clean_subject") or "",
             200,
         ),
-        "transport_labels": event.get("transport_labels", []),
+        "transport_labels": _sanitize_prompt_list(
+            event.get("transport_labels", []),
+            max_items=20,
+            item_chars=80,
+        ),
         "spam_label_present": event.get("spam_label_present", False),
         "reply_label_present": event.get("reply_label_present", False),
         "forwarded_wrapper": event.get("forwarded_wrapper", False),
         "body_preview": _sanitize_prompt_text(
             event.get("body_preview")
+            or event.get("body_short")
             or event.get("text_preview")
             or event.get("body")
             or "",
             500,
         ),
-        "attachment_filenames": [
-            _sanitize_prompt_text(attachment.get("filename", ""), 200)
-            for attachment in (event.get("attachments") or [])
-            if isinstance(attachment, dict) and attachment.get("filename")
-        ],
-        "attachment_mime_types": [
-            _sanitize_prompt_text(attachment.get("content_type", ""), 200)
-            for attachment in (event.get("attachments") or [])
-            if isinstance(attachment, dict) and attachment.get("content_type")
-        ],
+        "attachment_filenames": attachment_filenames,
+        "attachment_mime_types": attachment_mime_types,
         "deterministic_case_type": _deterministic_value(event, "case_type", "unknown"),
         "deterministic_case_subtype": _deterministic_value(event, "case_subtype", None),
         "deterministic_recommended_queue": _deterministic_value(
@@ -241,21 +624,37 @@ def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
         "deterministic_confidence": _deterministic_value(event, "confidence", 0.0),
         "deterministic_reason_code": _deterministic_value(event, "reason_code", ""),
         "is_fallback": event.get("is_fallback", False),
-        "risk_flags": event.get("risk_flags") or event.get("warnings") or [],
+        "deterministic_risk_flags": _sanitize_prompt_list(
+            event.get("risk_flags") or event.get("warnings") or [],
+            max_items=_MAX_RISK_FLAGS,
+            item_chars=_MAX_RISK_FLAG_LENGTH,
+        ),
+        "conflict_signals": _build_conflict_signals(event),
+        "bitrix_match_summary": _build_bitrix_match_summary(event),
     }
 
 
 def _event_text_for_marker_scan(event: dict[str, Any]) -> str:
-    payload = _build_prompt_event_payload(event)
+    attachment_filenames, attachment_mime_types = _extract_attachment_metadata(event)
     parts: list[str] = [
-        payload.get("sender", ""),
-        payload.get("original_sender_email", ""),
-        payload.get("subject", ""),
-        payload.get("clean_subject", ""),
-        payload.get("body_preview", ""),
+        _sanitize_prompt_text(event.get("sender") or "", 200),
+        _sanitize_prompt_text(
+            event.get("original_sender_email") or event.get("original_sender") or "",
+            200,
+        ),
+        _sanitize_prompt_text(event.get("subject") or "", 200),
+        _sanitize_prompt_text(event.get("clean_subject") or "", 200),
+        _sanitize_prompt_text(
+            event.get("body_preview")
+            or event.get("body_short")
+            or event.get("text_preview")
+            or event.get("body")
+            or "",
+            500,
+        ),
     ]
-    parts.extend(payload.get("attachment_filenames", []))
-    parts.extend(payload.get("attachment_mime_types", []))
+    parts.extend(attachment_filenames)
+    parts.extend(attachment_mime_types)
     return " ".join(part for part in parts if isinstance(part, str)).casefold()
 
 
@@ -298,16 +697,18 @@ def _has_conflict_or_risky_deterministic_signal(
     if any(part in reason_code for part in _RISKY_REASON_CODE_PARTS):
         return True
 
-    if event.get(
-        "spam_label_present", False
-    ) and _has_supplier_or_product_outreach_signal(event):
-        return True
-
-    if _has_newsletter_hr_legal_training_signal(event):
-        return True
-
     deterministic_action = _deterministic_value(event, "correct_action", "")
     if deterministic_action in _DANGEROUS_DETERMINISTIC_ACTIONS:
+        return True
+
+    deterministic_queue = _deterministic_value(event, "recommended_queue", "")
+    if deterministic_queue in _RISKY_DETERMINISTIC_QUEUES:
+        return True
+
+    if _has_false_positive_markers(event):
+        return True
+
+    if _has_conflict_marker_combinations(event):
         return True
 
     return False
@@ -318,23 +719,64 @@ def _ai_output_conflicts_with_marker_signals(
     validated: dict[str, Any],
 ) -> bool:
     ai_case_type = validated.get("case_type")
+    ai_queue = validated.get("recommended_queue")
     ai_correct_action = validated.get("correct_action")
+    safe_ignore = (
+        ai_case_type == "irrelevant"
+        and ai_queue == "ignore"
+        and ai_correct_action == "ignore"
+    )
+    if safe_ignore:
+        return _has_actionable_business_evidence(event)
+
     risky_ai_continuation = (
         ai_case_type in {"existing_deal", "new_lead"}
         or ai_correct_action in _DANGEROUS_DETERMINISTIC_ACTIONS
+        or ai_queue in _RISKY_DETERMINISTIC_QUEUES
     )
     if not risky_ai_continuation:
         return False
 
-    if event.get(
-        "spam_label_present", False
-    ) and _has_supplier_or_product_outreach_signal(event):
+    if _has_false_positive_markers(event):
         return True
 
-    if _has_newsletter_hr_legal_training_signal(event):
+    if _has_conflict_marker_combinations(event):
         return True
 
     return False
+
+
+def _is_low_confidence_safe_ignore_preservation(
+    event: dict[str, Any],
+    validated: dict[str, Any],
+) -> bool:
+    return (
+        _deterministic_is_safe_ignore(event)
+        and validated.get("case_type") == "irrelevant"
+        and validated.get("recommended_queue") == "ignore"
+        and validated.get("correct_action") == "ignore"
+        and not _has_actionable_business_evidence(event)
+    )
+
+
+def _is_high_confidence_false_positive_resolution(
+    event: dict[str, Any],
+    validated: dict[str, Any],
+    min_confidence: float,
+) -> bool:
+    if validated.get("confidence", 0.0) < min_confidence:
+        return False
+    if validated.get("case_type") != "irrelevant":
+        return False
+    if validated.get("recommended_queue") != "ignore":
+        return False
+    if validated.get("correct_action") != "ignore":
+        return False
+    if not _has_false_positive_markers(event):
+        return False
+    if _has_actionable_business_evidence(event):
+        return False
+    return _has_conflict_or_risky_deterministic_signal(event, min_confidence)
 
 
 def _build_adjudicator_prompt(
@@ -388,59 +830,41 @@ def _parse_ai_response(raw_text: str) -> dict[str, Any] | None:
 
 
 def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
-    valid_case_types = {"new_lead", "existing_deal", "irrelevant"}
-    valid_queues = {
-        "sales",
-        "tender",
-        "logistics",
-        "finance",
-        "procurement",
-        "manual_review",
-        "ignore",
-    }
-    valid_actions = {
-        "review_new_lead",
-        "review_tender",
-        "attach_to_deal",
-        "check_bitrix",
-        "manual_review",
-        "ignore",
-    }
-    valid_risk_flags = {
-        "marketing_conflict",
-        "spam_rfq_conflict",
-        "supplier_outreach",
-        "low_signal",
-        "ambiguous_bitrix",
-    }
-
     validated: dict[str, Any] = {}
     errors: list[str] = []
+    warnings: list[str] = []
+    dropped_risk_flags: list[str] = []
 
     case_type = data.get("case_type", "")
-    if isinstance(case_type, str) and case_type in valid_case_types:
+    if isinstance(case_type, str) and case_type in _VALID_CASE_TYPES:
         validated["case_type"] = case_type
     else:
         errors.append(f"invalid case_type: {case_type}")
         validated["case_type"] = "irrelevant"
 
     subtype = data.get("case_subtype")
-    validated["case_subtype"] = subtype if isinstance(subtype, str) else None
+    if isinstance(subtype, str):
+        cleaned_subtype = _sanitize_output_text(subtype, _MAX_CASE_SUBTYPE_LENGTH)
+        validated["case_subtype"] = cleaned_subtype or None
+    else:
+        validated["case_subtype"] = None
 
     queue = data.get("recommended_queue", "")
-    if isinstance(queue, str) and queue in valid_queues:
+    if isinstance(queue, str) and queue in _VALID_QUEUES:
         validated["recommended_queue"] = queue
     else:
         errors.append(f"invalid recommended_queue: {queue}")
         validated["recommended_queue"] = "manual_review"
 
     should_see = data.get("should_rop_see")
-    validated["should_rop_see"] = (
-        bool(should_see) if isinstance(should_see, bool) else True
-    )
+    if isinstance(should_see, bool):
+        validated["should_rop_see"] = should_see
+    else:
+        errors.append(f"invalid should_rop_see: {should_see}")
+        validated["should_rop_see"] = True
 
     action = data.get("correct_action", "")
-    if isinstance(action, str) and action in valid_actions:
+    if isinstance(action, str) and action in _VALID_ACTIONS:
         validated["correct_action"] = action
     else:
         errors.append(f"invalid correct_action: {action}")
@@ -454,21 +878,29 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
         validated["confidence"] = 0.0
 
     reason = data.get("reason")
-    validated["reason"] = reason if isinstance(reason, str) else ""
+    validated["reason"] = _sanitize_output_text(reason, _MAX_REASON_LENGTH)
 
     risk_flags = data.get("risk_flags", [])
+    cleaned_flags: list[str] = []
     if isinstance(risk_flags, list):
-        cleaned_flags: list[str] = []
         for flag in risk_flags:
-            if isinstance(flag, str) and flag in valid_risk_flags:
+            if len(cleaned_flags) >= _MAX_RISK_FLAGS:
+                break
+            if isinstance(flag, str) and flag in _VALID_RISK_FLAGS:
                 cleaned_flags.append(flag)
             elif isinstance(flag, str):
-                errors.append(f"unknown risk_flag: {flag}")
-        validated["risk_flags"] = cleaned_flags
+                cleaned_flag = _sanitize_output_text(flag, _MAX_RISK_FLAG_LENGTH)
+                if cleaned_flag:
+                    dropped_risk_flags.append(cleaned_flag)
+                    warnings.append(f"dropped unknown risk_flag: {cleaned_flag}")
+        validated["risk_flags"] = cleaned_flags[:_MAX_RISK_FLAGS]
     else:
+        warnings.append("risk_flags was not a list; replaced with []")
         validated["risk_flags"] = []
 
     validated["errors"] = errors
+    validated["warnings"] = warnings
+    validated["dropped_risk_flags"] = dropped_risk_flags[:_MAX_RISK_FLAGS]
     return validated
 
 
@@ -533,13 +965,7 @@ def call_openai_responses_api(
 
     api_url = base_url.rstrip("/") + "/responses"
 
-    payload = {
-        "model": model,
-        "input": prompt,
-        "temperature": 0.1,
-        "max_output_tokens": 500,
-        "text": {"format": {"type": "json_object"}},
-    }
+    payload = _build_openai_responses_payload(prompt=prompt, model=model)
 
     try:
         req = request.Request(
@@ -586,6 +1012,25 @@ def _deterministic_value(event: dict[str, Any], key: str, default: Any) -> Any:
     return event.get(f"deterministic_{key}", event.get(key, default))
 
 
+def _build_openai_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "name": "rop_ai_adjudicator_decision",
+        "strict": True,
+        "schema": _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA,
+    }
+
+
+def _build_openai_responses_payload(*, prompt: str, model: str) -> dict[str, Any]:
+    return {
+        "model": model,
+        "input": prompt,
+        "temperature": 0.1,
+        "max_output_tokens": 500,
+        "text": {"format": _build_openai_response_format()},
+    }
+
+
 def _build_result(
     event: dict[str, Any],
     *,
@@ -604,6 +1049,8 @@ def _build_result(
     final_should_rop_see: Any,
     merge_reason: str,
     errors: list[str],
+    warnings: list[str],
+    dropped_risk_flags: list[str],
 ) -> dict[str, Any]:
     return {
         "event_id": event.get("event_id", ""),
@@ -636,6 +1083,8 @@ def _build_result(
         "final_should_rop_see": final_should_rop_see,
         "merge_reason": merge_reason,
         "errors": errors,
+        "warnings": warnings,
+        "dropped_risk_flags": dropped_risk_flags,
     }
 
 
@@ -657,32 +1106,11 @@ def _build_request_artifact(
         "model": profile_cfg.get("model", ""),
         "prompt_key": adj_cfg.get("prompt_key", ""),
         "request_preview": {
-            "event_id": safe_payload["event_id"],
-            "source_id": safe_payload["source_id"],
-            "sender": safe_payload["sender"],
-            "original_sender_email": safe_payload["original_sender_email"],
-            "subject": safe_payload["subject"],
-            "clean_subject": safe_payload["clean_subject"],
-            "transport_labels": safe_payload["transport_labels"],
-            "spam_label_present": safe_payload["spam_label_present"],
-            "reply_label_present": safe_payload["reply_label_present"],
-            "forwarded_wrapper": safe_payload["forwarded_wrapper"],
+            **safe_payload,
             "body_preview_chars": len(safe_payload.get("body_preview", "")),
-            "attachment_filenames": safe_payload["attachment_filenames"],
-            "attachment_mime_types": safe_payload["attachment_mime_types"],
-            "deterministic_case_type": safe_payload["deterministic_case_type"],
-            "deterministic_case_subtype": safe_payload["deterministic_case_subtype"],
-            "deterministic_recommended_queue": safe_payload[
-                "deterministic_recommended_queue"
-            ],
-            "deterministic_correct_action": safe_payload[
-                "deterministic_correct_action"
-            ],
-            "deterministic_confidence": safe_payload["deterministic_confidence"],
-            "deterministic_reason_code": safe_payload["deterministic_reason_code"],
-            "is_fallback": safe_payload["is_fallback"],
         },
     }
+    artifact["response_format"] = _build_openai_response_format()
 
     if prompts_cfg.get("store") and prompt:
         artifact["prompt_chars"] = len(prompt)
@@ -752,6 +1180,8 @@ def run_adjudicator_for_event(
                 final_should_rop_see=final_should_rop_see,
                 merge_reason="deterministic_result_preserved",
                 errors=[],
+                warnings=[],
+                dropped_risk_flags=[],
             ),
         }
 
@@ -786,6 +1216,8 @@ def run_adjudicator_for_event(
                 final_should_rop_see=final_should_rop_see,
                 merge_reason="missing_api_key_deterministic_result_preserved",
                 errors=[error],
+                warnings=[],
+                dropped_risk_flags=[],
             ),
         }
 
@@ -827,6 +1259,8 @@ def run_adjudicator_for_event(
                 final_should_rop_see=final_should_rop_see,
                 merge_reason="provider_call_failed_deterministic_result_preserved",
                 errors=[error],
+                warnings=[],
+                dropped_risk_flags=[],
             ),
         }
 
@@ -861,6 +1295,8 @@ def run_adjudicator_for_event(
                 final_should_rop_see=final_should_rop_see,
                 merge_reason="ai_output_invalid_deterministic_result_preserved",
                 errors=[error],
+                warnings=[],
+                dropped_risk_flags=[],
             ),
         }
 
@@ -869,11 +1305,14 @@ def run_adjudicator_for_event(
     ai_reason = str(validated.get("reason", ""))
     ai_risk_flags = list(validated.get("risk_flags", []))
     validation_errors = list(validated.get("errors", []))
+    validation_warnings = list(validated.get("warnings", []))
+    dropped_risk_flags = list(validated.get("dropped_risk_flags", []))
     min_confidence = float(adj_cfg["confidence_accept_min"])
 
     status = "ok"
     ai_error = ""
     errors = validation_errors
+    warnings = validation_warnings
     merge_reason = "validated_ai_adjudicator_output"
     if ai_confidence >= min_confidence and not validation_errors:
         if _ai_output_conflicts_with_marker_signals(event, validated):
@@ -898,6 +1337,12 @@ def run_adjudicator_for_event(
                 validated.get("correct_action") or final_correct_action
             )
             final_should_rop_see = validated.get("should_rop_see")
+            if _is_high_confidence_false_positive_resolution(
+                event,
+                validated,
+                min_confidence,
+            ):
+                merge_reason = "ai_resolved_risky_false_positive"
     elif ai_confidence >= min_confidence and validation_errors:
         if _has_conflict_or_risky_deterministic_signal(event, min_confidence):
             status = "manual_review_degrade"
@@ -919,7 +1364,14 @@ def run_adjudicator_for_event(
             )
     else:
         errors = [*validation_errors, "ai_confidence_below_acceptance_threshold"]
-        if _has_conflict_or_risky_deterministic_signal(event, min_confidence):
+        if _is_low_confidence_safe_ignore_preservation(event, validated):
+            status = "low_confidence_preserve"
+            ai_error = (
+                "AI confidence below acceptance threshold; safe deterministic ignore "
+                "preserved."
+            )
+            merge_reason = "ai_low_confidence_safe_ignore_preserved"
+        elif _has_conflict_or_risky_deterministic_signal(event, min_confidence):
             status = "manual_review_degrade"
             final_case_type = _deterministic_value(event, "case_type", "unknown")
             final_case_subtype = None
@@ -953,6 +1405,8 @@ def run_adjudicator_for_event(
         "ai_reason": ai_reason,
         "ai_risk_flags": ai_risk_flags,
         "validation_errors": validation_errors,
+        "validation_warnings": validation_warnings,
+        "dropped_risk_flags": dropped_risk_flags,
         "error": ai_error,
     }
 
@@ -976,6 +1430,8 @@ def run_adjudicator_for_event(
             final_should_rop_see=final_should_rop_see,
             merge_reason=merge_reason,
             errors=errors,
+            warnings=warnings,
+            dropped_risk_flags=dropped_risk_flags,
         ),
     }
 

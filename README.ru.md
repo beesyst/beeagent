@@ -73,6 +73,15 @@
 - писать `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
 - применять AI result только через public module case `ai_assist_merge`;
 - сохранять deterministic result при `module_contract_unavailable`, invalid/low-confidence/blocked/provider-failed AI path;
+- выполнять BeeAgent-owned ROP OpenAI adjudicator для eligible ambiguous/conflict events;
+- использовать strict Responses API `json_schema` для adjudicator output;
+- валидировать AI output по allowed ROP taxonomy;
+- tolerantly drop unknown `risk_flags`, не инвалидируя valid core decision;
+- безопасно сохранять deterministic result или переводить кейс в manual review при provider/parse/validation failure adjudicator path;
+- отправлять risky/conflicting low-confidence AI cases в `manual_review_degrade`;
+- сохранять safe deterministic `irrelevant/ignore` как `low_confidence_preserve`, если conflict evidence нет;
+- писать `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
+- показывать AI/deterministic/final traceability в TSV через stage-dependent AI fields;
 - передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
 - писать source-level diagnostics artifact `source_diagnostics.json`.
 - запускать ROP source flow через explicit `--source-id` или все enabled sources через `--all-sources`;
@@ -206,6 +215,45 @@ BeeAgent уже прошёл этап **module platform v0**:
   - `GET /api/bitrix/rop/widget/events`;
   - `GET /api/bitrix/rop/widget/events/{event_id}`;
 - конфиг `bitrix.widget` и `rop.routing`.
+
+Итерация 33 добавила:
+
+- forwarded mailbox normalization polish;
+- `clean_subject`;
+- `transport_labels`;
+- `spam_label_present`;
+- `reply_label_present`;
+- `forwarded_wrapper`;
+- `form_email`;
+- `original_sender`;
+- `original_sender_email`;
+- `original_recipient`;
+- `original_message_date`;
+- `date_source`;
+- `x_email_id`;
+- enriched TSV fields;
+- правило, что transport labels — weak signals, а не business labels.
+
+Итерация 34 добавила:
+
+- BeeAgent-owned ROP OpenAI adjudicator execution path;
+- provider execution через `ai.profiles.openai` / `OPENAI_API_KEY`;
+- strict structured JSON output через Responses API `json_schema`;
+- bounded/sanitized AI request payload;
+- artifacts `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
+- deterministic-vs-AI-vs-final traceability в TSV;
+- safe fallback при missing key/provider failure/invalid JSON/invalid taxonomy;
+- no CRM/Bitrix/mailbox write-back;
+- no private `beeagent-rop` imports.
+
+Итерация 34.1 добавила:
+
+- prompt/schema hardening;
+- tolerant unknown `risk_flags` handling;
+- low-confidence safe-ignore preservation;
+- `manual_review_degrade` только для risky/conflict cases;
+- high-confidence safe resolution supplier/newsletter false positives в `irrelevant/ignore`;
+- improved payload completeness для `body_preview` и attachment metadata.
 
 Текущий фокус:
 
@@ -685,7 +733,11 @@ UI не должен обходить cases/modules/core.
 ### 6. Bounded AI
 
 AI используется как assistive layer, а не как неограниченный black box.
-AI assist в BeeAgent не должен обходить module boundary. BeeAgent может выполнять bounded provider call, писать evidence artifacts и передавать result в public module contract. Доменное применение результата остаётся за `beeagent-rop` через public case `ai_assist_merge`.
+BeeAgent может выполнять bounded provider calls и свой strict validation/safe merge для adjudicator evidence.
+Доменная классификация остаётся за `beeagent-rop`.
+Transport labels и AI outputs не считаются direct business truth.
+AI не может выполнять write-back.
+Dangerous или uncertain outputs должны уходить в manual review или deterministic fallback.
 
 ## Технологический стек
 
@@ -809,7 +861,8 @@ configured source(s)
 → mail_thread_context.json
 → beeagent-rop lead_classification per event with bounded thread_context
 → classified_events.json
-→ rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если AI assist включён
+→ rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если legacy bounded AI assist включён
+→ rop_ai_adjudicator_requests.json / rop_ai_adjudicator_decisions.json / rop_ai_adjudicator_results.json, если ROP AI adjudicator включён
 → bitrix_reconciliation.json (optional read-only evidence)
 → rop_context_enrichment.json
 → storage/interfaces/rop_routing_map.json
@@ -1043,7 +1096,7 @@ rop:
 - HTML предпочитает text/plain, для HTML body используется stripped text;
 - результат фиксируется в `normalized_events.json`.
 
-### ROP AI assist
+### ROP AI assist и OpenAI adjudicator
 
 `ai` — единый source of truth для BeeAgent AI provider/model/prompt config.
 
@@ -1081,7 +1134,7 @@ ai:
       model: ""
 ```
 
-ROP-specific adjudicator config живёт отдельно под `rop.ai_assist`, но не дублирует provider/prompt settings:
+ROP-specific AI config живёт отдельно под `rop.ai_assist`, но не дублирует provider/prompt settings:
 
 ```yaml
 rop:
@@ -1100,10 +1153,51 @@ rop:
       prompt_key: "rop.ai_adjudicator"
 ```
 
-Если `rop.ai_assist.adjudicator.enabled: true`, BeeAgent использует `ai.prompts.path`, `rop.ai_assist.adjudicator.prompt_key` и ровно один включённый `ai.profiles.*`.
-Для `openai` нужен `OPENAI_API_KEY`, для `deepseek` — `DEEPSEEK_API_KEY`, для `lmstudio` — `LMSTUDIO_API_KEY`, для `custom` — `CUSTOM_AI_API_KEY`.
+#### Legacy AI assist
 
-AI assist не является самостоятельной ROP business logic. BeeAgent строит bounded request/result artifacts, а применение AI result выполняется только через public `beeagent-rop` case `ai_assist_merge`. Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
+Legacy bounded AI assist контролируется через `rop.ai_assist.enabled` и disabled by default.
+Он пишет `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`.
+Применение результата выполняется только через public `beeagent-rop` case `ai_assist_merge`.
+Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
+
+#### OpenAI adjudicator
+
+ROP OpenAI adjudicator контролируется через `rop.ai_assist.adjudicator.enabled`.
+Он использует top-level `ai.prompts` и ровно один enabled `ai.profiles.*`.
+Сейчас поддерживается `openai_responses`.
+При active OpenAI profile требуется `OPENAI_API_KEY`.
+Adjudicator использует strict `json_schema`.
+
+Allowed `case_type`:
+
+- `new_lead`
+- `existing_deal`
+- `irrelevant`
+
+Allowed `recommended_queue`:
+
+- `sales`
+- `tender`
+- `logistics`
+- `finance`
+- `procurement`
+- `manual_review`
+- `ignore`
+
+Allowed `correct_action`:
+
+- `review_new_lead`
+- `review_tender`
+- `attach_to_deal`
+- `check_bitrix`
+- `manual_review`
+- `ignore`
+
+Unknown `risk_flags` отбрасываются как bounded diagnostics.
+Provider failure, invalid JSON и invalid taxonomy сохраняют deterministic result или переводят кейс в manual review в зависимости от risk/conflict context.
+Safe deterministic ignore может быть сохранён как `low_confidence_preserve`.
+Risky/conflict cases могут перейти в `manual_review_degrade`.
+Write-back в этом path не выполняется.
 
 `mailbox_readonly` используется только для read-only smoke:
 
@@ -1149,6 +1243,9 @@ AI assist не является самостоятельной ROP business logi
 - `storage/runs/<run_id>/rop_ai_assist_requests.json`
 - `storage/runs/<run_id>/rop_ai_assist_decisions.json`
 - `storage/runs/<run_id>/rop_ai_assist_results.json`
+- `storage/runs/<run_id>/rop_ai_adjudicator_requests.json`
+- `storage/runs/<run_id>/rop_ai_adjudicator_decisions.json`
+- `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
 - `storage/runs/<run_id>/rop_context_enrichment.json`
 - `storage/runs/<run_id>/rop_recommendations.json`
 - `storage/runs/<run_id>/rop_evaluation.json`, если выполнена команда `rop evaluate-review`
@@ -1219,6 +1316,32 @@ BeeAgent не принимает business-решений на основе trans
 **Структура `rop_review_table.tsv` (v1):**
 
 Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` и `rop action-drafts` TSV расширяется Bitrix/action columns. Число колонок stage-dependent и не должно считаться фиксированным контрактом.
+
+После It34 TSV также может содержать AI adjudicator trace fields:
+
+- `ai_used`
+- `ai_status`
+- `ai_provider`
+- `ai_model`
+- `ai_confidence`
+- `ai_reason`
+- `ai_risk_flags`
+- `ai_error`
+- `deterministic_case_type`
+- `deterministic_case_subtype`
+- `deterministic_recommended_queue`
+- `deterministic_correct_action`
+- `deterministic_confidence`
+- `deterministic_reason_code`
+
+Возможные `ai_status` stage-dependent и включают:
+
+- `ok`
+- `manual_review_degrade`
+- `low_confidence_preserve`
+- `degraded`
+- `invalid`
+- `low_confidence`
 
 **Base columns:**
 
@@ -1291,6 +1414,9 @@ BeeAgent не принимает business-решений на основе trans
 `mail_thread_index.json` — BeeAgent-owned thread index artifact.
 `mail_thread_context.json` — bounded thread context artifact, который может передаваться в public module classification path.
 `rop_ai_assist_*` artifacts — BeeAgent-owned AI assist evidence artifacts. Они фиксируют request preview, decision и result без secret values и без raw payload persistence.
+`rop_ai_adjudicator_requests.json` — sanitized/bounded adjudicator request preview и response format metadata.
+`rop_ai_adjudicator_decisions.json` — provider/model/status и validation diagnostics для adjudicator path.
+`rop_ai_adjudicator_results.json` — deterministic/final comparison, `ai_status`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `merge_reason`, `dropped_risk_flags`.
 `module_result.json` и `<case_type>_result.json` — module-linked artifacts.
 
 Точный текущий контракт смотри в:
@@ -1342,8 +1468,15 @@ BeeAgent не принимает business-решений на основе trans
 - `rop.ai_assist` disabled by default;
 - AI env values не пишутся в logs/artifacts;
 - при `enabled: true` и `dry_run: false` env валидируются fail-fast;
+- OpenAI adjudicator отправляет только bounded/sanitized payload;
+- strict schema используется для adjudicator output;
+- local validation остаётся обязательной;
+- unknown `risk_flags` bounded и отбрасываются, если не распознаны;
+- AI artifacts не должны содержать raw `.eml`, full HTML, base64, attachment content, webhook URLs, tokens, mailbox passwords или provider keys;
 - AI output не должен напрямую выполнять CRM/mailbox/Bitrix actions;
+- AI output не может триггерить CRM/Bitrix/mailbox actions;
 - write-back/action instructions from AI output must be rejected or preserved as non-executed evidence;
+- `manual_review_degrade` — safety route, а не write-back action;
 - recommendations должны оставаться read-only/draft-only;
 - `safe_to_execute=false` в текущем scope;
 - для non-ignore recommendations требуется human confirmation.
@@ -1381,6 +1514,10 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP thread artifacts and bounded thread context** — DONE;
 - **ROP bounded AI assist execution v0** — DONE;
 - **ROP public AI merge boundary** — DONE;
+- **ROP OpenAI adjudicator execution path** — DONE;
+- **ROP AI adjudicator strict schema contract** — DONE;
+- **ROP AI adjudicator safe merge/degrade policy** — DONE;
+- **ROP AI adjudicator payload/artifact safety** — DONE;
 - **ROP Review Workbench event details** — DONE;
 - **ROP review quality gate** — DONE;
 - **ROP context enrichment** — DONE;
@@ -1416,6 +1553,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent пишет AI assist evidence artifacts;
 - AI assist disabled by default и не делает write-back;
 - AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
+- OpenAI adjudicator может быть включён для eligible grey-zone events;
+- OpenAI adjudicator пишет `rop_ai_adjudicator_*` artifacts;
+- unsafe provider/parse/validation failures сохраняют deterministic decisions;
+- risky/conflicting uncertain adjudicator results уходят в manual review;
+- safe ignore может сохраняться, а safe supplier/newsletter false positives могут резолвиться в ignore;
+- write-back в adjudicator path не добавляется;
 - multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;
 - partial degraded source виден в artifacts и не скрывается aggregate метриками;
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
