@@ -604,6 +604,29 @@ class TestAdjudicatorBatch:
         assert results == []
         assert counters["adjudicator_enabled"] == 0
 
+    def test_env_kill_switch_disables_batch_and_skips_provider(self) -> None:
+        settings = _settings(ai_assist_enabled=True, adjudicator_enabled=True)
+
+        with patch.dict(
+            os.environ,
+            {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "0"},
+            clear=True,
+        ):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                side_effect=AssertionError("adjudicator provider must not run"),
+            ):
+                requests, decisions, results, counters = run_adjudicator_batch(
+                    events=[_sample_eligible_event()],
+                    settings=settings,
+                    logger=_null_logger(),
+                )
+
+        assert requests == []
+        assert decisions == []
+        assert results == []
+        assert counters["adjudicator_enabled"] == 0
+
     def test_gate_true_calls_provider_once(self) -> None:
         calls: list[str] = []
 
@@ -635,6 +658,47 @@ class TestAdjudicatorBatch:
                 )
         assert len(calls) == 1
         assert counters["adjudicator_eligible_count"] == 1
+        assert results[0]["ai_status"] == "ok"
+
+    def test_env_true_enables_batch_even_when_yaml_disabled(self) -> None:
+        calls: list[str] = []
+
+        def _fake_call(**kwargs: object) -> str:
+            calls.append("called")
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "tender",
+                    "recommended_queue": "tender",
+                    "should_rop_see": True,
+                    "correct_action": "review_tender",
+                    "confidence": 0.85,
+                    "reason": "Clear RFQ content",
+                    "risk_flags": [],
+                }
+            )
+
+        settings = _settings(ai_assist_enabled=True, adjudicator_enabled=False)
+        with patch.dict(
+            os.environ,
+            {
+                "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "1",
+                "OPENAI_API_KEY": "sk-test",
+            },
+            clear=True,
+        ):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _fake_call,
+            ):
+                _, _, results, counters = run_adjudicator_batch(
+                    events=[_sample_eligible_event()],
+                    settings=settings,
+                    logger=_null_logger(),
+                )
+
+        assert len(calls) == 1
+        assert counters["adjudicator_enabled"] == 1
         assert results[0]["ai_status"] == "ok"
 
 
@@ -777,6 +841,23 @@ class TestConfig:
             _settings(ai_assist_enabled=False, adjudicator_enabled=False)
         )
 
+    def test_env_kill_switch_skips_ai_profile_and_api_key_validation(self) -> None:
+        from beeagent_module.core.settings import (
+            _validate_rop_ai_adjudicator_settings,
+            _validate_rop_ai_assist_settings,
+        )
+
+        settings = _settings(ai_assist_enabled=True, adjudicator_enabled=True)
+        settings["rop"]["ai_assist"]["dry_run"] = False
+
+        with patch.dict(
+            os.environ,
+            {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "off"},
+            clear=True,
+        ):
+            _validate_rop_ai_assist_settings(settings)
+            _validate_rop_ai_adjudicator_settings(settings)
+
     def test_adjudicator_enabled_requires_ai_assist(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
 
@@ -790,6 +871,22 @@ class TestConfig:
 
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+                _validate_rop_ai_adjudicator_settings(
+                    _settings(ai_assist_enabled=True, adjudicator_enabled=True)
+                )
+
+    def test_invalid_adjudicator_env_value_fails_fast(self) -> None:
+        from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
+
+        with patch.dict(
+            os.environ,
+            {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "maybe"},
+            clear=True,
+        ):
+            with pytest.raises(
+                RuntimeError,
+                match="Invalid BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED value: maybe",
+            ):
                 _validate_rop_ai_adjudicator_settings(
                     _settings(ai_assist_enabled=True, adjudicator_enabled=True)
                 )

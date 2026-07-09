@@ -66,6 +66,13 @@ _REQUIRED_ROP_ROUTING_QUEUES: tuple[str, ...] = (
 _SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
     {"openai_responses", "openai_compatible"}
 )
+_ROP_AI_ADJUDICATOR_ENV = "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED"
+_ENV_TRUE_VALUES: frozenset[str] = frozenset(
+    {"1", "true", "yes", "on", "enabled"}
+)
+_ENV_FALSE_VALUES: frozenset[str] = frozenset(
+    {"0", "false", "no", "off", "disabled"}
+)
 
 
 def load_settings(settings_path: Path) -> dict:
@@ -83,6 +90,7 @@ def load_settings(settings_path: Path) -> dict:
 
 
 def validate_settings(settings: dict) -> None:
+    apply_runtime_settings_overrides(settings)
     missing_keys: list[str] = []
 
     for key_path in REQUIRED_KEYS:
@@ -363,6 +371,29 @@ def validate_settings(settings: dict) -> None:
     _validate_bitrix_widget_settings(settings)
 
     _validate_web_auth_settings(settings)
+
+
+def apply_runtime_settings_overrides(settings: dict) -> dict:
+    _apply_rop_ai_adjudicator_env_override(settings)
+    return settings
+
+
+def get_rop_ai_adjudicator_runtime_state(settings: dict) -> dict[str, bool]:
+    apply_runtime_settings_overrides(settings)
+    adj_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
+    if not isinstance(adj_cfg, dict):
+        return {
+            "enabled": False,
+            "env_override_present": False,
+            "yaml_enabled": False,
+        }
+    return {
+        "enabled": adj_cfg.get("enabled") is True,
+        "env_override_present": bool(
+            adj_cfg.get("_env_override_present", False)
+        ),
+        "yaml_enabled": adj_cfg.get("_yaml_enabled", False) is True,
+    }
 
 
 def _validate_web_auth_settings(settings: dict) -> None:
@@ -655,7 +686,14 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
     if not isinstance(dry_run, bool):
         raise RuntimeError("Invalid type for rop.ai_assist.dry_run, expected bool")
 
-    if ai_cfg.get("enabled"):
+    adjudicator_state = get_rop_ai_adjudicator_runtime_state(settings)
+    legacy_ai_assist_requested = bool(
+        ai_cfg.get("enabled")
+        and not adjudicator_state["enabled"]
+        and not adjudicator_state["env_override_present"]
+        and not adjudicator_state["yaml_enabled"]
+    )
+    if legacy_ai_assist_requested:
         _require_one_enabled_ai_profile(
             settings,
             reason="rop.ai_assist.enabled=true",
@@ -875,6 +913,7 @@ def _validate_bitrix_widget_settings(settings: dict) -> None:
 
 
 def _validate_rop_ai_adjudicator_settings(settings: dict) -> None:
+    apply_runtime_settings_overrides(settings)
     adj_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
     if adj_cfg is None:
         return
@@ -949,3 +988,46 @@ def _get_nested_value(settings: dict, key_path: tuple[str, ...]):
             return None
         current = current[key]
     return current
+
+
+def _parse_optional_bool_env(var_name: str) -> bool | None:
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return None
+
+    normalized = raw_value.strip().casefold()
+    if normalized in _ENV_TRUE_VALUES:
+        return True
+    if normalized in _ENV_FALSE_VALUES:
+        return False
+
+    raise RuntimeError(f"Invalid {var_name} value: {raw_value}")
+
+
+def _apply_rop_ai_adjudicator_env_override(settings: dict) -> None:
+    ai_cfg = _get_nested_value(settings, ("rop", "ai_assist"))
+    if not isinstance(ai_cfg, dict):
+        return
+
+    override_value = _parse_optional_bool_env(_ROP_AI_ADJUDICATOR_ENV)
+    adj_cfg = ai_cfg.get("adjudicator")
+    if not isinstance(adj_cfg, dict):
+        if override_value is None:
+            return
+        return
+
+    prev_override_present = bool(adj_cfg.get("_env_override_present", False))
+    if prev_override_present:
+        yaml_enabled = adj_cfg.get("_yaml_enabled", adj_cfg.get("enabled"))
+    else:
+        yaml_enabled = adj_cfg.get("enabled")
+    if isinstance(yaml_enabled, bool):
+        adj_cfg["_yaml_enabled"] = yaml_enabled
+    else:
+        adj_cfg["_yaml_enabled"] = False
+
+    adj_cfg["_env_override_present"] = override_value is not None
+    if override_value is not None:
+        adj_cfg["enabled"] = override_value
+    else:
+        adj_cfg["enabled"] = bool(adj_cfg["_yaml_enabled"])

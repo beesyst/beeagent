@@ -133,6 +133,18 @@ class TestRopCliArgumentParser:
         with pytest.raises(RopCliError, match="Invalid period"):
             handle_rop_mvp_pack(args, settings=settings, logger=_null_logger())
 
+    def test_cli_load_settings_honors_adjudicator_env_kill_switch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "disabled")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+
+        assert settings["rop"]["ai_assist"]["enabled"] is True
+        assert settings["rop"]["ai_assist"]["adjudicator"]["enabled"] is False
+
 
 class TestSourceOverrides:
     def test_apply_source_overrides_with_source_id(self) -> None:

@@ -11,6 +11,10 @@ from urllib import request
 import yaml
 
 from beeagent_module.core.paths import get_project_root
+from beeagent_module.core.settings import (
+    apply_runtime_settings_overrides,
+    get_rop_ai_adjudicator_runtime_state,
+)
 
 _SUPPORTED_AI_PROVIDERS = frozenset({"openai_responses"})
 _DATA_BASE64_RE = re.compile(
@@ -986,8 +990,11 @@ def run_adjudicator_batch(
     list[dict[str, Any]],
     dict[str, int],
 ]:
+    apply_runtime_settings_overrides(settings)
+    adjudicator_state = get_rop_ai_adjudicator_runtime_state(settings)
     adj_cfg = _resolve_adj_config(settings)
-    if not adj_cfg or not adj_cfg.get("enabled", False):
+    if not adj_cfg or not adjudicator_state["enabled"]:
+        logger.info("adjudicator disabled")
         return [], [], [], {"adjudicator_enabled": 0}
 
     _, profile_cfg = _resolve_active_ai_profile(settings)

@@ -27,6 +27,10 @@ from beeagent_module.core.rop_ai_assist import (
     write_ai_assist_artifacts,
 )
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
+from beeagent_module.core.settings import (
+    apply_runtime_settings_overrides,
+    get_rop_ai_adjudicator_runtime_state,
+)
 from beeagent_module.core.thread_index import (
     build_thread_context,
     build_thread_index,
@@ -669,7 +673,7 @@ def run_rop_batch_case(
     source_id: str | None = None,
     all_sources: bool = False,
 ) -> dict[str, Any]:
-
+    apply_runtime_settings_overrides(settings)
     effective_run_id = run_id or generate_run_id()
     effective_session_id = session_id or generate_session_id()
 
@@ -1024,14 +1028,13 @@ def run_rop_batch_case(
 
         ai_cfg = settings.get("rop", {}).get("ai_assist", {})
         ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
-        adj_cfg = (
-            ai_cfg.get("adjudicator", {})
-            if isinstance(ai_cfg, dict)
-            and isinstance(ai_cfg.get("adjudicator", {}), dict)
-            else {}
+        adjudicator_state = get_rop_ai_adjudicator_runtime_state(settings)
+        legacy_ai_assist_enabled = bool(
+            ai_enabled
+            and not adjudicator_state["enabled"]
+            and not adjudicator_state["env_override_present"]
+            and not adjudicator_state["yaml_enabled"]
         )
-        adj_config_enabled = bool(adj_cfg.get("enabled", False))
-        legacy_ai_assist_enabled = bool(ai_enabled and not adj_config_enabled)
         effective_ai_cfg = (
             resolve_ai_profile(ai_cfg, settings.get("ai", {}))
             if legacy_ai_assist_enabled and isinstance(ai_cfg, dict)
