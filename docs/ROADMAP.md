@@ -212,7 +212,7 @@ ROADMAP не дублирует полные правила процесса и 
 
 Включено:
 
-- команды `/start`, `/help`, `/run_oos`, `/last`;
+- команды `/start`, `/help`, plus legacy demo report commands;
 - inline-кнопки;
 - allowlist.
 
@@ -223,7 +223,7 @@ ROADMAP не дублирует полные правила процесса и 
 
 #### Реализовано
 
-- команды: `/start`, `/help`, `/run_oos`, `/last`
+- команды: `/start`, `/help`, plus legacy demo report commands
 - inline-кнопки: `Run OOS Scan`, `Show Report`
 - allowlist (один `chat_id` в config)
 
@@ -295,7 +295,7 @@ Demo-агенты могут работать на воспроизводимы�
 
 - одинаковый seed даёт одинаковый результат;
 - mock dataset создаётся и читается одной функцией;
-- `/run_oos` создаёт dataset artifact.
+- demo scan command создаёт dataset artifact.
 
 ### Итерация 3 — LangGraph workflow v0 (OOS detector, dry-run)
 
@@ -340,12 +340,12 @@ Demo-агенты могут работать на воспроизводимы�
 #### Checks
 
 - `bash start.sh`
-- `/run_oos`
+- demo scan command
 - artifact inspection
 
 #### DoD
 
-- `/run_oos` создаёт `run_id`, пишет артефакты и возвращает отчёт;
+- demo scan command создаёт `run_id`, пишет артефакты и возвращает отчёт;
 - empty data scenario обрабатывается без падения.
 
 ### Итерация 4 — Approval v0 + export
@@ -723,13 +723,13 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 #### Checks
 
 - `bash start.sh`
-- `/run_oos`
+- demo scan command
 - fallback LLM off
 - `pytest -q`
 
 #### DoD
 
-- `/run_oos` выдаёт отчёт с рекомендациями;
+- demo scan command выдаёт отчёт с рекомендациями;
 - recommendation artifacts создаются;
 - trace и logs расширены под recommendation path.
 
@@ -5735,7 +5735,7 @@ rop:
     enabled: false
     provider: openai_compatible
     model_env: ROP_AI_MODEL
-    api_key_env: ROP_AI_API_KEY
+    api_key_env: CUSTOM_AI_API_KEY
     base_url_env: ROP_AI_BASE_URL
     max_events_per_run: 20
     request_timeout_seconds: 30
@@ -6042,7 +6042,7 @@ Optional AI smoke only with explicit test env:
 
 ```bash
 ROP_AI_MODEL="test-model"
-ROP_AI_API_KEY="test-key"
+CUSTOM_AI_API_KEY="test-key"
 ROP_AI_BASE_URL="http://127.0.0.1:<fake-provider-port>"
 uv run python config/start.py rop run \
   --source-id rop_batch_sample \
@@ -6053,7 +6053,7 @@ uv run python config/start.py rop run \
 Security checks:
 
 ```bash
-grep -R "ROP_AI_API_KEY\|OPENAI_API_KEY\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
+grep -R "CUSTOM_AI_API_KEY\|OPENAI_API_KEY\|password\|secret\|token\|raw_eml\|message/rfc822\|attachment_content\|content_bytes" \
   logs storage/runs/smoke-it30-rop-execution storage/interfaces -n || true
 ```
 
@@ -6662,7 +6662,7 @@ Security/static checks:
 ```bash
 rg -n "raw_eml|message/rfc822|attachment_content|content_bytes|payload_bytes" src/beeagent_module/interfaces/ui tests || true
 
-rg -n "BITRIX_WEBHOOK|ROP_AI_API_KEY|OPENAI_API_KEY|password|secret|token" logs storage/runs storage/interfaces || true
+rg -n "BITRIX_WEBHOOK|CUSTOM_AI_API_KEY|OPENAI_API_KEY|password|secret|token" logs storage/runs storage/interfaces || true
 
 rg -n "POST|delete|archive|mark-as-read|reply|write-back|crm\.item\.add|crm\.item\.update|timeline" src/beeagent_module/interfaces/ui tests || true
 
@@ -6940,22 +6940,22 @@ rop:
       openai:
         provider: openai_compatible
         base_url_env: ROP_AI_OPENAI_BASE_URL
-        api_key_env: ROP_AI_OPENAI_API_KEY
+        api_key_env: OPENAI_API_KEY
         model_env: ROP_AI_OPENAI_MODEL
       deepseek:
         provider: openai_compatible
         base_url_env: ROP_AI_DEEPSEEK_BASE_URL
-        api_key_env: ROP_AI_DEEPSEEK_API_KEY
+        api_key_env: DEEPSEEK_API_KEY
         model_env: ROP_AI_DEEPSEEK_MODEL
       lmstudio:
         provider: openai_compatible
         base_url_env: ROP_AI_LMSTUDIO_BASE_URL
-        api_key_env: ROP_AI_LMSTUDIO_API_KEY
+        api_key_env: LMSTUDIO_API_KEY
         model_env: ROP_AI_LMSTUDIO_MODEL
       custom:
         provider: openai_compatible
         base_url_env: ROP_AI_BASE_URL
-        api_key_env: ROP_AI_API_KEY
+        api_key_env: CUSTOM_AI_API_KEY
         model_env: ROP_AI_MODEL
 ```
 
@@ -8020,6 +8020,201 @@ Fuzzing optional for forwarded-wrapper/date/subject parsing if parser complexity
 - tests and docs are updated;
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
+
+### Итерация 34 — ROP OpenAI adjudicator execution v0
+
+**Статус:** DONE
+
+#### Goal
+
+Добавить в BeeAgent реальный AI adjudication execution layer для спорных ROP classifications: BeeAgent должен вызывать OpenAI только для ambiguous/fallback/low-confidence событий, получать strict structured JSON, валидировать результат, безопасно merge/degrade final decision и записывать воспроизводимые AI evidence artifacts без CRM/mailbox/Bitrix write-back.
+
+#### Почему это нужно
+
+После It33 real-mail normalization улучшила качество входных mailbox artifacts, но pilot traffic показал предел deterministic rules:
+
+```text
+deterministic classifier
+→ хорошо работает на очевидных RFQ/tender/finance/noise cases
+→ ломается на серой зоне: supplier promo vs existing deal, newsletter vs business thread, spam label + RFQ, logistics reply hidden as ignore
+```
+
+Дальше нельзя бесконечно добавлять `if/else` под каждое письмо. Для MVP нужен bounded AI adjudicator:
+
+```text
+deterministic rules ловят очевидное
+conflict/eligibility gate выбирает серую зону
+OpenAI adjudicator решает только спорные случаи
+invalid/low-confidence AI → manual_review or deterministic fallback
+all outputs are visible in TSV/artifacts
+no automatic CRM actions
+```
+
+#### Scope
+
+**Включено в BeeAgent**
+
+* OpenAI provider execution через BeeAgent-owned provider layer;
+* Responses API / structured JSON output;
+* config-driven AI adjudicator settings;
+* env/secret handling;
+* fail-fast validation when AI adjudicator is enabled;
+* bounded/sanitized AI request payload;
+* timeout/error/invalid JSON handling;
+* deterministic result preservation on provider failure;
+* AI result validation against allowed ROP taxonomy/config/contract;
+* `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`;
+* deterministic-vs-AI comparison fields in TSV;
+* AI evidence artifacts:
+
+  * `rop_ai_adjudicator_requests.json`;
+  * `rop_ai_adjudicator_decisions.json`;
+  * `rop_ai_adjudicator_results.json`;
+* fake provider tests;
+* smoke with AI disabled and fake AI enabled;
+* docs update.
+
+**Не включено**
+
+* changes to `beeagent-rop`, unless a public contract is already available and can be used without private imports;
+* private imports from `beeagent-rop`;
+* new deterministic ROP rules in BeeAgent;
+* CRM/Bitrix write-back;
+* mailbox delete/archive/reply/mark-as-read;
+* OCR;
+* RAG;
+* attachment content parsing;
+* web-triggered run;
+* POST/operator actions;
+* saving human review decisions;
+* customer-specific sender/domain hardcoding.
+
+#### Deliverable
+
+BeeAgent can run ROP classification with AI adjudication enabled:
+
+```bash
+uv run python config/start.py rop run \
+  --source-id hotline_mailbox \
+  --items-max 20 \
+  --run-id mvp-ai-smoke-001-20
+```
+
+Перед run:
+
+```text
+1. Set OPENAI_API_KEY in .env
+2. Set rop.ai_assist.enabled: true
+3. Set rop.ai_assist.adjudicator.enabled: true
+4. Keep exactly one ai.profiles.*.enabled = true
+```
+
+Expected behavior:
+
+```text
+AI is disabled by default.
+AI is called only for eligible ambiguous/fallback/low-confidence events.
+AI is not called for every email.
+Provider failures do not crash the run.
+Invalid AI output does not crash the run.
+TSV shows deterministic and AI decisions.
+Artifacts show what AI saw, what it returned, and how final result was merged/degraded.
+```
+
+#### Config / contract impact
+
+Expected config source of truth:
+
+```yaml
+rop:
+  ai_assist:
+    enabled: false
+    adjudicator:
+      enabled: false
+      timeout: 20
+      input_chars_max: 8000
+      confidence_accept_min: 0.70
+      events_max: 20
+      prompt_key: "rop.ai_adjudicator"
+
+ai:
+  prompts:
+    path: "config/prompts.yml"
+    store: false
+  profiles:
+    openai:
+      enabled: true
+      provider: openai_responses
+      api_key_env: OPENAI_API_KEY
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-5.4-mini"
+```
+
+If existing `rop.ai_assist` already exists, prefer extending/reusing it instead of creating a conflicting second source of truth.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Reason:
+
+* external AI provider call;
+* env/secret handling;
+* email-derived input sent to provider;
+* structured model output parsing/validation;
+* artifact serialization of customer operational data;
+* future action/write-back boundary must stay blocked.
+
+#### DoD
+
+* AI adjudicator is disabled by default;
+* enabling AI without required env fails fast;
+* OpenAI provider execution exists in BeeAgent;
+* OpenAI API key is never stored in artifacts/logs/API/HTML;
+* only bounded/sanitized payload is sent;
+* strict JSON response is required and validated;
+* invalid/timeout/error result degrades safely;
+* AI is called only for eligible grey-zone events;
+* AI is not called for every event;
+* deterministic result is preserved when AI fails;
+* TSV contains deterministic and AI comparison columns;
+* AI artifacts are created and safe;
+* no CRM/mailbox/Bitrix mutation exists;
+* no `beeagent-rop` private internals are imported;
+* BeeAgent core does not add ROP business classification rules;
+* tests, smoke, docs and required security checks are completed;
+* `pyproject.toml.version` is not changed.
+
+#### Implementation notes (It34)
+
+Config:
+
+* `rop.ai_assist.adjudicator` — config block внутри существующего `rop.ai_assist`, не создаёт второй source of truth;
+* `ai.prompts` и `ai.profiles` — shared BeeAgent AI source of truth для prompt/provider/model config;
+* AI disabled by default.
+
+New module:
+
+* `src/beeagent_module/core/rop_ai_adjudicator.py` — OpenAI Responses API execution, bounded payload, JSON schema validation, deterministic fallback, safe artifacts;
+* `call_openai_responses_api()` — HTTP call к `/v1/responses` с `json_object` format;
+* `run_adjudicator_for_event()` — per-event adjudication: eligibility → prompt → API → parse → validate → merge/degrade;
+* `run_adjudicator_batch()` — batch wrapper с `max_events_per_run`;
+* `write_adjudicator_artifacts()` — `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`.
+
+Integration:
+
+* `run_rop_batch_case()` в `rop_operator.py` вызывает `run_adjudicator_batch()` после AI assist, до summary;
+* adjudicator counters записываются в `classification_diagnostics`.
+
+TSV:
+
+* 13 новых колонок: `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `deterministic_case_type`, `deterministic_case_subtype`, `deterministic_recommended_queue`, `deterministic_correct_action`, `deterministic_confidence`, `deterministic_reason_code`.
+
+Tests:
+
+* `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
 
 ---
 

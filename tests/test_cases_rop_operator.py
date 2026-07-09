@@ -7,6 +7,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from beeagent_module.cases.rop_operator import (
     _filter_event_for_module,
     run_rop_batch_case,
@@ -23,6 +25,11 @@ from beeagent_module.core.settings import load_settings
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
+
+
+@pytest.fixture(autouse=True)
+def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
 
 def _null_logger() -> logging.Logger:
@@ -1377,6 +1384,12 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
                 "source": "email",
                 "sender": "preview@example.com",
                 "subject": "[AUTO-FWD] FWD: *** SPAM *** Preview only",
+                "attachments": [
+                    {
+                        "filename": "spec.pdf",
+                        "content_type": "application/pdf",
+                    }
+                ],
                 "body_preview": (
                     "--- Original Message ---\n"
                     "Email: gina.shi@morrowwelding.com\n"
@@ -1484,7 +1497,25 @@ def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
         assert classified_events[0]["spam_label_present"] is True
         assert classified_events[0]["reply_label_present"] is False
         assert classified_events[0]["forwarded_wrapper"] is True
+        assert classified_events[0]["sender"] == "preview@example.com"
+        assert (
+            classified_events[0]["subject"]
+            == "[AUTO-FWD] FWD: *** SPAM *** Preview only"
+        )
+        assert (
+            "Safe preview text for classification"
+            in classified_events[0]["body_preview"]
+        )
+        assert classified_events[0]["attachments"] == [
+            {
+                "filename": "spec.pdf",
+                "content_type": "application/pdf",
+            }
+        ]
         assert classified_events[0]["original_sender"] == "gina.shi@morrowwelding.com"
+        assert classified_events[0]["original_sender_email"] == (
+            "gina.shi@morrowwelding.com"
+        )
         assert classified_events[0]["original_recipient"] == "online@welding.kz"
         assert (
             classified_events[0]["original_message_date"] == "2026-06-09T03:54:27+00:00"
@@ -1657,6 +1688,9 @@ def test_rop_batch_per_event_classification_failure(
         assert fallback["spam_label_present"] is True
         assert fallback["reply_label_present"] is False
         assert fallback["forwarded_wrapper"] is True
+        assert fallback["sender"] == "bad@example.com"
+        assert fallback["subject"] == "[AUTO-FWD] FWD: *** SPAM *** Bad"
+        assert fallback["body_preview"]
         assert fallback["original_sender"] == "bad-origin@example.com"
         assert fallback["original_recipient"] == "online@welding.kz"
         assert fallback["original_message_date"] == "2026-06-09T03:54:27+00:00"
@@ -2226,12 +2260,14 @@ def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"]["ai_assist"] = {
         "enabled": True,
-        "profile": "openai",
         "events_max": 20,
         "request_timeout": 30,
         "ai_confidence_min": 0.40,
         "dry_run": True,
-        "profiles": settings["rop"]["ai_assist"]["profiles"],
+        "adjudicator": {
+            **settings["rop"]["ai_assist"]["adjudicator"],
+            "enabled": False,
+        },
     }
 
     batch_file = tmp_path / "batch_ai_unavailable.json"
@@ -2356,6 +2392,758 @@ def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
         assert operator_summary["classification"]["ai_assist_degraded_count"] == 1
     finally:
         _remove_fake_package("test_stub_no_merge")
+
+
+def test_ai_adjudicator_accepted_result_updates_classified_events(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        lambda **kwargs: json.dumps(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "tender",
+                "recommended_queue": "tender",
+                "should_rop_see": True,
+                "correct_action": "review_tender",
+                "confidence": 0.91,
+                "reason": "Clear RFQ content",
+                "risk_flags": ["marketing_conflict"],
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = True
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+
+    batch_file = tmp_path / "batch_adjudicator_ok.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-adj-001",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need tender quote",
+                        "body": "Please send tender pricing",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-adj-batch",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test adjudicator batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _AdjudicatorStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": "unknown",
+                    "case_subtype": None,
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "priority": "medium",
+                    "confidence": 0.2,
+                    "reason_code": "deterministic_fallback",
+                    "is_fallback": True,
+                },
+            )
+
+    _make_fake_package("test_stub_adj_ok", "RopModule", _AdjudicatorStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_ok",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adjudicator-ok",
+            session_id="session-adjudicator-ok",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adjudicator-ok"
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event = classified_events[0]
+        assert event["case_type"] == "new_lead"
+        assert event["case_subtype"] == "tender"
+        assert event["recommended_queue"] == "tender"
+        assert event["correct_action"] == "review_tender"
+        assert event["confidence"] == 0.91
+        assert event["reason_code"] == "validated_ai_adjudicator_output"
+        assert event["reasoning"] == "Clear RFQ content"
+        assert event["deterministic_case_type"] == "unknown"
+        assert event["deterministic_recommended_queue"] == "manual_review"
+        assert event["ai_adjudicator_status"] == "ok"
+        assert event["ai_adjudicator_reason"] == "Clear RFQ content"
+
+        ai_results = json.loads(
+            (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
+        )
+        result = ai_results["results"][0]
+        assert result["ai_provider"] == "openai_responses"
+        assert result["ai_model"] == settings["ai"]["profiles"]["openai"]["model"]
+        assert result["ai_confidence"] == 0.91
+        assert result["ai_reason"] == "Clear RFQ content"
+        assert result["ai_risk_flags"] == ["marketing_conflict"]
+        assert result["ai_error"] == ""
+    finally:
+        _remove_fake_package("test_stub_adj_ok")
+
+
+def test_adjudicator_enabled_skips_legacy_ai_assist_provider_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy rop_ai_assist provider path must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        lambda **kwargs: json.dumps(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "tender",
+                "recommended_queue": "tender",
+                "should_rop_see": True,
+                "correct_action": "review_tender",
+                "confidence": 0.91,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = False
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+
+    batch_file = tmp_path / "batch_adjudicator_no_legacy.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-adj-legacy-001",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need tender quote",
+                        "body": "Please send tender pricing",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-adj-no-legacy",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test adjudicator legacy skip",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _NoLegacyStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": "unknown",
+                    "case_subtype": None,
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "priority": "medium",
+                    "confidence": 0.2,
+                    "reason_code": "deterministic_fallback",
+                    "is_fallback": True,
+                },
+            )
+
+    _make_fake_package("test_stub_adj_no_legacy", "RopModule", _NoLegacyStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_no_legacy",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adjudicator-no-legacy",
+            session_id="session-adjudicator-no-legacy",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adjudicator-no-legacy"
+        ai_results = json.loads(
+            (run_dir / "rop_ai_assist_results.json").read_text(encoding="utf-8")
+        )
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+
+        assert ai_results["results"] == []
+        assert operator_summary["classification"]["ai_assist_enabled"] is False
+        assert operator_summary["classification"]["ai_assist_requested_count"] == 0
+    finally:
+        _remove_fake_package("test_stub_adj_no_legacy")
+
+
+def test_adjudicator_env_kill_switch_skips_all_ai_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy rop_ai_assist provider path must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("adjudicator provider path must not run")
+        ),
+    )
+    monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "0")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = False
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+
+    batch_file = tmp_path / "batch_adjudicator_env_disabled.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-adj-env-off-001",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need tender quote",
+                        "body": "Please send tender pricing",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-adj-env-off",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test adjudicator env off",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _KillSwitchStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": "unknown",
+                    "case_subtype": None,
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "priority": "medium",
+                    "confidence": 0.2,
+                    "reason_code": "deterministic_fallback",
+                    "is_fallback": True,
+                },
+            )
+
+    _make_fake_package("test_stub_adj_env_off", "RopModule", _KillSwitchStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_env_off",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adjudicator-env-off",
+            session_id="session-adjudicator-env-off",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adjudicator-env-off"
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+
+        assert operator_summary["classification"]["ai_assist_enabled"] is False
+        assert operator_summary["classification"]["ai_assist_requested_count"] == 0
+        assert operator_summary["classification"]["ai_assist_used_count"] == 0
+        assert operator_summary["classification"]["ai_adjudicator_enabled"] is False
+        assert operator_summary["classification"]["ai_adjudicator_used_count"] == 0
+        assert classified_events[0].get("ai_adjudicator_used") is not True
+
+        assert not (run_dir / "rop_ai_adjudicator_requests.json").exists()
+        assert not (run_dir / "rop_ai_adjudicator_decisions.json").exists()
+        assert not (run_dir / "rop_ai_adjudicator_results.json").exists()
+
+        ai_results = json.loads(
+            (run_dir / "rop_ai_assist_results.json").read_text(encoding="utf-8")
+        )
+        assert ai_results["results"] == []
+    finally:
+        _remove_fake_package("test_stub_adj_env_off")
+
+
+def test_ai_adjudicator_low_confidence_routes_to_manual_review_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_operator._is_event_eligible_for_ai_assist",
+        lambda event, min_confidence: False,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        lambda **kwargs: json.dumps(
+            {
+                "case_type": "existing_deal",
+                "case_subtype": None,
+                "recommended_queue": "manual_review",
+                "should_rop_see": True,
+                "correct_action": "manual_review",
+                "confidence": 0.35,
+                "reason": "Uncertain",
+                "risk_flags": ["low_signal"],
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = True
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+
+    batch_file = tmp_path / "batch_adjudicator_low.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "evt-adj-002",
+                        "source": "email",
+                        "sender": "lead@example.com",
+                        "subject": "Need tender quote",
+                        "body": "Please send tender pricing",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-adj-low-batch",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test adjudicator low batch",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 10,
+            "batch": {
+                "path": str(batch_file.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    class _AdjudicatorLowStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": "unknown",
+                    "case_subtype": None,
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "priority": "medium",
+                    "confidence": 0.2,
+                    "reason_code": "deterministic_fallback",
+                    "is_fallback": True,
+                },
+            )
+
+    _make_fake_package("test_stub_adj_low", "RopModule", _AdjudicatorLowStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_low",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adjudicator-low",
+            session_id="session-adjudicator-low",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adjudicator-low"
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event = classified_events[0]
+        assert event["case_type"] == "unknown"
+        assert event["recommended_queue"] == "manual_review"
+        assert event["deterministic_case_type"] == "unknown"
+        assert event["ai_adjudicator_status"] == "manual_review_degrade"
+        assert event["reason_code"] == "ai_low_confidence_manual_review"
+
+        ai_results = json.loads(
+            (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
+        )
+        assert ai_results["results"][0]["ai_status"] == "manual_review_degrade"
+    finally:
+        _remove_fake_package("test_stub_adj_low")
+
+
+def test_ai_adjudicator_ok_result_can_clear_optional_case_subtype() -> None:
+    from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
+
+    events = [
+        {
+            "event_id": "evt-clear-subtype",
+            "case_type": "existing_deal",
+            "case_subtype": "follow_up",
+            "recommended_queue": "sales",
+            "correct_action": "check_bitrix",
+            "should_rop_see": True,
+            "confidence": 0.42,
+            "reason_code": "deterministic_follow_up",
+        }
+    ]
+    results = [
+        {
+            "event_id": "evt-clear-subtype",
+            "ai_used": True,
+            "ai_status": "ok",
+            "ai_confidence": 0.91,
+            "ai_reason": "AI accepted no subtype",
+            "ai_risk_flags": [],
+            "merge_reason": "validated_ai_adjudicator_output",
+            "final_case_type": "new_lead",
+            "final_case_subtype": None,
+            "final_recommended_queue": "sales",
+            "final_correct_action": "review_new_lead",
+            "final_should_rop_see": True,
+        }
+    ]
+
+    _apply_ai_adjudicator_results(events, results)
+
+    assert events[0]["case_type"] == "new_lead"
+    assert events[0]["case_subtype"] is None
+    assert events[0]["recommended_queue"] == "sales"
+    assert events[0]["correct_action"] == "review_new_lead"
+    assert events[0]["should_rop_see"] is True
+    assert events[0]["confidence"] == 0.91
+    assert events[0]["reason_code"] == "validated_ai_adjudicator_output"
+    assert events[0]["reasoning"] == "AI accepted no subtype"
+
+
+def test_ai_adjudicator_manual_review_degrade_updates_classified_events() -> None:
+    from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
+
+    events = [
+        {
+            "event_id": "evt-manual-review",
+            "case_type": "existing_deal",
+            "case_subtype": "existing_deal_procurement",
+            "recommended_queue": "procurement",
+            "correct_action": "check_bitrix",
+            "should_rop_see": True,
+            "confidence": 0.91,
+            "reason_code": "existing_deal_reference_signal",
+            "deterministic_case_type": "existing_deal",
+            "deterministic_case_subtype": "existing_deal_procurement",
+            "deterministic_recommended_queue": "procurement",
+            "deterministic_correct_action": "check_bitrix",
+            "deterministic_confidence": 0.91,
+            "deterministic_reason_code": "existing_deal_reference_signal",
+        }
+    ]
+    results = [
+        {
+            "event_id": "evt-manual-review",
+            "ai_used": True,
+            "ai_status": "manual_review_degrade",
+            "ai_confidence": 0.35,
+            "ai_reason": "Looks risky",
+            "ai_risk_flags": ["low_signal"],
+            "merge_reason": "ai_low_confidence_manual_review",
+            "final_case_type": "existing_deal",
+            "final_case_subtype": None,
+            "final_recommended_queue": "manual_review",
+            "final_correct_action": "manual_review",
+            "final_should_rop_see": True,
+        }
+    ]
+
+    _apply_ai_adjudicator_results(events, results)
+
+    assert events[0]["case_type"] == "existing_deal"
+    assert events[0]["case_subtype"] is None
+    assert events[0]["recommended_queue"] == "manual_review"
+    assert events[0]["correct_action"] == "manual_review"
+    assert events[0]["should_rop_see"] is True
+    assert events[0]["confidence"] == 0.35
+    assert events[0]["ai_adjudicator_status"] == "manual_review_degrade"
+    assert events[0]["reason_code"] == "ai_low_confidence_manual_review"
+    assert events[0]["reasoning"] == "Looks risky"
+
+
+def test_ai_adjudicator_low_confidence_preserve_keeps_deterministic_result() -> None:
+    from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
+
+    events = [
+        {
+            "event_id": "evt-preserve-ignore",
+            "case_type": "irrelevant",
+            "case_subtype": "newsletter_bulk",
+            "recommended_queue": "ignore",
+            "correct_action": "ignore",
+            "should_rop_see": False,
+            "confidence": 0.93,
+            "reason_code": "bulk_newsletter_ignore",
+            "reasoning": "Deterministic ignore.",
+        }
+    ]
+    results = [
+        {
+            "event_id": "evt-preserve-ignore",
+            "ai_used": True,
+            "ai_status": "low_confidence_preserve",
+            "ai_confidence": 0.31,
+            "ai_reason": "Low-confidence AI still sees non-actionable bulk content.",
+            "ai_risk_flags": ["newsletter_bulk"],
+            "merge_reason": "ai_low_confidence_safe_ignore_preserved",
+            "final_case_type": "irrelevant",
+            "final_case_subtype": "newsletter_bulk",
+            "final_recommended_queue": "ignore",
+            "final_correct_action": "ignore",
+            "final_should_rop_see": False,
+        }
+    ]
+
+    _apply_ai_adjudicator_results(events, results)
+
+    assert events[0]["case_type"] == "irrelevant"
+    assert events[0]["recommended_queue"] == "ignore"
+    assert events[0]["correct_action"] == "ignore"
+    assert events[0]["should_rop_see"] is False
+    assert events[0]["confidence"] == 0.93
+    assert events[0]["reason_code"] == "bulk_newsletter_ignore"
+    assert events[0]["reasoning"] == "Deterministic ignore."
+    assert events[0]["ai_adjudicator_status"] == "low_confidence_preserve"
+    assert (
+        events[0]["ai_adjudicator_merge_reason"]
+        == "ai_low_confidence_safe_ignore_preserved"
+    )
 
 
 def test_no_direct_beeagent_rop_imports() -> None:

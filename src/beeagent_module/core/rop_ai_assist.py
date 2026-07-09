@@ -7,28 +7,51 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
-_AI_ASSIST_PROVIDER = "openai_compatible"
+_AI_ASSIST_PROVIDERS = frozenset({"openai_compatible", "openai_responses"})
 
 
-def resolve_ai_profile(ai_cfg: dict[str, Any]) -> dict[str, Any]:
+def resolve_ai_profile(
+    ai_cfg: dict[str, Any],
+    ai_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     profile_name = ai_cfg.get("profile", "")
     profiles = ai_cfg.get("profiles", {})
-    if not isinstance(profiles, dict):
-        raise RuntimeError("rop.ai_assist.profiles must be a mapping")
-    if not isinstance(profile_name, str) or not profile_name:
-        raise RuntimeError("rop.ai_assist.profile must be configured")
+    if isinstance(profiles, dict) and isinstance(profile_name, str) and profile_name:
+        profile = profiles.get(profile_name)
+        if not isinstance(profile, dict):
+            raise RuntimeError(f"Unknown rop.ai_assist.profile: {profile_name}")
 
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        raise RuntimeError(f"Unknown rop.ai_assist.profile: {profile_name}")
+        return {
+            "provider": profile["provider"],
+            "model": os.getenv(profile["model_env"], "").strip(),
+            "api_key_env": profile["api_key_env"],
+            "base_url": os.getenv(profile["base_url_env"], "").strip(),
+            "request_timeout": ai_cfg.get("request_timeout", 30),
+            "dry_run": ai_cfg.get("dry_run", False),
+            "profile": profile_name,
+        }
 
+    active_profiles = (ai_settings or {}).get("profiles", {})
+    if not isinstance(active_profiles, dict):
+        raise RuntimeError("ai.profiles must be a mapping")
+
+    enabled_profiles = [
+        (name, profile)
+        for name, profile in active_profiles.items()
+        if isinstance(profile, dict) and profile.get("enabled") is True
+    ]
+    if len(enabled_profiles) != 1:
+        raise RuntimeError("Exactly one ai.profiles.*.enabled must be true")
+
+    active_name, active_profile = enabled_profiles[0]
     return {
-        "provider": profile["provider"],
-        "model_env": profile["model_env"],
-        "api_key_env": profile["api_key_env"],
-        "base_url_env": profile["base_url_env"],
+        "provider": active_profile["provider"],
+        "model": active_profile["model"],
+        "api_key_env": active_profile["api_key_env"],
+        "base_url": active_profile["base_url"],
         "request_timeout": ai_cfg.get("request_timeout", 30),
         "dry_run": ai_cfg.get("dry_run", False),
+        "profile": active_name,
     }
 
 
@@ -203,15 +226,17 @@ def _call_ai_provider(
     logger: logging.Logger,
 ) -> str | None:
     provider = ai_cfg["provider"]
-    if provider != _AI_ASSIST_PROVIDER:
+    if provider not in _AI_ASSIST_PROVIDERS:
         logger.warning(
-            "ai_assist: unsupported provider=%s, expected openai_compatible", provider
+            "ai_assist: unsupported provider=%s, expected one of %s",
+            provider,
+            sorted(_AI_ASSIST_PROVIDERS),
         )
         return None
 
     api_key_env = ai_cfg["api_key_env"]
-    model_env = ai_cfg["model_env"]
-    base_url_env = ai_cfg["base_url_env"]
+    model = ai_cfg["model"]
+    base_url = ai_cfg["base_url"]
     timeout = int(ai_cfg["request_timeout"])
     dry_run = ai_cfg.get("dry_run", False)
 
@@ -230,16 +255,18 @@ def _call_ai_provider(
             }
         )
 
-    api_key = os.getenv(api_key_env, "").strip()
-    model = os.getenv(model_env, "").strip()
-    base_url = os.getenv(base_url_env, "").strip()
+    if not isinstance(model, str) or not model.strip():
+        logger.warning("ai_assist: model is missing in active AI profile")
+        return None
+    if not isinstance(base_url, str) or not base_url.strip():
+        logger.warning("ai_assist: base_url is missing in active AI profile")
+        return None
 
-    if not api_key or not model or not base_url:
+    api_key = os.getenv(api_key_env, "").strip()
+    if not api_key:
         logger.warning(
-            "ai_assist: missing env vars (key=%s, model=%s, url=%s)",
-            "set" if api_key else "missing",
-            "set" if model else "missing",
-            "set" if base_url else "missing",
+            "ai_assist: api key env %s is empty",
+            api_key_env,
         )
         return None
 
@@ -287,8 +314,7 @@ def _build_request_artifact(
     thread_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     provider = ai_cfg["provider"]
-    model_env = ai_cfg["model_env"]
-    model = os.getenv(model_env, "").strip() or f"env:{model_env}"
+    model = ai_cfg.get("model", "")
 
     return {
         "event_id": event.get("event_id", ""),

@@ -23,6 +23,11 @@ os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
 
 
+@pytest.fixture(autouse=True)
+def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+
 def _null_logger() -> logging.Logger:
     logger = logging.getLogger("test_rop_dashboard")
     logger.addHandler(logging.NullHandler())

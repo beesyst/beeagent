@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+import pytest
+
 from beeagent_module.core.module_contract import (
     AuthorityLevel,
     ModuleContract,
@@ -17,6 +19,11 @@ from beeagent_module.core.settings import load_settings
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
+
+
+@pytest.fixture(autouse=True)
+def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
 
 def _null_logger() -> logging.Logger:

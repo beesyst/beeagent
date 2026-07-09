@@ -561,11 +561,30 @@ def _export_review_tsv_for_run(
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("ROP CLI: failed to read action drafts artifact: %s", exc)
 
+    adjudicator_results_path = (
+        storage_dir / "runs" / run_id / "rop_ai_adjudicator_results.json"
+    )
+    adjudicator_results_data = None
+    if adjudicator_results_path.exists():
+        try:
+            adjudicator_results_data = json.loads(
+                adjudicator_results_path.read_text(encoding="utf-8")
+            )
+            logger.debug(
+                "ROP CLI: adjudicator results artifact found for TSV enrichment: %s",
+                adjudicator_results_path,
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "ROP CLI: failed to read adjudicator results artifact: %s", exc
+            )
+
     tsv_rows = _build_review_tsv_rows(
         normalized_events,
         classified_events,
         reconciliation_data=reconciliation_data,
         action_drafts_data=action_drafts_data,
+        adjudicator_results_data=adjudicator_results_data,
     )
 
     try:
@@ -1008,6 +1027,20 @@ def _tsv_columns() -> list[str]:
         "bitrix_responsible",
         "is_duplicate",
         "duplicate_of",
+        "ai_used",
+        "ai_provider",
+        "ai_model",
+        "ai_status",
+        "ai_confidence",
+        "ai_reason",
+        "ai_risk_flags",
+        "ai_error",
+        "deterministic_case_type",
+        "deterministic_case_subtype",
+        "deterministic_recommended_queue",
+        "deterministic_correct_action",
+        "deterministic_confidence",
+        "deterministic_reason_code",
     ]
 
 
@@ -1016,6 +1049,7 @@ def _build_review_tsv_rows(
     classified_events: list[dict],
     reconciliation_data: dict | None = None,
     action_drafts_data: dict | None = None,
+    adjudicator_results_data: dict | None = None,
 ) -> list[dict[str, str]]:
     normalized_lookup = {evt.get("event_id"): evt for evt in normalized_events}
 
@@ -1036,6 +1070,15 @@ def _build_review_tsv_rows(
                 eid = item.get("event_id", "")
                 if eid:
                     action_drafts_lookup[eid] = item
+
+    adjudicator_results_lookup: dict[str, dict] = {}
+    if adjudicator_results_data and isinstance(adjudicator_results_data, dict):
+        items = adjudicator_results_data.get("results", [])
+        if isinstance(items, list):
+            for item in items:
+                eid = item.get("event_id", "")
+                if eid:
+                    adjudicator_results_lookup[eid] = item
 
     rows: list[dict[str, str]] = []
 
@@ -1084,6 +1127,8 @@ def _build_review_tsv_rows(
         recommended_action = action_draft_item.get("recommended_action", "")
         recommended_next_step = action_draft_item.get("recommended_next_step", "")
         action_queue = action_draft_item.get("queue", "")
+
+        adj_result = adjudicator_results_lookup.get(event_id, {})
 
         bot_should_rop_see = classified_evt.get("should_rop_see")
         bot_should_rop_see_value = (
@@ -1174,6 +1219,66 @@ def _build_review_tsv_rows(
                 else ""
             ),
             "duplicate_of": _safe_tsv_value(duplicate_of),
+            "ai_used": _safe_tsv_value(
+                str(adj_result.get("ai_used", False)).lower() if adj_result else ""
+            ),
+            "ai_provider": _safe_tsv_value(
+                adj_result.get("ai_provider", "") if adj_result else ""
+            ),
+            "ai_model": _safe_tsv_value(
+                adj_result.get("ai_model", "") if adj_result else ""
+            ),
+            "ai_status": _safe_tsv_value(
+                adj_result.get("ai_status", "") if adj_result else ""
+            ),
+            "ai_confidence": _safe_tsv_value(
+                str(adj_result.get("ai_confidence", "")) if adj_result else ""
+            ),
+            "ai_reason": _safe_tsv_value(
+                adj_result.get("ai_reason", "") if adj_result else ""
+            ),
+            "ai_risk_flags": _safe_tsv_value(
+                ",".join(adj_result.get("ai_risk_flags", [])) if adj_result else ""
+            ),
+            "ai_error": _safe_tsv_value(
+                adj_result.get("ai_error", "") if adj_result else ""
+            ),
+            "deterministic_case_type": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_case_type",
+                    adj_result.get("deterministic_case_type", ""),
+                )
+            ),
+            "deterministic_case_subtype": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_case_subtype",
+                    adj_result.get("deterministic_case_subtype", ""),
+                )
+            ),
+            "deterministic_recommended_queue": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_recommended_queue",
+                    adj_result.get("deterministic_recommended_queue", ""),
+                )
+            ),
+            "deterministic_correct_action": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_correct_action",
+                    adj_result.get("deterministic_correct_action", ""),
+                )
+            ),
+            "deterministic_confidence": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_confidence",
+                    adj_result.get("deterministic_confidence", ""),
+                )
+            ),
+            "deterministic_reason_code": _safe_tsv_value(
+                classified_evt.get(
+                    "deterministic_reason_code",
+                    adj_result.get("deterministic_reason_code", ""),
+                )
+            ),
         }
         rows.append(row)
 
