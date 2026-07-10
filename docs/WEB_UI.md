@@ -46,6 +46,10 @@
   - `rop.routing`
 - `storage/runs/<run_id>/rop_recommendations.json`
   - source for recommendations tab and Bitrix widget payload
+- `storage/runs/<run_id>/rop_final_decisions.json`
+  - source for final decisions read-model, AI adjudicator summary, and Bitrix widget final_decisions block
+- `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
+  - source for AI adjudicator evidence in AI tab and event detail
 - `storage/interfaces/rop_routing_map.json`
   - source for routing map evidence / routing contract
 
@@ -197,6 +201,100 @@ Config source of truth:
   - `bitrix.widget.token_env`
   - `bitrix.widget.default_period`
   - `bitrix.widget.max_items`
+
+Widget API response fields (MVP):
+
+- `summary` — counts per priority/bitrix state (same as UI-7)
+- `items` — recommendation items from `rop_recommendations.json`
+- `final_decisions` — optional block from `rop_final_decisions.json`
+  - `summary.total_events`, `summary.decision_source_counts`, `summary.attention_count`
+  - `events[]` — per-event final decision fields:
+    - `event_id`, `final_case_type`, `final_queue`, `final_action`
+    - `final_decision_source`, `final_confidence`
+    - `needs_attention`, `attention_reason`, `bitrix_write_allowed` (always false)
+
+### ROP final decisions read-model contract
+
+Источник: `storage/runs/<run_id>/rop_final_decisions.json`
+
+Структура:
+
+```json
+{
+  "summary": {
+    "total_events": 42,
+    "decision_source_counts": {
+      "ai_adjudicator": 12,
+      "deterministic": 28,
+      "deterministic_preserved": 2
+    },
+    "attention_count": 3
+  },
+  "events": [
+    {
+      "event_id": "...",
+      "source_id": "...",
+      "sender": "...",
+      "subject": "...",
+      "deterministic_case_type": "new_lead",
+      "deterministic_queue": "sales",
+      "deterministic_action": "review_new_lead",
+      "deterministic_confidence": 0.85,
+      "final_case_type": "new_lead",
+      "final_queue": "sales",
+      "final_action": "review_new_lead",
+      "final_decision_source": "ai_adjudicator",
+      "final_confidence": 0.92,
+      "needs_attention": false,
+      "attention_reason": null,
+      "automation_allowed": true,
+      "bitrix_write_allowed": false
+    }
+  ]
+}
+```
+
+Policy v1:
+
+- AI adjudicator `ok` → AI fields, `automation_allowed=true`
+- `low_confidence_preserve` → deterministic preserved, `needs_attention=true`, `automation_allowed=false`
+- `manual_review_degrade` → deterministic preserved, `needs_attention=true`, fallback manual_review queue/action
+- No AI result → deterministic fields, `final_decision_source=deterministic`
+- Invalid/unusable → `final_decision_source=fallback_policy`, `needs_attention=true`
+
+Always `bitrix_write_allowed=false`.
+
+### Artifact allowlist additions (UI-8)
+
+New allowlisted artifacts:
+
+- `rop_ai_adjudicator_results.json` — AI adjudicator results for AI tab and event detail
+- `rop_ai_adjudicator_requests.json` — AI adjudicator requests
+- `rop_ai_adjudicator_decisions.json` — AI adjudicator decisions
+- `rop_final_decisions.json` — final decision read-model
+
+### AI tab changes (UI-8)
+
+`/rop?tab=ai_assist` now shows:
+
+- AI Assist summary (legacy) when available
+- AI Adjudicator summary block when `rop_ai_adjudicator_results.json` exists
+- Final Decisions summary block when `rop_final_decisions.json` exists
+
+### Event detail changes (UI-8)
+
+`/rop/events/{event_id}?run_id=<run_id>` now shows:
+
+- AI Adjudicator section when adjudicator data exists for the event
+- Final Decision section with final fields and decision source
+
+### ROP dashboard API changes (UI-8)
+
+`/api/rop/dashboard` now exposes:
+
+- `ai_adjudicator_summary` — adjudicator available/eligible/used/degraded counts
+- `final_decisions` — computed per-event final decisions (projection)
+- `final_decision_summary` — decision source counts and attention count
 
 Auth:
 

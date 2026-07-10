@@ -255,6 +255,19 @@ BeeAgent уже прошёл этап **module platform v0**:
 - high-confidence safe resolution supplier/newsletter false positives в `irrelevant/ignore`;
 - improved payload completeness для `body_preview` и attachment metadata.
 
+Итерация UI-8 (read-model) добавила:
+
+- allowlist для `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
+- новый артефакт `rop_final_decisions.json` — read-model финальных решений;
+- AI Adjudicator summary в `/rop?tab=ai_assist`;
+- Final Decisions summary в `/rop?tab=ai_assist`;
+- секции AI Adjudicator и Final Decision на странице события `/rop/events/{event_id}`;
+- поля `final_case_type`, `final_queue`, `final_action`, `final_decision_source`, `final_confidence`, `needs_attention`, `attention_reason`, `automation_allowed`, `bitrix_write_allowed` (всегда false);
+- `/api/rop/dashboard` — `ai_adjudicator_summary`, `final_decisions`, `final_decision_summary`;
+- Bitrix widget API — опциональный блок `final_decisions` из `rop_final_decisions.json`;
+- политика финального решения v1 (AI ok / low_confidence_preserve / manual_review_degrade / deterministic / fallback_policy);
+- `bitrix_write_allowed=false` для MVP.
+
 Текущий фокус:
 
 1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;

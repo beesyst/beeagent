@@ -1201,6 +1201,23 @@ def run_rop_batch_case(
             ai_requested_count,
         )
 
+        final_decisions = _build_final_decisions_artifact(
+            events=enriched_classified,
+            adjudicator_results=adj_results,
+        )
+        final_decisions_path = run_dir / "rop_final_decisions.json"
+        final_decisions_path.write_text(
+            json.dumps(final_decisions, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(final_decisions_path.relative_to(storage_dir).as_posix())
+        logger.info(
+            "rop_final_decisions written: run_id=%s events=%d attention=%d",
+            effective_run_id,
+            len(final_decisions.get("events", [])),
+            final_decisions.get("summary", {}).get("attention_count", 0),
+        )
+
         payload: dict[str, Any] = {
             "period": intake_metadata.get("period", ""),
             "events": enriched_classified,
@@ -1648,3 +1665,100 @@ def _apply_ai_adjudicator_results(
                 event["reason_code"] = result["merge_reason"]
             if result.get("ai_reason"):
                 event["reasoning"] = result["ai_reason"]
+
+
+def _build_final_decisions_artifact(
+    events: list[dict[str, Any]],
+    adjudicator_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    _ACCEPTED_STATUSES = frozenset({"ok", "low_confidence_preserve", "manual_review_degrade"})
+
+    results_by_eid: dict[str, dict[str, Any]] = {}
+    for r in adjudicator_results:
+        if isinstance(r, dict) and r.get("event_id"):
+            results_by_eid[str(r["event_id"])] = r
+
+    decisions: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    attention_count = 0
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        eid = event.get("event_id", "")
+        adj = results_by_eid.get(eid)
+
+        det_case_type = event.get("case_type", "unknown")
+        det_queue = event.get("recommended_queue", "manual_review")
+        det_action = event.get("correct_action", "manual_review")
+        det_confidence = event.get("confidence", 0.0)
+
+        needs_attention = False
+        attention_reason: str | None = None
+        final_decision_source = "deterministic"
+        automation_allowed = False
+
+        final_case_type = det_case_type
+        final_queue = det_queue
+        final_action = det_action
+        final_confidence = det_confidence
+
+        if adj and adj.get("ai_status") in _ACCEPTED_STATUSES:
+            ai_status = adj.get("ai_status", "")
+            if ai_status == "ok":
+                final_case_type = adj.get("final_case_type", det_case_type)
+                final_queue = adj.get("final_recommended_queue", det_queue)
+                final_action = adj.get("final_correct_action", det_action)
+                final_confidence = adj.get("ai_confidence", det_confidence)
+                final_decision_source = "ai_adjudicator"
+                automation_allowed = True
+            elif ai_status == "low_confidence_preserve":
+                needs_attention = True
+                attention_reason = "ai_low_confidence_preserve"
+                final_decision_source = "deterministic_preserved"
+            elif ai_status == "manual_review_degrade":
+                needs_attention = True
+                attention_reason = adj.get("ai_reason") or "manual_review_degrade"
+                final_decision_source = "deterministic_preserved"
+                if not final_queue or final_queue == "ignore":
+                    final_queue = "manual_review"
+                if not final_action or final_action == "ignore":
+                    final_action = "manual_review"
+        elif adj:
+            needs_attention = True
+            attention_reason = f"ai_adjudicator_unexpected_status:{adj.get('ai_status', 'unknown')}"
+            final_decision_source = "fallback_policy"
+
+        if needs_attention:
+            attention_count += 1
+
+        source_counts[final_decision_source] = source_counts.get(final_decision_source, 0) + 1
+
+        decisions.append({
+            "event_id": eid,
+            "source_id": event.get("source_id", ""),
+            "sender": event.get("sender", ""),
+            "subject": event.get("subject", ""),
+            "deterministic_case_type": det_case_type,
+            "deterministic_queue": det_queue,
+            "deterministic_action": det_action,
+            "deterministic_confidence": det_confidence,
+            "final_case_type": final_case_type,
+            "final_queue": final_queue,
+            "final_action": final_action,
+            "final_decision_source": final_decision_source,
+            "final_confidence": final_confidence,
+            "needs_attention": needs_attention,
+            "attention_reason": attention_reason,
+            "automation_allowed": automation_allowed,
+            "bitrix_write_allowed": False,
+        })
+
+    return {
+        "summary": {
+            "total_events": len(decisions),
+            "decision_source_counts": source_counts,
+            "attention_count": attention_count,
+        },
+        "events": decisions,
+    }

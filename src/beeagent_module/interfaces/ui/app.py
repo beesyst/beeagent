@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as json_mod
 import logging
 import os
 import re
@@ -885,6 +886,7 @@ def _register_bitrix_widget_routes(
                         "ai_assisted": 0,
                     },
                     "items": [],
+                    "final_decisions": {},
                 },
                 meta={
                     "widget_disabled": True,
@@ -946,6 +948,7 @@ def _register_bitrix_widget_routes(
                         "ai_assisted": 0,
                     },
                     "items": [],
+                    "final_decisions": {},
                 },
                 warnings=[{"code": "no_runs", "message": "No runs available"}],
             )
@@ -960,18 +963,52 @@ def _register_bitrix_widget_routes(
         max_items = widget_cfg.get("max_items", 50)
 
         rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
+
+        final_decisions_path = storage_dir / "runs" / run_id / "rop_final_decisions.json"
+        final_decisions_payload: dict[str, Any] = {}
+        if final_decisions_path.exists():
+            try:
+                fd_data = json_mod.loads(final_decisions_path.read_text(encoding="utf-8"))
+                if isinstance(fd_data, dict):
+                    summary_data = fd_data.get("summary", {})
+                    events_data = fd_data.get("events", [])
+                    if isinstance(events_data, list):
+                        final_decisions_payload = {
+                            "summary": summary_data if isinstance(summary_data, dict) else {},
+                            "events": [
+                                {
+                                    "event_id": str(e.get("event_id", "")),
+                                    "final_case_type": str(e.get("final_case_type", "")),
+                                    "final_queue": str(e.get("final_queue", "")),
+                                    "final_action": str(e.get("final_action", "")),
+                                    "final_decision_source": str(e.get("final_decision_source", "")),
+                                    "final_confidence": e.get("final_confidence"),
+                                    "needs_attention": bool(e.get("needs_attention", False)),
+                                    "attention_reason": str(e.get("attention_reason", "")),
+                                    "bitrix_write_allowed": False,
+                                }
+                                for e in events_data
+                                if isinstance(e, dict)
+                            ][:max_items],
+                        }
+            except (json_mod.JSONDecodeError, OSError):
+                pass
+
         if not rec_path.exists():
-            return _ok_json(
-                {
-                    "summary": {
-                        "high_priority": 0,
-                        "needs_review": 0,
-                        "lost_in_bitrix": 0,
-                        "ambiguous": 0,
-                        "ai_assisted": 0,
-                    },
-                    "items": [],
+            payload = {
+                "summary": {
+                    "high_priority": 0,
+                    "needs_review": 0,
+                    "lost_in_bitrix": 0,
+                    "ambiguous": 0,
+                    "ai_assisted": 0,
                 },
+                "items": [],
+            }
+            if final_decisions_payload:
+                payload["final_decisions"] = final_decisions_payload
+            return _ok_json(
+                payload,
                 warnings=[
                     {
                         "code": "no_recommendations",
@@ -979,8 +1016,6 @@ def _register_bitrix_widget_routes(
                     }
                 ],
             )
-
-        import json as json_mod
 
         try:
             rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
@@ -1063,6 +1098,9 @@ def _register_bitrix_widget_routes(
             "summary": summary,
             "items": serializable_items,
         }
+
+        if final_decisions_payload:
+            widget_data["final_decisions"] = final_decisions_payload
 
         return _ok_json(
             widget_data,
@@ -1157,8 +1195,6 @@ def _register_bitrix_widget_routes(
                 f"No recommendations for run {run_id}",
                 status_code=404,
             )
-
-        import json as json_mod
 
         try:
             rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
