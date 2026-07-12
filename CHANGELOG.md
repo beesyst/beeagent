@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.44.0...beeagent-v0.45.0) (2026-07-12)
+
+
+### Features
+
+* **ui:** add final decision read model and widget integration ([#149](https://github.com/beesyst/beeagent/issues/149)) ([0a498c8](https://github.com/beesyst/beeagent/commit/0a498c8646decdd5f809ebc8af945734efb0128b))
+
 ## [0.44.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.43.4...beeagent-v0.44.0) (2026-07-09)
 
 
