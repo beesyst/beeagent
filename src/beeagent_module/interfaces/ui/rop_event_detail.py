@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from beeagent_module.core.rop_final_decision import (
+    find_final_decision,
+    load_or_build_final_decisions,
+)
+from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
 
 
@@ -122,7 +127,6 @@ def build_rop_event_detail_read_model(
     thread_context = _read_json(run_dir / "mail_thread_context.json")
     ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
-    final_decisions_data = _read_json(run_dir / "rop_final_decisions.json")
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
     action_drafts = _read_json(run_dir / "rop_action_drafts.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
@@ -272,53 +276,30 @@ def build_rop_event_detail_read_model(
                 "final_correct_action": _str(matched.get("final_correct_action", "")),
             }
 
-    if isinstance(final_decisions_data, dict):
-        events_list = final_decisions_data.get("events", [])
-        if isinstance(events_list, list):
-            for fd in events_list:
-                if isinstance(fd, dict) and fd.get("event_id") == event_id:
-                    final_decision_section = {
-                        "final_case_type": _str(fd.get("final_case_type", "")),
-                        "final_case_subtype": _str(fd.get("final_case_subtype", "")),
-                        "final_queue": _str(fd.get("final_queue", "")),
-                        "final_action": _str(fd.get("final_action", "")),
-                        "final_confidence": fd.get("final_confidence"),
-                        "final_decision_source": _str(fd.get("final_decision_source", "")),
-                        "needs_attention": bool(fd.get("needs_attention", False)),
-                        "attention_reason": _str(fd.get("attention_reason", "")),
-                        "automation_allowed": bool(fd.get("automation_allowed", False)),
-                        "bitrix_write_allowed": bool(fd.get("bitrix_write_allowed", False)),
-                    }
-                    break
-    elif adj_section:
-        adj_status = adj_section.get("ai_adjudicator_status", "")
-        if adj_status == "ok":
-            final_decision_section = {
-                "final_case_type": _str(adj_section.get("final_case_type", "")),
-                "final_queue": _str(adj_section.get("final_recommended_queue", "")),
-                "final_action": _str(adj_section.get("final_correct_action", "")),
-                "final_confidence": adj_section.get("ai_adjudicator_confidence"),
-                "final_decision_source": "ai_adjudicator",
-                "needs_attention": False,
-                "automation_allowed": True,
-                "bitrix_write_allowed": False,
-            }
-        elif adj_status == "low_confidence_preserve":
-            final_decision_section = {
-                "final_decision_source": "deterministic_preserved",
-                "needs_attention": True,
-                "attention_reason": "ai_low_confidence_preserve",
-                "automation_allowed": False,
-                "bitrix_write_allowed": False,
-            }
-        elif adj_status == "manual_review_degrade":
-            final_decision_section = {
-                "final_decision_source": "deterministic_preserved",
-                "needs_attention": True,
-                "attention_reason": _str(adj_section.get("ai_adjudicator_reason", "manual_review_degrade")),
-                "automation_allowed": False,
-                "bitrix_write_allowed": False,
-            }
+    final_decisions, _ = load_or_build_final_decisions(run_dir)
+    final_decision = find_final_decision(final_decisions, event_id)
+    if final_decision:
+        final_case_subtype = final_decision.get("final_case_subtype")
+        attention_reason = final_decision.get("attention_reason")
+        final_decision_section = {
+            "event_id": _str(final_decision.get("event_id", "")),
+            "final_case_type": _str(final_decision.get("final_case_type", "")),
+            "final_case_subtype": (
+                final_case_subtype if isinstance(final_case_subtype, str) else None
+            ),
+            "final_queue": _str(final_decision.get("final_queue", "")),
+            "final_action": _str(final_decision.get("final_action", "")),
+            "final_confidence": final_decision.get("final_confidence"),
+            "final_decision_source": _str(
+                final_decision.get("final_decision_source", "")
+            ),
+            "needs_attention": bool(final_decision.get("needs_attention", False)),
+            "attention_reason": (
+                attention_reason if isinstance(attention_reason, str) else None
+            ),
+            "automation_allowed": False,
+            "bitrix_write_allowed": False,
+        }
 
     bitrix_section: dict[str, Any] = {}
     bitrix_available = False
@@ -387,8 +368,7 @@ def build_rop_event_detail_read_model(
     ]
     evidence_links: list[dict[str, Any]] = []
     for aid in evidence_ids:
-        rel_path = _artifact_rel_path(aid)
-        available = bool(rel_path and (run_dir / rel_path).is_file())
+        available = resolve_artifact_path(storage_dir, run_id, aid) is not None
         evidence_links.append(
             {
                 "artifact_id": aid,
@@ -541,13 +521,13 @@ def build_rop_event_detail_page_model(
             "title": t("AI Adjudicator", lang),
             "items": _page_kv_items(
                 [
-                    ("AI adjudicator used", ai_adjudicator.get("ai_adjudicator_used")),
-                    ("AI adjudicator status", ai_adjudicator.get("ai_adjudicator_status")),
-                    ("AI adjudicator confidence", ai_adjudicator.get("ai_adjudicator_confidence")),
-                    ("AI adjudicator reason", ai_adjudicator.get("ai_adjudicator_reason")),
-                    ("Final case type", ai_adjudicator.get("final_case_type")),
-                    ("Final queue", ai_adjudicator.get("final_recommended_queue")),
-                    ("Final action", ai_adjudicator.get("final_correct_action")),
+                    (t("AI adjudicator used", lang), ai_adjudicator.get("ai_adjudicator_used")),
+                    (t("AI adjudicator status", lang), ai_adjudicator.get("ai_adjudicator_status")),
+                    (t("AI adjudicator confidence", lang), ai_adjudicator.get("ai_adjudicator_confidence")),
+                    (t("AI adjudicator reason", lang), ai_adjudicator.get("ai_adjudicator_reason")),
+                    (t("AI proposed case type", lang), ai_adjudicator.get("final_case_type")),
+                    (t("AI proposed queue", lang), ai_adjudicator.get("final_recommended_queue")),
+                    (t("AI proposed action", lang), ai_adjudicator.get("final_correct_action")),
                 ]
             ),
         },
@@ -562,7 +542,7 @@ def build_rop_event_detail_page_model(
                     (t("Final confidence", lang), final_decision.get("final_confidence")),
                     (t("Decision source", lang), final_decision.get("final_decision_source")),
                     (t("Needs attention", lang), final_decision.get("needs_attention")),
-                    ("Attention reason", final_decision.get("attention_reason")),
+                    (t("Attention reason", lang), final_decision.get("attention_reason")),
                     (t("Automation allowed", lang), final_decision.get("automation_allowed")),
                     (t("Bitrix write allowed", lang), final_decision.get("bitrix_write_allowed")),
                 ]
@@ -646,18 +626,3 @@ def build_rop_event_detail_page_model(
         "warnings": [w for w in _safe_list(data.get("warnings")) if isinstance(w, str)],
         "sections": sections,
     }
-
-
-def _artifact_rel_path(artifact_id: str) -> str | None:
-    mapping = {
-        "normalized_events_json": "normalized_events.json",
-        "classified_events_json": "classified_events.json",
-        "attachment_extraction_json": "attachment_extraction.json",
-        "mail_thread_context_json": "mail_thread_context.json",
-        "rop_ai_assist_results_json": "rop_ai_assist_results.json",
-        "bitrix_reconciliation_json": "bitrix_reconciliation.json",
-        "rop_action_drafts_json": "rop_action_drafts.json",
-        "rop_review_table_tsv": "rop_review_table.tsv",
-        "operator_summary_json": "operator_summary.json",
-    }
-    return mapping.get(artifact_id)

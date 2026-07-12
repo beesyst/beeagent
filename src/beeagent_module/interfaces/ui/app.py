@@ -20,7 +20,14 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.routing import Route
 
+from beeagent_module.core.rop_final_decision import (
+    find_final_decision,
+    load_or_build_final_decisions,
+)
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
+from beeagent_module.interfaces.ui.read_model import (
+    resolve_recommendation_execution_policy,
+)
 from beeagent_module.interfaces.ui.locale import (
     reset_current_locale,
     resolve_locale,
@@ -867,6 +874,65 @@ def _register_bitrix_widget_routes(
     adapter: BeeAgentUiAdapter,
     logger: logging.Logger,
 ) -> None:
+    def serialize_final_decision(item: dict[str, Any]) -> dict[str, Any]:
+        final_case_subtype = item.get("final_case_subtype")
+        attention_reason = item.get("attention_reason")
+        return {
+            "event_id": str(item.get("event_id", "")),
+            "final_case_type": str(item.get("final_case_type", "")),
+            "final_case_subtype": (
+                final_case_subtype if isinstance(final_case_subtype, str) else None
+            ),
+            "final_queue": str(item.get("final_queue", "")),
+            "final_action": str(item.get("final_action", "")),
+            "final_decision_source": str(item.get("final_decision_source", "")),
+            "final_confidence": item.get("final_confidence"),
+            "needs_attention": bool(item.get("needs_attention", False)),
+            "attention_reason": (
+                attention_reason if isinstance(attention_reason, str) else None
+            ),
+            "automation_allowed": False,
+            "bitrix_write_allowed": False,
+        }
+
+    def serialize_final_decisions_payload(
+        payload: dict[str, Any],
+        max_items: int,
+    ) -> dict[str, Any]:
+        events = payload.get("events", [])
+        if not isinstance(events, list):
+            events = []
+        serialized_events = [
+            serialize_final_decision(event)
+            for event in events
+            if isinstance(event, dict)
+        ][:max_items]
+        source_counts: dict[str, int] = {}
+        attention_count = 0
+        for event in serialized_events:
+            source = event["final_decision_source"]
+            source_counts[source] = source_counts.get(source, 0) + 1
+            if event["needs_attention"]:
+                attention_count += 1
+        return {
+            "summary": {
+                "total_events": len(serialized_events),
+                "decision_source_counts": source_counts,
+                "attention_count": attention_count,
+            },
+            "events": serialized_events,
+        }
+
+    def empty_final_decisions() -> dict[str, Any]:
+        return {
+            "summary": {
+                "total_events": 0,
+                "decision_source_counts": {},
+                "attention_count": 0,
+            },
+            "events": [],
+        }
+
     @app.get("/api/bitrix/rop/widget", include_in_schema=False)
     async def bitrix_rop_widget(request: Request) -> JSONResponse:
         settings = getattr(app.state, "beeagent_settings", {})
@@ -886,7 +952,7 @@ def _register_bitrix_widget_routes(
                         "ai_assisted": 0,
                     },
                     "items": [],
-                    "final_decisions": {},
+                    "final_decisions": empty_final_decisions(),
                 },
                 meta={
                     "widget_disabled": True,
@@ -948,7 +1014,7 @@ def _register_bitrix_widget_routes(
                         "ai_assisted": 0,
                     },
                     "items": [],
-                    "final_decisions": {},
+                    "final_decisions": empty_final_decisions(),
                 },
                 warnings=[{"code": "no_runs", "message": "No runs available"}],
             )
@@ -964,35 +1030,15 @@ def _register_bitrix_widget_routes(
 
         rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
 
-        final_decisions_path = storage_dir / "runs" / run_id / "rop_final_decisions.json"
-        final_decisions_payload: dict[str, Any] = {}
-        if final_decisions_path.exists():
-            try:
-                fd_data = json_mod.loads(final_decisions_path.read_text(encoding="utf-8"))
-                if isinstance(fd_data, dict):
-                    summary_data = fd_data.get("summary", {})
-                    events_data = fd_data.get("events", [])
-                    if isinstance(events_data, list):
-                        final_decisions_payload = {
-                            "summary": summary_data if isinstance(summary_data, dict) else {},
-                            "events": [
-                                {
-                                    "event_id": str(e.get("event_id", "")),
-                                    "final_case_type": str(e.get("final_case_type", "")),
-                                    "final_queue": str(e.get("final_queue", "")),
-                                    "final_action": str(e.get("final_action", "")),
-                                    "final_decision_source": str(e.get("final_decision_source", "")),
-                                    "final_confidence": e.get("final_confidence"),
-                                    "needs_attention": bool(e.get("needs_attention", False)),
-                                    "attention_reason": str(e.get("attention_reason", "")),
-                                    "bitrix_write_allowed": False,
-                                }
-                                for e in events_data
-                                if isinstance(e, dict)
-                            ][:max_items],
-                        }
-            except (json_mod.JSONDecodeError, OSError):
-                pass
+        run_dir = storage_dir / "runs" / run_id
+        if run_dir.is_dir():
+            final_decisions, _ = load_or_build_final_decisions(run_dir)
+            final_decisions_payload = serialize_final_decisions_payload(
+                final_decisions,
+                max_items,
+            )
+        else:
+            final_decisions_payload = empty_final_decisions()
 
         if not rec_path.exists():
             payload = {
@@ -1005,8 +1051,7 @@ def _register_bitrix_widget_routes(
                 },
                 "items": [],
             }
-            if final_decisions_payload:
-                payload["final_decisions"] = final_decisions_payload
+            payload["final_decisions"] = final_decisions_payload
             return _ok_json(
                 payload,
                 warnings=[
@@ -1047,10 +1092,15 @@ def _register_bitrix_widget_routes(
         }
 
         for item in items_raw[:max_items]:
+            recommended_action = str(item.get("recommended_action", ""))
+            (
+                safe_to_execute,
+                requires_human_confirmation,
+            ) = resolve_recommendation_execution_policy(recommended_action)
             priority = str(item.get("priority", "medium"))
             if priority == "high":
                 summary["high_priority"] += 1
-            if item.get("requires_human_confirmation"):
+            if requires_human_confirmation:
                 summary["needs_review"] += 1
             if item.get("bitrix_status") == "not_found":
                 summary["lost_in_bitrix"] += 1
@@ -1071,7 +1121,7 @@ def _register_bitrix_widget_routes(
                 "sender": str(item.get("sender", "")),
                 "subject": str(item.get("subject", "")),
                 "summary": str(item.get("summary", "")),
-                "recommended_action": str(item.get("recommended_action", "")),
+                "recommended_action": recommended_action,
                 "recommended_queue": str(item.get("recommended_queue", "")),
                 "target_bitrix_category": str(item.get("target_bitrix_category", "")),
                 "bitrix_status": str(item.get("bitrix_status", "")),
@@ -1080,10 +1130,8 @@ def _register_bitrix_widget_routes(
                 else 0.0,
                 "ai_used": bool(item.get("ai_used")),
                 "reason": str(item.get("reason", "")),
-                "safe_to_execute": bool(item.get("safe_to_execute", False)),
-                "requires_human_confirmation": bool(
-                    item.get("requires_human_confirmation", False)
-                ),
+                "safe_to_execute": safe_to_execute,
+                "requires_human_confirmation": requires_human_confirmation,
                 "evidence_links": [
                     str(link) for link in evidence_links if isinstance(link, str)
                 ],
@@ -1099,8 +1147,7 @@ def _register_bitrix_widget_routes(
             "items": serializable_items,
         }
 
-        if final_decisions_payload:
-            widget_data["final_decisions"] = final_decisions_payload
+        widget_data["final_decisions"] = final_decisions_payload
 
         return _ok_json(
             widget_data,
@@ -1188,6 +1235,11 @@ def _register_bitrix_widget_routes(
         if _is_path_traversal(event_id):
             return _error_json("invalid_event_id", "Invalid event_id", status_code=400)
 
+        final_decisions, _ = load_or_build_final_decisions(
+            storage_dir / "runs" / run_id
+        )
+        final_decision = find_final_decision(final_decisions, event_id)
+
         rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
         if not rec_path.exists():
             return _error_json(
@@ -1222,6 +1274,11 @@ def _register_bitrix_widget_routes(
                 if not isinstance(evidence_links, list):
                     evidence_links = []
 
+                recommended_action = str(item.get("recommended_action", ""))
+                (
+                    safe_to_execute,
+                    requires_human_confirmation,
+                ) = resolve_recommendation_execution_policy(recommended_action)
                 safe_item = {
                     "event_id": str(item.get("event_id", "")),
                     "title": str(item.get("title", "")),
@@ -1229,7 +1286,7 @@ def _register_bitrix_widget_routes(
                     "priority": str(item.get("priority", "")),
                     "sender": str(item.get("sender", "")),
                     "subject": str(item.get("subject", "")),
-                    "recommended_action": str(item.get("recommended_action", "")),
+                    "recommended_action": recommended_action,
                     "recommended_queue": str(item.get("recommended_queue", "")),
                     "target_bitrix_category": str(
                         item.get("target_bitrix_category", "")
@@ -1240,16 +1297,21 @@ def _register_bitrix_widget_routes(
                     else 0.0,
                     "ai_used": bool(item.get("ai_used")),
                     "reason": str(item.get("reason", "")),
-                    "safe_to_execute": bool(item.get("safe_to_execute", False)),
-                    "requires_human_confirmation": bool(
-                        item.get("requires_human_confirmation")
-                    ),
+                    "safe_to_execute": safe_to_execute,
+                    "requires_human_confirmation": requires_human_confirmation,
                     "evidence_links": [
                         str(link) for link in evidence_links if isinstance(link, str)
                     ],
                 }
                 return _ok_json(
-                    safe_item,
+                    {
+                        **safe_item,
+                        "final_decision": (
+                            serialize_final_decision(final_decision)
+                            if final_decision
+                            else None
+                        ),
+                    },
                     meta={
                         "run_id": run_id,
                         "read_only": True,

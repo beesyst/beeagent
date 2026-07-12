@@ -218,10 +218,15 @@ class TestSourceOverrides:
 
 
 class TestRopCliRun:
-    def test_rop_run_with_batch_source(self, tmp_path: Path) -> None:
+    def test_rop_run_with_batch_source(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         import argparse
 
         settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         batch_data = {
             "period": "2026-05",
@@ -273,6 +278,7 @@ class TestRopCliRun:
         import beeagent_module.core.cli as cli_module
 
         settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
@@ -348,6 +354,7 @@ class TestRopCliRun:
         import beeagent_module.core.cli as cli_module
 
         settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         good_batch_path = tmp_path / "good_batch.json"
         good_batch_path.write_text(
@@ -440,6 +447,7 @@ class TestRopCliRun:
         import beeagent_module.core.cli as cli_module
 
         settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
                 source["enabled"] = True
@@ -700,6 +708,7 @@ class TestRopCliExportReview:
         import beeagent_module.core.cli as cli_module
 
         settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":

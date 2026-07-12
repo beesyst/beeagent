@@ -258,13 +258,14 @@ BeeAgent уже прошёл этап **module platform v0**:
 Итерация UI-8 (read-model) добавила:
 
 - allowlist для `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
-- новый артефакт `rop_final_decisions.json` — read-model финальных решений;
+- новый артефакт `rop_final_decisions.json` — artifact-first read-model финальных решений с computed read-only fallback для missing/malformed/unsafe artifact;
 - AI Adjudicator summary в `/rop?tab=ai_assist`;
 - Final Decisions summary в `/rop?tab=ai_assist`;
 - секции AI Adjudicator и Final Decision на странице события `/rop/events/{event_id}`;
-- поля `final_case_type`, `final_queue`, `final_action`, `final_decision_source`, `final_confidence`, `needs_attention`, `attention_reason`, `automation_allowed`, `bitrix_write_allowed` (всегда false);
-- `/api/rop/dashboard` — `ai_adjudicator_summary`, `final_decisions`, `final_decision_summary`;
-- Bitrix widget API — опциональный блок `final_decisions` из `rop_final_decisions.json`;
+- поля `final_case_type`, nullable `final_case_subtype`, `final_queue`, `final_action`, `final_decision_source`, `final_confidence`, `needs_attention`, nullable `attention_reason`, `automation_allowed`, `bitrix_write_allowed` (всегда false);
+- `/api/rop/dashboard` — `ai_adjudicator_summary`, вложенный `final_decisions` и compatibility alias `final_decision_summary`;
+- Event Detail — `final_decision` из того же read-model;
+- Bitrix widget API — bounded `final_decisions` с summary, пересчитанным по возвращённым events;
 - политика финального решения v1 (AI ok / low_confidence_preserve / manual_review_degrade / deterministic / fallback_policy);
 - `bitrix_write_allowed=false` для MVP.
 

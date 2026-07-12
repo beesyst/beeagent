@@ -9,9 +9,18 @@ from typing import Any
 from urllib.parse import quote
 
 from beeagent_module.cases.rop_dashboard import build_rop_dashboard
+from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
 from beeagent_module.interfaces.ui.locale import t
 
 ATTENTION_EVENTS_MAX = 50
+ROP_OPERATOR_QUEUE_IDS: tuple[str, ...] = (
+    "high_priority",
+    "needs_review",
+    "lost_in_bitrix",
+    "ambiguous",
+    "degraded",
+    "unreconciled",
+)
 ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "operator_summary_json",
     "source_diagnostics_json",
@@ -1697,127 +1706,6 @@ def _build_ai_adjudicator_summary(
     return summary
 
 
-def _build_final_decisions(
-    classified: list | None,
-    adjudicator_results: dict[str, Any] | None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Build per-event final decisions using deterministic + AI adjudicator.
-
-    Policy v1:
-    - AI adjudicator status 'ok' → use AI final fields.
-    - 'low_confidence_preserve' → preserve deterministic, needs_attention=true.
-    - 'manual_review_degrade' → preserve deterministic, needs_attention=true, fallback manual_review.
-    - No AI result → deterministic, final_decision_source=deterministic.
-    - Invalid/unusable → final_decision_source=fallback_policy, needs_attention=true.
-    - Always bitrix_write_allowed=false.
-    """
-    _ACCEPTED_STATUSES = frozenset({"ok", "low_confidence_preserve", "manual_review_degrade"})
-
-    if not isinstance(classified, list):
-        return [], {"total_events": 0, "decision_source_counts": {}, "attention_count": 0}
-
-    results_by_eid: dict[str, dict[str, Any]] = {}
-    if isinstance(adjudicator_results, dict):
-        results_list = adjudicator_results.get("results", [])
-        if isinstance(results_list, list):
-            for r in results_list:
-                if isinstance(r, dict) and r.get("event_id"):
-                    results_by_eid[str(r["event_id"])] = r
-
-    decisions: list[dict[str, Any]] = []
-    source_counts: dict[str, int] = {}
-    attention_count = 0
-
-    for event in classified:
-        if not isinstance(event, dict):
-            continue
-
-        eid = event.get("event_id", "")
-        adj = results_by_eid.get(eid)
-        det_case_type = event.get("case_type", "unknown")
-        det_case_subtype = event.get("case_subtype")
-        det_queue = event.get("recommended_queue", "manual_review")
-        det_action = event.get("correct_action", "manual_review")
-        det_confidence = event.get("confidence", 0.0)
-        det_reason = event.get("reason_code", "")
-
-        needs_attention = False
-        attention_reason: str | None = None
-        final_decision_source = "deterministic"
-        automation_allowed = False
-        bitrix_write_allowed = False
-
-        final_case_type = det_case_type
-        final_case_subtype = det_case_subtype
-        final_queue = det_queue
-        final_action = det_action
-        final_confidence = det_confidence
-
-        if adj and adj.get("ai_status") in _ACCEPTED_STATUSES:
-            ai_status = adj.get("ai_status", "")
-            if ai_status == "ok":
-                final_case_type = adj.get("final_case_type", det_case_type)
-                final_case_subtype = adj.get("final_case_subtype", det_case_subtype)
-                final_queue = adj.get("final_recommended_queue", det_queue)
-                final_action = adj.get("final_correct_action", det_action)
-                final_confidence = adj.get("ai_confidence", det_confidence)
-                final_decision_source = "ai_adjudicator"
-                automation_allowed = True
-            elif ai_status == "low_confidence_preserve":
-                needs_attention = True
-                attention_reason = "ai_low_confidence_preserve"
-                final_decision_source = "deterministic_preserved"
-            elif ai_status == "manual_review_degrade":
-                needs_attention = True
-                attention_reason = adj.get("ai_reason") or "manual_review_degrade"
-                final_decision_source = "deterministic_preserved"
-                if not final_queue or final_queue == "ignore":
-                    final_queue = "manual_review"
-                if not final_action or final_action == "ignore":
-                    final_action = "manual_review"
-        elif adj:
-            needs_attention = True
-            attention_reason = f"ai_adjudicator_unexpected_status:{adj.get('ai_status', 'unknown')}"
-            final_decision_source = "fallback_policy"
-
-        if needs_attention:
-            attention_count += 1
-
-        source = final_decision_source
-        source_counts[source] = source_counts.get(source, 0) + 1
-
-        decisions.append({
-            "event_id": eid,
-            "source_id": event.get("source_id", ""),
-            "sender": event.get("sender", ""),
-            "subject": event.get("subject", ""),
-            "deterministic_case_type": det_case_type,
-            "deterministic_case_subtype": det_case_subtype,
-            "deterministic_queue": det_queue,
-            "deterministic_action": det_action,
-            "deterministic_confidence": det_confidence,
-            "deterministic_reason_code": det_reason,
-            "final_case_type": final_case_type,
-            "final_case_subtype": final_case_subtype,
-            "final_queue": final_queue,
-            "final_action": final_action,
-            "final_decision_source": final_decision_source,
-            "final_confidence": final_confidence,
-            "needs_attention": needs_attention,
-            "attention_reason": attention_reason,
-            "automation_allowed": automation_allowed,
-            "bitrix_write_allowed": bitrix_write_allowed,
-        })
-
-    summary = {
-        "total_events": len(decisions),
-        "decision_source_counts": source_counts,
-        "attention_count": attention_count,
-    }
-
-    return decisions, summary
-
-
 def _build_ai_assist_events(
     classified: list | None,
     normalized: list | None,
@@ -1979,7 +1867,6 @@ def build_rop_dashboard_read_model(
     ai_decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
     ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
-    final_decisions_data = _read_json(run_dir / "rop_final_decisions.json")
     recommendations_data = _read_json(run_dir / "rop_recommendations.json")
 
     warnings: list[dict[str, Any]] = []
@@ -2035,10 +1922,6 @@ def build_rop_dashboard_read_model(
     if ai_adjudicator_results is None:
         warnings.append(
             {"code": "missing_artifact", "artifact": "rop_ai_adjudicator_results.json"}
-        )
-    if final_decisions_data is None:
-        warnings.append(
-            {"code": "missing_artifact", "artifact": "rop_final_decisions.json"}
         )
 
     kpis = _build_kpis(
@@ -2116,10 +1999,15 @@ def build_rop_dashboard_read_model(
         ai_adjudicator_results if isinstance(ai_adjudicator_results, dict) else None,
     )
 
-    computed_final_decisions, final_decision_summary = _build_final_decisions(
-        classified if isinstance(classified, list) else None,
-        ai_adjudicator_results if isinstance(ai_adjudicator_results, dict) else None,
-    )
+    final_decisions, final_decisions_source = load_or_build_final_decisions(run_dir)
+    final_decision_summary = final_decisions["summary"]
+    if final_decisions_source == "computed":
+        warnings.append(
+            {
+                "code": "missing_or_malformed_artifact",
+                "artifact": "rop_final_decisions.json",
+            }
+        )
 
     ai_assist_events = _build_ai_assist_events(
         classified if isinstance(classified, list) else None,
@@ -2245,9 +2133,8 @@ def build_rop_dashboard_read_model(
         "ai_assist_summary": ai_assist_summary,
         "ai_assist_events": ai_assist_events,
         "ai_adjudicator_summary": ai_adjudicator_summary,
-        "final_decisions": computed_final_decisions,
+        "final_decisions": final_decisions,
         "final_decision_summary": final_decision_summary,
-        "final_decisions_artifact": final_decisions_data if isinstance(final_decisions_data, dict) else {},
         "warnings": warnings,
         "current_state_available": isinstance(current_state, dict),
         "current_state_kpi": current_state_kpi,
@@ -2730,20 +2617,13 @@ def _collect_priority_queue_preview(
     queues: dict[str, Any],
     current_period: str,
     *,
+    run_id: str,
     locale: str = "en",
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    order = (
-        "high_priority",
-        "needs_review",
-        "ambiguous",
-        "lost_in_bitrix",
-        "unreconciled",
-        "degraded",
-    )
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for bucket in order:
+    for bucket in ROP_OPERATOR_QUEUE_IDS:
         items = queues.get(bucket, [])
         if not isinstance(items, list):
             continue
@@ -2768,11 +2648,17 @@ def _collect_priority_queue_preview(
             )
             priority = item.get("bot_priority") or item.get("priority") or bucket
             next_step = item.get("recommended_next_step") or t("Open Queue", locale)
-            evidence_href = item.get("evidence_href") or _rop_href(
-                tab="queue",
-                period=current_period,
-                locale=locale,
-            )
+            detail_href = item.get("detail_href")
+            if not isinstance(detail_href, str) or not detail_href:
+                detail_href = (
+                    _rop_event_detail_href(event_id, run_id, locale)
+                    if event_id and run_id
+                    else _rop_href(
+                        tab="queue",
+                        period=current_period,
+                        locale=locale,
+                    )
+                )
             rows.append(
                 {
                     "priority": {
@@ -2790,7 +2676,7 @@ def _collect_priority_queue_preview(
                         locale,
                     ),
                     "next_step": next_step.replace("_", " "),
-                    "evidence": {"label": t("Open", locale), "href": evidence_href},
+                    "evidence": {"label": t("Open", locale), "href": detail_href},
                 }
             )
             if len(rows) >= limit:
@@ -2858,6 +2744,9 @@ def _build_rop_overview_layout(
     series = data.get("series", {})
     if not isinstance(series, dict):
         series = {}
+    queues = data.get("queues", {})
+    if not isinstance(queues, dict):
+        queues = {}
     source_health = data.get("source_health", [])
     if not isinstance(source_health, list):
         source_health = []
@@ -2914,15 +2803,22 @@ def _build_rop_overview_layout(
     if current_period == "today":
         todays_emails = period_emails
 
-    action_required_count = (
-        _int(high_priority)
-        + _int(needs_review)
-        + _int(ambiguous_or_duplicate)
-        + _int(unreconciled)
-        + _int(business_kpi.get("source_degraded", degraded_sources))
-        + _int(business_kpi.get("attachment_refused", 0))
-        + _int(bitrix_errors)
-    )
+    action_event_ids: set[str] = set()
+
+    for queue_id in ROP_OPERATOR_QUEUE_IDS:
+        queue_items = queues.get(queue_id, [])
+        if not isinstance(queue_items, list):
+            continue
+
+        for item in queue_items:
+            if not isinstance(item, dict):
+                continue
+
+            event_id = str(item.get("event_id", "")).strip()
+            if event_id:
+                action_event_ids.add(event_id)
+
+    action_required_count = len(action_event_ids)
     action_required_ratio = int(
         min(100, round((action_required_count / max(_int(total_leads), 1)) * 100))
     )
@@ -3157,12 +3053,10 @@ def _build_rop_overview_layout(
         }
     )
 
-    queues = data.get("queues", {})
-    if not isinstance(queues, dict):
-        queues = {}
     preview_rows = _collect_priority_queue_preview(
         queues,
         current_period,
+        run_id=str(data.get("run_id", "")),
         locale=locale,
     )
     layout.append(
@@ -3208,17 +3102,9 @@ def _build_rop_queue_layout(
         queues = {}
     run_id = data.get("run_id", "")
 
-    queue_specs = (
-        "high_priority",
-        "needs_review",
-        "lost_in_bitrix",
-        "ambiguous",
-        "degraded",
-        "unreconciled",
-    )
     queue_rows: list[dict[str, Any]] = []
     seen_event_ids: set[str] = set()
-    for key in queue_specs:
+    for key in ROP_OPERATOR_QUEUE_IDS:
         rows_source = queues.get(key, [])
         if not isinstance(rows_source, list):
             continue
@@ -3821,6 +3707,7 @@ def _build_rop_recommendations_layout(
     priority_counts: dict[str, int] = {}
     queue_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
+    safe_to_execute, _ = resolve_recommendation_execution_policy(None)
 
     for item in items:
         priority = str(item.get("priority", "medium"))
@@ -3850,11 +3737,7 @@ def _build_rop_recommendations_layout(
         },
         {
             "label": t("Safe to execute", locale),
-            "value": (
-                t("Yes", locale)
-                if recommendations_raw.get("safe_to_execute")
-                else t("No", locale)
-            ),
+            "value": t("Yes", locale) if safe_to_execute else t("No", locale),
         },
     ]
 
@@ -3897,6 +3780,9 @@ def _build_rop_recommendations_layout(
 
         bitrix_status = str(item.get("bitrix_status", ""))
         priority = str(item.get("priority", ""))
+        safe_to_execute, requires_human_confirmation = (
+            resolve_recommendation_execution_policy(item.get("recommended_action"))
+        )
 
         row: dict[str, Any] = {
             "event_id": event_id[:20],
@@ -3920,12 +3806,10 @@ def _build_rop_recommendations_layout(
                 "status": _bitrix_status_tone(bitrix_status),
             },
             "ai_used": t("Yes", locale) if item.get("ai_used") else t("No", locale),
-            "safe": (
-                t("Yes", locale) if item.get("safe_to_execute") else t("No", locale)
-            ),
+            "safe": t("Yes", locale) if safe_to_execute else t("No", locale),
             "confirm": (
                 t("Yes", locale)
-                if item.get("requires_human_confirmation")
+                if requires_human_confirmation
                 else t("No", locale)
             ),
             "reason": str(item.get("reason", ""))[:140],
@@ -3995,6 +3879,12 @@ def _build_rop_recommendations_layout(
     return layout
 
 
+def resolve_recommendation_execution_policy(
+    recommended_action: Any,
+) -> tuple[bool, bool]:
+    return False, str(recommended_action) != "ignore"
+
+
 def _build_rop_ai_assist_layout(
     data: dict[str, Any],
     locale: str = "en",
@@ -4010,190 +3900,6 @@ def _build_rop_ai_assist_layout(
     adj_summary = data.get("ai_adjudicator_summary", {})
     if not isinstance(adj_summary, dict):
         adj_summary = {}
-    has_adj = bool(adj_summary.get("available"))
-    has_ai_assist = bool(ai_summary.get("evidence_available"))
-
-    if not has_ai_assist and not has_adj:
-        layout.append(
-            {
-                "type": "state_grid",
-                "size": "XL",
-                "title": t("AI Assist", locale),
-                "items": [
-                    {
-                        "label": t("AI Assist unavailable", locale),
-                        "value": t(
-                            "No AI assist artifacts available for this run", locale
-                        ),
-                        "status": "empty",
-                    }
-                ],
-            }
-        )
-        return layout
-
-    no_ai_activity = (
-        not has_adj
-        and ai_summary.get("request_count", 0) == 0
-        and ai_summary.get("result_count", 0) == 0
-        and ai_summary.get("used_count", 0) == 0
-        and ai_summary.get("degraded_count", 0) == 0
-        and ai_summary.get("low_confidence_count", 0) == 0
-        and ai_summary.get("invalid_output_count", 0) == 0
-        and ai_summary.get("provider_unavailable_count", 0) == 0
-        and ai_summary.get("module_contract_unavailable_count", 0) == 0
-        and ai_summary.get("blocked_count", 0) == 0
-        and not ai_events
-    )
-    if no_ai_activity:
-        layout.append(
-            {
-                "type": "state_grid",
-                "size": "XL",
-                "title": t("AI Assist", locale),
-                "items": [
-                    {
-                        "label": t("AI Assist not used", locale),
-                        "value": t(
-                            "Deterministic classification only for this run",
-                            locale,
-                        ),
-                        "status": "empty",
-                    }
-                ],
-            }
-        )
-        return layout
-
-    kpi_items = [
-        {
-            "label": t("Eligible events", locale),
-            "value": ai_summary.get("eligible_count", 0),
-        },
-        {
-            "label": t("Requests made", locale),
-            "value": ai_summary.get("request_count", 0),
-        },
-        {
-            "label": t("Results OK", locale),
-            "value": ai_summary.get("ok_count", 0),
-        },
-        {
-            "label": t("AI used", locale),
-            "value": ai_summary.get("used_count", 0),
-        },
-        {
-            "label": t("Low confidence", locale),
-            "value": ai_summary.get("low_confidence_count", 0),
-        },
-        {
-            "label": t("Degraded", locale),
-            "value": ai_summary.get("degraded_count", 0),
-        },
-    ]
-    layout.append(
-        {
-            "type": "kpi_grid",
-            "size": "XL",
-            "columns": 3,
-            "title": t("AI Assist Summary", locale),
-            "items": kpi_items,
-        }
-    )
-
-    ai_warnings = ai_summary.get("warnings", [])
-    if isinstance(ai_warnings, list) and ai_warnings:
-        warn_items = []
-        for w in ai_warnings:
-            if isinstance(w, str):
-                warn_items.append({"label": "Warning", "value": w, "status": "warning"})
-        if warn_items:
-            layout.append(
-                {
-                    "type": "state_grid",
-                    "size": "XL",
-                    "title": t("AI Assist warnings", locale),
-                    "items": warn_items,
-                }
-            )
-
-    status_counts = ai_summary.get("status_counts", {})
-    if isinstance(status_counts, dict) and status_counts:
-        status_items = []
-        for status_key, status_val in status_counts.items():
-            if _int(status_val) > 0:
-                status_items.append(
-                    {
-                        "label": str(status_key).replace("_", " ").title(),
-                        "value": _int(status_val),
-                    }
-                )
-        if status_items:
-            layout.append(
-                {
-                    "type": "state_grid",
-                    "size": "XL",
-                    "title": t("AI Status Breakdown", locale),
-                    "items": status_items,
-                }
-            )
-
-    if not ai_events:
-        layout.append(
-            {
-                "type": "state_grid",
-                "size": "XL",
-                "title": t("AI Events", locale),
-                "items": [
-                    {
-                        "label": t("No events", locale),
-                        "value": t(
-                            "No AI assist events available for this run", locale
-                        ),
-                        "status": "empty",
-                    }
-                ],
-            }
-        )
-    else:
-        event_rows: list[list[str]] = []
-        for evt in ai_events[:50]:
-            if not isinstance(evt, dict):
-                continue
-            event_rows.append(
-                [
-                    str(evt.get("event_id", "")),
-                    str(evt.get("source_id", "")),
-                    str(evt.get("sender", "")),
-                    str(evt.get("subject", "")),
-                    str(evt.get("deterministic_case_type", "")),
-                    str(evt.get("ai_status", "")),
-                    t("Yes", locale) if evt.get("ai_used") else t("No", locale),
-                    str(evt.get("final_case_type", "")),
-                    str(evt.get("review_reason", "") or ""),
-                ]
-            )
-
-        layout.append(
-            {
-                "type": "status_table",
-                "size": "XL",
-                "title": t("AI Assist Events", locale),
-                "columns": [
-                    t("Event ID", locale),
-                    t("Source", locale),
-                    t("Sender", locale),
-                    t("Subject", locale),
-                    t("Case type", locale),
-                    t("AI status", locale),
-                    t("AI used", locale),
-                    t("Final type", locale),
-                    t("Review reason", locale),
-                ],
-                "rows": event_rows,
-            }
-        )
-
     if isinstance(adj_summary, dict) and adj_summary.get("available"):
         adj_kpi = [
             {"label": t("Eligible events", locale), "value": _int(adj_summary.get("eligible_count", 0))},
@@ -4225,10 +3931,15 @@ def _build_rop_ai_assist_layout(
                         "size": "XL",
                         "title": t("AI Adjudicator Status Breakdown", locale),
                         "items": status_items,
-                    }
-                )
+                }
+            )
 
-    final_summary = data.get("final_decision_summary", {})
+    final_decisions = data.get("final_decisions", {})
+    final_summary = (
+        final_decisions.get("summary", {})
+        if isinstance(final_decisions, dict)
+        else {}
+    )
     if isinstance(final_summary, dict) and final_summary.get("total_events", 0) > 0:
         decision_source_items = []
         src_counts = final_summary.get("decision_source_counts", {})
@@ -4255,6 +3966,116 @@ def _build_rop_ai_assist_layout(
                 "columns": 3,
                 "title": t("Final Decisions", locale),
                 "items": final_kpi,
+            }
+        )
+
+    status_counts = ai_summary.get("status_counts", {})
+    legacy_activity = bool(ai_events) or any(
+        _int(ai_summary.get(key, 0)) > 0
+        for key in (
+            "request_count",
+            "decision_count",
+            "result_count",
+            "ok_count",
+            "used_count",
+            "low_confidence_count",
+            "invalid_output_count",
+            "provider_unavailable_count",
+            "module_contract_unavailable_count",
+            "blocked_count",
+            "degraded_count",
+        )
+    ) or (
+        isinstance(status_counts, dict)
+        and any(_int(value) > 0 for value in status_counts.values())
+    )
+    if not legacy_activity:
+        if not layout:
+            layout.append(
+                {
+                    "type": "state_grid",
+                    "size": "XL",
+                    "title": t("AI Assist", locale),
+                    "items": [
+                        {
+                            "label": t("AI Assist unavailable", locale),
+                            "value": t(
+                                "No AI assist artifacts available for this run",
+                                locale,
+                            ),
+                            "status": "empty",
+                        }
+                    ],
+                }
+            )
+        return layout
+
+    layout.append(
+        {
+            "type": "kpi_grid",
+            "size": "XL",
+            "columns": 3,
+            "title": t("AI Assist Summary", locale),
+            "items": [
+                {"label": t("Eligible events", locale), "value": ai_summary.get("eligible_count", 0)},
+                {"label": t("Requests made", locale), "value": ai_summary.get("request_count", 0)},
+                {"label": t("Results OK", locale), "value": ai_summary.get("ok_count", 0)},
+                {"label": t("AI used", locale), "value": ai_summary.get("used_count", 0)},
+                {"label": t("Low confidence", locale), "value": ai_summary.get("low_confidence_count", 0)},
+                {"label": t("Degraded", locale), "value": ai_summary.get("degraded_count", 0)},
+            ],
+        }
+    )
+
+    if isinstance(status_counts, dict):
+        status_items = [
+            {
+                "label": str(key).replace("_", " ").title(),
+                "value": _int(value),
+            }
+            for key, value in status_counts.items()
+            if _int(value) > 0
+        ]
+        if status_items:
+            layout.append(
+                {
+                    "type": "state_grid",
+                    "size": "XL",
+                    "title": t("AI Status Breakdown", locale),
+                    "items": status_items,
+                }
+            )
+
+    if ai_events:
+        event_rows: list[list[str]] = []
+        for event in ai_events[:50]:
+            if isinstance(event, dict):
+                event_rows.append(
+                    [
+                        str(event.get("event_id", "")),
+                        str(event.get("source_id", "")),
+                        str(event.get("sender", "")),
+                        str(event.get("subject", "")),
+                        str(event.get("deterministic_case_type", "")),
+                        str(event.get("ai_status", "")),
+                        t("Yes", locale) if event.get("ai_used") else t("No", locale),
+                        str(event.get("final_case_type", "")),
+                        str(event.get("review_reason", "") or ""),
+                    ]
+                )
+        layout.append(
+            {
+                "type": "status_table",
+                "size": "XL",
+                "title": t("AI Assist Events", locale),
+                "columns": [
+                    t("Event ID", locale), t("Source", locale),
+                    t("Sender", locale), t("Subject", locale),
+                    t("Case type", locale), t("AI status", locale),
+                    t("AI used", locale), t("Final type", locale),
+                    t("Review reason", locale),
+                ],
+                "rows": event_rows,
             }
         )
 

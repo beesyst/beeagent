@@ -47,7 +47,9 @@
 - `storage/runs/<run_id>/rop_recommendations.json`
   - source for recommendations tab and Bitrix widget payload
 - `storage/runs/<run_id>/rop_final_decisions.json`
-  - source for final decisions read-model, AI adjudicator summary, and Bitrix widget final_decisions block
+  - artifact-first source for final decisions read-model and Bitrix widget `final_decisions` block
+  - missing, malformed or unsafe artifact uses a computed read-only fallback from `classified_events.json` and `rop_ai_adjudicator_results.json`
+  - GET/read-model fallback never writes storage
 - `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
   - source for AI adjudicator evidence in AI tab and event detail
 - `storage/interfaces/rop_routing_map.json`
@@ -206,12 +208,14 @@ Widget API response fields (MVP):
 
 - `summary` — counts per priority/bitrix state (same as UI-7)
 - `items` — recommendation items from `rop_recommendations.json`
-- `final_decisions` — optional block from `rop_final_decisions.json`
+- `final_decisions` — bounded block from the final decisions read-model
   - `summary.total_events`, `summary.decision_source_counts`, `summary.attention_count`
   - `events[]` — per-event final decision fields:
-    - `event_id`, `final_case_type`, `final_queue`, `final_action`
+    - `event_id`, `final_case_type`, `final_case_subtype`, `final_queue`, `final_action`
     - `final_decision_source`, `final_confidence`
-    - `needs_attention`, `attention_reason`, `bitrix_write_allowed` (always false)
+    - `needs_attention`, nullable `attention_reason`
+    - `automation_allowed`, `bitrix_write_allowed` (always false)
+  - `summary` is recalculated from the bounded `events[]` returned by widget `max_items`
 
 ### ROP final decisions read-model contract
 
@@ -237,17 +241,19 @@ Widget API response fields (MVP):
       "sender": "...",
       "subject": "...",
       "deterministic_case_type": "new_lead",
+      "deterministic_case_subtype": null,
       "deterministic_queue": "sales",
       "deterministic_action": "review_new_lead",
       "deterministic_confidence": 0.85,
       "final_case_type": "new_lead",
+      "final_case_subtype": null,
       "final_queue": "sales",
       "final_action": "review_new_lead",
       "final_decision_source": "ai_adjudicator",
       "final_confidence": 0.92,
       "needs_attention": false,
       "attention_reason": null,
-      "automation_allowed": true,
+      "automation_allowed": false,
       "bitrix_write_allowed": false
     }
   ]
@@ -256,13 +262,13 @@ Widget API response fields (MVP):
 
 Policy v1:
 
-- AI adjudicator `ok` → AI fields, `automation_allowed=true`
+- AI adjudicator `ok` → AI fields, `automation_allowed=false`
 - `low_confidence_preserve` → deterministic preserved, `needs_attention=true`, `automation_allowed=false`
 - `manual_review_degrade` → deterministic preserved, `needs_attention=true`, fallback manual_review queue/action
 - No AI result → deterministic fields, `final_decision_source=deterministic`
 - Invalid/unusable → `final_decision_source=fallback_policy`, `needs_attention=true`
 
-Always `bitrix_write_allowed=false`.
+Always `automation_allowed=false` and `bitrix_write_allowed=false`.
 
 ### Artifact allowlist additions (UI-8)
 
@@ -277,24 +283,24 @@ New allowlisted artifacts:
 
 `/rop?tab=ai_assist` now shows:
 
-- AI Assist summary (legacy) when available
 - AI Adjudicator summary block when `rop_ai_adjudicator_results.json` exists
-- Final Decisions summary block when `rop_final_decisions.json` exists
+- Final Decisions summary block for artifact-first or computed read-only data
+- legacy AI Assist summary only when legacy activity exists
 
 ### Event detail changes (UI-8)
 
 `/rop/events/{event_id}?run_id=<run_id>` now shows:
 
 - AI Adjudicator section when adjudicator data exists for the event
-- Final Decision section with final fields and decision source
+- Final Decision section with final fields, nullable subtype/attention reason and decision source
 
 ### ROP dashboard API changes (UI-8)
 
 `/api/rop/dashboard` now exposes:
 
 - `ai_adjudicator_summary` — adjudicator available/eligible/used/degraded counts
-- `final_decisions` — computed per-event final decisions (projection)
-- `final_decision_summary` — decision source counts and attention count
+- `final_decisions` — artifact-first or computed read-only per-event projection with nested `summary` and `events`
+- `final_decision_summary` — compatibility alias for `final_decisions.summary`
 
 Auth:
 
