@@ -396,6 +396,24 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     assert source["malformed_count"] == 0
     assert source["items_max"] == 50
 
+    from beeagent_module.core.rop_final_decision import (
+        load_or_build_final_decisions,
+    )
+
+    final_decisions_path = run_dir / "rop_final_decisions.json"
+    assert final_decisions_path.exists()
+    artifact = json.loads(final_decisions_path.read_text(encoding="utf-8"))
+    assert artifact["summary"]["total_events"] == 2
+    for event in artifact["events"]:
+        assert event["final_queue"] == "manual_review"
+        assert event["final_action"] == "manual_review"
+        assert event["automation_allowed"] is False
+        assert event["bitrix_write_allowed"] is False
+
+    loaded, source = load_or_build_final_decisions(run_dir)
+    assert source == "artifact"
+    assert loaded == artifact
+
 
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
@@ -2548,6 +2566,19 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         assert result["ai_reason"] == "Clear RFQ content"
         assert result["ai_risk_flags"] == ["marketing_conflict"]
         assert result["ai_error"] == ""
+
+        final_decisions = json.loads(
+            (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+        )
+        assert final_decisions["summary"]["total_events"] == 1
+        final_decision = final_decisions["events"][0]
+        assert final_decision["event_id"] == "evt-adj-001"
+        assert final_decision["final_decision_source"] == "ai_adjudicator"
+        assert final_decision["final_case_type"] == "new_lead"
+        assert final_decision["final_queue"] == "tender"
+        assert final_decision["final_action"] == "review_tender"
+        assert final_decision["automation_allowed"] is False
+        assert final_decision["bitrix_write_allowed"] is False
     finally:
         _remove_fake_package("test_stub_adj_ok")
 
@@ -2992,7 +3023,8 @@ def test_ai_adjudicator_low_confidence_routes_to_manual_review_result(
         assert event["recommended_queue"] == "manual_review"
         assert event["deterministic_case_type"] == "unknown"
         assert event["ai_adjudicator_status"] == "manual_review_degrade"
-        assert event["reason_code"] == "ai_low_confidence_manual_review"
+        assert event["reason_code"] == "deterministic_fallback"
+        assert event["ai_adjudicator_merge_reason"] == "ai_low_confidence_manual_review"
 
         ai_results = json.loads(
             (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
@@ -3046,7 +3078,7 @@ def test_ai_adjudicator_ok_result_can_clear_optional_case_subtype() -> None:
     assert events[0]["reasoning"] == "AI accepted no subtype"
 
 
-def test_ai_adjudicator_manual_review_degrade_updates_classified_events() -> None:
+def test_ai_adjudicator_manual_review_degrade_preserves_classified_events() -> None:
     from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
 
     events = [
@@ -3087,14 +3119,14 @@ def test_ai_adjudicator_manual_review_degrade_updates_classified_events() -> Non
     _apply_ai_adjudicator_results(events, results)
 
     assert events[0]["case_type"] == "existing_deal"
-    assert events[0]["case_subtype"] is None
-    assert events[0]["recommended_queue"] == "manual_review"
-    assert events[0]["correct_action"] == "manual_review"
+    assert events[0]["case_subtype"] == "existing_deal_procurement"
+    assert events[0]["recommended_queue"] == "procurement"
+    assert events[0]["correct_action"] == "check_bitrix"
     assert events[0]["should_rop_see"] is True
-    assert events[0]["confidence"] == 0.35
+    assert events[0]["confidence"] == 0.91
     assert events[0]["ai_adjudicator_status"] == "manual_review_degrade"
-    assert events[0]["reason_code"] == "ai_low_confidence_manual_review"
-    assert events[0]["reasoning"] == "Looks risky"
+    assert events[0]["reason_code"] == "existing_deal_reference_signal"
+    assert "reasoning" not in events[0]
 
 
 def test_ai_adjudicator_low_confidence_preserve_keeps_deterministic_result() -> None:

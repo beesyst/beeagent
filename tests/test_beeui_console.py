@@ -922,6 +922,85 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
     assert items[5]["href"] == "/rop?tab=bitrix&period=7d"
 
 
+def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None:
+    data = {
+        "run_id": "run-overview-actions",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {
+            "processed_events": 2,
+            "high_priority": 1,
+            "needs_review": 1,
+            "unreconciled": 1,
+        },
+        "series": {},
+        "period": "7d",
+        "configured_periods": ["7d"],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "lead@example.com",
+                    "subject": "Urgent request",
+                    "bot_priority": "high",
+                    "reason": "urgent_request",
+                    "recommended_next_step": "review",
+                }
+            ],
+            "needs_review": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "lead@example.com",
+                    "subject": "Urgent request",
+                    "bot_priority": "high",
+                    "reason": "needs_review",
+                    "recommended_next_step": "review",
+                }
+            ],
+            "unreconciled": [
+                {
+                    "event_id": "evt-2",
+                    "sender": "client@example.com",
+                    "subject": "Existing request",
+                    "bot_priority": "medium",
+                    "reason": "not_reconciled",
+                    "recommended_next_step": "reconcile",
+                }
+            ],
+        },
+    }
+
+    layout = build_rop_page_layout(data, tab="overview")
+
+    action_block = next(
+        block for block in layout if block.get("title") == "Action Required"
+    )
+    queue_block = next(
+        block for block in layout if block.get("type") == "data_table"
+    )
+
+    assert action_block["series"] == [2, 0]
+    assert "2 items need review" in action_block["subtitle"]
+    assert queue_block["rows"][0]["evidence"]["href"] == (
+        "/rop/events/evt-1?run_id=run-overview-actions"
+    )
+
+    ru_layout = build_rop_page_layout(data, tab="overview", locale="ru")
+    ru_queue_block = next(
+        block for block in ru_layout if block.get("type") == "data_table"
+    )
+
+    assert ru_queue_block["rows"][0]["evidence"]["href"] == (
+        "/rop/events/evt-1?run_id=run-overview-actions&lang=ru"
+    )
+
+
 def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
     """Bitrix errors should appear in KPI cards when non-zero."""
     data = {
@@ -1893,11 +1972,473 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
         "rop_ai_assist_requests_json",
         "rop_ai_assist_decisions_json",
         "rop_ai_assist_results_json",
+        "rop_ai_adjudicator_requests_json",
+        "rop_ai_adjudicator_decisions_json",
+        "rop_ai_adjudicator_results_json",
+        "rop_final_decisions_json",
     }
     link_ids = {l["artifact_id"] for l in links}
     assert link_ids == allowed
     available = [l for l in links if l["available"]]
     assert len(available) > 0
+
+
+def test_rop_dashboard_includes_ai_adjudicator_summary(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rich_rop_run(storage_dir, "run-adj-001")
+    adj_artifact = {
+        "counters": {
+            "adjudicator_enabled": 1,
+            "adjudicator_eligible_count": 10,
+            "adjudicator_used_count": 8,
+            "adjudicator_degraded_count": 2,
+        },
+        "results": [
+            {
+                "event_id": "evt-001",
+                "ai_used": True,
+                "ai_status": "ok",
+                "ai_confidence": 0.85,
+                "final_case_type": "new_lead",
+                "final_recommended_queue": "sales",
+                "final_correct_action": "review_new_lead",
+            },
+            {
+                "event_id": "evt-002",
+                "ai_used": True,
+                "ai_status": "low_confidence_preserve",
+                "ai_confidence": 0.45,
+                "deterministic_case_type": "existing_deal",
+                "final_case_type": "existing_deal",
+                "final_recommended_queue": "logistics",
+                "final_correct_action": "attach_to_deal",
+            },
+        ],
+    }
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(adj_artifact), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+    response = client.get("/api/rop/dashboard?run_id=run-adj-001")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert "ai_adjudicator_summary" in data
+    adj_summary = data["ai_adjudicator_summary"]
+    assert adj_summary["available"] is True
+    assert adj_summary["total_events"] == 2
+    assert adj_summary["ai_used_count"] == 2
+    assert "final_decisions" in data
+    assert "final_decision_summary" in data
+    fds = data["final_decisions"]["summary"]
+    assert fds["total_events"] > 0
+    assert fds["attention_count"] == 1
+
+
+def test_rop_dashboard_final_decisions_computed_projection(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rich_rop_run(storage_dir, "run-fd-001")
+    adj_artifact = {
+        "counters": {"adjudicator_enabled": 1, "adjudicator_eligible_count": 2, "adjudicator_used_count": 1},
+        "results": [
+            {
+                "event_id": "evt-001",
+                "ai_used": True,
+                "ai_status": "ok",
+                "ai_confidence": 0.92,
+                "final_case_type": "new_lead",
+                "final_recommended_queue": "sales",
+                "final_correct_action": "review_new_lead",
+            },
+            {
+                "event_id": "evt-002",
+                "ai_used": True,
+                "ai_status": "manual_review_degrade",
+                "ai_confidence": 0.30,
+                "ai_reason": "conflict_signals_detected",
+                "final_case_type": "existing_deal",
+                "final_recommended_queue": "manual_review",
+                "final_correct_action": "manual_review",
+            },
+        ],
+    }
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(adj_artifact), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+    response = client.get("/api/rop/dashboard?run_id=run-fd-001")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    fds = data["final_decisions"]["summary"]
+    assert fds["total_events"] == 5
+    assert fds["attention_count"] == 1
+    decisions = data["final_decisions"]["events"]
+    evt1 = next((d for d in decisions if d["event_id"] == "evt-001"), None)
+    assert evt1 is not None
+    assert evt1["final_decision_source"] == "ai_adjudicator"
+    assert evt1["automation_allowed"] is False
+    assert evt1["bitrix_write_allowed"] is False
+    evt2 = next((d for d in decisions if d["event_id"] == "evt-002"), None)
+    assert evt2 is not None
+    assert evt2["needs_attention"] is True
+    assert evt2["automation_allowed"] is False
+    assert evt2["bitrix_write_allowed"] is False
+
+
+def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    events = [
+        {"event_id": "e1", "case_type": "new_lead", "recommended_queue": "sales", "correct_action": "review_new_lead", "confidence": 0.85, "sender": "a@b.com", "subject": "Inquiry"},
+        {"event_id": "e2", "case_type": "existing_deal", "recommended_queue": "logistics", "correct_action": "attach_to_deal", "confidence": 0.60, "sender": "b@c.com", "subject": "Re: Order"},
+        {"event_id": "e3", "case_type": "irrelevant", "recommended_queue": "ignore", "correct_action": "ignore", "confidence": 0.95, "sender": "noreply@m.com", "subject": "Newsletter"},
+    ]
+    adj_results = [
+        {
+            "event_id": "e1",
+            "ai_status": "ok",
+            "ai_confidence": 0.92,
+            "final_case_type": "new_lead",
+            "final_recommended_queue": "tender",
+            "final_correct_action": "review_tender",
+        },
+        {
+            "event_id": "e2",
+            "ai_status": "manual_review_degrade",
+            "ai_reason": "conflict_signals_detected",
+            "ai_confidence": 0.35,
+            "final_case_type": "existing_deal",
+            "final_recommended_queue": "manual_review",
+            "final_correct_action": "manual_review",
+        },
+    ]
+
+    artifact = build_final_decisions(events, adj_results)
+    assert "summary" in artifact
+    assert "events" in artifact
+    assert artifact["summary"]["total_events"] == 3
+    assert artifact["summary"]["attention_count"] == 1
+    assert artifact["summary"]["decision_source_counts"]["ai_adjudicator"] == 1
+    assert artifact["summary"]["decision_source_counts"]["deterministic_preserved"] == 1
+
+    decisions = {d["event_id"]: d for d in artifact["events"]}
+
+    e1 = decisions["e1"]
+    assert e1["final_decision_source"] == "ai_adjudicator"
+    assert e1["final_case_type"] == "new_lead"
+    assert e1["final_queue"] == "tender"
+    assert e1["final_action"] == "review_tender"
+    assert e1["needs_attention"] is False
+    assert e1["automation_allowed"] is False
+    assert e1["bitrix_write_allowed"] is False
+
+    e2 = decisions["e2"]
+    assert e2["final_decision_source"] == "deterministic_preserved"
+    assert e2["needs_attention"] is True
+    assert e2["attention_reason"] == "conflict_signals_detected"
+    assert e2["final_queue"] == "logistics"
+    assert e2["final_action"] == "attach_to_deal"
+    assert e2["automation_allowed"] is False
+    assert e2["bitrix_write_allowed"] is False
+
+    e3 = decisions["e3"]
+    assert e3["final_decision_source"] == "deterministic"
+    assert e3["needs_attention"] is False
+    assert e3["automation_allowed"] is False
+    assert e3["bitrix_write_allowed"] is False
+
+
+def test_dashboard_prefers_final_decisions_artifact(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rich_rop_run(storage_dir, "run-fd-artifact")
+    artifact = {
+        "summary": {
+            "total_events": 1,
+            "decision_source_counts": {"artifact": 1},
+            "attention_count": 0,
+        },
+        "events": [
+            {
+                "event_id": "evt-artifact",
+                "final_case_type": "irrelevant",
+                "final_case_subtype": None,
+                "final_queue": "ignore",
+                "final_action": "ignore",
+                "final_decision_source": "artifact",
+                "final_confidence": 0.99,
+                "needs_attention": False,
+                "attention_reason": None,
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+            }
+        ],
+    }
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(artifact), encoding="utf-8"
+    )
+
+    data = build_rop_dashboard_read_model(storage_dir, "run-fd-artifact")
+
+    assert data["final_decisions"] == artifact
+    assert "final_decisions_artifact" not in data
+
+
+def test_unsafe_final_decisions_artifact_uses_computed_projection(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-fd-unsafe")
+    unsafe_artifact = {
+        "summary": {
+            "total_events": 1,
+            "decision_source_counts": {"deterministic": 1},
+            "attention_count": 0,
+        },
+        "events": [
+            {
+                "event_id": "evt-1",
+                "final_case_type": "new_lead",
+                "final_case_subtype": None,
+                "final_queue": "high_priority",
+                "final_action": "review",
+                "final_decision_source": "deterministic",
+                "final_confidence": 0.95,
+                "needs_attention": False,
+                "attention_reason": None,
+                "automation_allowed": True,
+                "bitrix_write_allowed": False,
+            }
+        ],
+    }
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(unsafe_artifact), encoding="utf-8"
+    )
+
+    final_decisions, source = load_or_build_final_decisions(run_dir)
+
+    assert source == "computed"
+    assert final_decisions["events"][0]["automation_allowed"] is False
+    assert final_decisions["events"][0]["bitrix_write_allowed"] is False
+
+
+def test_dashboard_rejects_final_decisions_artifact_with_unexpected_fields(
+    tmp_path: Path,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-fd-extra-field")
+    marker = "RAW-EML-MARKER"
+    artifact = {
+        "summary": {
+            "total_events": 1,
+            "decision_source_counts": {"deterministic": 1},
+            "attention_count": 0,
+        },
+        "events": [
+            {
+                "event_id": "evt-1",
+                "final_case_type": "new_lead",
+                "final_case_subtype": None,
+                "final_queue": "high_priority",
+                "final_action": "review",
+                "final_decision_source": "deterministic",
+                "final_confidence": 0.95,
+                "needs_attention": False,
+                "attention_reason": None,
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+                "raw_eml": marker,
+            }
+        ],
+    }
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(artifact), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/dashboard?run_id=run-fd-extra-field")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert marker not in json.dumps(data["final_decisions"])
+    assert any(
+        warning.get("code") == "missing_or_malformed_artifact"
+        for warning in data["warnings"]
+    )
+
+
+def test_recommendations_layout_enforces_read_only_execution_policy() -> None:
+    from beeagent_module.interfaces.ui.read_model import (
+        _build_rop_recommendations_layout,
+    )
+
+    layout = _build_rop_recommendations_layout(
+        {
+            "run_id": "run-recommendation-policy",
+            "delivery_recommendations": {
+                "aggregate": {},
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "recommended_action": "create_lead_draft",
+                        "safe_to_execute": True,
+                        "requires_human_confirmation": False,
+                    }
+                ],
+            },
+        }
+    )
+
+    table = next(block for block in layout if block.get("title") == "Recommendation Items")
+    assert table["rows"][0]["safe"] == "No"
+    assert table["rows"][0]["confirm"] == "Yes"
+
+
+def test_ai_adjudicator_layout_precedes_final_and_hides_empty_legacy() -> None:
+    data = {
+        "ai_assist_summary": {
+            "evidence_available": True,
+            "request_count": 0,
+            "decision_count": 0,
+            "result_count": 0,
+            "status_counts": {},
+        },
+        "ai_assist_events": [],
+        "ai_adjudicator_summary": {
+            "available": True,
+            "eligible_count": 1,
+            "used_count": 1,
+            "degraded_count": 0,
+            "total_events": 1,
+            "status_counts": {"ok": 1},
+        },
+        "final_decisions": {
+            "summary": {
+                "total_events": 1,
+                "decision_source_counts": {"ai_adjudicator": 1},
+                "attention_count": 0,
+            },
+            "events": [],
+        },
+    }
+
+    layout = build_rop_page_layout(data, tab="ai_assist")
+    titles = [block.get("title") for block in layout]
+
+    assert titles[:3] == [
+        "AI Adjudicator Summary",
+        "AI Adjudicator Status Breakdown",
+        "Final Decisions",
+    ]
+    assert "AI Assist Summary" not in titles
+    assert "AI Events" not in titles
+
+
+def test_deterministic_final_decisions_render_without_ai_activity() -> None:
+    data = {
+        "ai_assist_summary": {},
+        "ai_assist_events": [],
+        "ai_adjudicator_summary": {"available": False},
+        "final_decisions": {
+            "summary": {
+                "total_events": 1,
+                "decision_source_counts": {"deterministic": 1},
+                "attention_count": 0,
+            },
+            "events": [],
+        },
+    }
+
+    layout = build_rop_page_layout(data, tab="ai_assist")
+
+    assert [block.get("title") for block in layout] == ["Final Decisions"]
+
+
+def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-ru-ui8")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_used": True,
+                        "ai_status": "manual_review_degrade",
+                        "ai_confidence": 0.3,
+                        "ai_reason": "review needed",
+                        "final_case_type": "new_lead",
+                        "final_recommended_queue": "manual_review",
+                        "final_correct_action": "manual_review",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get("/rop/events/evt-1?run_id=run-detail-ru-ui8&lang=ru")
+
+    assert response.status_code == 200
+    assert "Статус AI арбитра" in response.text
+    assert "Предложенная AI очередь" in response.text
+    assert "Причина внимания" in response.text
+    assert "AI adjudicator status" not in response.text
+    assert "AI proposed queue" not in response.text
+    assert "Attention reason" not in response.text
+
+
+def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-final")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps({"results": []}), encoding="utf-8"
+    )
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps({}), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-final", "evt-1"
+    )
+
+    final_decision = data["final_decision"]
+    assert final_decision["event_id"] == "evt-1"
+    assert final_decision["final_decision_source"] == "deterministic"
+    availability = {item["artifact_id"]: item["available"] for item in data["evidence_links"]}
+    assert availability["rop_ai_adjudicator_results_json"] is True
+    assert availability["rop_final_decisions_json"] is True
+
+
+def test_final_decision_get_routes_do_not_change_storage(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-final-read-only")
+    before = {
+        path.relative_to(run_dir): path.read_bytes()
+        for path in run_dir.rglob("*")
+        if path.is_file()
+    }
+    client = _client(storage_dir)
+
+    dashboard = client.get("/api/rop/dashboard?run_id=run-final-read-only")
+    detail = client.get("/api/rop/events/evt-1?run_id=run-final-read-only")
+
+    assert dashboard.status_code == 200
+    assert detail.status_code == 200
+    after = {
+        path.relative_to(run_dir): path.read_bytes()
+        for path in run_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert not (run_dir / "rop_final_decisions.json").exists()
 
 
 def test_api_rop_dashboard_includes_current_state_queues(tmp_path: Path) -> None:
@@ -2533,7 +3074,7 @@ def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
         block for block in layout if block.get("title") == "Action Required"
     )
     assert action_card["type"] == "chart"
-    assert "2 items need review" in action_card["subtitle"]
+    assert "0 items need review" in action_card["subtitle"]
 
 
 def test_rop_overview_no_detailed_metrics_separate_card() -> None:
@@ -3023,7 +3564,8 @@ class TestUi6It30:
 
         html_response = client.get("/rop?tab=ai_assist")
         assert html_response.status_code == 200
-        assert "AI Assist not used" in html_response.text
+        assert "Final Decisions" in html_response.text
+        assert "AI Assist Summary" not in html_response.text
         assert "not_requested" not in html_response.text
 
     def test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
@@ -3069,7 +3611,8 @@ class TestUi6It30:
         client = _client(storage_dir)
         response = client.get("/rop?tab=ai_assist&lang=ru")
         assert response.status_code == 200
-        assert "AI ассистент не использовался" in response.text
+        assert "Итоговые решения" in response.text
+        assert "Сводка AI ассистента" not in response.text
 
     def test_new_it30_artifact_ids_allowlisted(self) -> None:
         from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
@@ -3729,8 +4272,8 @@ def test_rop_recommendations_tab_matches_widget_items(
                 "confidence": 0.91,
                 "ai_used": False,
                 "bitrix_status": "not_found",
-                "safe_to_execute": False,
-                "requires_human_confirmation": True,
+                "safe_to_execute": True,
+                "requires_human_confirmation": False,
                 "evidence_links": [
                     "/api/runs/run-rec-tab/artifacts/classified_events_json"
                 ],
@@ -3787,6 +4330,9 @@ def test_rop_recommendations_tab_matches_widget_items(
     assert widget_items[0]["detail_url"].endswith(
         "/api/bitrix/rop/widget/events/evt-1?run_id=run-rec-tab"
     )
+    final_decisions = widget_response.json()["data"]["final_decisions"]
+    assert isinstance(final_decisions["summary"], dict)
+    assert isinstance(final_decisions["events"], list)
 
     detail_response = client.get(
         "/api/bitrix/rop/widget/events/evt-1",
@@ -3797,9 +4343,14 @@ def test_rop_recommendations_tab_matches_widget_items(
     detail_item = detail_response.json()["data"]
     assert detail_item["sender"] == "test@example.com"
     assert detail_item["subject"] == "Test"
+    assert detail_item["safe_to_execute"] is False
+    assert detail_item["requires_human_confirmation"] is True
     assert detail_item["evidence_links"] == [
         "/api/runs/run-rec-tab/artifacts/classified_events_json"
     ]
+    assert detail_item["final_decision"]["event_id"] == "evt-1"
+    assert detail_item["final_decision"]["automation_allowed"] is False
+    assert detail_item["final_decision"]["bitrix_write_allowed"] is False
 
 
 def test_widget_api_allows_bearer_without_beeui_session(
@@ -3899,3 +4450,78 @@ def test_widget_api_rejects_missing_or_invalid_token(
 
     assert missing.status_code == 401
     assert invalid.status_code == 401
+
+
+def test_widget_api_returns_final_decisions_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rich_rop_run(storage_dir, "run-widget-fd")
+    final_decisions = {
+        "summary": {
+            "total_events": 2,
+            "decision_source_counts": {"deterministic": 2},
+            "attention_count": 0,
+        },
+        "events": [
+            {
+                "event_id": "evt-001",
+                "final_case_type": "new_lead",
+                "final_case_subtype": None,
+                "final_queue": "sales",
+                "final_action": "review_new_lead",
+                "final_decision_source": "deterministic",
+                "final_confidence": 0.85,
+                "needs_attention": False,
+                "attention_reason": None,
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+            },
+            {
+                "event_id": "evt-002",
+                "final_case_type": "existing_deal",
+                "final_case_subtype": "follow_up",
+                "final_queue": "logistics",
+                "final_action": "attach_to_deal",
+                "final_decision_source": "deterministic",
+                "final_confidence": 0.7,
+                "needs_attention": False,
+                "attention_reason": None,
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+            }
+        ],
+    }
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(final_decisions), encoding="utf-8"
+    )
+    settings = _build_settings()
+    settings["bitrix"] = {
+        "widget": {
+            "enabled": True,
+            "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+            "default_period": "7d",
+            "max_items": 1,
+        }
+    }
+    monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
+    client = _client(storage_dir, settings=settings)
+    response = client.get(
+        "/api/bitrix/rop/widget",
+        params={"run_id": "run-widget-fd"},
+        headers={"Authorization": "Bearer widget-token"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert "final_decisions" in data
+    fd = data["final_decisions"]
+    assert fd["summary"]["total_events"] == 1
+    assert fd["summary"]["decision_source_counts"] == {"deterministic": 1}
+    assert fd["summary"]["attention_count"] == 0
+    assert len(fd["events"]) == 1
+    assert fd["events"][0]["event_id"] == "evt-001"
+    assert fd["events"][0]["final_case_subtype"] is None
+    assert fd["events"][0]["attention_reason"] is None
+    assert fd["events"][0]["automation_allowed"] is False
+    assert fd["events"][0]["bitrix_write_allowed"] is False

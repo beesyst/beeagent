@@ -8216,8 +8216,6 @@ Tests:
 
 * `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
 
----
-
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

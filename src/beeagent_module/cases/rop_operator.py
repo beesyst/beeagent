@@ -26,6 +26,7 @@ from beeagent_module.core.rop_ai_assist import (
     run_ai_assist_for_event,
     write_ai_assist_artifacts,
 )
+from beeagent_module.core.rop_final_decision import build_final_decisions
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 from beeagent_module.core.settings import (
     apply_runtime_settings_overrides,
@@ -1201,6 +1202,23 @@ def run_rop_batch_case(
             ai_requested_count,
         )
 
+        final_decisions = build_final_decisions(
+            events=enriched_classified,
+            adjudicator_results=adj_results,
+        )
+        final_decisions_path = run_dir / "rop_final_decisions.json"
+        final_decisions_path.write_text(
+            json.dumps(final_decisions, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(final_decisions_path.relative_to(storage_dir).as_posix())
+        logger.info(
+            "rop_final_decisions written: run_id=%s events=%d attention=%d",
+            effective_run_id,
+            len(final_decisions.get("events", [])),
+            final_decisions.get("summary", {}).get("attention_count", 0),
+        )
+
         payload: dict[str, Any] = {
             "period": intake_metadata.get("period", ""),
             "events": enriched_classified,
@@ -1613,7 +1631,6 @@ def _apply_ai_adjudicator_results(
     events: list[dict[str, Any]],
     results: list[dict[str, Any]],
 ) -> None:
-    accepted_statuses = {"ok", "manual_review_degrade", "low_confidence_preserve"}
     results_by_event_id = {
         result.get("event_id", ""): result
         for result in results
@@ -1627,16 +1644,13 @@ def _apply_ai_adjudicator_results(
         result = results_by_event_id.get(event.get("event_id", ""))
         if not isinstance(result, dict):
             continue
-        if result.get("ai_status") not in accepted_statuses:
-            continue
-
         event["ai_adjudicator_used"] = bool(result.get("ai_used", False))
         event["ai_adjudicator_status"] = result.get("ai_status", "")
         event["ai_adjudicator_confidence"] = result.get("ai_confidence")
         event["ai_adjudicator_reason"] = result.get("ai_reason", "")
         event["ai_adjudicator_risk_flags"] = list(result.get("ai_risk_flags", []))
         event["ai_adjudicator_merge_reason"] = result.get("merge_reason", "")
-        if result.get("ai_status") != "low_confidence_preserve":
+        if result.get("ai_status") == "ok":
             for key in _AI_ADJUDICATOR_FINAL_KEYS:
                 final_key = f"final_{key}"
                 if final_key in result:

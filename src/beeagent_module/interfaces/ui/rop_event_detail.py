@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from beeagent_module.core.rop_final_decision import (
+    find_final_decision,
+    load_or_build_final_decisions,
+)
+from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
 
 
@@ -121,6 +126,7 @@ def build_rop_event_detail_read_model(
     attachment_extraction = _read_json(run_dir / "attachment_extraction.json")
     thread_context = _read_json(run_dir / "mail_thread_context.json")
     ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
+    ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
     action_drafts = _read_json(run_dir / "rop_action_drafts.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
@@ -253,6 +259,48 @@ def build_rop_event_detail_read_model(
     else:
         ai_section = {"ai_assist_status": "unavailable"}
 
+    final_decision_section: dict[str, Any] = {}
+    adj_section: dict[str, Any] = {}
+
+    if isinstance(ai_adjudicator_results, dict):
+        matched = _match_by_event_id(ai_adjudicator_results, event_id)
+        if matched:
+            adj_section = {
+                "ai_adjudicator_used": bool(matched.get("ai_used", False)),
+                "ai_adjudicator_status": _str(matched.get("ai_status", "")),
+                "ai_adjudicator_confidence": matched.get("ai_confidence"),
+                "ai_adjudicator_reason": _str(matched.get("ai_reason", "")),
+                "final_case_type": _str(matched.get("final_case_type", "")),
+                "final_case_subtype": _str(matched.get("final_case_subtype", "")),
+                "final_recommended_queue": _str(matched.get("final_recommended_queue", "")),
+                "final_correct_action": _str(matched.get("final_correct_action", "")),
+            }
+
+    final_decisions, _ = load_or_build_final_decisions(run_dir)
+    final_decision = find_final_decision(final_decisions, event_id)
+    if final_decision:
+        final_case_subtype = final_decision.get("final_case_subtype")
+        attention_reason = final_decision.get("attention_reason")
+        final_decision_section = {
+            "event_id": _str(final_decision.get("event_id", "")),
+            "final_case_type": _str(final_decision.get("final_case_type", "")),
+            "final_case_subtype": (
+                final_case_subtype if isinstance(final_case_subtype, str) else None
+            ),
+            "final_queue": _str(final_decision.get("final_queue", "")),
+            "final_action": _str(final_decision.get("final_action", "")),
+            "final_confidence": final_decision.get("final_confidence"),
+            "final_decision_source": _str(
+                final_decision.get("final_decision_source", "")
+            ),
+            "needs_attention": bool(final_decision.get("needs_attention", False)),
+            "attention_reason": (
+                attention_reason if isinstance(attention_reason, str) else None
+            ),
+            "automation_allowed": False,
+            "bitrix_write_allowed": False,
+        }
+
     bitrix_section: dict[str, Any] = {}
     bitrix_available = False
     if isinstance(bitrix_reconciliation, dict):
@@ -311,6 +359,8 @@ def build_rop_event_detail_read_model(
         "attachment_extraction_json",
         "mail_thread_context_json",
         "rop_ai_assist_results_json",
+        "rop_ai_adjudicator_results_json",
+        "rop_final_decisions_json",
         "bitrix_reconciliation_json",
         "rop_action_drafts_json",
         "rop_review_table_tsv",
@@ -318,8 +368,7 @@ def build_rop_event_detail_read_model(
     ]
     evidence_links: list[dict[str, Any]] = []
     for aid in evidence_ids:
-        rel_path = _artifact_rel_path(aid)
-        available = bool(rel_path and (run_dir / rel_path).is_file())
+        available = resolve_artifact_path(storage_dir, run_id, aid) is not None
         evidence_links.append(
             {
                 "artifact_id": aid,
@@ -352,6 +401,8 @@ def build_rop_event_detail_read_model(
         "classification": classification_section,
         "thread": thread_section,
         "ai_assist": ai_section,
+        "ai_adjudicator": adj_section,
+        "final_decision": final_decision_section,
         "bitrix": bitrix_section,
         "action_draft": action_draft_section,
         "attachments": attachments_section,
@@ -389,6 +440,8 @@ def build_rop_event_detail_page_model(
     classification = _safe_dict(data.get("classification"))
     thread = _safe_dict(data.get("thread"))
     ai_assist = _safe_dict(data.get("ai_assist"))
+    ai_adjudicator = _safe_dict(data.get("ai_adjudicator"))
+    final_decision = _safe_dict(data.get("final_decision"))
     bitrix = _safe_dict(data.get("bitrix"))
     action_draft = _safe_dict(data.get("action_draft"))
     attachments = _safe_list(data.get("attachments"))
@@ -460,6 +513,38 @@ def build_rop_event_detail_page_model(
                     ("AI confidence", ai_assist.get("ai_assist_confidence")),
                     ("Final type", ai_assist.get("final_case_type")),
                     ("Final priority", ai_assist.get("final_priority")),
+                ]
+            ),
+        },
+        {
+            "kind": "key_value",
+            "title": t("AI Adjudicator", lang),
+            "items": _page_kv_items(
+                [
+                    (t("AI adjudicator used", lang), ai_adjudicator.get("ai_adjudicator_used")),
+                    (t("AI adjudicator status", lang), ai_adjudicator.get("ai_adjudicator_status")),
+                    (t("AI adjudicator confidence", lang), ai_adjudicator.get("ai_adjudicator_confidence")),
+                    (t("AI adjudicator reason", lang), ai_adjudicator.get("ai_adjudicator_reason")),
+                    (t("AI proposed case type", lang), ai_adjudicator.get("final_case_type")),
+                    (t("AI proposed queue", lang), ai_adjudicator.get("final_recommended_queue")),
+                    (t("AI proposed action", lang), ai_adjudicator.get("final_correct_action")),
+                ]
+            ),
+        },
+        {
+            "kind": "key_value",
+            "title": t("Final decision", lang),
+            "items": _page_kv_items(
+                [
+                    (t("Final case type", lang), final_decision.get("final_case_type")),
+                    (t("Final queue", lang), final_decision.get("final_queue")),
+                    (t("Final action", lang), final_decision.get("final_action")),
+                    (t("Final confidence", lang), final_decision.get("final_confidence")),
+                    (t("Decision source", lang), final_decision.get("final_decision_source")),
+                    (t("Needs attention", lang), final_decision.get("needs_attention")),
+                    (t("Attention reason", lang), final_decision.get("attention_reason")),
+                    (t("Automation allowed", lang), final_decision.get("automation_allowed")),
+                    (t("Bitrix write allowed", lang), final_decision.get("bitrix_write_allowed")),
                 ]
             ),
         },
@@ -541,18 +626,3 @@ def build_rop_event_detail_page_model(
         "warnings": [w for w in _safe_list(data.get("warnings")) if isinstance(w, str)],
         "sections": sections,
     }
-
-
-def _artifact_rel_path(artifact_id: str) -> str | None:
-    mapping = {
-        "normalized_events_json": "normalized_events.json",
-        "classified_events_json": "classified_events.json",
-        "attachment_extraction_json": "attachment_extraction.json",
-        "mail_thread_context_json": "mail_thread_context.json",
-        "rop_ai_assist_results_json": "rop_ai_assist_results.json",
-        "bitrix_reconciliation_json": "bitrix_reconciliation.json",
-        "rop_action_drafts_json": "rop_action_drafts.json",
-        "rop_review_table_tsv": "rop_review_table.tsv",
-        "operator_summary_json": "operator_summary.json",
-    }
-    return mapping.get(artifact_id)
