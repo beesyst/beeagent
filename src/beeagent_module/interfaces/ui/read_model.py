@@ -2314,6 +2314,63 @@ _OVERVIEW_PERIODS: tuple[str, ...] = (
 )
 
 
+def _format_datetime_display(ts_str: str | None, locale: str = "en") -> str:
+    """Format an ISO timestamp as DD.MM.YYYY, HH:MM."""
+    if not ts_str or not isinstance(ts_str, str):
+        return t("n/a", locale)
+    dt = _parse_utc_datetime(ts_str)
+    if dt is None:
+        return ts_str
+    return f"{dt.day:02d}.{dt.month:02d}.{dt.year}, {dt.hour:02d}:{dt.minute:02d}"
+
+
+def _format_date_short(dt: datetime, locale: str = "en") -> str:
+    """Format a datetime as DD.MM.YYYY (no time)."""
+    return f"{dt.day:02d}.{dt.month:02d}.{dt.year}"
+
+
+def _format_period_display(
+    from_ts: str | None,
+    to_ts: str | None,
+    locale: str = "en",
+) -> str:
+    """Format a date range as period string like 07.06–09.06.2026."""
+    from_dt = _parse_utc_datetime(from_ts) if from_ts else None
+    to_dt = _parse_utc_datetime(to_ts) if to_ts else None
+    if not from_dt and not to_dt:
+        return t("n/a", locale)
+    if not from_dt:
+        return _format_date_short(to_dt, locale)  # type: ignore[arg-type]
+    if not to_dt:
+        return _format_date_short(from_dt, locale)  # type: ignore[arg-type]
+
+    if from_dt.date() == to_dt.date():
+        return _format_date_short(from_dt, locale)
+
+    if from_dt.year == to_dt.year:
+        if from_dt.month == to_dt.month:
+            return f"{from_dt.day:02d}.{from_dt.month:02d}–{to_dt.day:02d}.{to_dt.month:02d}.{from_dt.year}"
+        return (
+            f"{from_dt.day:02d}.{from_dt.month:02d} – "
+            f"{to_dt.day:02d}.{to_dt.month:02d}.{from_dt.year}"
+        )
+    return (
+        f"{from_dt.day:02d}.{from_dt.month:02d}.{from_dt.year} – "
+        f"{to_dt.day:02d}.{to_dt.month:02d}.{to_dt.year}"
+    )
+
+
+def _build_strategy_display_label(selected_count: int, locale: str = "en") -> str:
+    """Build a human-readable strategy label from the selected count."""
+    if selected_count == 0:
+        return t("No selection", locale)
+    latest = t("Latest", locale)
+    msgs = t("messages", locale)
+    if locale == "ru":
+        return f"{latest} {selected_count} {msgs}"
+    return f"{latest} {selected_count} {msgs}"
+
+
 def _period_label(period: str, locale: str = "en") -> str:
     return t(_PERIOD_LABELS.get(period, period), locale)
 
@@ -2691,46 +2748,83 @@ def _build_latest_selection_block(
     if not isinstance(latest_selection, dict):
         latest_selection = {}
 
+    selected_count = _int(latest_selection.get("selected_count", 0))
+    source_count = _int(latest_selection.get("source_count", 0))
+    newest_raw = latest_selection.get("newest_message_at")
+    oldest_raw = latest_selection.get("oldest_message_at")
+
+    # Build human-readable strategy label from actual count
+    strategy_display = _build_strategy_display_label(selected_count, locale)
+
+    # Format timestamps as human-readable
+    newest_display = _format_datetime_display(newest_raw, locale)
+    oldest_display = _format_datetime_display(oldest_raw, locale)
+
+    # Build period display from newest/oldest timestamps
+    period_display = _format_period_display(oldest_raw, newest_raw, locale)
+
     source_lines: list[str] = []
     for source in latest_selection.get("sources", []):
         if not isinstance(source, dict):
             continue
         display_name = str(source.get("display_name") or source.get("source_id") or "")
-        selected_count = _int(source.get("selected_count", 0))
-        available_count = _int(source.get("available_count", 0))
-        if available_count > 0:
-            source_lines.append(f"{display_name}: {selected_count}/{available_count}")
+        src_selected = _int(source.get("selected_count", 0))
+        src_available = _int(source.get("available_count", 0))
+        if src_available > 0:
+            source_lines.append(f"{display_name}: {src_selected}/{src_available}")
         else:
-            source_lines.append(f"{display_name}: {selected_count}")
+            source_lines.append(f"{display_name}: {src_selected}")
+
+    items: list[dict[str, Any]] = [
+        {
+            "label": t("Selected emails", locale),
+            "value": selected_count,
+        },
+    ]
+
+    if period_display != t("n/a", locale):
+        items.append(
+            {
+                "label": t("Period", locale),
+                "value": period_display,
+            }
+        )
+
+    if source_count > 0:
+        items.append(
+            {
+                "label": t("Sources", locale),
+                "value": source_count,
+            }
+        )
+
+    # Show source detail if multiple sources or explicit breakdown
+    if source_lines:
+        items.append(
+            {
+                "label": t("Source selection", locale),
+                "value": " | ".join(source_lines),
+            }
+        )
+
+    items.append(
+        {
+            "label": t("Newest message", locale),
+            "value": newest_display,
+        }
+    )
+    items.append(
+        {
+            "label": t("Oldest message", locale),
+            "value": oldest_display,
+        }
+    )
 
     return {
         "type": "state_grid",
         "size": "XL",
-        "title": t("Latest selection", locale),
-        "items": [
-            {
-                "label": t("Selected emails", locale),
-                "value": latest_selection.get("selected_count", 0),
-            },
-            {
-                "label": t("Strategy", locale),
-                "value": latest_selection.get("strategy", "unknown"),
-            },
-            {
-                "label": t("Source selection", locale),
-                "value": " | ".join(source_lines)
-                if source_lines
-                else t("No source data", locale),
-            },
-            {
-                "label": t("Newest message", locale),
-                "value": latest_selection.get("newest_message_at") or t("n/a", locale),
-            },
-            {
-                "label": t("Oldest message", locale),
-                "value": latest_selection.get("oldest_message_at") or t("n/a", locale),
-            },
-        ],
+        "title": f"{t('Latest selection', locale)} — {strategy_display}",
+        "items": items,
     }
 
 

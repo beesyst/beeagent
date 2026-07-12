@@ -3692,6 +3692,121 @@ class TestUi6It30:
             assert "raw_eml" not in response.text.lower()
             assert "attachment_content" not in response.text.lower()
 
+    # --- Latest selection display formatting tests ---
+
+    def test_latest_selection_block_uses_human_readable_strategy_label(
+        self, tmp_path: Path
+    ) -> None:
+        """Internal strategy key must not appear; display label based on selected_count."""
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-strategy-label")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        html = response.text
+        # Internal key must NOT be visible as primary text
+        assert "latest_n_by_internaldate_desc" not in html
+        # Display label based on selected_count (5) must appear
+        assert "Latest 5 messages" in html
+
+    def test_latest_selection_block_ru_human_readable_datetime(
+        self, tmp_path: Path
+    ) -> None:
+        """Russian locale must show DD.MM.YYYY format without raw ISO or UTC offset."""
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-ru-datetime")
+        client = _client(storage_dir)
+        response = client.get("/rop?lang=ru")
+        assert response.status_code == 200
+        html = response.text
+        # Must NOT contain raw ISO timestamp as visible text
+        assert "2026-06-28T12:00:00+00:00" not in html
+        # Must NOT contain UTC offset
+        assert "+00:00" not in html
+        # Must contain DD.MM.YYYY formatted date
+        assert "28.06.2026" in html
+        # Must contain Russian block title
+        assert "Последняя выборка" in html
+
+    def test_latest_selection_block_en_formats_datetime(
+        self, tmp_path: Path
+    ) -> None:
+        """English locale must show DD.MM.YYYY format without raw ISO."""
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-en-datetime")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        html = response.text
+        # Must NOT contain raw ISO timestamp
+        assert "2026-06-28T12:00:00+00:00" not in html
+        # Must contain DD.MM.YYYY formatted date
+        assert "28.06.2026" in html
+
+    def test_latest_selection_api_preserves_raw_technical_fields(
+        self, tmp_path: Path
+    ) -> None:
+        """API must still return raw strategy key and ISO timestamps for backward compat."""
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-api-raw")
+        client = _client(storage_dir)
+        response = client.get("/api/rop/dashboard")
+        assert response.status_code == 200
+        payload = response.json()["data"]["latest_selection"]
+        # Raw technical fields must be preserved
+        assert payload["strategy"] == "latest_n_by_internaldate_desc"
+        assert payload["newest_message_at"] == "2026-06-28T12:00:00+00:00"
+        assert payload["oldest_message_at"] == "2026-06-25T07:30:00+00:00"
+        # Display fields must also be present
+        assert payload["selected_count"] == 5
+        assert payload["source_count"] == 1
+
+    def test_latest_selection_period_display(self, tmp_path: Path) -> None:
+        """Period display must be shown in the block."""
+        storage_dir = _make_storage(tmp_path)
+        self._write_full_it30_run(storage_dir, "run-period")
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        html = response.text
+        # Period should be shown (newest 28.06, oldest 25.06)
+        assert "25.06" in html and "28.06" in html
+
+    def test_latest_selection_single_message(self, tmp_path: Path) -> None:
+        """Single message selection must work without errors."""
+        storage_dir = _make_storage(tmp_path)
+        run_dir = self._write_full_it30_run(storage_dir, "run-single-msg")
+        # Override mailbox_selection with single message
+        mailbox_selection = {
+            "run_id": "run-single-msg",
+            "strategy": "latest_n_by_internaldate_desc",
+            "sources": [
+                {
+                    "source_id": "hotline_mailbox",
+                    "source_display_name": "Welding Hotline mailbox",
+                    "selected_count": 1,
+                    "available_count": 5,
+                    "messages": [
+                        {
+                            "source_message_id": "m-001",
+                            "internal_date": "2026-06-28T12:00:00+00:00",
+                            "message_id": "<m-001@example.com>",
+                            "subject": "Test",
+                            "selected": True,
+                        },
+                    ],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "mailbox_selection.json").write_text(
+            json.dumps(mailbox_selection), encoding="utf-8"
+        )
+        client = _client(storage_dir)
+        response = client.get("/rop")
+        assert response.status_code == 200
+        assert "Latest 1" in response.text or "Latest selection" in response.text
+
 
 def _build_auth_settings(enabled: bool = False) -> dict:
     settings = _build_settings()
