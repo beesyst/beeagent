@@ -48,3 +48,4 @@ testpaths = ["tests"]
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
+beeui = { path = "../../beeui", editable = true }

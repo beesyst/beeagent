@@ -733,3 +733,250 @@ class TestSettingsValidation:
         settings = load_settings(_project_root() / "config" / "settings.yml")
         for p in settings["rop"]["dashboard"]["periods"]:
             validate_period(p)
+
+
+# ── Filter tests ───────────────────────────────────────────────────────────
+
+
+class TestQueueFilters:
+    """Tests for queue filter validation and application."""
+
+    def test_validate_filter_params_accepts_empty(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params({})
+        assert errors == []
+
+    def test_validate_filter_params_accepts_valid(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-30",
+                "sender": "test@example.com",
+                "subject": "test",
+                "classification": "new_lead",
+                "priority": "high",
+                "bitrix_status": "not_found",
+            }
+        )
+        assert errors == []
+
+    def test_validate_filter_params_rejects_bad_date(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"date_from": "not-a-date"}
+        )
+        assert any("Invalid date_from" in e for e in errors)
+
+    def test_validate_filter_params_rejects_date_from_after_to(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"date_from": "2026-06-30", "date_to": "2026-06-01"}
+        )
+        assert any("date_from must not be after date_to" in e for e in errors)
+
+    def test_validate_filter_params_rejects_bad_classification(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"classification": "non_existent_type"}
+        )
+        assert any("Invalid classification" in e for e in errors)
+
+    def test_validate_filter_params_rejects_bad_priority(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"priority": "urgent"}
+        )
+        assert any("Invalid priority" in e for e in errors)
+
+    def test_validate_filter_params_rejects_bad_bitrix_status(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"bitrix_status": "non_existent"}
+        )
+        assert any("Invalid bitrix_status" in e for e in errors)
+
+    def test_apply_queue_filters_classification(self) -> None:
+        events = [
+            {"event_id": "1", "case_type": "new_lead", "sender": "a@b.com"},
+            {"event_id": "2", "case_type": "existing_deal", "sender": "c@d.com"},
+            {"event_id": "3", "case_type": "irrelevant", "sender": "e@f.com"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"classification": "new_lead"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_priority(self) -> None:
+        events = [
+            {"event_id": "1", "priority": "high", "case_type": "new_lead"},
+            {"event_id": "2", "priority": "medium", "case_type": "new_lead"},
+            {"event_id": "3", "priority": "low", "case_type": "new_lead"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"priority": "high"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_sender_substring_case_insensitive(self) -> None:
+        events = [
+            {"event_id": "1", "sender": "Alice@Example.com"},
+            {"event_id": "2", "sender": "Bob@Test.com"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"sender": "alice"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_subject_substring(self) -> None:
+        events = [
+            {"event_id": "1", "subject": "Invoice for March"},
+            {"event_id": "2", "subject": "Welcome letter"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"subject": "invoice"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_bitrix_status(self) -> None:
+        events = [
+            {"event_id": "1", "sender": "a@b.com"},
+            {"event_id": "2", "sender": "c@d.com"},
+            {"event_id": "3", "sender": "e@f.com"},
+        ]
+        bitrix_status_by_event = {
+            "1": "matched",
+            "2": "not_found",
+            "3": "matched",
+        }
+        result = rop_dashboard_module.apply_queue_filters(
+            events, bitrix_status_by_event, {"bitrix_status": "not_found"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "2"
+
+    def test_apply_queue_filters_date_range(self) -> None:
+        events = [
+            {
+                "event_id": "1",
+                "event_date": "2026-06-15T10:00:00Z",
+            },
+            {
+                "event_id": "2",
+                "event_date": "2026-06-25T10:00:00Z",
+            },
+            {
+                "event_id": "3",
+                "event_date": "2026-07-05T10:00:00Z",
+            },
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events,
+            {},
+            {"date_from": "2026-06-01", "date_to": "2026-06-20"},
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_combined_and(self) -> None:
+        events = [
+            {
+                "event_id": "1",
+                "sender": "lead@example.com",
+                "case_type": "new_lead",
+                "priority": "high",
+            },
+            {
+                "event_id": "2",
+                "sender": "lead@example.com",
+                "case_type": "existing_deal",
+                "priority": "high",
+            },
+            {
+                "event_id": "3",
+                "sender": "other@example.com",
+                "case_type": "new_lead",
+                "priority": "high",
+            },
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events,
+            {},
+            {
+                "sender": "lead",
+                "classification": "new_lead",
+                "priority": "high",
+            },
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_no_mutation(self) -> None:
+        """Verify the input list is not mutated."""
+        original = [
+            {"event_id": "1", "case_type": "new_lead"},
+            {"event_id": "2", "case_type": "existing_deal"},
+        ]
+        original_copy = list(original)
+        rop_dashboard_module.apply_queue_filters(
+            original, {}, {"classification": "new_lead"}
+        )
+        assert original == original_copy
+
+    def test_apply_queue_filters_no_params_returns_all(self) -> None:
+        events = [
+            {"event_id": "1", "case_type": "new_lead"},
+            {"event_id": "2", "case_type": "existing_deal"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(events, {}, {})
+        assert len(result) == 2
+
+    def test_apply_queue_filters_date_only_from(self) -> None:
+        events = [
+            {
+                "event_id": "1",
+                "event_date": "2026-06-15T10:00:00Z",
+            },
+            {
+                "event_id": "2",
+                "event_date": "2026-07-25T10:00:00Z",
+            },
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"date_from": "2026-07-01"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "2"
+
+    def test_apply_queue_filters_date_only_to(self) -> None:
+        events = [
+            {
+                "event_id": "1",
+                "event_date": "2026-06-15T10:00:00Z",
+            },
+            {
+                "event_id": "2",
+                "event_date": "2026-07-25T10:00:00Z",
+            },
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, {}, {"date_to": "2026-06-30"}
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"
+
+    def test_apply_queue_filters_date_equal_range(self) -> None:
+        events = [
+            {
+                "event_id": "1",
+                "event_date": "2026-06-15T10:00:00Z",
+            },
+            {
+                "event_id": "2",
+                "event_date": "2026-06-25T10:00:00Z",
+            },
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events,
+            {},
+            {"date_from": "2026-06-15", "date_to": "2026-06-15"},
+        )
+        assert len(result) == 1
+        assert result[0]["event_id"] == "1"

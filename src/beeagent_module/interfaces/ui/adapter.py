@@ -36,6 +36,11 @@ from beeagent_module.interfaces.ui.read_model import (
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
+from beeagent_module.cases.rop_dashboard import (
+    ALLOWED_PAGE_SIZES,
+    DEFAULT_PAGE_SIZE,
+    validate_filter_params,
+)
 
 
 def _product_version() -> str:
@@ -43,6 +48,55 @@ def _product_version() -> str:
         return version("beeagent")
     except PackageNotFoundError:
         return "unknown"
+
+
+def _extract_filter_params(query: Mapping[str, str]) -> dict[str, str]:
+    """Extract queue filter parameters from query string.
+
+    Returns a dict of non-empty filter params. Empty strings are excluded.
+    Unknown params are silently ignored.
+    """
+    allowed_filter_keys = frozenset({
+        "date_from",
+        "date_to",
+        "q",
+        "sender",
+        "subject",
+        "case_type",
+        "classification",
+        "priority",
+        "bitrix_status",
+        "columns",
+        "columns_open",
+        "open_dropdowns",
+    })
+    params: dict[str, str] = {}
+    for key in allowed_filter_keys:
+        raw = query.get(key)
+        if raw is not None and isinstance(raw, str) and raw.strip():
+            params[key] = raw.strip()
+    # Map legacy key
+    if "classification" in params and "case_type" not in params:
+        params["case_type"] = params.pop("classification")
+    return params
+
+
+def _extract_pagination_params(query: Mapping[str, str]) -> dict[str, Any]:
+    """Extract pagination and sorting parameters."""
+    params: dict[str, Any] = {}
+    try:
+        params["page"] = max(1, int(query.get("page", "1")))
+    except (ValueError, TypeError):
+        params["page"] = 1
+    try:
+        params["page_size"] = int(query.get("page_size", "25"))
+        if params["page_size"] not in ALLOWED_PAGE_SIZES:
+            params["page_size"] = DEFAULT_PAGE_SIZE
+    except (ValueError, TypeError):
+        params["page_size"] = DEFAULT_PAGE_SIZE
+    params["sort"] = query.get("sort", "received_at")
+    params["order"] = query.get("order", "desc")
+    return params
 
 
 class BeeAgentUiAdapter:
@@ -196,7 +250,14 @@ class BeeAgentUiAdapter:
             return error_result_from_exception(exc)
 
     def get_rop_dashboard(
-        self, run_id: str | None = None, period: str | None = None
+        self,
+        run_id: str | None = None,
+        period: str | None = None,
+        filter_params: dict[str, str] | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort: str = "received_at",
+        order: str = "desc",
     ) -> AdapterResult | AdapterErrorResult:
         try:
             if run_id is not None:
@@ -213,6 +274,11 @@ class BeeAgentUiAdapter:
                 period=period,
                 default_period=default_period,
                 configured_periods=configured_periods,
+                filter_params=filter_params,
+                page=page,
+                page_size=page_size,
+                sort=sort,
+                order=order,
             )
             if "error" in data:
                 return error_result("not_found", data.get("message", "Not found"))
@@ -250,6 +316,18 @@ class BeeAgentUiAdapter:
                     except Exception:
                         return error_result("invalid_run_id", "Invalid run_id")
 
+                # Extract and validate filter parameters
+                filter_params = _extract_filter_params(query)
+                filter_errors = validate_filter_params(filter_params)
+                if filter_errors:
+                    return error_result(
+                        "invalid_filter",
+                        "; ".join(filter_errors),
+                    )
+
+                # Extract pagination and sorting parameters
+                pagination_params = _extract_pagination_params(query)
+
                 default_period = self._settings["rop"]["dashboard"]["default_period"]
                 configured_periods = self._settings["rop"]["dashboard"]["periods"]
                 data = build_rop_dashboard_read_model(
@@ -258,6 +336,11 @@ class BeeAgentUiAdapter:
                     period=period,
                     default_period=default_period,
                     configured_periods=configured_periods,
+                    filter_params=filter_params,
+                    page=pagination_params["page"],
+                    page_size=pagination_params["page_size"],
+                    sort=pagination_params["sort"],
+                    order=pagination_params["order"],
                 )
                 if "error" in data:
                     return error_result("not_found", data.get("message", "Not found"))

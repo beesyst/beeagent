@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from beeagent_module.cases.rop_dashboard import build_rop_dashboard
+from beeagent_module.cases.rop_dashboard import (
+    ALLOWED_BITRIX_STATUSES,
+    DEFAULT_PAGE_SIZE,
+    apply_queue_filters,
+    build_rop_dashboard,
+    paginate_items,
+    sort_queue_items,
+    validate_sort_params,
+)
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
 from beeagent_module.interfaces.ui.locale import t
 
@@ -1823,6 +1831,34 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     return None
 
 
+def _build_filter_options(
+    classified: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build distinct filter option values from classified events."""
+    case_types: set[str] = set()
+    priorities: set[str] = set()
+    bitrix_statuses: set[str] = set()
+
+    for evt in classified:
+        if not isinstance(evt, dict):
+            continue
+        ct = evt.get("case_type")
+        if isinstance(ct, str) and ct:
+            case_types.add(ct)
+        pr = evt.get("priority")
+        if isinstance(pr, str) and pr:
+            priorities.add(pr)
+        bs = evt.get("bitrix_status")
+        if isinstance(bs, str) and bs:
+            bitrix_statuses.add(bs)
+
+    return {
+        "case_types": sorted(case_types),
+        "priorities": sorted(priorities),
+        "bitrix_statuses": sorted(bitrix_statuses),
+    }
+
+
 def _int(value: Any) -> int:
     if isinstance(value, int):
         return value
@@ -1837,6 +1873,11 @@ def build_rop_dashboard_read_model(
     period: str | None = None,
     default_period: str | None = None,
     configured_periods: list[str] | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     runs_dir = storage_dir / "runs"
     if not runs_dir.is_dir():
@@ -2162,7 +2203,18 @@ def build_rop_dashboard_read_model(
         "time_basis": dashboard_payload.get("time_basis", "unknown")
         if dashboard_payload
         else "unknown",
+        "filter_params": dict(filter_params) if filter_params else {},
+        "page": page,
+        "page_size": page_size,
+        "sort": sort,
+        "order": order,
     }
+
+    # Build filter options from classified data for the filter form
+    filter_options = _build_filter_options(
+        classified if isinstance(classified, list) else [],
+    )
+    result["filter_options"] = filter_options
 
     result["summary"] = summary if isinstance(summary, dict) else {}
     result["source_diagnostics"] = source_diag if isinstance(source_diag, dict) else {}
@@ -3205,7 +3257,19 @@ def _build_rop_queue_layout(
     if not isinstance(queues, dict):
         queues = {}
     run_id = data.get("run_id", "")
+    filter_params = data.get("filter_params", {})
+    if not isinstance(filter_params, dict):
+        filter_params = {}
+    page = data.get("page", 1)
+    page_size = data.get("page_size", DEFAULT_PAGE_SIZE)
+    sort = data.get("sort", "received_at")
+    order = data.get("order", "desc")
+    current_period = data.get("period", "")
+    filter_options = data.get("filter_options", {})
+    if not isinstance(filter_options, dict):
+        filter_options = {}
 
+    # Collect all queue items with dedup
     queue_rows: list[dict[str, Any]] = []
     seen_event_ids: set[str] = set()
     for key in ROP_OPERATOR_QUEUE_IDS:
@@ -3222,59 +3286,375 @@ def _build_rop_queue_layout(
                 seen_event_ids.add(event_id)
             queue_rows.append(item)
 
-    if queue_rows:
-        return [
-            _queue_table("ROP Work Queue", queue_rows, run_id=run_id, locale=locale)
-        ]
+    # If no queue rows, fall back to attention events
+    if not queue_rows:
+        if not attention_events:
+            return [
+                {
+                    "type": "state_grid",
+                    "size": "XL",
+                    "title": t("Operator Queue", locale),
+                    "items": [
+                        {
+                            "label": "No events",
+                            "value": "Queue is empty",
+                            "status": "clear",
+                        }
+                    ],
+                }
+            ]
 
-    if not attention_events:
+        q_items: list[dict[str, Any]] = []
+        for evt in attention_events:
+            reasons: list[str] = []
+            if evt.get("priority") == "high":
+                reasons.append("High priority")
+            if evt.get("is_fallback"):
+                reasons.append("Fallback")
+            conf = evt.get("confidence")
+            if isinstance(conf, (int, float)) and conf < 0.7:
+                reasons.append(f"Low conf ({conf:.2f})")
+
+            q_items.append(
+                {
+                    "label": evt.get("event_id", ""),
+                    "value": (
+                        f"{evt.get('source_display_name', evt.get('source_id', ''))} | "
+                        f"{evt.get('sender', '')} | {evt.get('subject', '')} | "
+                        f"Type: {evt.get('case_type', '')} | Priority: {evt.get('priority', '')} | "
+                        f"Reason: {'; '.join(reasons) if reasons else evt.get('review_reason', 'Needs review')}"
+                    ),
+                    "status": "urgent"
+                    if evt.get("priority") == "high"
+                    else ("review" if evt.get("is_fallback") else ""),
+                }
+            )
+
         return [
             {
                 "type": "state_grid",
                 "size": "XL",
                 "title": t("Operator Queue", locale),
-                "items": [
-                    {
-                        "label": "No events",
-                        "value": "Queue is empty",
-                        "status": "clear",
-                    }
-                ],
+                "items": q_items,
             }
         ]
 
-    q_items: list[dict[str, Any]] = []
-    for evt in attention_events:
-        reasons: list[str] = []
-        if evt.get("priority") == "high":
-            reasons.append("High priority")
-        if evt.get("is_fallback"):
-            reasons.append("Fallback")
-        conf = evt.get("confidence")
-        if isinstance(conf, (int, float)) and conf < 0.7:
-            reasons.append(f"Low conf ({conf:.2f})")
+    # Apply filters
+    filtered_rows = apply_queue_filters(queue_rows, None, filter_params)
 
-        q_items.append(
-            {
-                "label": evt.get("event_id", ""),
-                "value": f"{evt.get('source_display_name', evt.get('source_id', ''))} | "
-                f"{evt.get('sender', '')} | {evt.get('subject', '')} | "
-                f"Type: {evt.get('case_type', '')} | Priority: {evt.get('priority', '')} | "
-                f"Reason: {'; '.join(reasons) if reasons else evt.get('review_reason', 'Needs review')}",
-                "status": "urgent"
-                if evt.get("priority") == "high"
-                else ("review" if evt.get("is_fallback") else ""),
-            }
+    # Apply sorting
+    filtered_rows = sort_queue_items(filtered_rows, sort=sort, order=order)
+
+    # Apply pagination
+    paginated_rows, pagination_info = paginate_items(
+        filtered_rows, page=page, page_size=page_size
+    )
+
+    layout: list[dict[str, Any]] = []
+
+    # Build filter form block
+    layout.append(
+        _queue_filter_form(
+            filter_params=filter_params,
+            current_period=current_period,
+            filter_options=filter_options,
+            locale=locale,
+        )
+    )
+
+    # Build the data table with pagination
+    layout.append(
+        _queue_table(
+            "ROP Work Queue",
+            paginated_rows,
+            run_id=run_id,
+            locale=locale,
+            total_count=len(filtered_rows),
+            page=page,
+            page_size=page_size,
+            total_pages=pagination_info["total_pages"],
+            sort=sort,
+            order=order,
+            filter_params=filter_params,
+            current_period=current_period,
+        )
+    )
+
+    return layout
+
+
+def _queue_filter_form(
+    filter_params: dict[str, str],
+    current_period: str,
+    filter_options: dict[str, Any],
+    locale: str = "en",
+) -> dict[str, Any]:
+    """Build a filter_form block for the queue page."""
+    case_type_options: list[dict[str, str]] = []
+    for ct in filter_options.get("case_types", []):
+        case_type_options.append(
+            {"value": ct, "label": t(ct.replace("_", " ").title(), locale)}
         )
 
-    return [
+    priority_options: list[dict[str, str]] = []
+    for pr in filter_options.get("priorities", []):
+        priority_options.append(
+            {"value": pr, "label": t(pr.title(), locale)}
+        )
+
+    # bitrix_status isn't embedded in classified events — use allowlist as fallback
+    raw_bitrix_statuses = filter_options.get("bitrix_statuses", [])
+    if not raw_bitrix_statuses:
+        raw_bitrix_statuses = list(ALLOWED_BITRIX_STATUSES)
+    bitrix_status_options: list[dict[str, str]] = []
+    for bs in raw_bitrix_statuses:
+        bitrix_status_options.append(
+            {"value": bs, "label": bs.replace("_", " ").title()}
+        )
+
+    fields: list[dict[str, Any]] = [
         {
-            "type": "state_grid",
-            "size": "XL",
-            "title": t("Operator Queue", locale),
-            "items": q_items,
-        }
+            "type": "date_range",
+            "name": "date",
+            "label": t("Date range", locale),
+            "from_value": filter_params.get("date_from", ""),
+            "to_value": filter_params.get("date_to", ""),
+            "from_label": t("From", locale),
+            "to_label": t("To", locale),
+        },
+        {
+            "type": "text",
+            "name": "q",
+            "label": t("Search", locale),
+            "value": filter_params.get("q", ""),
+            "placeholder": t("Search by sender or subject...", locale),
+        },
     ]
+
+    def _make_checkboxes(
+        param_name: str,
+        label: str,
+        options: list[dict[str, str]],
+        filter_params: dict[str, str],
+        current_period: str,
+        locale: str,
+    ) -> dict[str, Any]:
+        """Build a checkboxes field with toggle hrefs and open state."""
+        current_raw = filter_params.get(param_name, "")
+        selected = {v.strip() for v in current_raw.split(",") if v.strip()}
+
+        # Track which dropdowns should stay open across page reloads
+        open_raw = filter_params.get("open_dropdowns", "")
+        open_set = {v.strip() for v in open_raw.split(",") if v.strip()}
+        is_open = param_name in open_set
+
+        choices: list[dict[str, Any]] = []
+        for opt in options:
+            val = opt["value"]
+            checked = val in selected
+            if checked:
+                new_set = selected - {val}
+            else:
+                new_set = selected | {val}
+
+            new_val = ",".join(sorted(new_set))
+            toggle_params = dict(filter_params)
+            if new_val:
+                toggle_params[param_name] = new_val
+            elif param_name in toggle_params:
+                del toggle_params[param_name]
+
+            # Keep only the current dropdown open (not all previously opened ones)
+            toggle_params["open_dropdowns"] = param_name
+
+            qs = ["tab=queue"]
+            if current_period:
+                qs.append(f"period={current_period}")
+            for k, v in toggle_params.items():
+                if v:
+                    qs.append(f"{k}={v}")
+            if locale != "en":
+                qs.append(f"lang={locale}")
+            toggle_href = "/rop?" + "&".join(qs)
+
+            choices.append({
+                "value": val,
+                "label": opt["label"],
+                "checked": checked,
+                "toggle_href": toggle_href,
+            })
+
+        return {
+            "type": "checkboxes",
+            "name": param_name,
+            "label": label,
+            "choices": choices,
+            "selected_count": len(selected),
+            "open": is_open,
+        }
+
+    if case_type_options:
+        fields.append(
+            _make_checkboxes(
+                "case_type",
+                t("Classification", locale),
+                case_type_options,
+                filter_params,
+                current_period,
+                locale,
+            )
+        )
+
+    if priority_options:
+        fields.append(
+            _make_checkboxes(
+                "priority",
+                t("Priority", locale),
+                priority_options,
+                filter_params,
+                current_period,
+                locale,
+            )
+        )
+
+    if bitrix_status_options:
+        fields.append(
+            _make_checkboxes(
+                "bitrix_status",
+                t("Bitrix status", locale),
+                bitrix_status_options,
+                filter_params,
+                current_period,
+                locale,
+            )
+        )
+
+    # Build column toggle links
+    current_columns = filter_params.get("columns", "")
+    selected_set = {k.strip() for k in current_columns.split(",") if k.strip()} if current_columns else set()
+
+    all_columns = [
+        ("priority", "Priority"),
+        ("client", "Sender"),
+        ("subject", "Subject"),
+        ("date", "Date"),
+        ("classification", "Classification"),
+        ("bitrix_status", "Bitrix status"),
+    ]
+
+    # If no selection, all columns are shown
+    if not selected_set:
+        selected_set = {key for key, _ in all_columns}
+
+    column_toggles: list[dict[str, Any]] = []
+    for key, label in all_columns:
+        visible = key in selected_set
+        if visible:
+            new_set = selected_set - {key}
+        else:
+            new_set = selected_set | {key}
+
+        new_columns_str = ",".join(sorted(new_set))
+        toggle_params = dict(filter_params)
+        if new_columns_str and new_columns_str != ",".join(k for k, _ in all_columns):
+            toggle_params["columns"] = new_columns_str
+        elif "columns" in toggle_params:
+            del toggle_params["columns"]
+
+        # Build href preserving all params + keep dropdown open
+        qs = ["tab=queue"]
+        if current_period:
+            qs.append(f"period={current_period}")
+        for k, v in toggle_params.items():
+            if v:
+                qs.append(f"{k}={v}")
+        qs.append("columns_open=1")
+        if locale != "en":
+            qs.append(f"lang={locale}")
+        toggle_href = "/rop?" + "&".join(qs)
+
+        column_toggles.append({
+            "key": key,
+            "label": t(label, locale),
+            "visible": visible,
+            "toggle_href": toggle_href,
+        })
+
+    columns_open = bool(filter_params.get("columns_open", False))
+
+    # Build toggle href for opening/closing the columns dropdown
+    toggle_params = dict(filter_params)
+    if columns_open:
+        toggle_params.pop("columns_open", None)
+    else:
+        toggle_params["columns_open"] = "1"
+    qs_toggle = ["tab=queue"]
+    if current_period:
+        qs_toggle.append(f"period={current_period}")
+    for k, v in toggle_params.items():
+        if v:
+            qs_toggle.append(f"{k}={v}")
+    if locale != "en":
+        qs_toggle.append(f"lang={locale}")
+    columns_toggle_href = "/rop?" + "&".join(qs_toggle)
+
+    # Hidden fields to preserve tab, period, locale across GET submission
+    hidden: dict[str, str] = {"tab": "queue"}
+    if current_period:
+        hidden["period"] = current_period
+    if locale != "en":
+        hidden["lang"] = locale
+
+    return {
+        "type": "filter_form",
+        "size": "XL",
+        "title": t("Filters", locale),
+        "hidden": hidden,
+        "fields": fields,
+        "column_toggles": column_toggles,
+        "columns_open": columns_open,
+        "columns_toggle_href": columns_toggle_href,
+        "actions": {},
+    }
+
+
+def _sort_href(
+    base_href: str,
+    current_sort: str,
+    new_sort: str,
+    current_order: str,
+    filter_params: dict[str, str],
+    page: int = 1,
+) -> str:
+    """Build a sort href preserving current filter params."""
+    # Parse tab and period from base_href
+    qs_parts = []
+    if "tab=" in base_href:
+        # Extract tab from base_href
+        import re as _re
+        m = _re.search(r'tab=(\w+)', base_href)
+        if m:
+            qs_parts.append(f"tab={m.group(1)}")
+        m = _re.search(r'period=(\w+)', base_href)
+        if m:
+            qs_parts.append(f"period={m.group(1)}")
+        m = _re.search(r'lang=(\w+)', base_href)
+        if m:
+            qs_parts.append(f"lang={m.group(1)}")
+    else:
+        qs_parts.append("tab=queue")
+
+    for k, v in filter_params.items():
+        if v:
+            qs_parts.append(f"{k}={v}")
+    if new_sort == current_sort:
+        new_order = "asc" if current_order == "desc" else "desc"
+    else:
+        new_order = "desc"
+    qs_parts.append(f"sort={new_sort}")
+    qs_parts.append(f"order={new_order}")
+    qs_parts.append(f"page={page}")
+    return "/rop?" + "&".join(qs_parts)
 
 
 def _queue_table(
@@ -3282,9 +3662,22 @@ def _queue_table(
     rows_source: list[dict[str, Any]],
     run_id: str = "",
     locale: str = "en",
+    total_count: int = 0,
+    page: int = 1,
+    page_size: int = 25,
+    total_pages: int = 1,
+    sort: str = "received_at",
+    order: str = "desc",
+    filter_params: dict[str, str] | None = None,
+    current_period: str = "",
 ) -> dict[str, Any]:
+    if filter_params is None:
+        filter_params = {}
+
+    base_href = _rop_href(tab="queue", period=current_period, locale=locale)
+
     rows = []
-    for item in rows_source[:50]:
+    for item in rows_source:
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("event_id", ""))
@@ -3292,9 +3685,6 @@ def _queue_table(
         bitrix_status = item.get("bitrix_status", "unreconciled")
         raw_date = item.get("date") or item.get("received_at") or item.get("event_date", "")
         date_display = _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
-        evidence_href = item.get("evidence_href") or (
-            f"/rop?tab=evidence#event-{event_id}" if event_id else "/rop?tab=evidence"
-        )
         detail_href = item.get("detail_href")
         if not detail_href and event_id and run_id:
             detail_href = _rop_event_detail_href(event_id, run_id, locale)
@@ -3323,18 +3713,116 @@ def _queue_table(
             }
         )
 
+    # Build columns with sortable headers
     columns = [
-        {"key": "priority", "label": "Priority", "cell": "badge"},
-        {"key": "client", "label": "Sender / Client", "cell": "avatar_text"},
-        {"key": "subject", "label": "Subject / Request", "cell": "text"},
-        {"key": "date", "label": t("Date", locale), "cell": "text"},
-        {"key": "classification", "label": "Classification", "cell": "text"},
-        {"key": "bitrix_status", "label": "Bitrix status", "cell": "status"},
+        {
+            "key": "priority",
+            "label": t("Priority", locale),
+            "cell": "badge",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "priority", order, filter_params, page),
+            "sort_active": sort == "priority",
+            "sort_direction": order if sort == "priority" else "",
+        },
+        {
+            "key": "client",
+            "label": t("Sender", locale),
+            "cell": "avatar_text",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "sender", order, filter_params, page),
+            "sort_active": sort == "sender",
+            "sort_direction": order if sort == "sender" else "",
+        },
+        {
+            "key": "subject",
+            "label": t("Subject", locale),
+            "cell": "text",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "subject", order, filter_params, page),
+            "sort_active": sort == "subject",
+            "sort_direction": order if sort == "subject" else "",
+        },
+        {
+            "key": "date",
+            "label": t("Date", locale),
+            "cell": "text",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "received_at", order, filter_params, page),
+            "sort_active": sort == "received_at",
+            "sort_direction": order if sort == "received_at" else "",
+        },
+        {
+            "key": "classification",
+            "label": t("Classification", locale),
+            "cell": "text",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "case_type", order, filter_params, page),
+            "sort_active": sort == "case_type",
+            "sort_direction": order if sort == "case_type" else "",
+        },
+        {
+            "key": "bitrix_status",
+            "label": t("Bitrix status", locale),
+            "cell": "status",
+            "sortable": True,
+            "sort_href": _sort_href(base_href, sort, "bitrix_status", order, filter_params, page),
+            "sort_active": sort == "bitrix_status",
+            "sort_direction": order if sort == "bitrix_status" else "",
+        },
     ]
 
+    # Build pagination
+    pagination_label = t(
+        "Showing {start}–{end} of {total}", locale
+    ).format(
+        start=(page - 1) * page_size + 1 if total_count > 0 else 0,
+        end=min(page * page_size, total_count),
+        total=total_count,
+    )
+
+    pagination_pages: list[dict[str, Any]] = []
+    if total_pages > 1:
+        for p in range(1, total_pages + 1):
+            page_params = dict(filter_params)
+            page_params["page"] = str(p)
+            if sort != "received_at":
+                page_params["sort"] = sort
+            if order != "desc":
+                page_params["order"] = order
+
+            qs_parts = [f"tab=queue"]
+            if current_period:
+                qs_parts.append(f"period={current_period}")
+            for k, v in page_params.items():
+                if v:
+                    qs_parts.append(f"{k}={v}")
+            if locale != "en":
+                qs_parts.append(f"lang={locale}")
+
+            pagination_pages.append(
+                {
+                    "label": str(p),
+                    "href": "/rop?" + "&".join(qs_parts),
+                    "active": p == page,
+                }
+            )
+
+    # Filter columns based on `columns` param (comma-separated list of keys to show)
+    selected_columns_str = filter_params.get("columns", "")
+    if selected_columns_str:
+        selected_keys = {k.strip() for k in selected_columns_str.split(",") if k.strip()}
+        columns = [c for c in columns if c["key"] in selected_keys]
+
+    # Add detail column if any row has a detail link
     has_detail = any(row.get("detail_href") for row in rows)
     if has_detail:
-        columns.append({"key": "detail", "label": t("Detail", locale), "cell": "link"})
+        columns.append(
+            {
+                "key": "detail",
+                "label": t("Detail", locale),
+                "cell": "link",
+            }
+        )
         for row in rows:
             if row.get("detail_href"):
                 row["detail"] = {
@@ -3350,6 +3838,10 @@ def _queue_table(
         "mobile": "md",
         "columns": columns,
         "rows": rows,
+        "pagination": {
+            "label": pagination_label,
+            "pages": pagination_pages,
+        },
     }
 
 

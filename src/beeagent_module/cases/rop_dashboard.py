@@ -17,6 +17,320 @@ ALLOWED_PERIODS: tuple[str, ...] = (
     "all",
 )
 
+# ── Queue filter constants ──────────────────────────────────────────────────
+
+ALLOWED_CASE_TYPES: tuple[str, ...] = (
+    "new_lead",
+    "existing_client",
+    "existing_deal",
+    "existing_lead",
+    "follow_up",
+    "reminder",
+    "irrelevant",
+    "spam",
+    "ignore",
+    "needs_review",
+    "unclear",
+    "other",
+)
+ALLOWED_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
+ALLOWED_BITRIX_STATUSES: tuple[str, ...] = (
+    "not_found",
+    "weak_match",
+    "ambiguous",
+    "duplicate_candidate",
+    "connector_degraded",
+    "error",
+    "skipped",
+    "unreconciled",
+    # matched_{entity_type} — динамический префикс, проверяется отдельно
+)
+ALLOWED_SORT_FIELDS: tuple[str, ...] = (
+    "received_at",
+    "date",
+    "event_date",
+    "sender",
+    "subject",
+    "case_type",
+    "priority",
+    "bitrix_status",
+)
+ALLOWED_PAGE_SIZES: tuple[int, ...] = (25, 50, 100)
+DEFAULT_PAGE_SIZE = 25
+
+
+def validate_filter_params(
+    params: dict[str, str],
+) -> list[str]:
+    """Validate queue filter parameters.
+
+    Returns a list of error messages. Empty list means valid.
+    """
+    errors: list[str] = []
+
+    allowed_keys = frozenset({
+        "date_from",
+        "date_to",
+        "q",
+        "sender",
+        "subject",
+        "case_type",
+        "classification",
+        "priority",
+        "bitrix_status",
+        "columns",
+        "columns_open",
+        "open_dropdowns",
+    })
+    for key in params:
+        if key not in allowed_keys:
+            errors.append(f"Unknown filter key: '{key}'")
+
+    # Validate classification (maps to case_type) — supports comma-separated multi-value
+    classification = params.get("classification", "")
+    if classification:
+        for val in classification.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_CASE_TYPES:
+                errors.append(
+                    f"Invalid classification '{val}', "
+                    f"expected one of: {ALLOWED_CASE_TYPES}"
+                )
+
+    # Also validate case_type if given directly
+    case_type = params.get("case_type", "")
+    if case_type:
+        for val in case_type.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_CASE_TYPES:
+                errors.append(
+                    f"Invalid case_type '{val}', expected one of: {ALLOWED_CASE_TYPES}"
+                )
+
+    priority = params.get("priority", "")
+    if priority:
+        for val in priority.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_PRIORITIES:
+                errors.append(
+                    f"Invalid priority '{val}', expected one of: {ALLOWED_PRIORITIES}"
+                )
+
+    bitrix_status = params.get("bitrix_status", "")
+    if bitrix_status:
+        for val in bitrix_status.split(","):
+            val = val.strip()
+            if val:
+                if val.startswith("matched_"):
+                    pass  # matched_{entity_type} — динамический статус от Bitrix
+                elif val not in ALLOWED_BITRIX_STATUSES:
+                    errors.append(
+                        f"Invalid bitrix_status '{val}', "
+                        f"expected one of: {ALLOWED_BITRIX_STATUSES}"
+                    )
+
+    date_from = params.get("date_from", "")
+    if date_from:
+        try:
+            datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            errors.append(f"Invalid date_from '{date_from}', expected YYYY-MM-DD")
+
+    date_to = params.get("date_to", "")
+    if date_to:
+        try:
+            datetime.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            errors.append(f"Invalid date_to '{date_to}', expected YYYY-MM-DD")
+
+    if date_from and date_to:
+        try:
+            d_from = datetime.strptime(date_from, "%Y-%m-%d")
+            d_to = datetime.strptime(date_to, "%Y-%m-%d")
+            if d_from > d_to:
+                errors.append("date_from must not be after date_to")
+        except ValueError:
+            pass
+
+    return errors
+
+
+def apply_queue_filters(
+    items: list[dict[str, Any]],
+    bitrix_status_by_event: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Apply filter parameters to a list of queue items (classified events).
+
+    ``bitrix_status_by_event`` is an optional mapping of event_id -> bitrix_status
+    used when the status is not embedded in the item dict (legacy compatibility).
+
+    Returns filtered list.
+    """
+    if not params:
+        return items
+
+    # Support both "case_type" and legacy "classification" key
+    # Multi-value: comma-separated (e.g. "new_lead,existing_deal")
+    case_type_raw = params.get("case_type") or params.get("classification", "")
+    case_types = {v.strip() for v in case_type_raw.split(",") if v.strip()} if case_type_raw else set()
+    priority_raw = params.get("priority", "")
+    priorities = {v.strip() for v in priority_raw.split(",") if v.strip()} if priority_raw else set()
+    bitrix_status_raw = params.get("bitrix_status", "")
+    bitrix_statuses = {v.strip() for v in bitrix_status_raw.split(",") if v.strip()} if bitrix_status_raw else set()
+    q = params.get("q", "").lower().strip()
+    date_from = params.get("date_from", "")
+    date_to = params.get("date_to", "")
+
+    parsed_date_from: datetime | None = None
+    parsed_date_to: datetime | None = None
+    if date_from:
+        try:
+            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            # end of day for inclusive filter
+            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        # case_type filter (supports multi-value comma-separated)
+        if case_types:
+            item_ct = str(item.get("case_type") or item.get("bot_case_type", ""))
+            if item_ct not in case_types:
+                continue
+
+        # priority filter (supports multi-value comma-separated)
+        if priorities:
+            item_pri = str(item.get("priority") or item.get("bot_priority", ""))
+            if item_pri not in priorities:
+                continue
+
+        # bitrix_status filter (supports multi-value comma-separated)
+        if bitrix_statuses:
+            item_bs = str(item.get("bitrix_status", ""))
+            if not item_bs and bitrix_status_by_event:
+                event_id = str(item.get("event_id", ""))
+                item_bs = str(bitrix_status_by_event.get(event_id, ""))
+            if item_bs not in bitrix_statuses:
+                continue
+
+        # text search: sender + subject (via `q` param or legacy `sender`/`subject`)
+        search_q = q
+        legacy_sender = params.get("sender", "").lower().strip()
+        legacy_subject = params.get("subject", "").lower().strip()
+        if search_q or legacy_sender or legacy_subject:
+            sender = str(item.get("sender", "")).lower()
+            subject = str(item.get("subject", "")).lower()
+            if search_q and search_q not in sender and search_q not in subject:
+                continue
+            if legacy_sender and legacy_sender not in sender:
+                continue
+            if legacy_subject and legacy_subject not in subject:
+                continue
+
+        # date range
+        if parsed_date_from or parsed_date_to:
+            ts = _event_timestamp(item)
+            if ts is None:
+                continue
+            if parsed_date_from and ts < parsed_date_from:
+                continue
+            if parsed_date_to and ts > parsed_date_to:
+                continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def validate_sort_params(
+    sort: str,
+    order: str,
+) -> tuple[str, str]:
+    """Validate and normalize sort field and order.
+
+    Returns (sort, order) tuple with defaults applied.
+    """
+    if sort not in ALLOWED_SORT_FIELDS:
+        sort = "received_at"
+    if order not in ("asc", "desc"):
+        order = "desc"
+    return sort, order
+
+
+def sort_queue_items(
+    items: list[dict[str, Any]],
+    sort: str = "received_at",
+    order: str = "desc",
+) -> list[dict[str, Any]]:
+    """Sort queue items by the given field and order."""
+    sort, order = validate_sort_params(sort, order)
+
+    def _sort_key(item: dict[str, Any]) -> tuple:
+        raw = item.get(sort) or item.get(
+            {
+                "received_at": "date",
+                "date": "received_at",
+                "event_date": "received_at",
+            }.get(sort, sort),
+            "",
+        )
+        if sort in ("received_at", "date", "event_date"):
+            ts = _parse_iso(str(raw) if raw else None)
+            if ts is not None:
+                return (0, ts.timestamp())
+            return (1, str(raw))
+        return (1, str(raw).lower())
+
+    reverse = order == "desc"
+    return sorted(items, key=_sort_key, reverse=reverse)
+
+
+def paginate_items(
+    items: list[dict[str, Any]],
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Paginate a list of items.
+
+    Returns (paginated_slice, pagination_info).
+    """
+    if page_size not in ALLOWED_PAGE_SIZES:
+        page_size = DEFAULT_PAGE_SIZE
+    if page < 1:
+        page = 1
+
+    total = len(items)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = items[start:end]
+
+    pagination_info = {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "start": start + 1 if total > 0 else 0,
+        "end": min(end, total),
+    }
+    return paginated, pagination_info
+
 
 def parse_period(period: str) -> dict[str, Any]:
     period = period.strip().lower()

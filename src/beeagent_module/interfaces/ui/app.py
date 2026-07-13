@@ -48,6 +48,39 @@ def _result_data(
     return result.data
 
 
+def _extract_filter_params_from_query(
+    query_params: Any,
+) -> dict[str, str]:
+    """Extract queue filter parameters from query string.
+
+    Shared helper for API routes that need to pass filter params
+    to the adapter.
+    """
+    allowed_filter_keys = frozenset({
+        "date_from",
+        "date_to",
+        "q",
+        "sender",
+        "subject",
+        "case_type",
+        "classification",
+        "priority",
+        "bitrix_status",
+        "columns",
+        "columns_open",
+        "open_dropdowns",
+    })
+    params: dict[str, str] = {}
+    for key in allowed_filter_keys:
+        raw = query_params.get(key)
+        if raw is not None and isinstance(raw, str) and raw.strip():
+            params[key] = raw.strip()
+    # Map legacy key
+    if "classification" in params and "case_type" not in params:
+        params["case_type"] = params.pop("classification")
+    return params
+
+
 def _result_warnings(
     result: AdapterResult | AdapterErrorResult,
 ) -> list[dict[str, Any]]:
@@ -740,7 +773,30 @@ def _register_custom_routes(
     async def api_rop_dashboard(request: Request) -> JSONResponse:
         run_id = request.query_params.get("run_id")
         period = request.query_params.get("period")
-        result = adapter.get_rop_dashboard(run_id=run_id, period=period)
+        filter_params = _extract_filter_params_from_query(request.query_params)
+
+        try:
+            page = max(1, int(request.query_params.get("page", "1")))
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            page_size = int(request.query_params.get("page_size", "25"))
+            if page_size not in (25, 50, 100):
+                page_size = 25
+        except (ValueError, TypeError):
+            page_size = 25
+        sort = request.query_params.get("sort", "received_at")
+        order = request.query_params.get("order", "desc")
+
+        result = adapter.get_rop_dashboard(
+            run_id=run_id,
+            period=period,
+            filter_params=filter_params,
+            page=page,
+            page_size=page_size,
+            sort=sort,
+            order=order,
+        )
         if isinstance(result, AdapterErrorResult):
             code = result.error.get("code", "error")
             status = 404 if code == "not_found" else 400

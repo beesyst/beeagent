@@ -1046,18 +1046,23 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
 
     layout = build_rop_page_layout(data, tab="queue")
 
-    assert layout[0]["type"] == "data_table"
-    assert layout[0]["title"] == "ROP Work Queue"
-    assert [col["label"] for col in layout[0]["columns"]] == [
+    # First block is the filter form block
+    assert layout[0]["type"] == "filter_form"
+    assert layout[0]["title"] == "Filters"
+
+    # Second block is the data table
+    assert layout[1]["type"] == "data_table"
+    assert layout[1]["title"] == "ROP Work Queue"
+    assert [col["label"] for col in layout[1]["columns"]] == [
         "Priority",
-        "Sender / Client",
-        "Subject / Request",
+        "Sender",
+        "Subject",
         "Date",
         "Classification",
         "Bitrix status",
     ]
-    assert layout[0]["rows"][0]["classification"] == "new_lead"
-    assert layout[0]["rows"][0]["priority"]["label"] == "high"
+    assert layout[1]["rows"][0]["classification"] == "new_lead"
+    assert layout[1]["rows"][0]["priority"]["label"] == "high"
 
 
 def test_rop_overview_uses_rop_recommendations_detail() -> None:
