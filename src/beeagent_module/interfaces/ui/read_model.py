@@ -2324,6 +2324,16 @@ def _format_datetime_display(ts_str: str | None, locale: str = "en") -> str:
     return f"{dt.day:02d}.{dt.month:02d}.{dt.year}, {dt.hour:02d}:{dt.minute:02d}"
 
 
+def _format_date_display(ts_str: str | None, locale: str = "en") -> str:
+    """Format an ISO timestamp as DD.MM.YYYY (date only, no time)."""
+    if not ts_str or not isinstance(ts_str, str):
+        return t("n/a", locale)
+    dt = _parse_utc_datetime(ts_str)
+    if dt is None:
+        return ts_str
+    return f"{dt.day:02d}.{dt.month:02d}.{dt.year}"
+
+
 def _format_date_short(dt: datetime, locale: str = "en") -> str:
     """Format a datetime as DD.MM.YYYY (no time)."""
     return f"{dt.day:02d}.{dt.month:02d}.{dt.year}"
@@ -3280,6 +3290,8 @@ def _queue_table(
         event_id = str(item.get("event_id", ""))
         priority = item.get("bot_priority") or item.get("priority", "n/a")
         bitrix_status = item.get("bitrix_status", "unreconciled")
+        raw_date = item.get("date") or item.get("received_at") or item.get("event_date", "")
+        date_display = _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
         evidence_href = item.get("evidence_href") or (
             f"/rop?tab=evidence#event-{event_id}" if event_id else "/rop?tab=evidence"
         )
@@ -3300,17 +3312,12 @@ def _queue_table(
                     "color": "red" if priority == "high" else "blue",
                 },
                 "subject": item.get("subject", ""),
+                "date": date_display,
                 "classification": item.get("bot_case_type")
                 or item.get("case_type", ""),
                 "bitrix_status": {
                     "label": bitrix_status,
                     "status": _bitrix_status_tone(bitrix_status),
-                },
-                "reason": item.get("reason") or item.get("review_reason", ""),
-                "next_step": item.get("recommended_next_step", ""),
-                "evidence": {
-                    "label": "Evidence",
-                    "href": evidence_href,
                 },
                 "detail_href": detail_href if event_id else None,
             }
@@ -3320,11 +3327,9 @@ def _queue_table(
         {"key": "priority", "label": "Priority", "cell": "badge"},
         {"key": "client", "label": "Sender / Client", "cell": "avatar_text"},
         {"key": "subject", "label": "Subject / Request", "cell": "text"},
+        {"key": "date", "label": t("Date", locale), "cell": "text"},
         {"key": "classification", "label": "Classification", "cell": "text"},
         {"key": "bitrix_status", "label": "Bitrix status", "cell": "status"},
-        {"key": "reason", "label": "Reason", "cell": "muted"},
-        {"key": "next_step", "label": "Recommended next step", "cell": "muted"},
-        {"key": "evidence", "label": "Evidence link", "cell": "link"},
     ]
 
     has_detail = any(row.get("detail_href") for row in rows)

@@ -1052,11 +1052,9 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
         "Priority",
         "Sender / Client",
         "Subject / Request",
+        "Date",
         "Classification",
         "Bitrix status",
-        "Reason",
-        "Recommended next step",
-        "Evidence link",
     ]
     assert layout[0]["rows"][0]["classification"] == "new_lead"
     assert layout[0]["rows"][0]["priority"]["label"] == "high"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -11,6 +12,19 @@ from beeagent_module.core.rop_final_decision import (
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
+
+
+def _format_iso_datetime(value: Any) -> str:
+    """Parse an ISO datetime string and return as DD.MM.YYYY, HH:MM."""
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return f"{dt.day:02d}.{dt.month:02d}.{dt.year}, {dt.hour:02d}:{dt.minute:02d}"
+    except (ValueError, TypeError):
+        return value
 
 
 def _read_json(path: Path) -> dict | list | None:
@@ -196,14 +210,20 @@ def build_rop_event_detail_read_model(
 
     classification_section: dict[str, Any] = {}
     if class_event:
+        reason = _str(
+            class_event.get("reasoning")
+            or class_event.get("reason_code", "")
+        )
         classification_section = {
             "case_type": _str(class_event.get("case_type")),
             "case_subtype": _str(class_event.get("case_subtype")),
             "priority": _str(class_event.get("priority")),
             "confidence": class_event.get("confidence"),
             "reason_code": _str(class_event.get("reason_code")),
+            "reason": reason,
             "is_fallback": bool(class_event.get("is_fallback")),
             "recommended_queue": _str(class_event.get("recommended_queue", "")),
+            "recommended_next_step": _str(class_event.get("recommended_queue", "")),
             "correct_action": _str(class_event.get("correct_action", "")),
             "should_rop_see": class_event.get("should_rop_see"),
         }
@@ -466,6 +486,7 @@ def build_rop_event_detail_page_model(
                     (t("Event ID", lang), event_id),
                     (t("Sender", lang), message.get("sender")),
                     (t("Subject", lang), message.get("subject")),
+                    (t("Date", lang), _format_iso_datetime(message.get("date"))),
                     (t("Body preview", lang), message.get("body_preview")),
                     ("Preview source", message.get("body_preview_source")),
                     ("Preview chars", message.get("body_preview_chars")),
@@ -483,6 +504,11 @@ def build_rop_event_detail_page_model(
                     ("Priority", classification.get("priority")),
                     ("Confidence", classification.get("confidence")),
                     ("Reason code", classification.get("reason_code")),
+                    (t("Reason", lang), classification.get("reason")),
+                    (
+                        t("Recommended next step", lang),
+                        classification.get("recommended_next_step"),
+                    ),
                     (
                         t("Recommended queue", lang),
                         classification.get("recommended_queue"),

@@ -758,6 +758,7 @@ def _operator_queue_entry(
         "bitrix_status": status or "unreconciled",
         "reason": evt.get("reasoning") or evt.get("reason_code", ""),
         "recommended_next_step": _recommended_next_step(priority, status, queue_kind),
+        "date": evt.get("received_at") or evt.get("date") or evt.get("event_date", ""),
         "run_id": run_id,
         "evidence_href": f"/runs/{run_id}/artifacts/classified_events_json",
         "is_fallback": bool(evt.get("is_fallback")),
