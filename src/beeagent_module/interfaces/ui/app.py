@@ -66,6 +66,8 @@ def _extract_filter_params_from_query(
         "classification",
         "priority",
         "bitrix_status",
+        "is_fallback",
+        "queue",
         "columns",
         "columns_open",
         "open_dropdowns",
@@ -454,7 +456,11 @@ def _register_rop_html_polish(app: FastAPI) -> None:
 
         content_type = response.headers.get("content-type", "")
         path = request.url.path
-        needs_polish = path == "/rop" or (locale == "ru" and path in {"/", "/runs"})
+        # /rop is rendered by BeeUI adapter — no localization pass needed
+        if path == "/rop":
+            return response
+
+        needs_polish = locale == "ru" and path in {"/", "/runs"}
         if not needs_polish or "text/html" not in content_type:
             return response
 
@@ -463,10 +469,7 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             body += chunk
 
         html = body.decode("utf-8")
-        if path == "/rop":
-            pass
-        else:
-            html = _localize_product_console_html(html, path, locale)
+        html = _localize_product_console_html(html, path, locale)
         headers = dict(response.headers)
         headers.pop("content-length", None)
         return Response(

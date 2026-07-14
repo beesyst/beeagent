@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +80,8 @@ def validate_filter_params(
         "classification",
         "priority",
         "bitrix_status",
+        "is_fallback",
+        "queue",
         "columns",
         "columns_open",
         "open_dropdowns",
@@ -115,6 +119,10 @@ def validate_filter_params(
                 errors.append(
                     f"Invalid priority '{val}', expected one of: {ALLOWED_PRIORITIES}"
                 )
+
+    is_fallback = params.get("is_fallback", "")
+    if is_fallback and is_fallback not in ("true", "false"):
+        errors.append(f"Invalid is_fallback '{is_fallback}', expected 'true' or 'false'")
 
     bitrix_status = params.get("bitrix_status", "")
     if bitrix_status:
@@ -179,6 +187,7 @@ def apply_queue_filters(
     bitrix_status_raw = params.get("bitrix_status", "")
     bitrix_statuses = {v.strip() for v in bitrix_status_raw.split(",") if v.strip()} if bitrix_status_raw else set()
     q = params.get("q", "").lower().strip()
+    is_fallback_raw = params.get("is_fallback", "").lower().strip()
     date_from = params.get("date_from", "")
     date_to = params.get("date_to", "")
 
@@ -190,7 +199,9 @@ def apply_queue_filters(
                 tzinfo=timezone.utc
             )
         except ValueError:
-            pass
+            logging.getLogger(__name__).warning(
+                "Invalid date_from value: %r, ignoring", date_from
+            )
     if date_to:
         try:
             # end of day for inclusive filter
@@ -198,12 +209,26 @@ def apply_queue_filters(
                 hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
             )
         except ValueError:
-            pass
+            logging.getLogger(__name__).warning(
+                "Invalid date_to value: %r, ignoring", date_to
+            )
+
+    # is_fallback filter
+    is_fallback_filter: bool | None = None
+    if is_fallback_raw == "true":
+        is_fallback_filter = True
+    elif is_fallback_raw == "false":
+        is_fallback_filter = False
 
     filtered: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
+
+        # is_fallback filter
+        if is_fallback_filter is not None:
+            if bool(item.get("is_fallback")) != is_fallback_filter:
+                continue
 
         # case_type filter (supports multi-value comma-separated)
         if case_types:
@@ -387,7 +412,7 @@ def parse_period(period: str) -> dict[str, Any]:
             "period": "all",
             "period_start_utc": None,
             "period_end_utc": None,
-            "time_basis": "run_generated_at",
+            "time_basis": "event_timestamp",
         }
     raise ValueError(f"Unsupported period: '{period}'")
 

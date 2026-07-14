@@ -1061,6 +1061,134 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
     assert layout[1]["rows"][0]["priority"]["label"] == "high"
 
 
+def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events() -> None:
+    """When queues are empty but attention_events exist, show data_table, not state_grid."""
+    data = {
+        "attention_events": [
+            {
+                "event_id": "evt-fallback-001",
+                "source_id": "hotline_mailbox",
+                "source_display_name": "Hotline mailbox",
+                "sender": "client@example.com",
+                "subject": "Price request",
+                "case_type": "new_lead",
+                "priority": "high",
+                "date": "2026-07-01T10:00:00+00:00",
+                "detail_href": "/rop/events/evt-fallback-001",
+            },
+            {
+                "event_id": "evt-fallback-002",
+                "source_id": "online_mailbox",
+                "source_display_name": "Online mailbox",
+                "sender": "buyer@example.com",
+                "subject": "Order inquiry",
+                "case_type": "existing_deal",
+                "priority": "medium",
+                "date": "2026-07-02T14:30:00+00:00",
+                "detail_href": "/rop/events/evt-fallback-002",
+            },
+        ],
+        "queues": {},
+        "filter_params": {},
+        "filter_options": {},
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "",
+    }
+
+    layout = build_rop_page_layout(data, tab="queue")
+
+    assert len(layout) >= 2
+    # First block: filter form
+    assert layout[0]["type"] == "filter_form"
+    # Second block: data_table, not state_grid
+    assert layout[1]["type"] == "data_table", (
+        f"Expected data_table when queues empty, got {layout[1]['type']}"
+    )
+    assert layout[1]["title"] == "ROP Work Queue"
+    assert len(layout[1]["rows"]) == 2
+    # Verify fallback rows got mapped correctly
+    row_senders = {r["client"]["title"] for r in layout[1]["rows"]}
+    assert "client@example.com" in row_senders
+    assert "buyer@example.com" in row_senders
+
+
+def test_rop_queue_tab_shows_empty_table_when_no_data() -> None:
+    """When both queues and attention_events are empty, show empty data_table."""
+    data = {
+        "attention_events": [],
+        "queues": {},
+        "filter_params": {},
+        "filter_options": {},
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "",
+    }
+
+    layout = build_rop_page_layout(data, tab="queue")
+
+    assert len(layout) >= 2
+    assert layout[0]["type"] == "filter_form"
+    assert layout[1]["type"] == "data_table"
+    assert len(layout[1]["rows"]) == 0
+    assert layout[1]["pagination"]["label"] == "Showing 0–0 of 0"
+
+
+def test_rop_queue_filter_options_from_queue_data() -> None:
+    """filter_options should reflect case_type/priority/bitrix_status from queue data."""
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                },
+                {
+                    "event_id": "evt-2",
+                    "case_type": "existing_deal",
+                    "priority": "medium",
+                    "bitrix_status": "matched_lead",
+                },
+            ],
+            "needs_review": [
+                {
+                    "event_id": "evt-3",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "ambiguous",
+                },
+            ],
+        },
+        "filter_params": {},
+        "filter_options": {
+            "case_types": ["new_lead", "existing_deal"],
+            "priorities": ["high", "medium"],
+            "bitrix_statuses": ["not_found", "matched_lead", "ambiguous"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "",
+    }
+
+    layout = build_rop_page_layout(data, tab="queue")
+    assert layout[0]["type"] == "filter_form"
+
+    # The filter form checkboxes should contain the expected options
+    # We verify by checking that the layout was built without errors
+    # (the filter options passed in data are used downstream)
+    assert layout[1]["type"] == "data_table"
+    assert len(layout[1]["rows"]) == 3
+
+
 def test_rop_overview_uses_rop_recommendations_detail() -> None:
     data = {
         "run_id": "run-rec",
@@ -1906,10 +2034,12 @@ def test_rop_dashboard_source_health_degraded(tmp_path: Path) -> None:
 
 
 def test_rop_dashboard_attention_events_are_capped(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.read_model import ATTENTION_EVENTS_MAX
+
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rich_rop_run(storage_dir, "run-cap-001")
     many_events = []
-    for i in range(60):
+    for i in range(ATTENTION_EVENTS_MAX + 10):
         many_events.append(
             {
                 "event_id": f"evt-cap-{i:03d}",
@@ -1928,7 +2058,7 @@ def test_rop_dashboard_attention_events_are_capped(tmp_path: Path) -> None:
     response = client.get("/api/rop/dashboard")
     assert response.status_code == 200
     events = response.json()["data"]["attention_events"]
-    assert len(events) <= 50
+    assert len(events) <= ATTENTION_EVENTS_MAX
 
 
 def test_rop_dashboard_attachment_summary(tmp_path: Path) -> None:
@@ -2787,7 +2917,14 @@ def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
     response = client.get("/rop?tab=overview&period=7d&lang=ru")
     assert response.status_code == 200
     html = response.text
-    assert "/rop?tab=queue&amp;period=7d&amp;lang=ru" in html
+    # Overview cards use filtered Queue hrefs with date_from/date_to for same period
+    # Jinja2 auto-escapes & to &amp; in HTML
+    # date_from/date_to values are dynamic (based on current date), check prefix only
+    assert "/rop?tab=queue&amp;priority=high&amp;date_from=" in html
+    assert "&amp;date_to=" in html
+    assert "&amp;lang=ru" in html
+    assert "/rop?tab=queue&amp;queue=needs_review" in html
+    assert "/rop?tab=queue&amp;bitrix_status=not_found,ambiguous,duplicate_candidate,unreconciled" in html
     assert "/rop?tab=bitrix&amp;period=7d&amp;lang=ru" in html
     assert "/rop?tab=evidence&amp;period=7d&amp;lang=ru" in html
     assert "/rop?tab=overview&amp;period=today&amp;lang=ru" in html
@@ -2951,7 +3088,9 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     assert 'href="/rop?tab=overview&amp;period=90d"' in html
     assert 'href="/rop?tab=overview&amp;period=365d"' in html
     assert 'href="/rop?tab=overview&amp;period=all"' in html
-    assert 'href="/rop?tab=queue&amp;period=7d"' in html
+    assert 'href="/rop?tab=queue&amp;priority=high&amp;date_from=' in html
+    assert 'href="/rop?tab=queue&amp;queue=needs_review&amp;date_from=' in html
+    assert 'href="/rop?tab=queue&amp;bitrix_status=not_found,ambiguous,duplicate_candidate,unreconciled&amp;date_from=' in html
     assert 'href="/rop?tab=bitrix&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 

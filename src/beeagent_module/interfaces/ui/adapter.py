@@ -66,6 +66,8 @@ def _extract_filter_params(query: Mapping[str, str]) -> dict[str, str]:
         "classification",
         "priority",
         "bitrix_status",
+        "is_fallback",
+        "queue",
         "columns",
         "columns_open",
         "open_dropdowns",
@@ -310,6 +312,9 @@ class BeeAgentUiAdapter:
 
                 run_id = query.get("run_id")
                 period = query.get("period")
+                # Point 3: Queue tab always loads all events; date filtering via filter_form
+                if tab == "queue":
+                    period = "all"
                 if run_id is not None:
                     try:
                         validate_run_id(run_id)

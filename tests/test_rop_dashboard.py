@@ -312,7 +312,7 @@ class TestPeriodParsing:
         assert info["period"] == "all"
         assert info["period_start_utc"] is None
         assert info["period_end_utc"] is None
-        assert info["time_basis"] == "run_generated_at"
+        assert info["time_basis"] == "event_timestamp"
 
     def test_parse_invalid_period_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported period"):
@@ -789,6 +789,22 @@ class TestQueueFilters:
         )
         assert any("Invalid bitrix_status" in e for e in errors)
 
+    def test_validate_filter_params_rejects_bad_is_fallback(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"is_fallback": "maybe"}
+        )
+        assert any("Invalid is_fallback" in e for e in errors)
+
+    def test_validate_filter_params_accepts_is_fallback(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"is_fallback": "true"}
+        )
+        assert errors == []
+        errors = rop_dashboard_module.validate_filter_params(
+            {"is_fallback": "false"}
+        )
+        assert errors == []
+
     def test_apply_queue_filters_classification(self) -> None:
         events = [
             {"event_id": "1", "case_type": "new_lead", "sender": "a@b.com"},
@@ -851,6 +867,25 @@ class TestQueueFilters:
         )
         assert len(result) == 1
         assert result[0]["event_id"] == "2"
+
+    def test_apply_queue_filters_is_fallback(self) -> None:
+        events = [
+            {"event_id": "1", "is_fallback": True},
+            {"event_id": "2", "is_fallback": False},
+            {"event_id": "3", "is_fallback": True},
+            {"event_id": "4"},  # missing is_fallback → False
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, None, {"is_fallback": "true"}
+        )
+        assert len(result) == 2
+        assert {r["event_id"] for r in result} == {"1", "3"}
+
+        result = rop_dashboard_module.apply_queue_filters(
+            events, None, {"is_fallback": "false"}
+        )
+        assert len(result) == 2
+        assert {r["event_id"] for r in result} == {"2", "4"}
 
     def test_apply_queue_filters_date_range(self) -> None:
         events = [
