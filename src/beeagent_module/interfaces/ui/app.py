@@ -464,9 +464,7 @@ def _register_rop_html_polish(app: FastAPI) -> None:
 
         html = body.decode("utf-8")
         if path == "/rop":
-            html = _replace_period_buttons_with_dropdown(html)
-            html = _replace_rop_chart_ids(html)
-            html = _polish_rop_overview_cards(html)
+            pass
         else:
             html = _localize_product_console_html(html, path, locale)
         headers = dict(response.headers)
@@ -477,63 +475,6 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             headers=headers,
             media_type="text/html",
         )
-
-
-_PERIOD_BUTTON_RE = re.compile(
-    r'\s*<a href="(?P<href>/rop\?tab=overview&amp;period='
-    r'(?P<period>[^"&]+)(?:&amp;lang=[^"]+)?)" '
-    r'class="btn btn-outline-primary btn-sm me-1">'
-    r"(?P<label>[^<]+)</a>"
-)
-
-_ROP_CHART_IDS: dict[str, str] = {
-    "Email Workload": "chart-rop-email-workload",
-    "Action Required": "chart-rop-action-required",
-    "Email intake trend": "chart-rop-email-intake",
-    "Lead outcome mix": "chart-rop-outcome-mix",
-    "Bitrix reconciliation": "chart-rop-bitrix",
-    "Source contribution": "chart-rop-source-contribution",
-}
-
-
-def _replace_period_buttons_with_dropdown(html: str) -> str:
-    matches = list(_PERIOD_BUTTON_RE.finditer(html))
-    if not matches:
-        return html
-
-    active_label = ""
-    items: list[str] = []
-    for match in matches:
-        label = match.group("label")
-        href = match.group("href")
-        is_active = False
-        for suffix in (" (current)", " (текущий)"):
-            if label.endswith(suffix):
-                label = label[: -len(suffix)]
-                is_active = True
-                break
-        if is_active:
-            active_label = label
-        active_class = " active" if is_active else ""
-        aria_current = ' aria-current="true"' if is_active else ""
-        items.append(
-            f'<a class="dropdown-item{active_class}" href="{href}"{aria_current}>'
-            f"{label}</a>"
-        )
-
-    if not active_label and matches:
-        active_label = matches[0].group("label").split(" (", 1)[0]
-
-    dropdown = (
-        '<div class="dropdown me-1 d-inline-block">'
-        '<button class="btn btn-outline-primary btn-sm dropdown-toggle" '
-        'type="button" data-bs-toggle="dropdown" aria-expanded="false">'
-        f"{active_label}</button>"
-        '<div class="dropdown-menu dropdown-menu-end">'
-        + "".join(items)
-        + "</div></div>"
-    )
-    return html[: matches[0].start()] + dropdown + html[matches[-1].end() :]
 
 
 def _localize_product_console_html(
@@ -598,65 +539,6 @@ def _localize_product_console_html(
     result = html
     for old, new in replacements.get(path, []):
         result = result.replace(old, new)
-    return result
-
-
-def _replace_rop_chart_ids(html: str) -> str:
-    result = html
-    for title, chart_id in _ROP_CHART_IDS.items():
-        pattern = re.compile(
-            r'(<h3 class="card-title mb-0">'
-            + re.escape(title)
-            + r"</h3>.*?id=\")(?P<old>beeui-chart-[^\"]+)(\")",
-            re.DOTALL,
-        )
-        match = pattern.search(result)
-        if not match:
-            continue
-        old_id = match.group("old")
-        result = result.replace(old_id, chart_id)
-    return result
-
-
-_ROP_HERO_METRIC_RE = re.compile(
-    r'(<div class="datagrid-title">(?P<label>TODAY&#39;S EMAILS|NEW LEADS)</div>\s*'
-    r'<div class="datagrid-content">(?P<value>.*?)</div>)',
-    re.DOTALL,
-)
-
-
-def _polish_rop_overview_cards(html: str) -> str:
-    def metric_repl(match: re.Match[str]) -> str:
-        label = match.group("label")
-        value_text = re.sub(r"<.*?>", "", match.group("value"))
-        try:
-            value = max(0, int(value_text.strip()))
-        except ValueError:
-            value = 0
-        width = min(100, max(8 if value else 0, value * 20))
-        tone = "bg-primary" if label == "TODAY&#39;S EMAILS" else "bg-success"
-        return (
-            match.group(1)
-            + '<div class="progress progress-sm mt-2">'
-            + f'<div class="progress-bar {tone}" style="width: {width}%"></div>'
-            + "</div>"
-        )
-
-    result = _ROP_HERO_METRIC_RE.sub(metric_repl, html)
-    result = result.replace("Chart render error", "No chart data for this period")
-    for title in ("Urgent leads", "Needs review", "Bitrix gaps", "Data quality"):
-        title_html = f'<h3 class="card-title mb-0">{title}</h3>'
-        title_index = result.find(title_html)
-        if title_index < 0:
-            continue
-        card_index = result.rfind('<div class="card">', 0, title_index)
-        if card_index < 0:
-            continue
-        result = (
-            result[:card_index]
-            + '<div class="card card-sm">'
-            + result[card_index + len('<div class="card">') :]
-        )
     return result
 
 

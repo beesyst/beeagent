@@ -2844,14 +2844,6 @@ def _build_latest_selection_block(
         },
     ]
 
-    if period_display != t("n/a", locale):
-        items.append(
-            {
-                "label": t("Period", locale),
-                "value": period_display,
-            }
-        )
-
     if source_count > 0:
         items.append(
             {
@@ -3020,20 +3012,30 @@ def _build_rop_overview_layout(
                 "Inbound email intake, lead quality and Bitrix reconciliation",
                 locale,
             ),
-            "status": period_hint,
+            "status": "",
             "items": [
-                {"label": t("TODAY'S EMAILS", locale), "value": todays_emails},
-                {"label": t("NEW LEADS", locale), "value": new_leads},
-                {"label": t("Period", locale), "value": period_hint},
+                {
+                    "label": (
+                        t("TODAY'S EMAILS", locale)
+                        if current_period == "today"
+                        else t("Yesterday's emails", locale)
+                        if current_period == "yesterday"
+                        else t("Emails in period", locale)
+                    ),
+                    "value": todays_emails,
+                    "progress": min(100, max(8 if _int(todays_emails) else 0, _int(todays_emails) * 20)),
+                    "progress_tone": "bg-primary",
+                },
+                {
+                    "label": t("NEW LEADS", locale),
+                    "value": new_leads,
+                    "progress": min(100, max(8 if _int(new_leads) else 0, _int(new_leads) * 20)),
+                    "progress_tone": "bg-success",
+                },
                 {"label": t("Sources", locale), "value": source_summary},
                 {"label": t("Bitrix", locale), "value": bitrix_summary},
-                {"label": t("Data quality", locale), "value": data_quality},
             ],
-            "primary_links": period_actions
-            + [
-                {"label": t("Open Queue", locale), "href": queue_href},
-                {"label": t("Open Bitrix", locale), "href": bitrix_href},
-            ],
+            "primary_links": period_actions,
         }
     )
     layout.append(
@@ -3045,6 +3047,7 @@ def _build_rop_overview_layout(
                 "{count} processed inbound items in selected period",
                 locale,
             ).format(count=period_emails),
+            "chart_id": "chart-rop-email-workload",
             "kind": "area",
             "series": workload_series
             or [{"name": t("Processed", locale), "data": [period_emails]}],
@@ -3063,6 +3066,7 @@ def _build_rop_overview_layout(
                 "{count} items need review · {ratio}% action ratio",
                 locale,
             ).format(count=action_required_count, ratio=action_required_ratio),
+            "chart_id": "chart-rop-action-required",
             "kind": "donut",
             "series": [
                 action_required_count,
@@ -3078,6 +3082,7 @@ def _build_rop_overview_layout(
         {
             "type": "venue_card",
             "width": 3,
+            "compact": True,
             "title": t("Urgent leads", locale),
             "subtitle": t("Open now", locale),
             "status": str(high_priority),
@@ -3087,6 +3092,7 @@ def _build_rop_overview_layout(
         {
             "type": "venue_card",
             "width": 3,
+            "compact": True,
             "title": t("Needs review", locale),
             "subtitle": t("Operator queue", locale),
             "status": str(needs_review),
@@ -3096,6 +3102,7 @@ def _build_rop_overview_layout(
         {
             "type": "venue_card",
             "width": 3,
+            "compact": True,
             "title": t("Bitrix gaps", locale),
             "subtitle": t("Check CRM evidence", locale),
             "status": str(bitrix_gap_count),
@@ -3105,6 +3112,7 @@ def _build_rop_overview_layout(
         {
             "type": "venue_card",
             "width": 3,
+            "compact": True,
             "title": t("Data quality", locale),
             "subtitle": t("Timestamp/source/attachment issues", locale),
             "status": str(data_quality_count),
@@ -3120,20 +3128,8 @@ def _build_rop_overview_layout(
         )
     )
 
-    layout.append(
-        {
-            "type": "chart",
-            "size": "M",
-            "title": t("Email intake trend", locale),
-            "kind": "area",
-            "series": workload_series
-            or [{"name": t("Processed", locale), "data": [period_emails]}],
-            "categories": workload_labels
-            or [period_hint or t("Selected period", locale)],
-            "height": 240,
-            "empty_message": t("No chart data for this period", locale),
-        }
-    )
+    # Order: Email Workload, Action Required, Lead outcome mix,
+    # Bitrix reconciliation, Source contribution
 
     outcome_labels = [
         t("New leads", locale),
@@ -3154,6 +3150,7 @@ def _build_rop_overview_layout(
             "type": "chart",
             "size": "M",
             "title": t("Lead outcome mix", locale),
+            "chart_id": "chart-rop-outcome-mix",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": outcome_values}],
             "categories": outcome_labels,
@@ -3179,6 +3176,7 @@ def _build_rop_overview_layout(
             "type": "chart",
             "size": "M",
             "title": t("Bitrix reconciliation", locale),
+            "chart_id": "chart-rop-bitrix",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": bitrix_values}],
             "categories": bitrix_labels,
@@ -3199,8 +3197,9 @@ def _build_rop_overview_layout(
     layout.append(
         {
             "type": "chart",
-            "size": "M",
+            "size": "XL",
             "title": t("Source contribution", locale),
+            "chart_id": "chart-rop-source-contribution",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": source_values or [0]}],
             "categories": source_categories or [t("No data", locale)],

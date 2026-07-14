@@ -583,7 +583,7 @@ class TestRopTabs:
         response = client.get("/rop?tab=overview")
         html = response.text
         assert "ROP Control Center" in html
-        assert "TODAY&#39;S EMAILS" in html
+        assert "Emails in period" in html
         assert "NEW LEADS" in html
         assert "Urgent leads" in html
         assert "Needs review" in html
@@ -800,7 +800,7 @@ def test_rop_chart_blocks_use_controlled_fields() -> None:
         assert "kind" in chart
         assert "series" in chart
         assert "data" not in chart
-    area = next(chart for chart in charts if chart["title"] == "Email intake trend")
+    area = next(chart for chart in charts if chart["title"] == "Email Workload")
     assert area["kind"] == "area"
     assert area["categories"] == ["2026-06-20", "2026-06-21"]
     donuts = [chart for chart in charts if chart["kind"] == "donut"]
@@ -845,7 +845,7 @@ def test_rop_overview_buckets_7d_and_30d_chart_series() -> None:
         data = {**base_data, "period": period}
         layout = build_rop_page_layout(data, tab="overview")
         chart = next(
-            block for block in layout if block["title"] == "Email intake trend"
+            block for block in layout if block["title"] == "Email Workload"
         )
         assert len(chart["categories"]) == expected_count
         assert chart["categories"][-1] == "2026-06-21"
@@ -913,13 +913,9 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
         "Last 7 days (current)",
         "Last 30 days",
         "All time",
-        "Open Queue",
-        "Open Bitrix",
     ]
     assert items[0]["href"] == "/rop?tab=overview&period=today"
     assert items[1]["href"] == "/rop?tab=overview&period=7d"
-    assert items[4]["href"] == "/rop?tab=queue&period=7d"
-    assert items[5]["href"] == "/rop?tab=bitrix&period=7d"
 
 
 def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None:
@@ -2741,7 +2737,7 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     assert "Требуют проверки" in html
     assert "Needs review" not in html
     assert "beeui-language-switcher" in html
-    assert 'class="dropdown me-1 d-inline-block"' in html
+    assert 'class="dropdown ms-auto"' in html
     assert "dropdown-menu dropdown-menu-end" in html
     assert "Последние 7 дней" in html
     assert "Сегодня" in html
@@ -2901,19 +2897,17 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     html = response.text
     assert "Email Workload" in html
     assert "Action Required" in html
-    assert "Email intake trend" in html
     assert "Lead outcome mix" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
     assert "chart-rop-email-workload" in html
     assert "chart-rop-action-required" in html
-    assert "chart-rop-email-intake" in html
     assert "chart-rop-outcome-mix" in html
     assert "chart-rop-bitrix" in html
     assert "chart-rop-source-contribution" in html
     assert "progress progress-sm" in html
     assert 'class="card card-sm"' in html
-    assert "Chart render error" not in html
+    assert "No chart data for this period" in html
 
 
 def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
@@ -2940,7 +2934,7 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     client = _client(storage_dir)
     response = client.get("/rop?tab=overview")
     html = response.text
-    assert 'class="dropdown me-1 d-inline-block"' in html
+    assert 'class="dropdown ms-auto"' in html
     assert "dropdown-menu dropdown-menu-end" in html
     assert "dropdown-item active" in html
     assert "Today" in html
@@ -2992,7 +2986,7 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "Business KPI" not in html
     assert "Detailed Metrics" not in html
     assert "Business metrics" not in html
-    assert "TODAY&#39;S EMAILS" in html
+    assert "Emails in period" in html
     assert "NEW LEADS" in html
     assert "Urgent leads" in html
     assert "Needs review" in html
@@ -3043,7 +3037,6 @@ def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
     html = response.text
     assert "Email Workload" in html
     assert "Action Required" in html
-    assert "Email intake trend" in html
     assert "Lead outcome mix" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
