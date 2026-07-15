@@ -3023,8 +3023,10 @@ def _build_rop_overview_layout(
     # Build date range from current period so Queue shows same period as Overview
     period_start_utc = data.get("period_start_utc")
     period_end_utc = data.get("period_end_utc")
-    date_from_str = _day_label(_parse_utc_datetime(period_start_utc)) if period_start_utc else ""
-    date_to_str = _day_label(_parse_utc_datetime(period_end_utc)) if period_end_utc else ""
+    _parsed_start = _parse_utc_datetime(period_start_utc) if period_start_utc else None
+    _parsed_end = _parse_utc_datetime(period_end_utc) if period_end_utc else None
+    date_from_str = _day_label(_parsed_start) if _parsed_start else ""
+    date_to_str = _day_label(_parsed_end) if _parsed_end else ""
     date_suffix = ""
     if date_from_str and date_to_str:
         date_suffix = f"&date_from={date_from_str}&date_to={date_to_str}"
@@ -3109,6 +3111,7 @@ def _build_rop_overview_layout(
             or [{"name": t("Processed", locale), "data": [period_emails]}],
             "categories": workload_labels
             or [period_hint or t("Selected period", locale)],
+            "colors": ["#4f46e5", "#818cf8"],
             "height": 180,
             "empty_message": t("No chart data for this period", locale),
         }
@@ -3129,6 +3132,7 @@ def _build_rop_overview_layout(
                 max(_int(total_leads) - action_required_count, 0),
             ],
             "labels": [t("Needs attention", locale), t("Clear", locale)],
+            "colors": ["#f59e0b", "#10b981"],
             "height": 180,
             "empty_message": t("No chart data for this period", locale),
         }
@@ -3213,6 +3217,7 @@ def _build_rop_overview_layout(
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": outcome_values}],
             "categories": outcome_labels,
+            "colors": ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444"],
             "height": 240,
             "empty_message": t("No chart data for this period", locale),
         }
@@ -3239,6 +3244,7 @@ def _build_rop_overview_layout(
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": bitrix_values}],
             "categories": bitrix_labels,
+            "colors": ["#0d9488", "#f43f5e", "#f59e0b", "#64748b"],
             "height": 240,
             "empty_message": t("No chart data for this period", locale),
         }
@@ -3262,6 +3268,7 @@ def _build_rop_overview_layout(
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": source_values or [0]}],
             "categories": source_categories or [t("No data", locale)],
+            "colors": ["#6366f1", "#8b5cf6", "#a855f7", "#d946ef"],
             "height": 240,
             "empty_message": t("No chart data for this period", locale),
         }

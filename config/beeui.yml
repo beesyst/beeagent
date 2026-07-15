@@ -12,7 +12,7 @@ app:
       - en
       - ru
   theme:
-    mode: dark
+    mode: auto
     primary: blue
     base: gray
     font: sans-serif
@@ -22,7 +22,7 @@ app:
     type: vertical
     container: xl
     sidebar:
-      variant: dark
+      variant: default
       collapsed: false
     navbar:
       enabled: false

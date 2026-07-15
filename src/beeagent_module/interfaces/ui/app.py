@@ -263,7 +263,6 @@ def build_beeui_app(
         product_title="BeeAgent",
         adapter=adapter,
     )
-    _register_apexcharts_compat(app)
     _register_rop_html_polish(app)
 
     app.state.beeagent_logger = logger
@@ -543,87 +542,6 @@ def _localize_product_console_html(
     for old, new in replacements.get(path, []):
         result = result.replace(old, new)
     return result
-
-
-def _register_apexcharts_compat(app: FastAPI) -> None:
-    async def apexcharts_compat(_: Request) -> Response:
-        script = """
-(function () {
-  'use strict';
-  function safeText(value) {
-    return String(value == null ? '' : value);
-  }
-  window.ApexCharts = function (el, config) {
-    this.el = el;
-    this.config = config || {};
-  };
-  window.ApexCharts.prototype.render = function () {
-    var config = this.config || {};
-    var chart = config.chart || {};
-    var type = chart.type || 'line';
-    var series = Array.isArray(config.series) ? config.series : [];
-    var labels = Array.isArray(config.labels) ? config.labels : [];
-    var categories = config.xaxis && Array.isArray(config.xaxis.categories)
-      ? config.xaxis.categories
-      : labels;
-    var wrap = document.createElement('div');
-    wrap.className = 'beeui-apex-compat';
-    wrap.style.minHeight = '220px';
-    wrap.style.display = 'flex';
-    wrap.style.flexDirection = 'column';
-    wrap.style.justifyContent = 'center';
-    wrap.style.gap = '0.5rem';
-    if (type === 'donut') {
-      series.forEach(function (value, index) {
-        var row = document.createElement('div');
-        row.className = 'd-flex justify-content-between border-bottom py-1';
-        var label = document.createElement('span');
-        label.className = 'text-secondary';
-        label.textContent = safeText(labels[index] || ('Segment ' + (index + 1)));
-        var number = document.createElement('strong');
-        number.textContent = safeText(value);
-        row.appendChild(label);
-        row.appendChild(number);
-        wrap.appendChild(row);
-      });
-    } else {
-      var points = series.length && Array.isArray(series[0].data) ? series[0].data : [];
-      points.forEach(function (value, index) {
-        var row = document.createElement('div');
-        row.className = 'd-flex align-items-center gap-2';
-        var label = document.createElement('span');
-        label.className = 'text-secondary small';
-        label.style.width = '6rem';
-        label.textContent = safeText(categories[index] || (index + 1));
-        var barWrap = document.createElement('div');
-        barWrap.className = 'progress flex-fill';
-        var bar = document.createElement('div');
-        bar.className = 'progress-bar';
-        bar.style.width = Math.max(4, Math.min(100, Number(value) || 0)) + '%';
-        barWrap.appendChild(bar);
-        var number = document.createElement('strong');
-        number.style.width = '3rem';
-        number.textContent = safeText(value);
-        row.appendChild(label);
-        row.appendChild(barWrap);
-        row.appendChild(number);
-        wrap.appendChild(row);
-      });
-    }
-    this.el.innerHTML = '';
-    this.el.appendChild(wrap);
-    return Promise.resolve();
-  };
-}());
-"""
-        return Response(script, media_type="application/javascript")
-
-    route = Route(
-        "/static/vendor/apexcharts/apexcharts.min.js",
-        endpoint=apexcharts_compat,
-        methods=["GET"],
-    )
-    app.router.routes.insert(0, route)
 
 
 _PATH_TRAVERSAL_RE = re.compile(r"(?:^|/)\.\.(?:/|$)")
