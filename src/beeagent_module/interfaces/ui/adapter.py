@@ -358,8 +358,9 @@ class BeeAgentUiAdapter:
                 return ok_result(data)
 
             if page_id == "modules":
+                locale = resolve_locale(query.get("lang"))
                 modules_data = build_modules_list(self._storage_dir)
-                modules_data["layout"] = build_modules_page_layout(modules_data)
+                modules_data["layout"] = build_modules_page_layout(modules_data, locale=locale)
                 return ok_result(modules_data)
 
             if page_id == "rop_event_detail":

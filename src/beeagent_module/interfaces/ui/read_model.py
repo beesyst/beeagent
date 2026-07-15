@@ -293,11 +293,11 @@ def build_modules_page_layout(
             {
                 "type": "attention_list",
                 "size": "XL",
-                "title": "Modules",
+                "title": t("Modules", locale),
                 "items": [
                     {
-                        "label": "No modules",
-                        "message": "No modules registered.",
+                        "label": t("No modules", locale),
+                        "message": t("No modules registered.", locale),
                         "severity": "info",
                     }
                 ],
@@ -321,7 +321,7 @@ def build_modules_page_layout(
             "type": "status_table",
             "size": "XL",
             "title": t("Modules Overview", locale),
-            "columns": ["ID", "Package", "Entry", "State", "Error"],
+            "columns": [t("ID", locale), t("Package", locale), t("Entry", locale), t("State", locale), t("Error", locale)],
             "rows": table_rows,
         }
     ]
@@ -3413,7 +3413,7 @@ def _build_rop_queue_layout(
                 locale=locale,
             ),
             _queue_table(
-                "ROP Work Queue",
+                t("ROP Work Queue", locale),
                 paginated_fallback,
                 run_id=run_id,
                 locale=locale,
@@ -3455,7 +3455,7 @@ def _build_rop_queue_layout(
     # Build the data table with pagination
     layout.append(
         _queue_table(
-            "ROP Work Queue",
+            t("ROP Work Queue", locale),
             paginated_rows,
             run_id=run_id,
             locale=locale,
@@ -3994,8 +3994,8 @@ def _build_rop_sources_layout(
                 "title": t("Source Health", locale),
                 "items": [
                     {
-                        "label": "No sources",
-                        "value": "No source data available",
+                        "label": t("No sources", locale),
+                        "value": t("No source data available", locale),
                         "status": "empty",
                     }
                 ],
@@ -4003,14 +4003,14 @@ def _build_rop_sources_layout(
         ]
 
     columns = [
-        "Source",
-        "Type",
-        "Status",
-        "Reason",
-        "Fetched",
-        "Loaded",
-        "Malformed",
-        "Classified",
+        t("Source", locale),
+        t("Type", locale),
+        t("Status", locale),
+        t("Reason", locale),
+        t("Fetched", locale),
+        t("Loaded", locale),
+        t("Malformed", locale),
+        t("Classified", locale),
     ]
     rows: list[list[str]] = []
     for sh in source_health:
@@ -4031,7 +4031,7 @@ def _build_rop_sources_layout(
         {
             "type": "status_table",
             "size": "XL",
-            "title": "Source Health Details",
+            "title": t("Source Health Details", locale),
             "columns": columns,
             "rows": rows,
         }
@@ -4052,8 +4052,8 @@ def _build_rop_attachments_layout(
                 "title": t("Attachment Processing", locale),
                 "items": [
                     {
-                        "label": "No attachments",
-                        "value": "No attachment data available",
+                        "label": t("No attachments", locale),
+                        "value": t("No attachment data available", locale),
                         "status": "empty",
                     }
                 ],
@@ -4062,18 +4062,18 @@ def _build_rop_attachments_layout(
 
     kpi_items: list[dict[str, Any]] = [
         {
-            "label": "Total Attachments",
+            "label": t("Total Attachments", locale),
             "value": att_summary.get("total_attachments", 0),
         },
         {
-            "label": "Preview Available",
+            "label": t("Preview Available", locale),
             "value": att_summary.get("preview_available_count", 0),
         },
-        {"label": "Refused", "value": att_summary.get("refused_count", 0)},
-        {"label": "Blocked", "value": att_summary.get("blocked_count", 0)},
-        {"label": "Unsupported", "value": att_summary.get("unsupported_count", 0)},
+        {"label": t("Refused", locale), "value": att_summary.get("refused_count", 0)},
+        {"label": t("Blocked", locale), "value": att_summary.get("blocked_count", 0)},
+        {"label": t("Unsupported", locale), "value": att_summary.get("unsupported_count", 0)},
         {
-            "label": "Extraction Errors",
+            "label": t("Extraction Errors", locale),
             "value": att_summary.get("extraction_error_count", 0),
         },
     ]
@@ -4158,13 +4158,12 @@ def _build_rop_bitrix_layout(
             {
                 "type": "state_grid",
                 "size": "XL",
-                "title": "Bitrix Evidence Board",
+                "title": t("Bitrix Evidence Board", locale),
                 "items": [
                     {
-                        "label": "Not reconciled",
+                        "label": t("Not reconciled", locale),
                         "value": (
-                            "Bitrix reconciliation artifact is not available for this run. "
-                            "Run read-only reconcile-bitrix to create CRM evidence."
+                            t("Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.", locale)
                         ),
                         "status": "read-only",
                     }
@@ -4188,32 +4187,32 @@ def _build_rop_bitrix_layout(
             "type": "kpi_grid",
             "size": "XL",
             "columns": 3,
-            "title": "Bitrix Evidence Board",
+            "title": t("Bitrix Evidence Board", locale),
             "items": [
                 {
-                    "label": "Bitrix Status",
+                    "label": t("Bitrix Status", locale),
                     "value": bitrix_state.get("status", "unknown"),
                 },
                 {
-                    "label": "Matched",
+                    "label": t("Matched", locale),
                     "value": business_kpi.get("matched_in_bitrix", 0),
                 },
                 {
-                    "label": "Lost in Bitrix",
+                    "label": t("Lost in Bitrix", locale),
                     "value": business_kpi.get("lost_in_bitrix", 0),
                 },
                 {
-                    "label": "Ambiguous",
+                    "label": t("Ambiguous", locale),
                     "value": business_kpi.get(
                         "ambiguous_or_duplicate", ambiguous_count
                     ),
                 },
                 {
-                    "label": "Connector Degraded",
+                    "label": t("Connector Degraded", locale),
                     "value": connector_degraded_count,
                 },
                 {
-                    "label": "Unreconciled",
+                    "label": t("Unreconciled", locale),
                     "value": business_kpi.get("unreconciled", 0),
                 },
             ],
@@ -4221,11 +4220,11 @@ def _build_rop_bitrix_layout(
     ]
 
     queue_specs = [
-        ("lost_in_bitrix", "Lost in Bitrix"),
-        ("ambiguous", "Ambiguous"),
-        ("degraded", "Connector Degraded"),
-        ("unreconciled", "Unreconciled"),
-        ("matched", "Matched"),
+        ("lost_in_bitrix", t("Lost in Bitrix", locale)),
+        ("ambiguous", t("Ambiguous", locale)),
+        ("degraded", t("Connector Degraded", locale)),
+        ("unreconciled", t("Unreconciled", locale)),
+        ("matched", t("Matched", locale)),
     ]
     for queue_id, title in queue_specs:
         if queue_id in period_queues:
@@ -4253,7 +4252,7 @@ def _build_rop_bitrix_layout(
                 "type": "status_table",
                 "size": "XL",
                 "title": title,
-                "columns": ["Event ID", "Case Type", "Priority", "Bitrix Status"],
+                "columns": [t("Event ID", locale), t("Case Type", locale), t("Priority", locale), t("Bitrix Status", locale)],
                 "rows": rows,
             }
         )
@@ -4647,7 +4646,7 @@ def _build_rop_ai_assist_layout(
         adj_status_counts = adj_summary.get("status_counts", {})
         if isinstance(adj_status_counts, dict) and adj_status_counts:
             status_items = [
-                {"label": str(key).replace("_", " ").title(), "value": _int(val)}
+                {"label": t(str(key).replace("_", " ").title(), locale), "value": _int(val)}
                 for key, val in adj_status_counts.items()
                 if _int(val) > 0
             ]
@@ -4675,7 +4674,7 @@ def _build_rop_ai_assist_layout(
                 if _int(src_val) > 0:
                     decision_source_items.append(
                         {
-                            "label": str(src_key).replace("_", " ").title(),
+                            "label": t(str(src_key).replace("_", " ").title(), locale),
                             "value": _int(src_val),
                         }
                     )
@@ -4757,7 +4756,7 @@ def _build_rop_ai_assist_layout(
     if isinstance(status_counts, dict):
         status_items = [
             {
-                "label": str(key).replace("_", " ").title(),
+                "label": t(str(key).replace("_", " ").title(), locale),
                 "value": _int(value),
             }
             for key, value in status_counts.items()

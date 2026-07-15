@@ -524,10 +524,10 @@ def build_rop_event_detail_page_model(
             "items": _page_kv_items(
                 [
                     _kv(t("Case type", lang), classification.get("case_type")),
-                    _kv("Subtype", classification.get("case_subtype")),
-                    _kv("Priority", classification.get("priority"), hint="priority"),
-                    _kv("Confidence", classification.get("confidence"), hint="confidence"),
-                    _kv("Reason code", classification.get("reason_code")),
+                    _kv(t("Subtype", lang), classification.get("case_subtype")),
+                    _kv(t("Priority", lang), classification.get("priority"), hint="priority"),
+                    _kv(t("Confidence", lang), classification.get("confidence"), hint="confidence"),
+                    _kv(t("Reason code", lang), classification.get("reason_code")),
                     _kv(t("Reason", lang), classification.get("reason")),
                     _kv(
                         t("Recommended queue", lang),
@@ -544,9 +544,9 @@ def build_rop_event_detail_page_model(
             "no_data": not thread.get("available", False),
             "items": _page_kv_items(
                 [
-                    _kv("Thread ID", thread.get("thread_id")),
-                    _kv("Connection", thread.get("thread_connection")),
-                    _kv("Reply/forward", thread.get("reply_or_forward"), hint="boolean"),
+                    _kv(t("Thread ID", lang), thread.get("thread_id")),
+                    _kv(t("Connection", lang), thread.get("thread_connection")),
+                    _kv(t("Reply/forward", lang), thread.get("reply_or_forward"), hint="boolean"),
                 ]
             ),
         },
@@ -557,10 +557,10 @@ def build_rop_event_detail_page_model(
             "items": _page_kv_items(
                 [
                     _kv(t("AI status", lang), ai_assist.get("ai_assist_status")),
-                    _kv("AI used", ai_assist.get("ai_assist_used"), hint="boolean"),
-                    _kv("AI confidence", ai_assist.get("ai_assist_confidence"), hint="confidence"),
-                    _kv("Final type", ai_assist.get("final_case_type")),
-                    _kv("Final priority", ai_assist.get("final_priority")),
+                    _kv(t("AI used", lang), ai_assist.get("ai_assist_used"), hint="boolean"),
+                    _kv(t("AI confidence", lang), ai_assist.get("ai_assist_confidence"), hint="confidence"),
+                    _kv(t("Final type", lang), ai_assist.get("final_case_type")),
+                    _kv(t("Final priority", lang), ai_assist.get("final_priority")),
                 ]
             ),
         },
@@ -604,11 +604,11 @@ def build_rop_event_detail_page_model(
             "no_data": not bitrix.get("available", False),
             "items": _page_kv_items(
                 [
-                    _kv("Bitrix status", bitrix.get("bitrix_status")),
+                    _kv(t("Bitrix status", lang), bitrix.get("bitrix_status")),
                     _kv(t("Match quality", lang), bitrix.get("match_quality")),
-                    _kv("Candidate count", bitrix.get("candidate_count")),
-                    _kv("Entity type", bitrix.get("entity_type")),
-                    _kv("Entity ID", bitrix.get("entity_id")),
+                    _kv(t("Candidate count", lang), bitrix.get("candidate_count")),
+                    _kv(t("Entity type", lang), bitrix.get("entity_type")),
+                    _kv(t("Entity ID", lang), bitrix.get("entity_id")),
                 ]
             ),
         },
@@ -618,9 +618,9 @@ def build_rop_event_detail_page_model(
             "no_data": not action_draft.get("available", False),
             "items": _page_kv_items(
                 [
-                    _kv("Action type", action_draft.get("action_type")),
-                    _kv("Summary", action_draft.get("summary")),
-                    _kv("Draft status", action_draft.get("draft_status")),
+                    _kv(t("Action type", lang), action_draft.get("action_type")),
+                    _kv(t("Summary", lang), action_draft.get("summary")),
+                    _kv(t("Draft status", lang), action_draft.get("draft_status")),
                 ]
             ),
         },
@@ -641,9 +641,9 @@ def build_rop_event_detail_page_model(
                 "kind": "table",
                 "title": t("Attachment Processing", lang),
                 "columns": [
-                    {"key": "filename", "label": "Filename"},
-                    {"key": "content_type", "label": "Content type"},
-                    {"key": "size_bytes", "label": "Size"},
+                    {"key": "filename", "label": t("Filename", lang)},
+                    {"key": "content_type", "label": t("Content type", lang)},
+                    {"key": "size_bytes", "label": t("Size", lang)},
                 ],
                 "rows": attachment_rows,
             }
