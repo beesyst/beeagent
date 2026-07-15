@@ -709,11 +709,8 @@ class TestRopOverviewLayoutStructure:
     def test_top_row_has_two_chart_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         assert layout[1]["type"] == "chart"
-        assert layout[1]["title"] == "Email Workload"
-        assert layout[1]["width"] == 3
-        assert layout[2]["type"] == "chart"
-        assert layout[2]["title"] == "Action Required"
-        assert layout[2]["width"] == 3
+        assert layout[1]["title"] == "Lead outcome mix"
+        assert layout[1]["width"] == 6
 
     def test_kpi_has_customer_facing_labels(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")

@@ -3061,6 +3061,22 @@ def _build_rop_overview_layout(
     )
     source_label_map = _source_display_labels(source_health)
 
+    # Pre-compute chart data for Lead outcome mix (moved to top row)
+    outcome_labels = [
+        t("New leads", locale),
+        t("Existing clients", locale),
+        t("Follow-ups", locale),
+        t("Needs review", locale),
+        t("High priority", locale),
+    ]
+    outcome_values = [
+        _int(new_leads),
+        _int(business_kpi.get("existing_clients", 0)),
+        _int(business_kpi.get("follow_ups", 0)),
+        _int(needs_review),
+        _int(high_priority),
+    ]
+
     layout.append(
         {
             "type": "operator_hero",
@@ -3099,41 +3115,18 @@ def _build_rop_overview_layout(
     layout.append(
         {
             "type": "chart",
-            "width": 3,
-            "title": t("Email Workload", locale),
+            "width": 6,
+            "title": t("Lead outcome mix", locale),
             "subtitle": t(
-                "{count} processed inbound items in selected period",
+                "{count} total leads in selected period",
                 locale,
-            ).format(count=period_emails),
-            "chart_id": "chart-rop-email-workload",
-            "kind": "area",
-            "series": workload_series
-            or [{"name": t("Processed", locale), "data": [period_emails]}],
-            "categories": workload_labels
-            or [period_hint or t("Selected period", locale)],
-            "colors": ["#4f46e5", "#818cf8"],
-            "height": 180,
-            "empty_message": t("No chart data for this period", locale),
-        }
-    )
-    layout.append(
-        {
-            "type": "chart",
-            "width": 3,
-            "title": t("Action Required", locale),
-            "subtitle": t(
-                "{count} items need review · {ratio}% action ratio",
-                locale,
-            ).format(count=action_required_count, ratio=action_required_ratio),
-            "chart_id": "chart-rop-action-required",
+            ).format(count=total_leads),
+            "chart_id": "chart-rop-outcome-mix",
             "kind": "donut",
-            "series": [
-                action_required_count,
-                max(_int(total_leads) - action_required_count, 0),
-            ],
-            "labels": [t("Needs attention", locale), t("Clear", locale)],
-            "colors": ["#f59e0b", "#10b981"],
-            "height": 180,
+            "series": outcome_values,
+            "labels": outcome_labels,
+            "colors": ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444"],
+            "height": 260,
             "empty_message": t("No chart data for this period", locale),
         }
     )
@@ -3191,33 +3184,25 @@ def _build_rop_overview_layout(
         )
     )
 
-    # Order: Email Workload, Action Required, Lead outcome mix,
-    # Bitrix reconciliation, Source contribution
+    # Order: Lead outcome mix, Email Workload, Bitrix reconciliation,
+    # Source contribution, Action Required
 
-    outcome_labels = [
-        t("New leads", locale),
-        t("Existing clients", locale),
-        t("Follow-ups", locale),
-        t("Needs review", locale),
-        t("High priority", locale),
-    ]
-    outcome_values = [
-        _int(new_leads),
-        _int(business_kpi.get("existing_clients", 0)),
-        _int(business_kpi.get("follow_ups", 0)),
-        _int(needs_review),
-        _int(high_priority),
-    ]
     layout.append(
         {
             "type": "chart",
             "size": "M",
-            "title": t("Lead outcome mix", locale),
-            "chart_id": "chart-rop-outcome-mix",
-            "kind": "bar",
-            "series": [{"name": t("Leads", locale), "data": outcome_values}],
-            "categories": outcome_labels,
-            "colors": ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444"],
+            "title": t("Email Workload", locale),
+            "subtitle": t(
+                "{count} processed inbound items in selected period",
+                locale,
+            ).format(count=period_emails),
+            "chart_id": "chart-rop-email-workload",
+            "kind": "area",
+            "series": workload_series
+            or [{"name": t("Processed", locale), "data": [period_emails]}],
+            "categories": workload_labels
+            or [period_hint or t("Selected period", locale)],
+            "colors": ["#4f46e5", "#818cf8"],
             "height": 240,
             "empty_message": t("No chart data for this period", locale),
         }
@@ -3245,7 +3230,7 @@ def _build_rop_overview_layout(
             "series": [{"name": t("Leads", locale), "data": bitrix_values}],
             "categories": bitrix_labels,
             "colors": ["#0d9488", "#f43f5e", "#f59e0b", "#64748b"],
-            "height": 240,
+            "height": 260,
             "empty_message": t("No chart data for this period", locale),
         }
     )
@@ -3262,14 +3247,35 @@ def _build_rop_overview_layout(
     layout.append(
         {
             "type": "chart",
-            "size": "XL",
+            "size": "L",
             "title": t("Source contribution", locale),
             "chart_id": "chart-rop-source-contribution",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": source_values or [0]}],
             "categories": source_categories or [t("No data", locale)],
-            "colors": ["#6366f1", "#8b5cf6", "#a855f7", "#d946ef"],
+            "colors": ["#6366f1"],
             "height": 240,
+            "empty_message": t("No chart data for this period", locale),
+        }
+    )
+    layout.append(
+        {
+            "type": "chart",
+            "width": 4,
+            "title": t("Action Required", locale),
+            "subtitle": t(
+                "{count} items need review · {ratio}% action ratio",
+                locale,
+            ).format(count=action_required_count, ratio=action_required_ratio),
+            "chart_id": "chart-rop-action-required",
+            "kind": "donut",
+            "series": [
+                action_required_count,
+                max(_int(total_leads) - action_required_count, 0),
+            ],
+            "labels": [t("Needs attention", locale), t("Clear", locale)],
+            "colors": ["#f59e0b", "#10b981"],
+            "height": 220,
             "empty_message": t("No chart data for this period", locale),
         }
     )

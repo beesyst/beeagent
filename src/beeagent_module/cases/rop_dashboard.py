@@ -33,6 +33,7 @@ ALLOWED_CASE_TYPES: tuple[str, ...] = (
     "ignore",
     "needs_review",
     "unclear",
+    "finance_document",
     "other",
 )
 ALLOWED_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
@@ -460,6 +461,8 @@ def build_rop_dashboard(
     bitrix_reconciliation = _read_json_dict(run_dir / "bitrix_reconciliation.json")
     attachment_extraction = _read_json_dict(run_dir / "attachment_extraction.json")
     operator_summary = _read_json_dict(run_dir / "operator_summary.json")
+    ai_assist_results = _read_json_dict(run_dir / "rop_ai_assist_results.json")
+    ai_adjudicator_results = _read_json_dict(run_dir / "rop_ai_adjudicator_results.json")
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)
@@ -552,6 +555,31 @@ def build_rop_dashboard(
             }
         )
 
+    # Build AI assist summary from adjudicator results (primary) and assist results
+    ai_assist_summary: dict[str, Any] = {}
+
+    # Prefer adjudicator results (have real data)
+    if isinstance(ai_adjudicator_results, dict):
+        adj_counters = ai_adjudicator_results.get("counters", {})
+        if isinstance(adj_counters, dict):
+            ai_assist_summary = {
+                "eligible": adj_counters.get("adjudicator_eligible_count", 0),
+                "requested": adj_counters.get("adjudicator_eligible_count", 0),
+                "ok": adj_counters.get("adjudicator_used_count", 0),
+                "degraded": adj_counters.get("adjudicator_degraded_count", 0),
+            }
+    # Fallback to assist results if adjudicator not available
+    if not ai_assist_summary and isinstance(ai_assist_results, dict):
+        counters = ai_assist_results.get("counters", {})
+        if isinstance(counters, dict):
+            ai_assist_summary = {
+                "eligible": counters.get("ai_assist_enabled", 0),
+                "requested": counters.get("ai_assist_requested_count", 0),
+                "ok": counters.get("ai_assist_used_count", 0),
+                "invalid": counters.get("ai_assist_invalid_count", 0),
+                "degraded": counters.get("ai_assist_degraded_count", 0),
+            }
+
     dashboard: dict[str, Any] = {
         "run_id": run_id,
         "status": "ok",
@@ -568,6 +596,7 @@ def build_rop_dashboard(
         "rop_recommendations": rop_recommendations,
         "evidence_links": evidence_links,
         "warnings": warnings,
+        "ai_assist_summary": ai_assist_summary,
     }
 
     return dashboard
