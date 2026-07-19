@@ -2663,6 +2663,9 @@ HTML
 API responses
 logs/app.log
 storage/*
+
+Real secrets live only in environment variables.
+
 docs examples with real values
 ```
 
@@ -2778,7 +2781,7 @@ DAST-style route misuse checks required for protected HTML/API routes, artifact 
 
 ### Итерация UI-8 — ROP final decision read-model + recommendations + Bitrix widget payload MVP
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
