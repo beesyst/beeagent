@@ -6,10 +6,9 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
-
 from beeagent_module.cases.rop_dashboard import (
     ALLOWED_BITRIX_STATUSES,
+    ALLOWED_QUEUE_IDS,
     DEFAULT_PAGE_SIZE,
     apply_queue_filters,
     build_rop_dashboard,
@@ -19,16 +18,9 @@ from beeagent_module.cases.rop_dashboard import (
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
 from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.url_builder import build_rop_url, build_rop_event_url
 
 ATTENTION_EVENTS_MAX = 500
-ROP_OPERATOR_QUEUE_IDS: tuple[str, ...] = (
-    "high_priority",
-    "needs_review",
-    "lost_in_bitrix",
-    "ambiguous",
-    "degraded",
-    "unreconciled",
-)
 ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
     "operator_summary_json",
     "source_diagnostics_json",
@@ -902,6 +894,7 @@ def _build_attention_events(
 
         evt = {
             "event_id": eid,
+            "run_id": run_id,
             "source_id": sid,
             "source_display_name": src_display.get(sid, ""),
             "sender": sender,
@@ -920,9 +913,47 @@ def _build_attention_events(
             if eid and run_id
             else None,
         }
+        for key in (
+            "recommended_queue",
+            "recommended_next_step",
+            "correct_action",
+            "should_rop_see",
+        ):
+            if key in item:
+                evt[key] = item[key]
         events.append(evt)
 
     return events
+
+
+def _canonical_queue_rows(
+    queues: dict[str, Any],
+    attention_events: list[dict[str, Any]],
+    filter_params: dict[str, str],
+) -> list[dict[str, Any]]:
+    queue_filter = filter_params.get("queue", "").strip()
+    queue_ids: tuple[str, ...] = (
+        (queue_filter,) if queue_filter in ALLOWED_QUEUE_IDS else ALLOWED_QUEUE_IDS
+    )
+    rows: list[dict[str, Any]] = []
+    seen_event_ids: set[str] = set()
+    for queue_id in queue_ids:
+        source_rows = queues.get(queue_id, [])
+        if not isinstance(source_rows, list):
+            continue
+        for item in source_rows:
+            if not isinstance(item, dict):
+                continue
+            event_id = str(item.get("event_id", ""))
+            if event_id and event_id in seen_event_ids:
+                continue
+            if event_id:
+                seen_event_ids.add(event_id)
+            rows.append(item)
+
+    if rows or queue_filter in ALLOWED_QUEUE_IDS:
+        return rows
+    return [item for item in attention_events if isinstance(item, dict)]
 
 
 def _build_evidence_links(run_id: str) -> list[dict[str, Any]]:
@@ -2170,6 +2201,20 @@ def build_rop_dashboard_read_model(
     if not isinstance(rop_recommendations, list):
         rop_recommendations = []
 
+    canonical_queue_rows = _canonical_queue_rows(
+        queues, attention_events, filter_params or {}
+    )
+    filtered_queue_rows = apply_queue_filters(
+        canonical_queue_rows, None, filter_params or {}
+    )
+    sorted_queue_rows = sort_queue_items(filtered_queue_rows, sort=sort, order=order)
+    paginated_queue_rows, pagination = paginate_items(
+        sorted_queue_rows, page=page, page_size=page_size
+    )
+    pagination["total_items"] = pagination["total"]
+    pagination["showing_from"] = pagination["start"]
+    pagination["showing_to"] = pagination["end"]
+
     result: dict[str, Any] = {
         "run_id": run_id,
         "selected_run_id": run_id,
@@ -2199,6 +2244,7 @@ def build_rop_dashboard_read_model(
         "business_kpi": business_kpi,
         "series": series,
         "queues": queues,
+        "queue_rows": paginated_queue_rows,
         "rop_recommendations": rop_recommendations,
         "delivery_recommendations": recommendations_data
         if isinstance(recommendations_data, dict)
@@ -2219,8 +2265,9 @@ def build_rop_dashboard_read_model(
         if dashboard_payload
         else "unknown",
         "filter_params": dict(filter_params) if filter_params else {},
-        "page": page,
-        "page_size": page_size,
+        "page": pagination["page"],
+        "page_size": pagination["page_size"],
+        "pagination": pagination,
         "sort": sort,
         "order": order,
     }
@@ -2478,6 +2525,7 @@ def _period_link_items(
     current_period: str,
     current_tab: str,
     locale: str = "en",
+    run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for period_value in _OVERVIEW_PERIODS:
@@ -2493,6 +2541,7 @@ def _period_link_items(
                     tab=current_tab,
                     period=period_value,
                     locale=locale,
+                    run_id=run_id,
                 ),
             }
         )
@@ -2742,24 +2791,55 @@ def _rop_href(
     tab: str,
     period: str | None = None,
     locale: str = "en",
+    run_id: str | None = None,
 ) -> str:
-    params = [f"tab={tab}"]
-    if period:
-        params.append(f"period={period}")
-    if locale != "en":
-        params.append(f"lang={locale}")
-    return f"/rop?{'&'.join(params)}"
+    return build_rop_url(tab=tab, period=period, lang=locale, run_id=run_id)
 
 
 def _rop_event_detail_href(
     event_id: str,
     run_id: str,
     locale: str = "en",
+    period: str | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    sort: str | None = None,
+    order: str | None = None,
 ) -> str:
-    href = f"/rop/events/{quote(event_id, safe='')}?run_id={quote(run_id, safe='')}"
-    if locale != "en":
-        href += f"&lang={quote(locale, safe='')}"
-    return href
+    return build_rop_event_url(
+        event_id, run_id, lang=locale, period=period, filter_params=filter_params,
+        page=page, page_size=page_size, sort=sort, order=order,
+    )
+
+
+def normalize_rop_recommendation_hrefs(
+    recommendations: list[dict[str, Any]],
+    *,
+    run_id: str,
+    period: str | None,
+    locale: str,
+) -> list[dict[str, Any]]:
+    target_tabs = {
+        "/rop?tab=queue": "queue",
+        "/rop?tab=bitrix": "bitrix",
+        "/rop?tab=evidence": "evidence",
+        "/rop?tab=sources": "sources",
+        "/rop?tab=attachments": "attachments",
+    }
+    normalized: list[dict[str, Any]] = []
+    for recommendation in recommendations:
+        item = dict(recommendation)
+        target_tab = target_tabs.get(str(item.get("evidence_href", "")))
+        if target_tab:
+            item["evidence_href"] = build_rop_url(
+                tab=target_tab,
+                run_id=run_id,
+                period=period,
+                lang=locale,
+            )
+        normalized.append(item)
+    return normalized
 
 
 def _collect_priority_queue_preview(
@@ -2772,7 +2852,7 @@ def _collect_priority_queue_preview(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for bucket in ROP_OPERATOR_QUEUE_IDS:
+    for bucket in ALLOWED_QUEUE_IDS:
         items = queues.get(bucket, [])
         if not isinstance(items, list):
             continue
@@ -2797,17 +2877,13 @@ def _collect_priority_queue_preview(
             )
             priority = item.get("bot_priority") or item.get("priority") or bucket
             next_step = item.get("recommended_next_step") or t("Open Queue", locale)
-            detail_href = item.get("detail_href")
-            if not isinstance(detail_href, str) or not detail_href:
-                detail_href = (
-                    _rop_event_detail_href(event_id, run_id, locale)
-                    if event_id and run_id
-                    else _rop_href(
-                        tab="queue",
-                        period=current_period,
-                        locale=locale,
-                    )
+            detail_href = (
+                _rop_event_detail_href(event_id, run_id, locale, current_period)
+                if event_id and run_id
+                else _rop_href(
+                    tab="queue", period=current_period, locale=locale, run_id=run_id
                 )
+            )
             rows.append(
                 {
                     "priority": {
@@ -2877,10 +2953,17 @@ def _build_latest_selection_block(
     if source_count > 0:
         items.append(
             {
-                "label": t("Sources", locale),
+                "label": t("Selection Sources", locale),
                 "value": source_count,
             }
         )
+
+    items.append(
+        {
+            "label": t("Selection Period", locale),
+            "value": period_display,
+        }
+    )
 
     # Show source detail if multiple sources or explicit breakdown
     if source_lines:
@@ -2983,7 +3066,7 @@ def _build_rop_overview_layout(
 
     action_event_ids: set[str] = set()
 
-    for queue_id in ROP_OPERATOR_QUEUE_IDS:
+    for queue_id in ALLOWED_QUEUE_IDS:
         queue_items = queues.get(queue_id, [])
         if not isinstance(queue_items, list):
             continue
@@ -3017,7 +3100,9 @@ def _build_rop_overview_layout(
     )
     period_actions = [
         item
-        for item in _period_link_items(current_period, "overview", locale)
+        for item in _period_link_items(
+            current_period, "overview", locale, str(data.get("run_id", ""))
+        )
         if item["period"] in configured_values
     ]
     # Build date range from current period so Queue shows same period as Overview
@@ -3027,30 +3112,28 @@ def _build_rop_overview_layout(
     _parsed_end = _parse_utc_datetime(period_end_utc) if period_end_utc else None
     date_from_str = _day_label(_parsed_start) if _parsed_start else ""
     date_to_str = _day_label(_parsed_end) if _parsed_end else ""
-    date_suffix = ""
-    if date_from_str and date_to_str:
-        date_suffix = f"&date_from={date_from_str}&date_to={date_to_str}"
-    elif date_from_str:
-        date_suffix = f"&date_from={date_from_str}"
-    elif date_to_str:
-        date_suffix = f"&date_to={date_to_str}"
+    # Build date filter params for Queue links
+    date_filter: dict[str, str] = {}
+    if date_from_str:
+        date_filter["date_from"] = date_from_str
+    if date_to_str:
+        date_filter["date_to"] = date_to_str
 
-    lang_suffix = f"&lang={locale}" if locale != "en" else ""
     # Filtered Queue hrefs for each overview card
-    queue_urgent_href = f"/rop?tab=queue&priority=high{date_suffix}{lang_suffix}"
-    # Needs review = is_fallback items (KPI: is_fallback OR high_priority, but
-    # filter system ANDs params; is_fallback=true catches the fallback subset)
-    # Needs review = items from the needs_review queue (matches KPI exactly)
-    queue_needs_review_href = (
-        f"/rop?tab=queue&queue=needs_review{date_suffix}{lang_suffix}"
+    queue_urgent_href = build_rop_url(
+        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
+        filter_params={**date_filter, "priority": "high"} if date_filter else {"priority": "high"},
     )
-    # Bitrix gaps = not_found + ambiguous + duplicate_candidate + unreconciled
-    queue_bitrix_gaps_href = (
-        "/rop?tab=queue&bitrix_status="
-        f"not_found,ambiguous,duplicate_candidate,unreconciled{date_suffix}{lang_suffix}"
+    queue_needs_review_href = build_rop_url(
+        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
+        filter_params={**date_filter, "queue": "needs_review"} if date_filter else {"queue": "needs_review"},
     )
-    bitrix_href = _rop_href(tab="bitrix", period=current_period, locale=locale)
-    evidence_href = _rop_href(tab="evidence", period=current_period, locale=locale)
+    queue_bitrix_gaps_href = build_rop_url(
+        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
+        filter_params={**date_filter, "bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"} if date_filter else {"bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"},
+    )
+    bitrix_href = build_rop_url(tab="bitrix", period=current_period, lang=locale, run_id=str(data.get("run_id", "")))
+    evidence_href = build_rop_url(tab="evidence", period=current_period, lang=locale, run_id=str(data.get("run_id", "")))
 
     processed_by_day = series.get("processed_by_day", {})
     workload_labels, workload_series = _bucket_daily_chart_series(
@@ -3324,6 +3407,8 @@ def _build_rop_queue_layout(
     data: dict[str, Any], locale: str = "en"
 ) -> list[dict[str, Any]]:
     attention_events = data.get("attention_events", [])
+    if not isinstance(attention_events, list):
+        attention_events = []
     queues = data.get("queues", {})
     if not isinstance(queues, dict):
         queues = {}
@@ -3340,107 +3425,32 @@ def _build_rop_queue_layout(
     if not isinstance(filter_options, dict):
         filter_options = {}
 
-    # If filter_params specifies a queue key, only show items from that queue
-    queue_filter = filter_params.get("queue", "").strip()
-    selected_queue_keys: tuple[str, ...] = (
-        (queue_filter,) if queue_filter in ROP_OPERATOR_QUEUE_IDS else ROP_OPERATOR_QUEUE_IDS
-    )
+    queue_rows = _canonical_queue_rows(queues, attention_events, filter_params)
 
-    # Collect all queue items with dedup
-    queue_rows: list[dict[str, Any]] = []
-    seen_event_ids: set[str] = set()
-    for key in selected_queue_keys:
-        rows_source = queues.get(key, [])
-        if not isinstance(rows_source, list):
-            continue
-        for item in rows_source:
-            if not isinstance(item, dict):
-                continue
-            event_id = str(item.get("event_id", ""))
-            if event_id and event_id in seen_event_ids:
-                continue
-            if event_id:
-                seen_event_ids.add(event_id)
-            queue_rows.append(item)
-
-    # If no queue rows, build table from attention events (unfiltered data)
     if not queue_rows:
-        # If a specific queue was requested but had no items, show empty table
-        if queue_filter and queue_filter in ROP_OPERATOR_QUEUE_IDS:
-            layout = [
-                _queue_filter_form(
-                    filter_params=filter_params,
-                    current_period=current_period,
-                    filter_options=filter_options,
-                    locale=locale,
-                ),
-                _empty_queue_table(locale=locale),
-            ]
-            return layout
-
-        if not attention_events:
-            layout: list[dict[str, Any]] = []
-            layout.append(
-                _queue_filter_form(
-                    filter_params=filter_params,
-                    current_period=current_period,
-                    filter_options=filter_options,
-                    locale=locale,
-                )
-            )
-            layout.append(
-                _empty_queue_table(locale=locale)
-            )
-            return layout
-
-        # Convert attention events to queue-style rows for table display
-        fallback_rows: list[dict[str, Any]] = []
-        for evt in attention_events:
-            fallback_rows.append({
-                "event_id": evt.get("event_id", ""),
-                "source_id": evt.get("source_id", ""),
-                "source_display_name": evt.get("source_display_name", ""),
-                "sender": evt.get("sender", ""),
-                "subject": evt.get("subject", ""),
-                "case_type": evt.get("case_type", ""),
-                "priority": evt.get("priority", ""),
-                "bitrix_status": "unreconciled",
-                "date": evt.get("date", ""),
-                "detail_href": evt.get("detail_href", ""),
-            })
-
-        # Apply filters (date range, text search, etc.)
-        filtered_fallback = apply_queue_filters(fallback_rows, None, filter_params)
-        # Apply sorting
-        filtered_fallback = sort_queue_items(filtered_fallback, sort=sort, order=order)
-        # Apply pagination
-        paginated_fallback, pagination_info = paginate_items(
-            filtered_fallback, page=page, page_size=page_size
-        )
-
-        layout = [
+        return [
             _queue_filter_form(
                 filter_params=filter_params,
                 current_period=current_period,
                 filter_options=filter_options,
                 locale=locale,
-            ),
-            _queue_table(
-                t("ROP Work Queue", locale),
-                paginated_fallback,
                 run_id=run_id,
-                locale=locale,
-                total_count=len(filtered_fallback),
                 page=page,
                 page_size=page_size,
-                total_pages=pagination_info["total_pages"],
                 sort=sort,
                 order=order,
-                filter_params=filter_params,
+            ),
+            _empty_queue_table(
+                locale=locale,
+                run_id=run_id,
                 current_period=current_period,
+                filter_params=filter_params,
+                page=page,
+                page_size=page_size,
+                sort=sort,
+                order=order,
             ),
         ]
-        return layout
 
     # Apply filters
     filtered_rows = apply_queue_filters(queue_rows, None, filter_params)
@@ -3462,6 +3472,7 @@ def _build_rop_queue_layout(
             current_period=current_period,
             filter_options=filter_options,
             locale=locale,
+            run_id=run_id, page=page, page_size=page_size, sort=sort, order=order,
         )
     )
 
@@ -3473,8 +3484,8 @@ def _build_rop_queue_layout(
             run_id=run_id,
             locale=locale,
             total_count=len(filtered_rows),
-            page=page,
-            page_size=page_size,
+            page=pagination_info["page"],
+            page_size=pagination_info["page_size"],
             total_pages=pagination_info["total_pages"],
             sort=sort,
             order=order,
@@ -3491,6 +3502,11 @@ def _queue_filter_form(
     current_period: str,
     filter_options: dict[str, Any],
     locale: str = "en",
+    run_id: str = "",
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     """Build a filter_form block for the queue page."""
     case_type_options: list[dict[str, str]] = []
@@ -3570,15 +3586,11 @@ def _queue_filter_form(
             # Keep only the current dropdown open (not all previously opened ones)
             toggle_params["open_dropdowns"] = param_name
 
-            qs = ["tab=queue"]
-            if current_period:
-                qs.append(f"period={current_period}")
-            for k, v in toggle_params.items():
-                if v:
-                    qs.append(f"{k}={v}")
-            if locale != "en":
-                qs.append(f"lang={locale}")
-            toggle_href = "/rop?" + "&".join(qs)
+            toggle_href = build_rop_url(
+                tab="queue", period=current_period, lang=locale, run_id=run_id,
+                page=page, page_size=page_size, sort=sort, order=order,
+                filter_params=toggle_params,
+            )
 
             choices.append({
                 "value": val,
@@ -3665,16 +3677,11 @@ def _queue_filter_form(
             del toggle_params["columns"]
 
         # Build href preserving all params + keep dropdown open
-        qs = ["tab=queue"]
-        if current_period:
-            qs.append(f"period={current_period}")
-        for k, v in toggle_params.items():
-            if v:
-                qs.append(f"{k}={v}")
-        qs.append("columns_open=1")
-        if locale != "en":
-            qs.append(f"lang={locale}")
-        toggle_href = "/rop?" + "&".join(qs)
+        toggle_href = build_rop_url(
+            tab="queue", period=current_period, lang=locale, run_id=run_id,
+            page=page, page_size=page_size, sort=sort, order=order,
+            filter_params=toggle_params, extra={"columns_open": "1"},
+        )
 
         column_toggles.append({
             "key": key,
@@ -3691,30 +3698,33 @@ def _queue_filter_form(
         toggle_params.pop("columns_open", None)
     else:
         toggle_params["columns_open"] = "1"
-    qs_toggle = ["tab=queue"]
-    if current_period:
-        qs_toggle.append(f"period={current_period}")
-    for k, v in toggle_params.items():
-        if v:
-            qs_toggle.append(f"{k}={v}")
-    if locale != "en":
-        qs_toggle.append(f"lang={locale}")
-    columns_toggle_href = "/rop?" + "&".join(qs_toggle)
+    columns_toggle_href = build_rop_url(
+        tab="queue", period=current_period, lang=locale, run_id=run_id,
+        page=page, page_size=page_size, sort=sort, order=order,
+        filter_params=toggle_params,
+    )
 
     # Hidden fields to preserve tab, period, locale across GET submission
     hidden: dict[str, str] = {"tab": "queue"}
+    if run_id:
+        hidden["run_id"] = run_id
     if current_period:
         hidden["period"] = current_period
     if locale != "en":
         hidden["lang"] = locale
+    if page > 1:
+        hidden["page"] = str(page)
+    if page_size != DEFAULT_PAGE_SIZE:
+        hidden["page_size"] = str(page_size)
+    if sort != "received_at" or order != "desc":
+        hidden["sort"] = sort
+        hidden["order"] = order
 
     # Reset link — clears all filter params
-    reset_qs = ["tab=queue"]
-    if current_period:
-        reset_qs.append(f"period={current_period}")
-    if locale != "en":
-        reset_qs.append(f"lang={locale}")
-    reset_href = "/rop?" + "&".join(reset_qs)
+    reset_href = build_rop_url(
+        tab="queue", run_id=run_id, period=current_period, lang=locale,
+        page=page, page_size=page_size, sort=sort, order=order,
+    )
 
     return {
         "type": "filter_form",
@@ -3741,39 +3751,25 @@ def _sort_href(
     current_order: str,
     filter_params: dict[str, str],
     page: int = 1,
+    *,
+    run_id: str = "",
+    period: str = "",
+    locale: str = "en",
+    page_size: int = DEFAULT_PAGE_SIZE,
 ) -> str:
     """Build a sort href preserving current filter params."""
-    # Parse tab, period, lang, queue from base_href
-    qs_parts = []
-    if "tab=" in base_href:
-        # Extract tab from base_href
-        import re as _re
-        m = _re.search(r'tab=(\w+)', base_href)
-        if m:
-            qs_parts.append(f"tab={m.group(1)}")
-        m = _re.search(r'period=(\w+)', base_href)
-        if m:
-            qs_parts.append(f"period={m.group(1)}")
-        m = _re.search(r'lang=(\w+)', base_href)
-        if m:
-            qs_parts.append(f"lang={m.group(1)}")
-        m = _re.search(r'queue=(\w+)', base_href)
-        if m:
-            qs_parts.append(f"queue={m.group(1)}")
-    else:
-        qs_parts.append("tab=queue")
-
-    for k, v in filter_params.items():
-        if v:
-            qs_parts.append(f"{k}={v}")
     if new_sort == current_sort:
         new_order = "asc" if current_order == "desc" else "desc"
     else:
         new_order = "desc"
-    qs_parts.append(f"sort={new_sort}")
-    qs_parts.append(f"order={new_order}")
-    qs_parts.append(f"page={page}")
-    return "/rop?" + "&".join(qs_parts)
+    return build_rop_url(
+        tab="queue",
+        run_id=run_id, period=period, lang=locale, page_size=page_size,
+        page=page,
+        sort=new_sort,
+        order=new_order,
+        filter_params=filter_params,
+    )
 
 
 def _queue_table(
@@ -3793,7 +3789,7 @@ def _queue_table(
     if filter_params is None:
         filter_params = {}
 
-    base_href = _rop_href(tab="queue", period=current_period, locale=locale)
+    base_href = _rop_href(tab="queue", period=current_period, locale=locale, run_id=run_id)
 
     rows = []
     for item in rows_source:
@@ -3805,8 +3801,11 @@ def _queue_table(
         raw_date = item.get("date") or item.get("received_at") or item.get("event_date", "")
         date_display = _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
         detail_href = item.get("detail_href")
-        if not detail_href and event_id and run_id:
-            detail_href = _rop_event_detail_href(event_id, run_id, locale)
+        if event_id and run_id:
+            detail_href = _rop_event_detail_href(
+                event_id, run_id, locale, current_period, filter_params,
+                page, page_size, sort, order,
+            )
         rows.append(
             {
                 "priority": {
@@ -3839,7 +3838,7 @@ def _queue_table(
             "label": t("Priority", locale),
             "cell": "badge",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "priority", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "priority", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "priority",
             "sort_direction": order if sort == "priority" else "",
         },
@@ -3848,7 +3847,7 @@ def _queue_table(
             "label": t("Sender", locale),
             "cell": "avatar_text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "sender", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "sender", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "sender",
             "sort_direction": order if sort == "sender" else "",
         },
@@ -3857,7 +3856,7 @@ def _queue_table(
             "label": t("Subject", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "subject", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "subject", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "subject",
             "sort_direction": order if sort == "subject" else "",
         },
@@ -3866,7 +3865,7 @@ def _queue_table(
             "label": t("Date", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "received_at", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "received_at", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "received_at",
             "sort_direction": order if sort == "received_at" else "",
         },
@@ -3875,7 +3874,7 @@ def _queue_table(
             "label": t("Classification", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "case_type", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "case_type", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "case_type",
             "sort_direction": order if sort == "case_type" else "",
         },
@@ -3884,7 +3883,7 @@ def _queue_table(
             "label": t("Bitrix status", locale),
             "cell": "status",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "bitrix_status", order, filter_params, page),
+            "sort_href": _sort_href(base_href, sort, "bitrix_status", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
             "sort_active": sort == "bitrix_status",
             "sort_direction": order if sort == "bitrix_status" else "",
         },
@@ -3901,26 +3900,15 @@ def _queue_table(
 
     pagination_pages: list[dict[str, Any]] = []
     for p in range(1, total_pages + 1):
-        page_params = dict(filter_params)
-        page_params["page"] = str(p)
-        if sort != "received_at":
-            page_params["sort"] = sort
-        if order != "desc":
-            page_params["order"] = order
-
-        qs_parts = [f"tab=queue"]
-        if current_period:
-            qs_parts.append(f"period={current_period}")
-        for k, v in page_params.items():
-            if v:
-                qs_parts.append(f"{k}={v}")
-        if locale != "en":
-            qs_parts.append(f"lang={locale}")
-
+        href = build_rop_url(
+            tab="queue", period=current_period, lang=locale, run_id=run_id,
+            page=p, page_size=page_size, sort=sort, order=order,
+            filter_params=filter_params,
+        )
         pagination_pages.append(
             {
                 "label": str(p),
-                "href": "/rop?" + "&".join(qs_parts),
+                "href": href,
                 "active": p == page,
             }
         )
@@ -3963,7 +3951,16 @@ def _queue_table(
     }
 
 
-def _empty_queue_table(locale: str = "en") -> dict[str, Any]:
+def _empty_queue_table(
+    locale: str = "en",
+    run_id: str = "",
+    current_period: str = "",
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    sort: str = "received_at",
+    order: str = "desc",
+) -> dict[str, Any]:
     """Build an empty data table block for the queue page when no events exist."""
     columns = [
         {"key": "priority", "label": t("Priority", locale), "cell": "badge"},
@@ -3973,6 +3970,14 @@ def _empty_queue_table(locale: str = "en") -> dict[str, Any]:
         {"key": "classification", "label": t("Classification", locale), "cell": "text"},
         {"key": "bitrix_status", "label": t("Bitrix status", locale), "cell": "status"},
     ]
+    if filter_params is None:
+        filter_params = {}
+    selected_columns = {
+        key.strip() for key in filter_params.get("columns", "").split(",") if key.strip()
+    }
+    if selected_columns:
+        columns = [column for column in columns if column["key"] in selected_columns]
+    _, pagination = paginate_items([], page=page, page_size=page_size)
     return {
         "type": "data_table",
         "size": "XL",
@@ -3986,8 +3991,13 @@ def _empty_queue_table(locale: str = "en") -> dict[str, Any]:
             "pages": [
                 {
                     "label": "1",
-                    "href": "/rop?tab=queue",
-                    "active": False,
+                    "href": build_rop_url(
+                        tab="queue", run_id=run_id, period=current_period,
+                        lang=locale, page=pagination["page"], page_size=pagination["page_size"],
+                        sort=sort, order=order,
+                        filter_params=filter_params,
+                    ),
+                    "active": True,
                 }
             ],
         },

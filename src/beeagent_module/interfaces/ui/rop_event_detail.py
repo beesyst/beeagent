@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
@@ -12,6 +11,7 @@ from beeagent_module.core.rop_final_decision import (
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.url_builder import build_rop_url
 
 
 def _format_iso_datetime(value: Any) -> str:
@@ -128,6 +128,12 @@ def build_rop_event_detail_read_model(
     event_id: str,
     *,
     lang: str = "en",
+    period: str | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     run_dir, error = _resolve_run_dir(storage_dir, run_id)
     if run_dir is None:
@@ -176,7 +182,13 @@ def build_rop_event_detail_read_model(
             "to": norm_event.get("to", []),
             "cc": norm_event.get("cc", []),
             "subject": _str(norm_event.get("subject")),
-            "date": _str(norm_event.get("date")),
+            "date": _str(
+                norm_event.get("event_date")
+                or norm_event.get("received_at")
+                or norm_event.get("timestamp")
+                or norm_event.get("created_at")
+                or norm_event.get("date")
+            ),
             "body_preview": _str(norm_event.get("body_preview", "")),
             "body_preview_chars": _int(norm_event.get("body_preview_chars", 0)),
             "body_preview_truncated": bool(
@@ -237,6 +249,7 @@ def build_rop_event_detail_read_model(
         for ctx in contexts:
             if isinstance(ctx, dict) and ctx.get("event_id") == event_id:
                 thread_section = {
+                    "available": True,
                     "thread_id": _str(ctx.get("thread_id")),
                     "previous_event_ids": _safe_list(ctx.get("previous_event_ids")),
                     "reply_or_forward": bool(
@@ -328,8 +341,12 @@ def build_rop_event_detail_read_model(
         for item in items:
             if isinstance(item, dict) and item.get("event_id") == event_id:
                 bitrix_section = {
+                    "available": True,
                     "bitrix_status": _str(
-                        item.get("bitrix_status", item.get("status", ""))
+                        item.get("bitrix_match_status")
+                        or item.get("match_status")
+                        or item.get("bitrix_status")
+                        or item.get("status")
                     ),
                     "match_quality": item.get("match_quality"),
                     "candidate_count": _int(item.get("candidate_count", 0)),
@@ -349,6 +366,7 @@ def build_rop_event_detail_read_model(
         for item in items:
             if isinstance(item, dict) and item.get("event_id") == event_id:
                 action_draft_section = {
+                    "available": True,
                     "action_type": _str(item.get("action_type", item.get("type", ""))),
                     "summary": _str(item.get("summary", item.get("description", ""))),
                     "draft_status": _str(item.get("status", "draft")),
@@ -470,6 +488,12 @@ def build_rop_event_detail_page_model(
     event_id: str,
     *,
     lang: str = "en",
+    period: str | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     data = build_rop_event_detail_read_model(
         storage_dir=storage_dir,
@@ -669,9 +693,11 @@ def build_rop_event_detail_page_model(
     # Sort: filled sections first, "not used" sections last
     sections.sort(key=lambda s: s.get("no_data", False))
 
-    back_href = f"/rop?tab=queue&run_id={quote(run_id, safe='')}"
-    if lang != "en":
-        back_href += f"&lang={quote(lang, safe='')}"
+    back_href = build_rop_url(
+        tab="queue", run_id=run_id, period=period, lang=lang,
+        page=page, page_size=page_size, sort=sort, order=order,
+        filter_params=filter_params,
+    )
 
     return {
         "page_id": "rop_event_detail",

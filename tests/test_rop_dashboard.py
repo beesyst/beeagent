@@ -1015,3 +1015,37 @@ class TestQueueFilters:
         )
         assert len(result) == 1
         assert result[0]["event_id"] == "1"
+
+    def test_descending_text_sort_handles_unicode_prefixes_and_missing_values(self) -> None:
+        items = [
+            {"event_id": "prefix", "sender": "Анна"},
+            {"event_id": "longer", "sender": "Анна Б"},
+            {"event_id": "latin", "sender": "zebra"},
+            {"event_id": "missing", "sender": ""},
+        ]
+
+        sorted_items = rop_dashboard_module.sort_queue_items(
+            items, sort="sender", order="desc"
+        )
+
+        assert [item["event_id"] for item in sorted_items] == [
+            "longer",
+            "prefix",
+            "latin",
+            "missing",
+        ]
+
+    def test_missing_and_malformed_dates_are_last_for_both_orders(self) -> None:
+        items = [
+            {"event_id": "early", "received_at": "2026-06-01T00:00:00Z"},
+            {"event_id": "malformed", "received_at": "not-a-date"},
+            {"event_id": "late", "received_at": "2026-06-15T00:00:00Z"},
+            {"event_id": "missing", "received_at": ""},
+        ]
+
+        assert [item["event_id"] for item in rop_dashboard_module.sort_queue_items(
+            items, sort="received_at", order="asc"
+        )] == ["early", "late", "malformed", "missing"]
+        assert [item["event_id"] for item in rop_dashboard_module.sort_queue_items(
+            items, sort="received_at", order="desc"
+        )] == ["late", "early", "malformed", "missing"]

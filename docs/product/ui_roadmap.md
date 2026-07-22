@@ -3197,7 +3197,110 @@ git diff -- pyproject.toml uv.lock
 
 #### Status notes
 
-To be filled after PR.
+- AI adjudicator artifacts allowlisted (`rop_ai_adjudicator_requests_json`, `rop_ai_adjudicator_decisions_json`, `rop_ai_adjudicator_results_json`);
+- `rop_final_decisions.json` artifact-first read-model with computed read-only fallback;
+- AI Adjudicator summary and Final Decisions summary in `/rop?tab=ai_assist`;
+- Event detail page `/rop/events/{event_id}` shows AI Adjudicator and Final Decision sections;
+- `/api/rop/dashboard` exposes `ai_adjudicator_summary`, nested `final_decisions` and compatibility alias `final_decision_summary`;
+- Bitrix widget API includes bounded `final_decisions` with summary recalculated by `max_items`;
+- Final decision policy v1 implemented: AI ok / low_confidence_preserve / manual_review_degrade / deterministic / fallback_policy;
+- `bitrix_write_allowed` always `false` for MVP.
+
+### Итерация UI-8.1 — Web Console UX increment: Queue, filters, sort, pagination, locale, charts, Event Detail
+
+**Статус:** IN PROGRESS
+
+#### Goal
+
+Завершить Web Console UX increment: реализовать полноценный Queue tab с серверными фильтрами, multi-select dropdown, сортировкой, пагинацией, унифицированным URL/query builder, unified adapter-level contract для HTML/API parsing и валидации, исправлением date sorting, устранением дублей локали, charts и полным Event Detail page.
+
+#### Почему это нужно
+
+UI-8 реализовал final decision read-model, но Queue tab и общий UX Web Console требуют доработки для эффективной операторской работы:
+- URL/query параметры формируются вручную без единого builder;
+- HTML/API parsing и валидация размазаны между adapter и read-model;
+- page number не всегда берётся из canonical `paginate_items()`;
+- date sorting ставит missing/malformed даты в начало;
+- RU locale содержит дублирующиеся ключи `Period` и `Sources`;
+- нет regression-тестов на специальные символы, round-trip, HTML/API parity, invalid ввод.
+
+#### Depends on
+
+- UI-8 — ROP final decision read-model + recommendations + Bitrix widget payload MVP;
+- review/pr152 branch changes.
+
+#### Change level
+
+```text
+security-sensitive
+```
+
+Причина:
+
+- URL query builder влияет на формирование всех HTML ссылок в Queue/Overview/Event Detail;
+- adapter-level contract меняет поведение парсинга и валидации query-параметров;
+- sorting logic меняет порядок отображения операторских данных;
+- locale изменения влияют на отображение RU-интерфейса;
+- добавляются regression-тесты на invalid/special-char input;
+- полный набор security checks на точном committed tree.
+
+#### Scope
+
+**Включено:**
+
+- создать единый URL/query builder через `urllib.parse.urlencode`;
+- перевести registry dependency BeeUI на `beeui>=0.22,<0.30`, удалить local editable source и подтвердить transition обязательными frozen/SCA checks;
+- использовать его во всех ROP filter/column/sort/pagination/reset/period/KPI links;
+- сохранить явный `run_id`, `tab`, `period`, `lang` и канонический filter state в каждом URL;
+- объединить HTML/API parsing и валидацию в одном adapter-level contract;
+- валидировать queue, columns, dropdown state, booleans, dates, enums, page/page_size и атомарную пару sort/order;
+- невалидный ввод не должен молча расширять выборку;
+- использовать каноническую страницу из `paginate_items()` во всех rows, labels, links и API metadata;
+- исправить date sorting: missing/malformed dates всегда после валидных при asc и desc;
+- убрать дубли `Period` и `Sources` в RU locale;
+- ввести отдельные semantic keys для Latest Selection;
+- добавить regression tests: special-character query round-trip, сохранение выбранного run_id, HTML/API parity, unknown queue, invalid columns/dropdowns/sort/order, page=-1/non-int/999, mixed valid/missing dates и locale contexts;
+- синхронизировать `docs/WEB_UI.md`, `README.ru.md` и `docs/DEV_GUIDE.md` с фактическими filters/sort/pagination/API semantics, attention cap и additive contracts;
+- классифицировать итог как security-sensitive и выполнить полный набор проверок на точном committed tree.
+
+**Не включено:**
+
+- изменения в `beeagent-rop`;
+- изменения в BeeUI;
+- удаление legacy `src/beeagent_module/web`;
+- auth/RBAC changes;
+- CRM/Bitrix write-back;
+- web-triggered ROP run;
+- новые runtime artifacts;
+- local editable BeeUI dependency.
+
+#### Deliverable
+
+Web Console Queue tab с единым URL builder, adapter-level validation, canonical pagination, исправленным date sorting, корректной RU локалью, полным набором regression тестов и синхронизированной документацией.
+
+#### Checks
+
+- frozen sync/tree после registry dependency transition;
+- full pytest suite;
+- targeted regression tests;
+- routes smoke;
+- web smoke (`./start.sh web`);
+- required SCA для `beeui>=0.22,<0.30` registry dependency;
+- SAST / manual review;
+- DAST / manual query abuse;
+- logs/artifacts/no-secret/no-mutation.
+
+#### DoD
+
+- Единый URL builder через `urllib.parse.urlencode` используется во всех ROP links;
+- adapter-level contract валидирует все query-параметры до передачи в read_model;
+- canonical `paginate_items()` page используется в rows, labels, pagination links и API metadata;
+- missing/malformed dates всегда после валидных при asc и desc;
+- RU locale не содержит дубли `Period` и `Sources`;
+- semantic keys для Latest Selection изолированы от общих Period/Sources;
+- regression тесты покрывают special chars, run_id round-trip, HTML/API parity, invalid ввод;
+- документация синхронизирована;
+- security checks выполнены на точном committed tree.
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI MVP parity
 

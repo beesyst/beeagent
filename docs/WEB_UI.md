@@ -793,7 +793,7 @@ HTML `/rop` использует BeeUI tabs:
 - `classification_distribution` — `case_type_counts`, `priority_counts`, `reason_code_counts`, `fallback_count`;
 - `attachment_summary` — aggregate counts без raw content;
 - `recommendations` — deterministic operator recommendations;
-- `attention_events` — priority-ordered classified events (max 50);
+- `attention_events` — priority-ordered classified events (max 500);
 - `evidence_links` — allowlisted artifact links with availability flag;
 - `warnings` — missing/malformed/degraded warnings.
 
@@ -1078,3 +1078,80 @@ Sanitization rules:
 - changes to `beeagent-rop`;
 - stable API v1 freeze;
 - standalone BeeUI service.
+
+## ROP Queue filter/sort/pagination contract
+
+### Query parameters
+
+Все параметры Queue tab передаются через query string в `/rop?tab=queue`.
+
+#### Filter params
+
+| Param              | Type      | Description                                                    | Validation                                                                 |
+| ------------------ | --------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `q`                | string    | Full-text search across sender and subject                     | Любое строковое значение                                                   |
+| `sender`           | string    | Filter by sender (legacy, use `q` for combined search)         | Любое строковое значение                                                   |
+| `subject`          | string    | Filter by subject (legacy, use `q` for combined search)        | Любое строковое значение                                                   |
+| `case_type`        | string    | Comma-separated classification values                          | Должен быть одним из: `new_lead`, `existing_client`, `existing_deal`, …    |
+| `classification`   | string    | Legacy alias for `case_type` (mapped to `case_type`)           | То же, что `case_type`                                                     |
+| `priority`         | string    | Comma-separated priority values                                | `low`, `medium`, `high`, `critical`                                        |
+| `bitrix_status`    | string    | Comma-separated Bitrix reconciliation status values            | `not_found`, `weak_match`, `ambiguous`, `duplicate_candidate`, …           |
+| `is_fallback`      | boolean   | Filter by fallback classification (`true`/`false`)             | `true` или `false`                                                         |
+| `queue`            | string    | Filter by operator queue bucket name                           | `high_priority`, `needs_review`, `lost_in_bitrix`, `ambiguous`, `degraded`, `unreconciled` |
+| `date_from`        | date      | Start of date range (inclusive, YYYY-MM-DD)                   | Должен быть корректной датой; не позже `date_to`                           |
+| `date_to`          | date      | End of date range (inclusive, YYYY-MM-DD)                     | Должен быть корректной датой; не раньше `date_from`                        |
+
+#### Column params
+
+| Param           | Type             | Description                                                                 |
+| --------------- | ---------------- | --------------------------------------------------------------------------- |
+| `columns`        | comma-separated  | Visible column keys: `priority`, `client`, `subject`, `date`, `classification`, `bitrix_status` |
+| `columns_open`   | flag (`1`)       | Open column selector dropdown                                               |
+
+#### Dropdown state
+
+| Param            | Type             | Description                                                |
+| ---------------- | ---------------- | ---------------------------------------------------------- |
+| `open_dropdowns`  | comma-separated  | Which dropdowns are open across page reloads: `case_type`, `priority`, `bitrix_status` |
+
+#### Pagination params
+
+| Param       | Type    | Default         | Description                    | Validation                    |
+| ----------- | ------- | --------------- | ------------------------------ | ----------------------------- |
+| `page`      | integer | `1`              | Page number (1-based)          | `>= 1`                        |
+| `page_size` | integer | `25`             | Items per page                 | `25`, `50`, или `100`         |
+| `sort`      | string  | `received_at`    | Sort field                     | `received_at`, `date`, `event_date`, `sender`, `subject`, `case_type`, `priority`, `bitrix_status` |
+| `order`     | string  | `desc`           | Sort direction                 | `asc` или `desc`              |
+
+`sort` и `order` образуют атомарную пару: URL содержит оба параметра или не
+содержит ни одного для default `received_at` / `desc`.
+
+#### Canonical params preserved in all ROP links
+
+- `run_id` — explicit run identifier
+- `tab` — active tab name (overview, queue, threads, …)
+- `period` — period value (today, yesterday, 7d, 30d, 90d, 365d, all)
+- `lang` — locale override (en, ru)
+
+### Adapter-level validation contract
+
+Все filter/pagination/sort параметры валидируются в одном adapter-level contract в `BeeAgentUiAdapter.get_page()`. Процесс:
+
+1. `_extract_and_validate_params(query)` — единая функция, извлекающая и валидирующая filter + pagination + sort параметры
+2. Валидация проверяет: queue, columns, dropdown state, booleans, dates, enums, page/page_size, sort/order
+3. Невалидные значения возвращают `invalid_params` error вместо молчаливого расширения выборки
+4. `validate_filter_params()` — проверяет filter-специфичные значения
+5. `validate_pagination_params()` — проверяет page/page_size/sort/order
+6. Каноническая страница из `paginate_items()` используется во всех rows, labels, links и API metadata
+
+### Date sorting semantics
+
+- Valid ISO dates (`2026-06-15T00:00:00Z`) группируются перед invalid/missing
+- Missing/malformed dates (`""`, `null`, `"invalid"`) всегда после валидных — как при asc, так и при desc
+- Asc: валидные даты по возрастанию, затем missing
+- Desc: валидные даты по убыванию, затем missing
+
+### Attention cap
+
+- `ATTENTION_EVENTS_MAX = 500` — максимальное количество событий в attention events
+- Queue tab показывает все события из `queues[]` buckets, capped per period filtering

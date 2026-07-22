@@ -19,8 +19,6 @@ ALLOWED_PERIODS: tuple[str, ...] = (
     "all",
 )
 
-# ── Queue filter constants ──────────────────────────────────────────────────
-
 ALLOWED_CASE_TYPES: tuple[str, ...] = (
     "new_lead",
     "existing_client",
@@ -46,7 +44,6 @@ ALLOWED_BITRIX_STATUSES: tuple[str, ...] = (
     "error",
     "skipped",
     "unreconciled",
-    # matched_{entity_type} — динамический префикс, проверяется отдельно
 )
 ALLOWED_SORT_FIELDS: tuple[str, ...] = (
     "received_at",
@@ -61,14 +58,32 @@ ALLOWED_SORT_FIELDS: tuple[str, ...] = (
 ALLOWED_PAGE_SIZES: tuple[int, ...] = (25, 50, 100)
 DEFAULT_PAGE_SIZE = 25
 
+ALLOWED_QUEUE_IDS: tuple[str, ...] = (
+    "high_priority",
+    "needs_review",
+    "lost_in_bitrix",
+    "ambiguous",
+    "degraded",
+    "unreconciled",
+)
+ALLOWED_COLUMN_KEYS: tuple[str, ...] = (
+    "priority",
+    "client",
+    "subject",
+    "date",
+    "classification",
+    "bitrix_status",
+)
+ALLOWED_DROPDOWN_KEYS: tuple[str, ...] = (
+    "case_type",
+    "priority",
+    "bitrix_status",
+)
+
 
 def validate_filter_params(
     params: dict[str, str],
 ) -> list[str]:
-    """Validate queue filter parameters.
-
-    Returns a list of error messages. Empty list means valid.
-    """
     errors: list[str] = []
 
     allowed_keys = frozenset({
@@ -91,7 +106,6 @@ def validate_filter_params(
         if key not in allowed_keys:
             errors.append(f"Unknown filter key: '{key}'")
 
-    # Validate classification (maps to case_type) — supports comma-separated multi-value
     classification = params.get("classification", "")
     if classification:
         for val in classification.split(","):
@@ -102,7 +116,6 @@ def validate_filter_params(
                     f"expected one of: {ALLOWED_CASE_TYPES}"
                 )
 
-    # Also validate case_type if given directly
     case_type = params.get("case_type", "")
     if case_type:
         for val in case_type.split(","):
@@ -161,6 +174,81 @@ def validate_filter_params(
         except ValueError:
             pass
 
+    queue = params.get("queue", "")
+    if queue:
+        if queue not in ALLOWED_QUEUE_IDS:
+            errors.append(
+                f"Invalid queue '{queue}', expected one of: {ALLOWED_QUEUE_IDS}"
+            )
+
+    columns = params.get("columns", "")
+    if columns:
+        for val in columns.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_COLUMN_KEYS:
+                errors.append(
+                    f"Invalid column '{val}', expected one of: {ALLOWED_COLUMN_KEYS}"
+                )
+
+    columns_open = params.get("columns_open", "")
+    if columns_open and columns_open not in ("1", "true"):
+        errors.append(f"Invalid columns_open '{columns_open}', expected '1' or 'true'")
+
+    open_dropdowns = params.get("open_dropdowns", "")
+    if open_dropdowns:
+        for val in open_dropdowns.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_DROPDOWN_KEYS:
+                errors.append(
+                    f"Invalid open_dropdowns key '{val}', "
+                    f"expected one of: {ALLOWED_DROPDOWN_KEYS}"
+                )
+
+    return errors
+
+
+def validate_pagination_params(
+    page_raw: str | None,
+    page_size_raw: str | None,
+    sort: str | None,
+    order: str | None,
+) -> list[str]:
+    errors: list[str] = []
+
+    if page_raw is not None and page_raw.strip():
+        try:
+            p = int(page_raw)
+            if p < 1:
+                errors.append(f"Invalid page '{page_raw}', page must be >= 1")
+        except ValueError:
+            errors.append(f"Invalid page '{page_raw}', expected an integer")
+
+    if page_size_raw is not None and page_size_raw.strip():
+        try:
+            ps = int(page_size_raw)
+            if ps not in ALLOWED_PAGE_SIZES:
+                errors.append(
+                    f"Invalid page_size '{page_size_raw}', "
+                    f"expected one of: {ALLOWED_PAGE_SIZES}"
+                )
+        except ValueError:
+            errors.append(
+                f"Invalid page_size '{page_size_raw}', expected an integer"
+            )
+
+    if sort is not None and sort.strip():
+        if sort not in ALLOWED_SORT_FIELDS:
+            errors.append(
+                f"Invalid sort '{sort}', expected one of: {ALLOWED_SORT_FIELDS}"
+            )
+
+    if order is not None and order.strip():
+        if order not in ("asc", "desc"):
+            errors.append(f"Invalid order '{order}', expected 'asc' or 'desc'")
+
+    if bool(sort and sort.strip()) != bool(order and order.strip()):
+        errors.append("sort and order must be provided together")
+
     return errors
 
 
@@ -169,18 +257,9 @@ def apply_queue_filters(
     bitrix_status_by_event: dict[str, str] | None = None,
     params: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Apply filter parameters to a list of queue items (classified events).
-
-    ``bitrix_status_by_event`` is an optional mapping of event_id -> bitrix_status
-    used when the status is not embedded in the item dict (legacy compatibility).
-
-    Returns filtered list.
-    """
     if not params:
         return items
 
-    # Support both "case_type" and legacy "classification" key
-    # Multi-value: comma-separated (e.g. "new_lead,existing_deal")
     case_type_raw = params.get("case_type") or params.get("classification", "")
     case_types = {v.strip() for v in case_type_raw.split(",") if v.strip()} if case_type_raw else set()
     priority_raw = params.get("priority", "")
@@ -205,7 +284,6 @@ def apply_queue_filters(
             )
     if date_to:
         try:
-            # end of day for inclusive filter
             parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
                 hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
             )
@@ -214,7 +292,6 @@ def apply_queue_filters(
                 "Invalid date_to value: %r, ignoring", date_to
             )
 
-    # is_fallback filter
     is_fallback_filter: bool | None = None
     if is_fallback_raw == "true":
         is_fallback_filter = True
@@ -226,24 +303,20 @@ def apply_queue_filters(
         if not isinstance(item, dict):
             continue
 
-        # is_fallback filter
         if is_fallback_filter is not None:
             if bool(item.get("is_fallback")) != is_fallback_filter:
                 continue
 
-        # case_type filter (supports multi-value comma-separated)
         if case_types:
             item_ct = str(item.get("case_type") or item.get("bot_case_type", ""))
             if item_ct not in case_types:
                 continue
 
-        # priority filter (supports multi-value comma-separated)
         if priorities:
             item_pri = str(item.get("priority") or item.get("bot_priority", ""))
             if item_pri not in priorities:
                 continue
 
-        # bitrix_status filter (supports multi-value comma-separated)
         if bitrix_statuses:
             item_bs = str(item.get("bitrix_status", ""))
             if not item_bs and bitrix_status_by_event:
@@ -252,7 +325,6 @@ def apply_queue_filters(
             if item_bs not in bitrix_statuses:
                 continue
 
-        # text search: sender + subject (via `q` param or legacy `sender`/`subject`)
         search_q = q
         legacy_sender = params.get("sender", "").lower().strip()
         legacy_subject = params.get("subject", "").lower().strip()
@@ -266,7 +338,6 @@ def apply_queue_filters(
             if legacy_subject and legacy_subject not in subject:
                 continue
 
-        # date range
         if parsed_date_from or parsed_date_to:
             ts = _event_timestamp(item)
             if ts is None:
@@ -285,10 +356,6 @@ def validate_sort_params(
     sort: str,
     order: str,
 ) -> tuple[str, str]:
-    """Validate and normalize sort field and order.
-
-    Returns (sort, order) tuple with defaults applied.
-    """
     if sort not in ALLOWED_SORT_FIELDS:
         sort = "received_at"
     if order not in ("asc", "desc"):
@@ -301,27 +368,36 @@ def sort_queue_items(
     sort: str = "received_at",
     order: str = "desc",
 ) -> list[dict[str, Any]]:
-    """Sort queue items by the given field and order."""
     sort, order = validate_sort_params(sort, order)
+    fallback_field = {
+        "received_at": "date",
+        "date": "received_at",
+        "event_date": "received_at",
+    }.get(sort, sort)
+    valid: list[tuple[Any, dict[str, Any]]] = []
+    missing: list[dict[str, Any]] = []
 
-    def _sort_key(item: dict[str, Any]) -> tuple:
-        raw = item.get(sort) or item.get(
-            {
-                "received_at": "date",
-                "date": "received_at",
-                "event_date": "received_at",
-            }.get(sort, sort),
-            "",
-        )
+    for item in items:
+        raw = item.get(sort)
+        if raw is None or raw == "":
+            raw = item.get(fallback_field)
+
         if sort in ("received_at", "date", "event_date"):
-            ts = _parse_iso(str(raw) if raw else None)
-            if ts is not None:
-                return (0, ts.timestamp())
-            return (1, str(raw))
-        return (1, str(raw).lower())
+            timestamp = _parse_iso(str(raw) if raw is not None else None)
+            if timestamp is None:
+                missing.append(item)
+            else:
+                valid.append((timestamp, item))
+            continue
 
-    reverse = order == "desc"
-    return sorted(items, key=_sort_key, reverse=reverse)
+        normalized = str(raw).strip().casefold() if raw is not None else ""
+        if not normalized:
+            missing.append(item)
+        else:
+            valid.append((normalized, item))
+
+    valid.sort(key=lambda entry: entry[0], reverse=order == "desc")
+    return [item for _, item in valid] + missing
 
 
 def paginate_items(
@@ -329,10 +405,6 @@ def paginate_items(
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Paginate a list of items.
-
-    Returns (paginated_slice, pagination_info).
-    """
     if page_size not in ALLOWED_PAGE_SIZES:
         page_size = DEFAULT_PAGE_SIZE
     if page < 1:
@@ -555,10 +627,8 @@ def build_rop_dashboard(
             }
         )
 
-    # Build AI assist summary from adjudicator results (primary) and assist results
     ai_assist_summary: dict[str, Any] = {}
 
-    # Prefer adjudicator results (have real data)
     if isinstance(ai_adjudicator_results, dict):
         adj_counters = ai_adjudicator_results.get("counters", {})
         if isinstance(adj_counters, dict):
@@ -568,7 +638,6 @@ def build_rop_dashboard(
                 "ok": adj_counters.get("adjudicator_used_count", 0),
                 "degraded": adj_counters.get("adjudicator_degraded_count", 0),
             }
-    # Fallback to assist results if adjudicator not available
     if not ai_assist_summary and isinstance(ai_assist_results, dict):
         counters = ai_assist_results.get("counters", {})
         if isinstance(counters, dict):

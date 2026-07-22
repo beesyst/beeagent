@@ -24,8 +24,9 @@ from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
 )
-from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
+from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter, extract_rop_query_params
 from beeagent_module.interfaces.ui.read_model import (
+    normalize_rop_recommendation_hrefs,
     resolve_recommendation_execution_policy,
 )
 from beeagent_module.interfaces.ui.locale import (
@@ -46,41 +47,6 @@ def _result_data(
     if isinstance(result, AdapterErrorResult):
         return default
     return result.data
-
-
-def _extract_filter_params_from_query(
-    query_params: Any,
-) -> dict[str, str]:
-    """Extract queue filter parameters from query string.
-
-    Shared helper for API routes that need to pass filter params
-    to the adapter.
-    """
-    allowed_filter_keys = frozenset({
-        "date_from",
-        "date_to",
-        "q",
-        "sender",
-        "subject",
-        "case_type",
-        "classification",
-        "priority",
-        "bitrix_status",
-        "is_fallback",
-        "queue",
-        "columns",
-        "columns_open",
-        "open_dropdowns",
-    })
-    params: dict[str, str] = {}
-    for key in allowed_filter_keys:
-        raw = query_params.get(key)
-        if raw is not None and isinstance(raw, str) and raw.strip():
-            params[key] = raw.strip()
-    # Map legacy key
-    if "classification" in params and "case_type" not in params:
-        params["case_type"] = params.pop("classification")
-    return params
 
 
 def _result_warnings(
@@ -142,6 +108,14 @@ def _error_json(
         },
         status_code=status_code,
     )
+
+
+def _event_detail_error_status(code: str) -> int:
+    if code in {"invalid_params", "invalid_run_id", "invalid_event_id", "invalid_query"}:
+        return 400
+    if code in {"not_found", "run_not_found", "event_not_found"}:
+        return 404
+    return 500
 
 
 def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
@@ -576,29 +550,20 @@ def _register_custom_routes(
     async def api_rop_dashboard(request: Request) -> JSONResponse:
         run_id = request.query_params.get("run_id")
         period = request.query_params.get("period")
-        filter_params = _extract_filter_params_from_query(request.query_params)
-
-        try:
-            page = max(1, int(request.query_params.get("page", "1")))
-        except (ValueError, TypeError):
-            page = 1
-        try:
-            page_size = int(request.query_params.get("page_size", "25"))
-            if page_size not in (25, 50, 100):
-                page_size = 25
-        except (ValueError, TypeError):
-            page_size = 25
-        sort = request.query_params.get("sort", "received_at")
-        order = request.query_params.get("order", "desc")
+        if request.query_params.get("tab") == "queue":
+            period = "all"
+        filter_params, pagination_params, param_errors = extract_rop_query_params(request.query_params)
+        if param_errors:
+            return _error_json("invalid_params", "; ".join(param_errors), status_code=400)
 
         result = adapter.get_rop_dashboard(
             run_id=run_id,
             period=period,
             filter_params=filter_params,
-            page=page,
-            page_size=page_size,
-            sort=sort,
-            order=order,
+            page=pagination_params["page"],
+            page_size=pagination_params["page_size"],
+            sort=pagination_params["sort"],
+            order=pagination_params["order"],
         )
         if isinstance(result, AdapterErrorResult):
             code = result.error.get("code", "error")
@@ -606,10 +571,22 @@ def _register_custom_routes(
             return _error_json(code, status_code=status, error=result.error)
 
         data = _result_data(result, {})
+        if isinstance(data, dict):
+            data["rop_recommendations"] = normalize_rop_recommendation_hrefs(
+                data.get("rop_recommendations", []),
+                run_id=str(data.get("run_id", "")),
+                period=data.get("period"),
+                locale=resolve_locale(request.query_params.get("lang")),
+            )
         return _ok_json(data)
 
     @app.get("/api/rop/events/{event_id}", include_in_schema=False)
     async def api_rop_event_detail(request: Request, event_id: str) -> JSONResponse:
+        _, _, param_errors = extract_rop_query_params(
+            request.query_params
+        )
+        if param_errors:
+            return _error_json("invalid_params", "; ".join(param_errors), status_code=400)
         run_id = request.query_params.get("run_id")
         if not run_id:
             return _error_json(
@@ -681,17 +658,17 @@ def _register_custom_routes(
         locale = resolve_locale(request.query_params.get("lang"))
         token = set_current_locale(locale)
         try:
-            query_params = {"run_id": run_id, "event_id": event_id}
-            if locale != "en":
-                query_params["lang"] = locale
+            query_params = dict(request.query_params)
+            query_params["run_id"] = run_id
+            query_params["event_id"] = event_id
 
             page_result = adapter.get_page("rop_event_detail", query_params)
             if isinstance(page_result, AdapterErrorResult):
                 code = str(page_result.error.get("code", "page_error"))
-                status_code = 404 if code == "not_found" else 500
+                status_code = _event_detail_error_status(code)
                 message = (
                     f"Event {event_id} not found in run {run_id}"
-                    if code == "not_found"
+                    if status_code == 404
                     else str(
                         page_result.error.get(
                             "message", "Failed to build event detail page"

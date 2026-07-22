@@ -546,7 +546,8 @@ def test_rop_queue_detail_link_is_localized_in_ru(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "Подробнее" in response.text
     assert (
-        'href="/rop/events/evt-1?run_id=run-rop-detail-ru&amp;lang=ru"' in response.text
+        'href="/rop/events/evt-1?run_id=run-rop-detail-ru&amp;period=all&amp;lang=ru"'
+        in response.text
     )
 
 
@@ -911,8 +912,8 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
         "Last 30 days",
         "All time",
     ]
-    assert items[0]["href"] == "/rop?tab=overview&period=today"
-    assert items[1]["href"] == "/rop?tab=overview&period=7d"
+    assert items[0]["href"] == "/rop?tab=overview&run_id=run-test-001&period=today"
+    assert items[1]["href"] == "/rop?tab=overview&run_id=run-test-001&period=7d"
 
 
 def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None:
@@ -981,7 +982,7 @@ def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None
     assert action_block["series"] == [2, 0]
     assert "2 items need review" in action_block["subtitle"]
     assert queue_block["rows"][0]["evidence"]["href"] == (
-        "/rop/events/evt-1?run_id=run-overview-actions"
+        "/rop/events/evt-1?run_id=run-overview-actions&period=7d"
     )
 
     ru_layout = build_rop_page_layout(data, tab="overview", locale="ru")
@@ -990,7 +991,7 @@ def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None
     )
 
     assert ru_queue_block["rows"][0]["evidence"]["href"] == (
-        "/rop/events/evt-1?run_id=run-overview-actions&lang=ru"
+        "/rop/events/evt-1?run_id=run-overview-actions&period=7d&lang=ru"
     )
 
 
@@ -1242,27 +1243,15 @@ def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
     assert "Run read-only reconcile-bitrix" in item["value"]
 
 
-def test_api_rop_dashboard_invalid_period_degrades_to_default(tmp_path: Path) -> None:
+def test_api_rop_dashboard_invalid_period_is_rejected(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-invalid-period")
     client = _client(storage_dir)
 
     response = client.get("/api/rop/dashboard", params={"period": "14d"})
 
-    assert response.status_code == 200
-    payload = response.json()["data"]
-    assert payload["period"] == "7d"
-    assert payload["default_period"] == "7d"
-    assert payload["configured_periods"] == [
-        "today",
-        "yesterday",
-        "7d",
-        "30d",
-        "90d",
-        "365d",
-        "all",
-    ]
-    assert any(w.get("code") == "invalid_period" for w in payload["warnings"])
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_params"
 
 
 def test_dashboard_accordion_has_chevron(tmp_path: Path) -> None:
@@ -2914,18 +2903,15 @@ def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
     response = client.get("/rop?tab=overview&period=7d&lang=ru")
     assert response.status_code == 200
     html = response.text
-    # Overview cards use filtered Queue hrefs with date_from/date_to for same period
-    # Jinja2 auto-escapes & to &amp; in HTML
-    # date_from/date_to values are dynamic (based on current date), check prefix only
-    assert "/rop?tab=queue&amp;priority=high&amp;date_from=" in html
-    assert "&amp;date_to=" in html
+    assert "run_id=run-lang-overview-links" in html
+    assert "priority=high" in html
     assert "&amp;lang=ru" in html
-    assert "/rop?tab=queue&amp;queue=needs_review" in html
-    assert "/rop?tab=queue&amp;bitrix_status=not_found,ambiguous,duplicate_candidate,unreconciled" in html
-    assert "/rop?tab=bitrix&amp;period=7d&amp;lang=ru" in html
-    assert "/rop?tab=evidence&amp;period=7d&amp;lang=ru" in html
-    assert "/rop?tab=overview&amp;period=today&amp;lang=ru" in html
-    assert "/rop?tab=overview&amp;period=30d&amp;lang=ru" in html
+    assert "queue=needs_review" in html
+    assert "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled" in html
+    assert "/rop?tab=bitrix&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=evidence&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=today&amp;lang=ru" in html
+    assert "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=30d&amp;lang=ru" in html
 
 
 def test_rop_language_switcher_visible(tmp_path: Path) -> None:
@@ -3041,7 +3027,6 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     assert "chart-rop-source-contribution" in html
     assert "progress progress-sm" in html
     assert 'class="card card-sm"' in html
-    assert "No chart data for this period" in html
 
 
 def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
@@ -3078,17 +3063,18 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     assert "Last 3 months" in html
     assert "Last year" in html
     assert "All time" in html
-    assert 'href="/rop?tab=overview&amp;period=today"' in html
-    assert 'href="/rop?tab=overview&amp;period=yesterday"' in html
-    assert 'href="/rop?tab=overview&amp;period=7d"' in html
-    assert 'href="/rop?tab=overview&amp;period=30d"' in html
-    assert 'href="/rop?tab=overview&amp;period=90d"' in html
-    assert 'href="/rop?tab=overview&amp;period=365d"' in html
-    assert 'href="/rop?tab=overview&amp;period=all"' in html
-    assert 'href="/rop?tab=queue&amp;priority=high&amp;date_from=' in html
-    assert 'href="/rop?tab=queue&amp;queue=needs_review&amp;date_from=' in html
-    assert 'href="/rop?tab=queue&amp;bitrix_status=not_found,ambiguous,duplicate_candidate,unreconciled&amp;date_from=' in html
-    assert 'href="/rop?tab=bitrix&amp;period=7d"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=today"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=yesterday"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=7d"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=30d"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=90d"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=365d"' in html
+    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=all"' in html
+    assert 'run_id=run-period-labels' in html
+    assert 'priority=high' in html
+    assert 'queue=needs_review' in html
+    assert 'bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled' in html
+    assert 'href="/rop?tab=bitrix&amp;run_id=run-period-labels&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 
 
@@ -4772,3 +4758,341 @@ def test_widget_api_returns_final_decisions_block(
     assert fd["events"][0]["attention_reason"] is None
     assert fd["events"][0]["automation_allowed"] is False
     assert fd["events"][0]["bitrix_write_allowed"] is False
+
+
+def test_rop_route_url_state_round_trip_and_selected_run(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-state")
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/rop?tab=queue&run_id=run-state&period=all&lang=ru&"
+        "q=a%40example.com+%26+co&page=2&page_size=50&sort=sender&order=asc"
+    )
+
+    assert response.status_code == 200
+    assert "run-state" in response.text
+    assert "q=a%40example.com+%26+co" in response.text
+    assert "page_size=50" in response.text
+    assert "sort=sender" in response.text
+
+
+def test_rop_html_and_api_share_validation_and_canonical_pagination(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-contract")
+    client = _client(storage_dir)
+
+    assert client.get(
+        "/rop?tab=queue&run_id=run-contract&queue=unknown"
+    ).status_code >= 400
+    for path in (
+        "/api/rop/dashboard?run_id=run-contract&queue=unknown",
+        "/api/rop/dashboard?run_id=run-contract&page=-1",
+        "/api/rop/dashboard?run_id=run-contract&sort=sender",
+    ):
+        assert client.get(path).status_code == 400
+
+    payload = client.get(
+        "/api/rop/dashboard?run_id=run-contract&page=999&page_size=50"
+    ).json()["data"]
+    assert payload["page"] == payload["pagination"]["page"]
+    assert payload["page_size"] == payload["pagination"]["page_size"] == 50
+
+
+def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-state")
+    (run_dir / "mail_thread_context.json").write_text(
+        json.dumps({"contexts": [{"event_id": "evt-1", "thread_id": "thread-1"}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps({"items": [{"event_id": "evt-1", "status": "matched"}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_action_drafts.json").write_text(
+        json.dumps({"items": [{"event_id": "evt-1", "action_type": "review"}]}),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/rop/events/evt-1?run_id=run-detail-state&period=all&lang=ru&"
+        "priority=high&page=2&page_size=50&sort=sender&order=asc"
+    )
+
+    assert response.status_code == 200
+    assert "Thread context" in response.text or "Контекст цепочки" in response.text
+    assert "Bitrix evidence" in response.text or "Доказательства из Битрикс" in response.text
+    assert "Action draft" in response.text or "Черновик действия" in response.text
+    assert "run_id=run-detail-state" in response.text
+    assert "page_size=50" in response.text
+
+
+def test_rop_latest_selection_period_is_rendered(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-latest-period")
+    (run_dir / "mailbox_selection.json").write_text(
+        json.dumps({
+            "sources": [{
+                "source_id": "mailbox", "selected_count": 2,
+                "messages": [
+                    {"internal_date": "2026-06-25T00:00:00+00:00"},
+                    {"internal_date": "2026-06-28T00:00:00+00:00"},
+                ],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get("/rop?run_id=run-latest-period")
+
+    assert response.status_code == 200
+    assert "25.06" in response.text and "28.06" in response.text
+
+
+def test_queue_sort_links_round_trip_and_keep_atomic_pair(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-sort-links")
+    (run_dir / "rop_current_state.json").write_text(
+        json.dumps({"queues": {"high_priority": [{
+            "event_id": "evt-1", "sender": "client@example.com",
+            "subject": "Need welding quote", "priority": "high",
+        }]}}),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    initial = client.get("/rop?tab=queue&run_id=run-sort-links")
+    assert initial.status_code == 200
+    assert "sort=sender&amp;order=desc" in initial.text
+
+    ascending = client.get(
+        "/rop?tab=queue&run_id=run-sort-links&sort=sender&order=asc"
+    )
+    assert ascending.status_code == 200
+    assert "sort=sender&amp;order=desc" in ascending.text
+
+
+def test_queue_pagination_links_keep_canonical_page_size() -> None:
+    rows = [
+        {
+            "event_id": f"evt-{index}", "sender": f"sender-{index}",
+            "subject": "Queue item", "priority": "high",
+        }
+        for index in range(51)
+    ]
+    layout = build_rop_page_layout(
+        {
+            "run_id": "run-page-size", "period": "all",
+            "queues": {"high_priority": rows}, "filter_params": {},
+            "page": 1, "page_size": 50, "sort": "received_at", "order": "desc",
+        },
+        tab="queue",
+    )
+    pages = layout[1]["pagination"]["pages"]
+
+    assert len(pages) == 2
+    assert all("page_size=50" in page["href"] for page in pages)
+
+
+def test_queue_uses_all_data_before_validated_date_range(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-queue-all")
+    classified = json.loads((run_dir / "classified_events.json").read_text(encoding="utf-8"))
+    classified[0]["event_date"] = "2020-01-15T12:00:00Z"
+    (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+    (run_dir / "rop_current_state.json").write_text(
+        json.dumps({"queues": {"high_priority": [{
+            "event_id": "evt-1", "sender": "client@example.com",
+            "subject": "Need welding quote", "priority": "high",
+            "event_date": "2020-01-15T12:00:00Z",
+        }]}}),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/rop?tab=queue&run_id=run-queue-all&period=today&"
+        "date_from=2020-01-01&date_to=2020-01-31"
+    )
+
+    assert response.status_code == 200
+    assert "Need welding quote" in response.text
+
+
+def test_fallback_queue_rows_share_html_and_api_pagination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-fallback-queue")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["is_fallback"] = True
+    classified[0]["event_date"] = "2020-01-15T12:00:00Z"
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    from beeagent_module.interfaces.ui import read_model as read_model_module
+
+    monkeypatch.setattr(
+        read_model_module,
+        "build_rop_dashboard",
+        lambda **kwargs: {
+            "period": kwargs["period"],
+            "queues": {},
+            "business_kpi": {},
+            "series": {},
+            "rop_recommendations": [],
+            "warnings": [],
+        },
+    )
+    client = _client(storage_dir)
+
+    html = client.get(
+        "/rop?tab=queue&run_id=run-fallback-queue&is_fallback=true&"
+        "page=999&page_size=50&sort=sender&order=asc"
+    )
+    api = client.get(
+        "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&"
+        "is_fallback=true&page=999&page_size=50&sort=sender&order=asc"
+    )
+
+    assert html.status_code == 200
+    assert "test@example.com" in html.text
+    assert api.status_code == 200
+    payload = api.json()["data"]
+    assert payload["pagination"]["total_items"] == 1
+    assert payload["pagination"]["page"] == 1
+    assert payload["pagination"]["page_size"] == 50
+    assert payload["pagination"]["total_pages"] == 1
+    assert payload["pagination"]["showing_from"] == 1
+    assert payload["pagination"]["showing_to"] == 1
+    assert payload["queue_rows"][0]["is_fallback"] is True
+    assert payload["sort"] == "sender"
+    assert payload["order"] == "asc"
+
+    excluded = client.get(
+        "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&"
+        "is_fallback=false"
+    ).json()["data"]
+    assert excluded["pagination"]["total_items"] == 0
+
+
+def test_event_detail_routes_return_client_error_statuses(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-event-errors")
+    client = _client(storage_dir)
+
+    invalid_query = client.get(
+        "/rop/events/evt-1?run_id=run-event-errors&sort=sender"
+    )
+    invalid_run = client.get("/rop/events/evt-1?run_id=../outside")
+    missing = client.get("/rop/events/missing?run_id=run-event-errors")
+    valid = client.get("/rop/events/evt-1?run_id=run-event-errors")
+    api_valid = client.get("/api/rop/events/evt-1?run_id=run-event-errors")
+    api_invalid_run = client.get("/api/rop/events/evt-1?run_id=../outside")
+    api_invalid_sort = client.get(
+        "/api/rop/events/evt-1?run_id=run-event-errors&sort=sender"
+    )
+    api_missing = client.get("/api/rop/events/missing?run_id=run-event-errors")
+
+    assert invalid_query.status_code == 400
+    assert invalid_run.status_code == 400
+    assert missing.status_code == 404
+    assert valid.status_code == 200
+    assert api_valid.status_code == 200
+    assert api_invalid_run.status_code == 400
+    assert api_invalid_sort.status_code == 400
+    assert api_missing.status_code == 404
+    assert "Traceback" not in invalid_query.text
+    assert str(storage_dir) not in invalid_query.text
+    assert "RAW-EML-CONTENT" not in invalid_query.text
+
+
+def test_empty_queue_keeps_canonical_url_state_and_selected_columns(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-empty-queue-state")
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/rop?tab=queue&run_id=run-empty-queue-state&period=all&lang=ru&"
+        "queue=ambiguous&q=needle&date_from=2020-01-01&date_to=2020-01-31&"
+        "case_type=new_lead&priority=high&bitrix_status=not_found&"
+        "columns=subject,date&columns_open=1&open_dropdowns=priority&"
+        "page=999&page_size=50&sort=sender&order=asc"
+    )
+
+    assert response.status_code == 200
+    table_html = response.text.split("<table", 1)[1].split("</table>", 1)[0]
+    assert "Тема" in table_html
+    assert "Дата" in table_html
+    assert "Приоритет" not in table_html
+    assert "Отправитель" not in table_html
+    assert "Классификация" not in table_html
+    assert "Статус Битрикса" not in table_html
+    assert "run_id=run-empty-queue-state" in response.text
+    assert "queue=ambiguous" in response.text
+    assert "q=needle" in response.text
+    assert "date_from=2020-01-01" in response.text
+    assert "date_to=2020-01-31" in response.text
+    assert "case_type=new_lead" in response.text
+    assert "columns=subject%2Cdate" in response.text or "columns=date%2Csubject" in response.text
+    assert "page_size=50" in response.text
+    assert "sort=sender&amp;order=asc" in response.text
+
+
+def test_recommendation_links_are_built_with_current_rop_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-recommendation-links")
+    from beeagent_module.interfaces.ui import read_model as read_model_module
+
+    monkeypatch.setattr(
+        read_model_module,
+        "build_rop_dashboard",
+        lambda **kwargs: {
+            "period": kwargs["period"],
+            "queues": {},
+            "business_kpi": {},
+            "series": {},
+            "rop_recommendations": [
+                {"reason_code": "high_priority", "evidence_href": "/rop?tab=queue"}
+            ],
+            "warnings": [],
+        },
+    )
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/api/rop/dashboard?run_id=run-recommendation-links&period=all&lang=ru"
+    )
+
+    assert response.status_code == 200
+    href = response.json()["data"]["rop_recommendations"][0]["evidence_href"]
+    assert href.startswith("/rop?tab=queue")
+    assert "run_id=run-recommendation-links" in href
+    assert "period=all" in href
+    assert "lang=ru" in href
+
+
+def test_event_detail_uses_canonical_date_and_bitrix_status_fields(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-canonical-detail")
+    normalized = json.loads((run_dir / "normalized_events.json").read_text(encoding="utf-8"))
+    normalized[0]["received_at"] = "2026-01-15T14:30:00Z"
+    (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps({"items": [{"event_id": "evt-1", "bitrix_match_status": "matched_lead"}]}),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get("/rop/events/evt-1?run_id=run-canonical-detail")
+
+    assert response.status_code == 200
+    assert "15.01.2026, 14:30" in response.text
+    assert "matched_lead" in response.text
