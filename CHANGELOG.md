@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.45.0...beeagent-v0.46.0) (2026-07-22)
+
+
+### Features
+
+* adapt web inteface design for improved user experience ([#152](https://github.com/beesyst/beeagent/issues/152)) ([3dbf7d9](https://github.com/beesyst/beeagent/commit/3dbf7d9cc53b323ba4af4976e398c5aee498fb42))
+
 ## [0.45.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.44.0...beeagent-v0.45.0) (2026-07-12)
 
 
