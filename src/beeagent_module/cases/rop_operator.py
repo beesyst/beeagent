@@ -602,6 +602,10 @@ def _attach_classification_trace(
         "attachment_text_preview",
         "attachment_extraction_refs",
         "attachment_refusal_reasons",
+        "received_at",
+        "date",
+        "event_date",
+        "timestamp",
     ):
         if key not in enriched:
             enriched[key] = source_event.get(key)

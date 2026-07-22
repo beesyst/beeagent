@@ -28,6 +28,7 @@ from beeagent_module.interfaces.ui.read_model import (
     build_dashboard,
     build_modules_list,
     build_modules_page_layout,
+    normalize_rop_recommendation_hrefs,
     build_rop_dashboard_read_model,
     build_rop_page_layout,
     build_run_detail,
@@ -36,6 +37,14 @@ from beeagent_module.interfaces.ui.read_model import (
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
+from beeagent_module.cases.rop_dashboard import (
+    ALLOWED_PERIODS,
+    ALLOWED_PAGE_SIZES,
+    ALLOWED_SORT_FIELDS,
+    DEFAULT_PAGE_SIZE,
+    validate_filter_params,
+    validate_pagination_params,
+)
 
 
 def _product_version() -> str:
@@ -43,6 +52,108 @@ def _product_version() -> str:
         return version("beeagent")
     except PackageNotFoundError:
         return "unknown"
+
+
+def extract_rop_query_params(
+    query: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, Any], list[str]]:
+    """Extract and validate filter + pagination + sort parameters.
+
+    Returns (filter_params, pagination_params, errors).
+    Invalid input produces error messages instead of silently expanding selection.
+    """
+    errors: list[str] = []
+
+    allowed_query_keys = frozenset({
+        "tab", "run_id", "event_id", "period", "lang", "page", "page_size", "sort", "order",
+        "date_from", "date_to", "q", "sender", "subject", "case_type",
+        "classification", "priority", "bitrix_status", "is_fallback", "queue",
+        "columns", "columns_open", "open_dropdowns",
+    })
+    for key in query:
+        if key not in allowed_query_keys:
+            errors.append(f"Unknown query parameter: '{key}'")
+
+    period = query.get("period")
+    if period and period not in ALLOWED_PERIODS:
+        errors.append(f"Invalid period '{period}'")
+
+    # ── Filter params ──
+    allowed_filter_keys = frozenset({
+        "date_from",
+        "date_to",
+        "q",
+        "sender",
+        "subject",
+        "case_type",
+        "classification",
+        "priority",
+        "bitrix_status",
+        "is_fallback",
+        "queue",
+        "columns",
+        "columns_open",
+        "open_dropdowns",
+    })
+    filter_params: dict[str, str] = {}
+    for key in allowed_filter_keys:
+        raw = query.get(key)
+        if raw is not None and isinstance(raw, str) and raw.strip():
+            filter_params[key] = raw.strip()
+    # Map legacy key
+    if "classification" in filter_params and "case_type" not in filter_params:
+        filter_params["case_type"] = filter_params.pop("classification")
+
+    # Validate filter params
+    filter_errors = validate_filter_params(filter_params)
+    errors.extend(filter_errors)
+
+    # ── Pagination params ──
+    page_raw = query.get("page")
+    page_size_raw = query.get("page_size")
+    sort_raw = query.get("sort")
+    order_raw = query.get("order")
+
+    pag_errors = validate_pagination_params(page_raw, page_size_raw, sort_raw, order_raw)
+    errors.extend(pag_errors)
+
+    # Parse pagination with safe defaults (only if no validation errors)
+    if not any("page" in e for e in pag_errors):
+        try:
+            page = max(1, int(page_raw or "1"))
+        except (ValueError, TypeError):
+            page = 1
+    else:
+        page = 1
+
+    if not any("page_size" in e for e in pag_errors):
+        try:
+            page_size = int(page_size_raw or str(DEFAULT_PAGE_SIZE))
+            if page_size not in ALLOWED_PAGE_SIZES:
+                page_size = DEFAULT_PAGE_SIZE
+        except (ValueError, TypeError):
+            page_size = DEFAULT_PAGE_SIZE
+    else:
+        page_size = DEFAULT_PAGE_SIZE
+
+    if not any("sort" in e for e in pag_errors):
+        sort = sort_raw if sort_raw in ALLOWED_SORT_FIELDS else "received_at"
+    else:
+        sort = "received_at"
+
+    if not any("order" in e for e in pag_errors):
+        order = order_raw if order_raw in ("asc", "desc") else "desc"
+    else:
+        order = "desc"
+
+    pagination_params: dict[str, Any] = {
+        "page": page,
+        "page_size": page_size,
+        "sort": sort,
+        "order": order,
+    }
+
+    return filter_params, pagination_params, errors
 
 
 class BeeAgentUiAdapter:
@@ -196,7 +307,14 @@ class BeeAgentUiAdapter:
             return error_result_from_exception(exc)
 
     def get_rop_dashboard(
-        self, run_id: str | None = None, period: str | None = None
+        self,
+        run_id: str | None = None,
+        period: str | None = None,
+        filter_params: dict[str, str] | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort: str = "received_at",
+        order: str = "desc",
     ) -> AdapterResult | AdapterErrorResult:
         try:
             if run_id is not None:
@@ -213,6 +331,11 @@ class BeeAgentUiAdapter:
                 period=period,
                 default_period=default_period,
                 configured_periods=configured_periods,
+                filter_params=filter_params,
+                page=page,
+                page_size=page_size,
+                sort=sort,
+                order=order,
             )
             if "error" in data:
                 return error_result("not_found", data.get("message", "Not found"))
@@ -244,11 +367,23 @@ class BeeAgentUiAdapter:
 
                 run_id = query.get("run_id")
                 period = query.get("period")
+                if tab == "queue":
+                    # Queue always starts from the full dataset; its validated
+                    # date range is the only time constraint for operator work.
+                    period = "all"
                 if run_id is not None:
                     try:
                         validate_run_id(run_id)
                     except Exception:
                         return error_result("invalid_run_id", "Invalid run_id")
+
+                # Extract and validate filter + pagination + sort params atomically
+                filter_params, pagination_params, param_errors = extract_rop_query_params(query)
+                if param_errors:
+                    return error_result(
+                        "invalid_params",
+                        "; ".join(param_errors),
+                    )
 
                 default_period = self._settings["rop"]["dashboard"]["default_period"]
                 configured_periods = self._settings["rop"]["dashboard"]["periods"]
@@ -258,11 +393,22 @@ class BeeAgentUiAdapter:
                     period=period,
                     default_period=default_period,
                     configured_periods=configured_periods,
+                    filter_params=filter_params,
+                    page=pagination_params["page"],
+                    page_size=pagination_params["page_size"],
+                    sort=pagination_params["sort"],
+                    order=pagination_params["order"],
                 )
                 if "error" in data:
                     return error_result("not_found", data.get("message", "Not found"))
 
                 locale = resolve_locale(query.get("lang"))
+                data["rop_recommendations"] = normalize_rop_recommendation_hrefs(
+                    data.get("rop_recommendations", []),
+                    run_id=str(data.get("run_id", "")),
+                    period=data.get("period"),
+                    locale=locale,
+                )
                 data["locale"] = locale
                 data["title"] = t("ROP Dashboard", locale)
                 layout = build_rop_page_layout(data, tab=tab, locale=locale)
@@ -270,8 +416,9 @@ class BeeAgentUiAdapter:
                 return ok_result(data)
 
             if page_id == "modules":
+                locale = resolve_locale(query.get("lang"))
                 modules_data = build_modules_list(self._storage_dir)
-                modules_data["layout"] = build_modules_page_layout(modules_data)
+                modules_data["layout"] = build_modules_page_layout(modules_data, locale=locale)
                 return ok_result(modules_data)
 
             if page_id == "rop_event_detail":
@@ -288,11 +435,20 @@ class BeeAgentUiAdapter:
                     return error_result("invalid_run_id", "Invalid run_id")
 
                 locale = resolve_locale(query.get("lang"))
+                filter_params, pagination_params, param_errors = extract_rop_query_params(query)
+                if param_errors:
+                    return error_result("invalid_params", "; ".join(param_errors))
                 data = build_rop_event_detail_page_model(
                     self._storage_dir,
                     run_id,
                     event_id,
                     lang=locale,
+                    period=query.get("period"),
+                    filter_params=filter_params,
+                    page=pagination_params["page"],
+                    page_size=pagination_params["page_size"],
+                    sort=pagination_params["sort"],
+                    order=pagination_params["order"],
                 )
                 if not data.get("ok", True) and data.get("error") == "not_found":
                     return error_result("not_found", "Event not found")

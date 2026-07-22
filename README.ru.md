@@ -393,12 +393,16 @@ API artifact маршруты:
 
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
+- **Queue tab** (`/rop?tab=queue`) поддерживает server-side GET фильтрацию, multi-select dropdowns, сортировку и пагинацию через query-параметры: `q`, `case_type`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`, `page`, `page_size`, `sort`, `order`;
+- Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
+- `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
+- Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;
 - HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix, Recommendations. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
 - вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
 - при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
 - Overview использует period dropdown для выбора периода, а не отдельные period buttons;
-- dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 50), attachment summary без raw content и evidence links по allowlist;
+- dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 500), attachment summary без raw content и evidence links по allowlist;
 - `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload с UI-6 полями: `latest_selection`, `thread_summary`, `threads`, `ai_assist_summary`, `ai_assist_events`.
 
 Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.

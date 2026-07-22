@@ -143,6 +143,26 @@ Web console читает только existing artifacts из `storage/` и не
 Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 `./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
 
+> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через форму. Период, выбранный на Overview, не влияет на данные в Queue.
+
+#### Queue tab: filters, sort, pagination
+
+Queue tab поддерживает server-side GET фильтрацию, multi-select dropdowns, сортировку и пагинацию.
+
+Параметры запроса:
+
+- Filter params: `q`, `sender`, `subject`, `case_type`/`classification`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`
+- Column params: `columns` (comma-separated keys), `columns_open`
+- Dropdown state: `open_dropdowns` (comma-separated param names)
+- Pagination: `page` (>=1), `page_size` (25/50/100), `sort`, `order` (asc/desc)
+- Canonical params: `run_id`, `tab`, `period`, `lang`
+
+Все URL формируются через единый `build_rop_url()` из `src/beeagent_module/interfaces/ui/url_builder.py`, использующий `urllib.parse.urlencode` для корректного экранирования специальных символов.
+
+Валидация параметров выполняется в adapter-level contract (`_extract_and_validate_params` в `adapter.py`). Невалидные значения возвращают ошибку, а не молча расширяют выборку.
+
+Missing/malformed dates при сортировке всегда после валидных (как asc, так и desc).
+
 #### Web Console Auth (UI-7, dev smoke)
 
 По умолчанию auth отключён (`web.auth.enabled: false`). Для локального теста:

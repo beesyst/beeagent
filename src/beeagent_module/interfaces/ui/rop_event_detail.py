@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
@@ -11,6 +11,20 @@ from beeagent_module.core.rop_final_decision import (
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.url_builder import build_rop_url
+
+
+def _format_iso_datetime(value: Any) -> str:
+    """Parse an ISO datetime string and return as DD.MM.YYYY, HH:MM."""
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return f"{dt.day:02d}.{dt.month:02d}.{dt.year}, {dt.hour:02d}:{dt.minute:02d}"
+    except (ValueError, TypeError):
+        return value
 
 
 def _read_json(path: Path) -> dict | list | None:
@@ -114,6 +128,12 @@ def build_rop_event_detail_read_model(
     event_id: str,
     *,
     lang: str = "en",
+    period: str | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     run_dir, error = _resolve_run_dir(storage_dir, run_id)
     if run_dir is None:
@@ -162,7 +182,13 @@ def build_rop_event_detail_read_model(
             "to": norm_event.get("to", []),
             "cc": norm_event.get("cc", []),
             "subject": _str(norm_event.get("subject")),
-            "date": _str(norm_event.get("date")),
+            "date": _str(
+                norm_event.get("event_date")
+                or norm_event.get("received_at")
+                or norm_event.get("timestamp")
+                or norm_event.get("created_at")
+                or norm_event.get("date")
+            ),
             "body_preview": _str(norm_event.get("body_preview", "")),
             "body_preview_chars": _int(norm_event.get("body_preview_chars", 0)),
             "body_preview_truncated": bool(
@@ -196,14 +222,20 @@ def build_rop_event_detail_read_model(
 
     classification_section: dict[str, Any] = {}
     if class_event:
+        reason = _str(
+            class_event.get("reasoning")
+            or class_event.get("reason_code", "")
+        )
         classification_section = {
             "case_type": _str(class_event.get("case_type")),
             "case_subtype": _str(class_event.get("case_subtype")),
             "priority": _str(class_event.get("priority")),
             "confidence": class_event.get("confidence"),
             "reason_code": _str(class_event.get("reason_code")),
+            "reason": reason,
             "is_fallback": bool(class_event.get("is_fallback")),
             "recommended_queue": _str(class_event.get("recommended_queue", "")),
+            "recommended_next_step": _str(class_event.get("recommended_queue", "")),
             "correct_action": _str(class_event.get("correct_action", "")),
             "should_rop_see": class_event.get("should_rop_see"),
         }
@@ -217,6 +249,7 @@ def build_rop_event_detail_read_model(
         for ctx in contexts:
             if isinstance(ctx, dict) and ctx.get("event_id") == event_id:
                 thread_section = {
+                    "available": True,
                     "thread_id": _str(ctx.get("thread_id")),
                     "previous_event_ids": _safe_list(ctx.get("previous_event_ids")),
                     "reply_or_forward": bool(
@@ -308,8 +341,12 @@ def build_rop_event_detail_read_model(
         for item in items:
             if isinstance(item, dict) and item.get("event_id") == event_id:
                 bitrix_section = {
+                    "available": True,
                     "bitrix_status": _str(
-                        item.get("bitrix_status", item.get("status", ""))
+                        item.get("bitrix_match_status")
+                        or item.get("match_status")
+                        or item.get("bitrix_status")
+                        or item.get("status")
                     ),
                     "match_quality": item.get("match_quality"),
                     "candidate_count": _int(item.get("candidate_count", 0)),
@@ -329,6 +366,7 @@ def build_rop_event_detail_read_model(
         for item in items:
             if isinstance(item, dict) and item.get("event_id") == event_id:
                 action_draft_section = {
+                    "available": True,
                     "action_type": _str(item.get("action_type", item.get("type", ""))),
                     "summary": _str(item.get("summary", item.get("description", ""))),
                     "draft_status": _str(item.get("status", "draft")),
@@ -415,8 +453,33 @@ def build_rop_event_detail_read_model(
     return result
 
 
-def _page_kv_items(items: list[tuple[str, Any]]) -> list[dict[str, Any]]:
-    return [{"label": label, "value": value} for label, value in items]
+def _kv(label: str, value: Any, *, hint: str | None = None) -> dict[str, Any]:
+    """Create a key_value item with optional type hint for visual styling."""
+    item: dict[str, Any] = {"label": label, "value": value}
+    if hint:
+        item["type_hint"] = hint
+    return item
+
+
+def _format_size(size_bytes: Any) -> str:
+    """Convert bytes to a human-readable file size string."""
+    if not isinstance(size_bytes, (int, float)) or size_bytes < 0:
+        return "n/a"
+    if size_bytes == 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    size = float(size_bytes)
+    while size >= 1024 and i < len(units) - 1:
+        size /= 1024
+        i += 1
+    if i == 0:
+        return f"{int(size)} {units[i]}"
+    return f"{size:.1f} {units[i]}"
+
+
+def _page_kv_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return items
 
 
 def build_rop_event_detail_page_model(
@@ -425,6 +488,12 @@ def build_rop_event_detail_page_model(
     event_id: str,
     *,
     lang: str = "en",
+    period: str | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
 ) -> dict[str, Any]:
     data = build_rop_event_detail_read_model(
         storage_dir=storage_dir,
@@ -453,8 +522,10 @@ def build_rop_event_detail_page_model(
             "title": t("Source", lang),
             "items": _page_kv_items(
                 [
-                    (t("Source", lang), source.get("source_id")),
-                    (t("Client", lang), source.get("client_id")),
+                    _kv(t("Source", lang), source.get("source_id")),
+                    _kv(t("Client", lang), source.get("client_id")),
+                    _kv(t("Source type", lang), source.get("source_type")),
+                    _kv(t("Source role", lang), source.get("source_role")),
                 ]
             ),
         },
@@ -463,13 +534,11 @@ def build_rop_event_detail_page_model(
             "title": t("Message body", lang),
             "items": _page_kv_items(
                 [
-                    (t("Event ID", lang), event_id),
-                    (t("Sender", lang), message.get("sender")),
-                    (t("Subject", lang), message.get("subject")),
-                    (t("Body preview", lang), message.get("body_preview")),
-                    ("Preview source", message.get("body_preview_source")),
-                    ("Preview chars", message.get("body_preview_chars")),
-                    ("Preview truncated", message.get("body_preview_truncated")),
+                    _kv(t("Event ID", lang), event_id),
+                    _kv(t("Sender", lang), message.get("sender")),
+                    _kv(t("Subject", lang), message.get("subject")),
+                    _kv(t("Date", lang), _format_iso_datetime(message.get("date"))),
+                    _kv(t("Body preview", lang), message.get("body_preview"), hint="long_text"),
                 ]
             ),
         },
@@ -478,97 +547,104 @@ def build_rop_event_detail_page_model(
             "title": t("Classification", lang),
             "items": _page_kv_items(
                 [
-                    (t("Case type", lang), classification.get("case_type")),
-                    ("Subtype", classification.get("case_subtype")),
-                    ("Priority", classification.get("priority")),
-                    ("Confidence", classification.get("confidence")),
-                    ("Reason code", classification.get("reason_code")),
-                    (
+                    _kv(t("Case type", lang), classification.get("case_type")),
+                    _kv(t("Subtype", lang), classification.get("case_subtype")),
+                    _kv(t("Priority", lang), classification.get("priority"), hint="priority"),
+                    _kv(t("Confidence", lang), classification.get("confidence"), hint="confidence"),
+                    _kv(t("Reason code", lang), classification.get("reason_code")),
+                    _kv(t("Reason", lang), classification.get("reason")),
+                    _kv(
                         t("Recommended queue", lang),
                         classification.get("recommended_queue"),
                     ),
-                    (t("Correct action", lang), classification.get("correct_action")),
-                    (t("Should ROP see", lang), classification.get("should_rop_see")),
+                    _kv(t("Correct action", lang), classification.get("correct_action")),
+                    _kv(t("Should ROP see", lang), classification.get("should_rop_see"), hint="boolean"),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("Thread context", lang),
+            "no_data": not thread.get("available", False),
             "items": _page_kv_items(
                 [
-                    ("Thread ID", thread.get("thread_id")),
-                    ("Connection", thread.get("thread_connection")),
-                    ("Reply/forward", thread.get("reply_or_forward")),
+                    _kv(t("Thread ID", lang), thread.get("thread_id")),
+                    _kv(t("Connection", lang), thread.get("thread_connection")),
+                    _kv(t("Reply/forward", lang), thread.get("reply_or_forward"), hint="boolean"),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("AI Assist", lang),
+            "no_data": ai_assist.get("ai_assist_status") in ("unavailable", "not_applied"),
             "items": _page_kv_items(
                 [
-                    (t("AI status", lang), ai_assist.get("ai_assist_status")),
-                    ("AI used", ai_assist.get("ai_assist_used")),
-                    ("AI confidence", ai_assist.get("ai_assist_confidence")),
-                    ("Final type", ai_assist.get("final_case_type")),
-                    ("Final priority", ai_assist.get("final_priority")),
+                    _kv(t("AI status", lang), ai_assist.get("ai_assist_status")),
+                    _kv(t("AI used", lang), ai_assist.get("ai_assist_used"), hint="boolean"),
+                    _kv(t("AI confidence", lang), ai_assist.get("ai_assist_confidence"), hint="confidence"),
+                    _kv(t("Final type", lang), ai_assist.get("final_case_type")),
+                    _kv(t("Final priority", lang), ai_assist.get("final_priority")),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("AI Adjudicator", lang),
+            "no_data": not bool(ai_adjudicator),
             "items": _page_kv_items(
                 [
-                    (t("AI adjudicator used", lang), ai_adjudicator.get("ai_adjudicator_used")),
-                    (t("AI adjudicator status", lang), ai_adjudicator.get("ai_adjudicator_status")),
-                    (t("AI adjudicator confidence", lang), ai_adjudicator.get("ai_adjudicator_confidence")),
-                    (t("AI adjudicator reason", lang), ai_adjudicator.get("ai_adjudicator_reason")),
-                    (t("AI proposed case type", lang), ai_adjudicator.get("final_case_type")),
-                    (t("AI proposed queue", lang), ai_adjudicator.get("final_recommended_queue")),
-                    (t("AI proposed action", lang), ai_adjudicator.get("final_correct_action")),
+                    _kv(t("AI adjudicator used", lang), ai_adjudicator.get("ai_adjudicator_used"), hint="boolean"),
+                    _kv(t("AI adjudicator status", lang), ai_adjudicator.get("ai_adjudicator_status")),
+                    _kv(t("AI adjudicator confidence", lang), ai_adjudicator.get("ai_adjudicator_confidence"), hint="confidence"),
+                    _kv(t("AI adjudicator reason", lang), ai_adjudicator.get("ai_adjudicator_reason")),
+                    _kv(t("AI proposed case type", lang), ai_adjudicator.get("final_case_type")),
+                    _kv(t("AI proposed queue", lang), ai_adjudicator.get("final_recommended_queue")),
+                    _kv(t("AI proposed action", lang), ai_adjudicator.get("final_correct_action")),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("Final decision", lang),
+            "no_data": not bool(final_decision),
             "items": _page_kv_items(
                 [
-                    (t("Final case type", lang), final_decision.get("final_case_type")),
-                    (t("Final queue", lang), final_decision.get("final_queue")),
-                    (t("Final action", lang), final_decision.get("final_action")),
-                    (t("Final confidence", lang), final_decision.get("final_confidence")),
-                    (t("Decision source", lang), final_decision.get("final_decision_source")),
-                    (t("Needs attention", lang), final_decision.get("needs_attention")),
-                    (t("Attention reason", lang), final_decision.get("attention_reason")),
-                    (t("Automation allowed", lang), final_decision.get("automation_allowed")),
-                    (t("Bitrix write allowed", lang), final_decision.get("bitrix_write_allowed")),
+                    _kv(t("Final case type", lang), final_decision.get("final_case_type")),
+                    _kv(t("Final queue", lang), final_decision.get("final_queue")),
+                    _kv(t("Final action", lang), final_decision.get("final_action")),
+                    _kv(t("Final confidence", lang), final_decision.get("final_confidence"), hint="confidence"),
+                    _kv(t("Decision source", lang), final_decision.get("final_decision_source")),
+                    _kv(t("Needs attention", lang), final_decision.get("needs_attention"), hint="boolean"),
+                    _kv(t("Attention reason", lang), final_decision.get("attention_reason")),
+                    _kv(t("Automation allowed", lang), final_decision.get("automation_allowed"), hint="boolean"),
+                    _kv(t("Bitrix write allowed", lang), final_decision.get("bitrix_write_allowed"), hint="boolean"),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("Bitrix evidence", lang),
+            "no_data": not bitrix.get("available", False),
             "items": _page_kv_items(
                 [
-                    ("Bitrix status", bitrix.get("bitrix_status")),
-                    (t("Match quality", lang), bitrix.get("match_quality")),
-                    ("Candidate count", bitrix.get("candidate_count")),
-                    ("Entity type", bitrix.get("entity_type")),
-                    ("Entity ID", bitrix.get("entity_id")),
+                    _kv(t("Bitrix status", lang), bitrix.get("bitrix_status")),
+                    _kv(t("Match quality", lang), bitrix.get("match_quality")),
+                    _kv(t("Candidate count", lang), bitrix.get("candidate_count")),
+                    _kv(t("Entity type", lang), bitrix.get("entity_type")),
+                    _kv(t("Entity ID", lang), bitrix.get("entity_id")),
                 ]
             ),
         },
         {
             "kind": "key_value",
             "title": t("Action draft", lang),
+            "no_data": not action_draft.get("available", False),
             "items": _page_kv_items(
                 [
-                    ("Action type", action_draft.get("action_type")),
-                    ("Summary", action_draft.get("summary")),
-                    ("Draft status", action_draft.get("draft_status")),
+                    _kv(t("Action type", lang), action_draft.get("action_type")),
+                    _kv(t("Summary", lang), action_draft.get("summary")),
+                    _kv(t("Draft status", lang), action_draft.get("draft_status")),
                 ]
             ),
         },
@@ -578,7 +654,7 @@ def build_rop_event_detail_page_model(
         {
             "filename": attachment.get("filename"),
             "content_type": attachment.get("content_type"),
-            "size_bytes": attachment.get("size_bytes"),
+            "size_bytes": _format_size(attachment.get("size_bytes")),
         }
         for attachment in attachments
         if isinstance(attachment, dict)
@@ -589,9 +665,9 @@ def build_rop_event_detail_page_model(
                 "kind": "table",
                 "title": t("Attachment Processing", lang),
                 "columns": [
-                    {"key": "filename", "label": "Filename"},
-                    {"key": "content_type", "label": "Content type"},
-                    {"key": "size_bytes", "label": "Size (bytes)"},
+                    {"key": "filename", "label": t("Filename", lang)},
+                    {"key": "content_type", "label": t("Content type", lang)},
+                    {"key": "size_bytes", "label": t("Size", lang)},
                 ],
                 "rows": attachment_rows,
             }
@@ -614,9 +690,14 @@ def build_rop_event_detail_page_model(
             }
         )
 
-    back_href = f"/rop?tab=queue&run_id={quote(run_id, safe='')}"
-    if lang != "en":
-        back_href += f"&lang={quote(lang, safe='')}"
+    # Sort: filled sections first, "not used" sections last
+    sections.sort(key=lambda s: s.get("no_data", False))
+
+    back_href = build_rop_url(
+        tab="queue", run_id=run_id, period=period, lang=lang,
+        page=page, page_size=page_size, sort=sort, order=order,
+        filter_params=filter_params,
+    )
 
     return {
         "page_id": "rop_event_detail",

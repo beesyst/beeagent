@@ -57,7 +57,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", specifier = ">=0.13,<0.30" },
+    { name = "beeui", editable = "../../beeui" },
     { name = "fastapi", specifier = ">=0.136.3,<0.137" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langgraph", specifier = "==1.2.4" },
@@ -84,7 +84,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 [[package]]
 name = "beeui"
 version = "0.21.2"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../beeui" }
 dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
@@ -93,9 +93,27 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1a/9e/9177dd34561288cfe13e11cbd23a19ddc880538784bc48236a032c5b01e8/beeui-0.21.2.tar.gz", hash = "sha256:ead6f80202cbd9b7fd91519ca3ba81d13aed28cc3399edfd6af8db0c0fca7c15", size = 293209, upload-time = "2026-06-30T18:25:08.468Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/1c/1e223bb369b400eaa38e6f3552d050577fa1cc10a595747ac8ff4efe270f/beeui-0.21.2-py3-none-any.whl", hash = "sha256:ff37acb70495c9a4e0e34703867af1a0096c289e28db47706146ab9cd5e83197", size = 230867, upload-time = "2026-06-30T18:25:10.541Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.135" },
+    { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.2.0" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
+    { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", specifier = ">=0.44" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "fastapi", specifier = ">=0.136.3" },
+    { name = "httpx2", specifier = ">=2.2.0" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [[package]]

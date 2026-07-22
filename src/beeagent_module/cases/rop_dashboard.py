@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,416 @@ ALLOWED_PERIODS: tuple[str, ...] = (
     "365d",
     "all",
 )
+
+ALLOWED_CASE_TYPES: tuple[str, ...] = (
+    "new_lead",
+    "existing_client",
+    "existing_deal",
+    "existing_lead",
+    "follow_up",
+    "reminder",
+    "irrelevant",
+    "spam",
+    "ignore",
+    "needs_review",
+    "unclear",
+    "finance_document",
+    "other",
+)
+ALLOWED_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
+ALLOWED_BITRIX_STATUSES: tuple[str, ...] = (
+    "not_found",
+    "weak_match",
+    "ambiguous",
+    "duplicate_candidate",
+    "connector_degraded",
+    "error",
+    "skipped",
+    "unreconciled",
+)
+ALLOWED_SORT_FIELDS: tuple[str, ...] = (
+    "received_at",
+    "date",
+    "event_date",
+    "sender",
+    "subject",
+    "case_type",
+    "priority",
+    "bitrix_status",
+)
+ALLOWED_PAGE_SIZES: tuple[int, ...] = (25, 50, 100)
+DEFAULT_PAGE_SIZE = 25
+
+ALLOWED_QUEUE_IDS: tuple[str, ...] = (
+    "high_priority",
+    "needs_review",
+    "lost_in_bitrix",
+    "ambiguous",
+    "degraded",
+    "unreconciled",
+)
+ALLOWED_COLUMN_KEYS: tuple[str, ...] = (
+    "priority",
+    "client",
+    "subject",
+    "date",
+    "classification",
+    "bitrix_status",
+)
+ALLOWED_DROPDOWN_KEYS: tuple[str, ...] = (
+    "case_type",
+    "priority",
+    "bitrix_status",
+)
+
+
+def validate_filter_params(
+    params: dict[str, str],
+) -> list[str]:
+    errors: list[str] = []
+
+    allowed_keys = frozenset({
+        "date_from",
+        "date_to",
+        "q",
+        "sender",
+        "subject",
+        "case_type",
+        "classification",
+        "priority",
+        "bitrix_status",
+        "is_fallback",
+        "queue",
+        "columns",
+        "columns_open",
+        "open_dropdowns",
+    })
+    for key in params:
+        if key not in allowed_keys:
+            errors.append(f"Unknown filter key: '{key}'")
+
+    classification = params.get("classification", "")
+    if classification:
+        for val in classification.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_CASE_TYPES:
+                errors.append(
+                    f"Invalid classification '{val}', "
+                    f"expected one of: {ALLOWED_CASE_TYPES}"
+                )
+
+    case_type = params.get("case_type", "")
+    if case_type:
+        for val in case_type.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_CASE_TYPES:
+                errors.append(
+                    f"Invalid case_type '{val}', expected one of: {ALLOWED_CASE_TYPES}"
+                )
+
+    priority = params.get("priority", "")
+    if priority:
+        for val in priority.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_PRIORITIES:
+                errors.append(
+                    f"Invalid priority '{val}', expected one of: {ALLOWED_PRIORITIES}"
+                )
+
+    is_fallback = params.get("is_fallback", "")
+    if is_fallback and is_fallback not in ("true", "false"):
+        errors.append(f"Invalid is_fallback '{is_fallback}', expected 'true' or 'false'")
+
+    bitrix_status = params.get("bitrix_status", "")
+    if bitrix_status:
+        for val in bitrix_status.split(","):
+            val = val.strip()
+            if val:
+                if val.startswith("matched_"):
+                    pass  # matched_{entity_type} — динамический статус от Bitrix
+                elif val not in ALLOWED_BITRIX_STATUSES:
+                    errors.append(
+                        f"Invalid bitrix_status '{val}', "
+                        f"expected one of: {ALLOWED_BITRIX_STATUSES}"
+                    )
+
+    date_from = params.get("date_from", "")
+    if date_from:
+        try:
+            datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            errors.append(f"Invalid date_from '{date_from}', expected YYYY-MM-DD")
+
+    date_to = params.get("date_to", "")
+    if date_to:
+        try:
+            datetime.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            errors.append(f"Invalid date_to '{date_to}', expected YYYY-MM-DD")
+
+    if date_from and date_to:
+        try:
+            d_from = datetime.strptime(date_from, "%Y-%m-%d")
+            d_to = datetime.strptime(date_to, "%Y-%m-%d")
+            if d_from > d_to:
+                errors.append("date_from must not be after date_to")
+        except ValueError:
+            pass
+
+    queue = params.get("queue", "")
+    if queue:
+        if queue not in ALLOWED_QUEUE_IDS:
+            errors.append(
+                f"Invalid queue '{queue}', expected one of: {ALLOWED_QUEUE_IDS}"
+            )
+
+    columns = params.get("columns", "")
+    if columns:
+        for val in columns.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_COLUMN_KEYS:
+                errors.append(
+                    f"Invalid column '{val}', expected one of: {ALLOWED_COLUMN_KEYS}"
+                )
+
+    columns_open = params.get("columns_open", "")
+    if columns_open and columns_open not in ("1", "true"):
+        errors.append(f"Invalid columns_open '{columns_open}', expected '1' or 'true'")
+
+    open_dropdowns = params.get("open_dropdowns", "")
+    if open_dropdowns:
+        for val in open_dropdowns.split(","):
+            val = val.strip()
+            if val and val not in ALLOWED_DROPDOWN_KEYS:
+                errors.append(
+                    f"Invalid open_dropdowns key '{val}', "
+                    f"expected one of: {ALLOWED_DROPDOWN_KEYS}"
+                )
+
+    return errors
+
+
+def validate_pagination_params(
+    page_raw: str | None,
+    page_size_raw: str | None,
+    sort: str | None,
+    order: str | None,
+) -> list[str]:
+    errors: list[str] = []
+
+    if page_raw is not None and page_raw.strip():
+        try:
+            p = int(page_raw)
+            if p < 1:
+                errors.append(f"Invalid page '{page_raw}', page must be >= 1")
+        except ValueError:
+            errors.append(f"Invalid page '{page_raw}', expected an integer")
+
+    if page_size_raw is not None and page_size_raw.strip():
+        try:
+            ps = int(page_size_raw)
+            if ps not in ALLOWED_PAGE_SIZES:
+                errors.append(
+                    f"Invalid page_size '{page_size_raw}', "
+                    f"expected one of: {ALLOWED_PAGE_SIZES}"
+                )
+        except ValueError:
+            errors.append(
+                f"Invalid page_size '{page_size_raw}', expected an integer"
+            )
+
+    if sort is not None and sort.strip():
+        if sort not in ALLOWED_SORT_FIELDS:
+            errors.append(
+                f"Invalid sort '{sort}', expected one of: {ALLOWED_SORT_FIELDS}"
+            )
+
+    if order is not None and order.strip():
+        if order not in ("asc", "desc"):
+            errors.append(f"Invalid order '{order}', expected 'asc' or 'desc'")
+
+    if bool(sort and sort.strip()) != bool(order and order.strip()):
+        errors.append("sort and order must be provided together")
+
+    return errors
+
+
+def apply_queue_filters(
+    items: list[dict[str, Any]],
+    bitrix_status_by_event: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    if not params:
+        return items
+
+    case_type_raw = params.get("case_type") or params.get("classification", "")
+    case_types = {v.strip() for v in case_type_raw.split(",") if v.strip()} if case_type_raw else set()
+    priority_raw = params.get("priority", "")
+    priorities = {v.strip() for v in priority_raw.split(",") if v.strip()} if priority_raw else set()
+    bitrix_status_raw = params.get("bitrix_status", "")
+    bitrix_statuses = {v.strip() for v in bitrix_status_raw.split(",") if v.strip()} if bitrix_status_raw else set()
+    q = params.get("q", "").lower().strip()
+    is_fallback_raw = params.get("is_fallback", "").lower().strip()
+    date_from = params.get("date_from", "")
+    date_to = params.get("date_to", "")
+
+    parsed_date_from: datetime | None = None
+    parsed_date_to: datetime | None = None
+    if date_from:
+        try:
+            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "Invalid date_from value: %r, ignoring", date_from
+            )
+    if date_to:
+        try:
+            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
+            )
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "Invalid date_to value: %r, ignoring", date_to
+            )
+
+    is_fallback_filter: bool | None = None
+    if is_fallback_raw == "true":
+        is_fallback_filter = True
+    elif is_fallback_raw == "false":
+        is_fallback_filter = False
+
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        if is_fallback_filter is not None:
+            if bool(item.get("is_fallback")) != is_fallback_filter:
+                continue
+
+        if case_types:
+            item_ct = str(item.get("case_type") or item.get("bot_case_type", ""))
+            if item_ct not in case_types:
+                continue
+
+        if priorities:
+            item_pri = str(item.get("priority") or item.get("bot_priority", ""))
+            if item_pri not in priorities:
+                continue
+
+        if bitrix_statuses:
+            item_bs = str(item.get("bitrix_status", ""))
+            if not item_bs and bitrix_status_by_event:
+                event_id = str(item.get("event_id", ""))
+                item_bs = str(bitrix_status_by_event.get(event_id, ""))
+            if item_bs not in bitrix_statuses:
+                continue
+
+        search_q = q
+        legacy_sender = params.get("sender", "").lower().strip()
+        legacy_subject = params.get("subject", "").lower().strip()
+        if search_q or legacy_sender or legacy_subject:
+            sender = str(item.get("sender", "")).lower()
+            subject = str(item.get("subject", "")).lower()
+            if search_q and search_q not in sender and search_q not in subject:
+                continue
+            if legacy_sender and legacy_sender not in sender:
+                continue
+            if legacy_subject and legacy_subject not in subject:
+                continue
+
+        if parsed_date_from or parsed_date_to:
+            ts = _event_timestamp(item)
+            if ts is None:
+                continue
+            if parsed_date_from and ts < parsed_date_from:
+                continue
+            if parsed_date_to and ts > parsed_date_to:
+                continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def validate_sort_params(
+    sort: str,
+    order: str,
+) -> tuple[str, str]:
+    if sort not in ALLOWED_SORT_FIELDS:
+        sort = "received_at"
+    if order not in ("asc", "desc"):
+        order = "desc"
+    return sort, order
+
+
+def sort_queue_items(
+    items: list[dict[str, Any]],
+    sort: str = "received_at",
+    order: str = "desc",
+) -> list[dict[str, Any]]:
+    sort, order = validate_sort_params(sort, order)
+    fallback_field = {
+        "received_at": "date",
+        "date": "received_at",
+        "event_date": "received_at",
+    }.get(sort, sort)
+    valid: list[tuple[Any, dict[str, Any]]] = []
+    missing: list[dict[str, Any]] = []
+
+    for item in items:
+        raw = item.get(sort)
+        if raw is None or raw == "":
+            raw = item.get(fallback_field)
+
+        if sort in ("received_at", "date", "event_date"):
+            timestamp = _parse_iso(str(raw) if raw is not None else None)
+            if timestamp is None:
+                missing.append(item)
+            else:
+                valid.append((timestamp, item))
+            continue
+
+        normalized = str(raw).strip().casefold() if raw is not None else ""
+        if not normalized:
+            missing.append(item)
+        else:
+            valid.append((normalized, item))
+
+    valid.sort(key=lambda entry: entry[0], reverse=order == "desc")
+    return [item for _, item in valid] + missing
+
+
+def paginate_items(
+    items: list[dict[str, Any]],
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if page_size not in ALLOWED_PAGE_SIZES:
+        page_size = DEFAULT_PAGE_SIZE
+    if page < 1:
+        page = 1
+
+    total = len(items)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = items[start:end]
+
+    pagination_info = {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "start": start + 1 if total > 0 else 0,
+        "end": min(end, total),
+    }
+    return paginated, pagination_info
 
 
 def parse_period(period: str) -> dict[str, Any]:
@@ -73,7 +485,7 @@ def parse_period(period: str) -> dict[str, Any]:
             "period": "all",
             "period_start_utc": None,
             "period_end_utc": None,
-            "time_basis": "run_generated_at",
+            "time_basis": "event_timestamp",
         }
     raise ValueError(f"Unsupported period: '{period}'")
 
@@ -121,6 +533,8 @@ def build_rop_dashboard(
     bitrix_reconciliation = _read_json_dict(run_dir / "bitrix_reconciliation.json")
     attachment_extraction = _read_json_dict(run_dir / "attachment_extraction.json")
     operator_summary = _read_json_dict(run_dir / "operator_summary.json")
+    ai_assist_results = _read_json_dict(run_dir / "rop_ai_assist_results.json")
+    ai_adjudicator_results = _read_json_dict(run_dir / "rop_ai_adjudicator_results.json")
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)
@@ -213,6 +627,28 @@ def build_rop_dashboard(
             }
         )
 
+    ai_assist_summary: dict[str, Any] = {}
+
+    if isinstance(ai_adjudicator_results, dict):
+        adj_counters = ai_adjudicator_results.get("counters", {})
+        if isinstance(adj_counters, dict):
+            ai_assist_summary = {
+                "eligible": adj_counters.get("adjudicator_eligible_count", 0),
+                "requested": adj_counters.get("adjudicator_eligible_count", 0),
+                "ok": adj_counters.get("adjudicator_used_count", 0),
+                "degraded": adj_counters.get("adjudicator_degraded_count", 0),
+            }
+    if not ai_assist_summary and isinstance(ai_assist_results, dict):
+        counters = ai_assist_results.get("counters", {})
+        if isinstance(counters, dict):
+            ai_assist_summary = {
+                "eligible": counters.get("ai_assist_enabled", 0),
+                "requested": counters.get("ai_assist_requested_count", 0),
+                "ok": counters.get("ai_assist_used_count", 0),
+                "invalid": counters.get("ai_assist_invalid_count", 0),
+                "degraded": counters.get("ai_assist_degraded_count", 0),
+            }
+
     dashboard: dict[str, Any] = {
         "run_id": run_id,
         "status": "ok",
@@ -229,6 +665,7 @@ def build_rop_dashboard(
         "rop_recommendations": rop_recommendations,
         "evidence_links": evidence_links,
         "warnings": warnings,
+        "ai_assist_summary": ai_assist_summary,
     }
 
     return dashboard
@@ -758,6 +1195,7 @@ def _operator_queue_entry(
         "bitrix_status": status or "unreconciled",
         "reason": evt.get("reasoning") or evt.get("reason_code", ""),
         "recommended_next_step": _recommended_next_step(priority, status, queue_kind),
+        "date": evt.get("received_at") or evt.get("date") or evt.get("event_date", ""),
         "run_id": run_id,
         "evidence_href": f"/runs/{run_id}/artifacts/classified_events_json",
         "is_fallback": bool(evt.get("is_fallback")),
