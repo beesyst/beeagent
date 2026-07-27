@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.45.0"
+version = "0.46.0"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -57,7 +57,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", editable = "../../beeui" },
+    { name = "beeui", specifier = ">=0.22,<0.30" },
     { name = "fastapi", specifier = ">=0.136.3,<0.137" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langgraph", specifier = "==1.2.4" },
@@ -83,8 +83,8 @@ dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "beeui"
-version = "0.21.2"
-source = { editable = "../../beeui" }
+version = "0.22.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
@@ -93,27 +93,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.135" },
-    { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.2.0" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
-    { name = "python-multipart", specifier = ">=0.0.32" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "uvicorn", specifier = ">=0.44" },
-]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "fastapi", specifier = ">=0.136.3" },
-    { name = "httpx2", specifier = ">=2.2.0" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
+sdist = { url = "https://files.pythonhosted.org/packages/91/ec/021116e9482118ba833159bd634cb2b0968d998f2f60f22850eab84b3f58/beeui-0.22.1.tar.gz", hash = "sha256:1e6db43273a0b76b5c0a3d7955d6ce28118a49fa6f8cf83645303fd13143bfde", size = 469785, upload-time = "2026-07-22T14:06:50.323Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/12/f6e2da7771f164894e9fe17d5cac0f34fd59d2dac6eb5901707e9f1c897c/beeui-0.22.1-py3-none-any.whl", hash = "sha256:23f7f1c62aeb93a1f8d3e9d2799eee1ad05f86fdf209f8b9ca1cde104eaf4ca3", size = 402632, upload-time = "2026-07-22T14:06:48.294Z" },
 ]
 
 [[package]]

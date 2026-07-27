@@ -2,65 +2,132 @@
 
 ## Purpose
 
-This file contains stable repository-wide instructions for AI coding and review agents working in `beeagent`.
+This file contains stable repository-wide rules for AI agents working with `beeagent`.
 
-Keep task-specific requirements in the approved Issue. Keep detailed workflows in `.agents/skills/`.
+Task-specific requirements belong in the approved Issue.
+
+Detailed workflows belong in `.agents/skills/`.
+
+Prompts should normally contain only:
+
+* selected workflow;
+* exact target information;
+* approved Issue;
+* implementation or verification evidence;
+* task-specific constraints.
 
 ## Instruction precedence
 
 Use this order:
 
-1. Current explicit task instructions and approved Issue acceptance criteria.
+1. Current explicit task instructions and approved Issue.
 2. This `AGENTS.md`.
-3. Current repository contracts and project documentation.
-4. Implementation reports, PR comments and previous prompts as supporting evidence only.
+3. Selected repository skill.
+4. Current repository contracts and documentation.
+5. Implementation reports and previous comments as supporting evidence only.
 
-When instructions conflict materially, stop and report the conflict. Do not silently choose a broader scope.
+The actual target worktree, current files, diff, tests and artifacts take precedence over stale reports.
 
-The current worktree, code, diff, tests and artifacts take precedence over stale implementation reports.
+When instructions materially conflict, stop and report the conflict.
+
+## Agent role separation
+
+Tool, authority and read-only restrictions apply only to the current task and agent.
+
+When producing a prompt for another agent, do not copy the current agent's tool restrictions unless they are explicitly required for that executor.
+
+Review and planning tasks may use Bee Dev MCP in read-only mode.
+
+Implementation and correction prompts are executed by Copilot or Codex. They must instruct the executor to work in the exact worktree using its available local repository tools. They must not require Bee Dev MCP, an MCP target, review mode or read-only behavior.
+
+## Bee Dev MCP rules
+
+These rules apply only when the current task explicitly selects Bee Dev MCP for read-only planning or review.
+
+Bee Dev MCP is read-only.
+
+Available repository tools:
+
+* `list_projects`;
+* `list_worktrees`;
+* `get_project_context`;
+* `get_review_manifest`;
+* `get_review_bundle_page`;
+* `get_review_bundle` — compatibility only;
+* `read_project_file`;
+* `search_project`.
+
+Do not refer to nonexistent tools such as `get_file`.
+
+Use `get_review_manifest` and `get_review_bundle_page` for complete reviews.
+
+Do not repeatedly call `get_review_bundle` expecting pagination.
+
+### Exact target resolution
+
+Before planning or review:
+
+1. call `list_worktrees`;
+2. match the requested worktree by exact `path`;
+3. use the returned MCP `target`;
+4. call `get_project_context`;
+5. verify project, path, branch, HEAD and dirty state.
+
+For review, verify the expected base branch from the complete manifest.
+
+Do not infer a target from a branch name.
+
+Do not substitute the main worktree for a requested feature worktree.
+
+### Complete reading
+
+Repository inspection is incomplete while required data is paginated, truncated or has continuation metadata.
+
+For manifests and diffs, continue with the exact `next_cursor` while `has_more=true`.
+
+For files, continue with the exact `next_line` and `next_column` until both are null.
+
+Read required files listed under `omitted_files` or `related_omitted_files` directly with `read_project_file`.
+
+Treat `truncated=true` as incomplete review data.
+
+Failure to retrieve mandatory MCP data is not a code defect.
+
+When mandatory review inspection cannot be completed, return:
+
+```text
+REVIEW INCOMPLETE
+```
+
+Do not return `CHANGES REQUIRED` solely because MCP data is incomplete.
 
 ## Mandatory reading
 
-Before changing or reviewing the repository, read:
+Read documents required by the selected skill.
+
+Common documents include:
 
 * `AGENTS.md`;
-* the relevant section of `docs/ROADMAP.md`;
+* approved Issue;
+* relevant `docs/ROADMAP.md` section;
 * `docs/SDLC.md`;
 * `docs/SECURITY.md`;
 * `docs/DEV_GUIDE.md`;
-* `README.ru.md`;
-* the approved Issue or its acceptance criteria;
-* `.github/ISSUE_TEMPLATE/issue.md` when preparing an Issue;
-* `.github/PULL_REQUEST_TEMPLATE/pr.md` when preparing or closing a PR.
+* `README.ru.md`.
 
-Read additional documents when relevant:
+When relevant, also read:
 
-* architecture or platform contract:
+* `docs/ARCHITECTURE.md`;
+* `docs/SPEC.md`;
+* `docs/WEB_UI.md`;
+* `docs/product/ui_roadmap.md`;
+* `config/beeui.yml`;
+* `config/settings.yml`;
+* `config/prompts.yml`;
+* public domain-module contracts;
+* related repository ROADMAPs and public contracts.
 
-  * `docs/ARCHITECTURE.md`;
-  * `docs/SPEC.md`;
-* Web UI or API:
-
-  * `docs/WEB_UI.md`;
-  * `docs/product/ui_roadmap.md`;
-  * `config/beeui.yml`;
-* ROP integration:
-
-  * the related `beeagent-rop` ROADMAP;
-  * only public `beeagent-rop` contracts used by BeeAgent;
-* runtime or config:
-
-  * `config/start.py`;
-  * `config/settings.yml`;
-  * `src/beeagent_module/core/settings.py`;
-* dependencies:
-
-  * `pyproject.toml`;
-  * `uv.lock`.
-
-When a tool omits or truncates a file, continue reading from the returned cursor until the complete file has been read.
-
-Do not assume that a ROADMAP status proves implementation. Compare ROADMAP statements with current code, contracts, artifacts and tests.
+ROADMAP status does not prove implementation. Compare it with current code, contracts, tests and artifacts.
 
 ## Architecture boundary
 
@@ -77,207 +144,143 @@ UI / transport
 BeeAgent owns:
 
 * orchestration;
-* run, session and job state;
-* config loading and validation;
-* module contract and registry;
+* run and session state;
+* configuration loading and validation;
+* module registry and runtime;
 * artifact lifecycle;
-* capability boundary;
+* capability boundaries;
 * approvals, authority and policy;
-* transport and UI integration;
+* transport integration;
+* product adapters and read-models;
 * shared provider execution;
 * logs and observability.
 
-Domain modules such as `beeagent-rop` own:
+Domain modules own:
 
 * domain models and taxonomy;
-* client-specific classification;
-* business rules;
+* classification and business rules;
 * duplicate resolution;
 * domain fixtures;
-* domain summary and recommendation semantics;
+* domain summaries and recommendations;
 * bounded domain AI contracts.
 
-BeeUI owns generic rendering, layout, session and UI primitives.
+BeeUI owns:
 
-BeeAgent adapters and read-models decide what product data BeeUI receives.
+* generic rendering;
+* layout and reusable blocks;
+* templates and static assets;
+* generic UI session mechanisms.
 
 Do not:
 
-* move ROP or Welding business rules into BeeAgent core;
-* import private `beeagent-rop` internals;
-* create a second runtime inside a module;
-* put orchestration or business decisions in UI templates;
-* bypass the capability or authority boundary;
-* add external mutations without explicit Issue scope.
+* move domain business rules into BeeAgent core;
+* duplicate domain taxonomy when a public module contract exists;
+* import private module internals;
+* put orchestration or business decisions in templates;
+* add BeeAgent- or domain-specific behavior to generic BeeUI components;
+* bypass capability, approval or authority boundaries;
+* add external mutations outside explicit Issue scope;
+* create a second runtime or source of truth.
 
 ## Sources of truth
 
-Use these sources of truth:
+Use:
 
-* runtime configuration:
-
-  * `config/settings.yml`;
-* UI navigation, pages, tabs and locale:
-
-  * `config/beeui.yml`;
-* AI prompts:
-
-  * `config/prompts.yml`;
-* required config validation:
-
-  * `src/beeagent_module/core/settings.py`;
-* runtime evidence:
-
-  * bounded artifacts under `storage/`;
-* domain classification semantics:
-
-  * public domain-module contracts and tested fixtures;
-* iteration scope:
-
-  * approved Issue aligned with the current ROADMAP.
+* runtime configuration: `config/settings.yml`;
+* UI product configuration: `config/beeui.yml`;
+* AI prompts: `config/prompts.yml`;
+* required setting validation: core settings code;
+* runtime evidence: bounded artifacts under `storage/`;
+* domain semantics: public module contracts and tested fixtures;
+* iteration scope: approved Issue aligned with the current ROADMAP.
 
 Rules:
 
 * no hidden defaults for required behavior;
-* no second source of truth;
-* new required config keys must be explicit and fail fast;
-* CLI overrides remain in-memory unless the Issue explicitly changes that contract;
-* artifacts are evidence and read-model inputs, not editable configuration;
-* real secrets live only in environment variables.
-
-## Development workflow
-
-Use:
-
-```text
-ROADMAP
-→ Issue
-→ branch
-→ code
-→ tests
-→ artifacts
-→ PR
-→ merge
-```
-
-Rules:
-
-* one task should use one focused branch and one PR;
-* do not merge a feature branch into local `main` before PR review;
-* process/tooling work does not need a numbered product iteration unless it delivers a product increment;
-* verify the actual branch and dirty state before work;
-* do not carry unrelated dirty files into the task;
-* stage only intended files;
-* do not use `git add .` when a bounded file list is known;
-* after an approved squash merge, update local `main` before deleting the local branch.
-
-Use:
-
-* `.agents/skills/beeagent-plan-iteration/SKILL.md` when the next iteration or Issue still needs to be selected or refined;
-* `.agents/skills/beeagent-review-and-close/SKILL.md` after implementation is ready for independent review.
-
-When an Issue is already approved, skip iteration planning and proceed directly to implementation.
+* no duplicate source of truth;
+* required configuration must fail fast;
+* artifacts are evidence, not editable configuration;
+* secrets belong only in environment variables;
+* query parameters and cookies must not replace product configuration;
+* preserve compatibility unless the Issue explicitly allows a breaking change.
 
 ## Implementation rules
 
-* Stay strictly inside the approved Issue.
+* Stay inside the approved Issue.
 * Prefer the smallest complete solution.
 * Follow KISS.
-* Do not perform unrelated refactors.
-* Do not add speculative architecture for future work.
-* Do not create a new abstraction, service, helper or test file without a concrete need.
-* Preserve backward compatibility unless the Issue explicitly declares a breaking change.
-* Do not remove or weaken existing validation without a documented reason.
+* Do not perform unrelated refactoring.
+* Do not add speculative architecture.
+* Do not create abstractions without a concrete need.
 * Do not duplicate existing logic.
+* Do not weaken validation without justification.
 * Follow PEP 8.
-* Do not add new code comments unless the Issue explicitly requires them.
-* Keep logs, runtime messages, JSON fields and artifact fields in English.
-* Keep logs understandable and free of secrets or unnecessary customer data.
-* Use bounded and sanitized representations of untrusted inputs.
-* Keep read-only, draft-only and execution-capable authority explicit.
-* Do not modify `pyproject.toml.version` in ordinary feature, fix, docs or chore work.
-* Do not touch release metadata unless the Issue is explicitly about a release.
-* Change dependencies only when required by the Issue.
-* When dependencies change, update both dependency declarations and `uv.lock`.
-* When dependencies do not change, do not modify `uv.lock`.
+* Keep logs, runtime messages and data fields in English.
+* Keep logs free of secrets and unnecessary customer data.
+* Treat external input, configuration and AI output as untrusted.
+* Keep read-only, draft-only and execution authority explicit.
+* Do not change `pyproject.toml.version` for ordinary work.
 
-## Documentation and contract rules
+## Documentation and contracts
 
-Update documentation when the change modifies:
+Update relevant documentation when implementation changes:
 
-* runtime behavior;
-* config contract;
+* public runtime behavior;
+* configuration;
 * CLI or entrypoint;
 * module or capability contract;
 * API or UI contract;
-* artifact shape;
+* artifact schema;
 * authority or security boundary.
 
-Do not update unrelated documents merely to increase the file count.
+Do not update unrelated documentation.
 
-When JSON, JSONL, TSV or API fields change:
+When public data fields change:
 
-* document the source of truth;
-* preserve existing fields when backward compatibility is required;
-* provide an example shape where useful;
-* update tests that validate the public contract.
+* identify the source of truth;
+* document compatibility impact;
+* preserve existing fields when required;
+* update contract tests.
 
 ## Verification
 
-First determine the change level using `docs/SDLC.md` and `docs/SECURITY.md`:
+Do not run, request or require `uv lock --check` or any dedicated lockfile validation.
+
+Determine the change level from `docs/SDLC.md` and `docs/SECURITY.md`:
 
 * `low-risk`;
 * `runtime-risk`;
 * `security-sensitive`.
 
-Base repository checks:
+Run checks proportional to the change.
 
-```bash
-git status --short
-git diff --check
-```
+Review agents using Bee Dev MCP cannot execute commands.
 
-For code or runtime changes, run targeted tests and:
+They may use supplied command output as evidence but must:
 
-```bash
-uv run pytest -q
-```
+* name the supplied command;
+* distinguish reported evidence from inspected code;
+* verify that required scenarios are covered;
+* never claim MCP ran tests.
 
-Run smoke, log and artifact checks only when the changed behavior requires them.
+Missing verification is a blocker only when required by the Issue, SDLC or security rules.
 
-Apply security checks proportionally:
+## Security
 
-* SAST mindset review for code and runtime changes;
-* SCA when dependencies change;
-* DAST-style checks for network-facing routes or connectors;
-* targeted malformed-input tests or fuzzing for parsers when justified;
-* IAST only when the risk and available runtime justify it.
-
-For a docs/process-only change:
-
-* do not create artificial runtime tests;
-* inspect paths, Markdown/frontmatter and repository diff;
-* `git diff --check` is required;
-* the full test suite may be run as regression evidence but does not justify adding test-only scaffolding.
-
-Never claim that a check passed unless its exact command and result are available.
-
-When operating through Bee Dev MCP, remember that it is read-only. It can inspect worktrees, files and diffs, but it cannot execute tests or modify the repository.
-
-## Security rules
-
-* Treat email, attachment metadata, restored artifacts, API payloads, config and CLI input as untrusted.
-* Never expose secrets, auth headers, tokens, passwords or full environment dumps.
-* Do not store raw `.eml`, raw MIME, attachment bytes or unrestricted external payloads unless a security-reviewed Issue explicitly requires it.
+* Never expose secrets, tokens, passwords or complete environment dumps.
+* Do not persist raw `.eml`, raw MIME, attachment bytes or unrestricted external payloads without explicit security-reviewed scope.
 * Validate user-controlled identifiers and paths.
 * Keep artifact access allowlisted and bounded.
-* Do not introduce CRM, mailbox, Bitrix or other external mutations through read-only routes.
-* AI output is untrusted input and must not create execution authority.
-* Preserve deterministic and manual-review safety paths when provider execution fails.
+* Preserve server-side authority enforcement.
+* Do not introduce external mutations through read-only routes.
+* AI output must not create execution authority by itself.
+* Preserve deterministic and manual-review fallback paths.
+* Keep output escaping enabled.
+* Treat cookie and query values as untrusted.
 
 ## Review rules
 
-Review the actual target worktree relative to its declared base branch.
+Review the exact requested target relative to the declared base branch.
 
 Inspect:
 
@@ -285,68 +288,52 @@ Inspect:
 * staged changes;
 * unstaged changes;
 * untracked files;
-* deleted files;
-* renamed files;
-* complete contents of changed files;
-* relevant project contracts;
-* supplied test, log and artifact evidence.
+* deleted and renamed files;
+* complete changed-file contents;
+* relevant unchanged contracts;
+* supplied verification evidence.
 
-Prioritize real blockers:
+Prioritize blockers that affect the current Issue:
 
-* missing acceptance criteria;
-* incorrect behavior;
-* security or authority violation;
-* core/module/UI boundary violation;
-* broken config or source-of-truth contract;
-* unsafe path, parsing or serialization behavior;
-* incompatible API or artifact contract;
+* unmet acceptance criteria;
+* incorrect or unsafe behavior;
+* security or authority violations;
+* architecture ownership violations;
+* conflicting sources of truth;
+* missing fail-fast validation;
+* incompatible public contracts;
 * missing required verification;
-* unrelated scope that would enter the PR;
-* unintended version or dependency changes.
+* unrelated changes entering the PR;
+* unintended dependency or version changes;
+* documentation contradicting public behavior.
 
-Do not turn optional polish, naming preference or speculative follow-up into a blocker.
+Do not make blockers from:
 
-Perform one complete review pass and consolidate all blockers into one correction request.
+* optional polish;
+* personal naming preferences;
+* speculative architecture;
+* unrelated cleanup;
+* requirements absent from the Issue.
 
-On re-review:
+Perform one complete review pass and consolidate all real blockers.
 
-* verify all previous findings;
-* verify the original acceptance criteria;
-* check regressions caused by the correction;
-* do not open a new round of unrelated optional improvements.
+Use:
 
-Use only one final verdict:
+* `.agents/skills/beeagent-plan-iteration/SKILL.md` for planning;
+* `.agents/skills/beeagent-review-and-close/SKILL.md` for review and PR preparation.
 
-```text
-APPROVED
-```
+## Required implementation evidence
 
-or:
-
-```text
-CHANGES REQUIRED
-```
-
-When approved, explicitly state:
-
-```text
-Правки не нужны.
-```
-
-Then prepare the PR body from the repository template.
-
-## Required implementation report
-
-The implementation agent must provide:
+The implementation report should contain:
 
 1. files read;
 2. change level;
-3. source of truth after change;
-4. core/module/UI boundary assessment;
+3. source of truth;
+4. architecture-boundary assessment;
 5. changed files;
-6. exact tests and command results;
-7. smoke results when applicable;
-8. logs and artifacts checked;
+6. exact test commands and results;
+7. required smoke results;
+8. logs and artifacts inspected;
 9. security review;
 10. known limitations;
 11. confirmation:
@@ -355,4 +342,4 @@ The implementation agent must provide:
 version not changed
 ```
 
-Do not substitute a narrative summary for exact verification evidence.
+Narrative claims do not replace exact verification evidence.
