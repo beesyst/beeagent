@@ -1,0 +1,213 @@
+---
+name: beeagent-verify-and-correct
+description: Independently verify an implemented BeeAgent Issue, apply only necessary in-scope corrections, and return final evidence for read-only review.
+---
+
+# BeeAgent verification and correction workflow
+
+## Purpose
+
+Use this workflow after initial implementation or after a read-only review has returned blocking findings.
+
+The executor may inspect files, modify the exact target worktree and run local checks.
+
+This workflow can be repeated until the implementation is ready for final Bee Dev MCP review.
+
+Do not:
+
+- expand the approved Issue;
+- add optional polish;
+- create speculative architecture;
+- perform unrelated cleanup;
+- create preventive closing patches without a demonstrated blocker;
+- commit, push, create a PR or merge;
+- change project version unless the Issue is explicitly release-related.
+
+## Required inputs
+
+Obtain:
+
+- project;
+- exact target worktree;
+- expected branch;
+- base branch;
+- approved Issue;
+- implementation report;
+- previous verification reports when supplied;
+- previous review blockers when supplied;
+- related repository contracts when explicitly supplied.
+
+## Target safety gate
+
+Before verification:
+
+1. verify the current working directory;
+2. verify the current branch;
+3. inspect `git status`;
+4. inventory committed, staged, unstaged and untracked changes relative to the base branch;
+5. distinguish current-Issue changes from unrelated changes.
+
+Stop when:
+
+- the path or branch differs from the requested target;
+- unrelated changes prevent safe verification;
+- mandatory Issue or target information is missing.
+
+Do not silently switch branches or replace the requested worktree.
+
+## Required reading
+
+Read:
+
+- `AGENTS.md`;
+- the approved Issue;
+- the relevant `docs/ROADMAP.md` section;
+- `docs/SDLC.md`;
+- `docs/SECURITY.md`;
+- all changed and untracked files;
+- directly related contracts, callers and tests;
+- supplied implementation and review evidence.
+
+Reports are supporting evidence only.
+
+The current files, diff, tests, logs and artifacts are authoritative.
+
+## Verification
+
+Evaluate every Acceptance Criterion as:
+
+- satisfied;
+- partially satisfied;
+- not satisfied;
+- not verifiable;
+- not applicable.
+
+Verify as applicable:
+
+- source of truth;
+- core, module and UI ownership;
+- configuration and fail-fast behavior;
+- public contracts;
+- compatibility;
+- runtime behavior;
+- artifacts;
+- logs;
+- dependency and version status;
+- security and authority boundaries;
+- required tests and checks.
+
+Determine the actual change level from `docs/SDLC.md` and `docs/SECURITY.md`.
+
+Do not run or require `uv lock --check`.
+
+Do not treat `uv.lock` noise as an independent blocker. Do not modify dependencies or `uv.lock` unless the approved Issue requires it.
+
+Do not report the following syntax as a finding solely because it lacks additional parentheses:
+
+```python
+except json_mod.JSONDecodeError, OSError:
+```
+
+## Corrections
+
+Apply corrections only when required by:
+
+* an unsatisfied Acceptance Criterion;
+* incorrect or unsafe current-Issue behavior;
+* an architecture or source-of-truth violation;
+* a public-contract incompatibility;
+* missing required verification;
+* a supplied valid review blocker.
+
+Corrections must be:
+
+* limited to the current Issue;
+* minimal and complete;
+* consistent with existing configuration and contracts;
+* free of duplicated logic;
+* free of unnecessary defaults and hardcoding;
+* PEP 8 compliant;
+* free of new comments.
+
+If a new function or class is necessary, identify its exact insertion location in the report.
+
+Do not introduce a new requirement merely because it might be useful later.
+
+## Tests and checks
+
+Run all checks required by the actual change level.
+
+Include as applicable:
+
+* targeted regression tests;
+* `uv run pytest -q`;
+* expected entrypoint or smoke scenario;
+* logs inspection;
+* artifacts inspection;
+* configuration and contract checks;
+* SAST;
+* SCA;
+* DAST;
+* IAST;
+* fuzzing.
+
+Use existing tests and helpers when practical.
+
+Do not create new test files or helpers without a concrete need.
+
+Record exact commands, exit codes, passed, failed, skipped and warnings.
+
+## Final report
+
+Return one consolidated report containing:
+
+1. `Target verification`
+2. `Actual changed-file inventory`
+3. `Acceptance Criteria coverage`
+4. `Blocking findings received`
+5. `Corrections made`
+6. `Change level`
+7. `Required checks`
+8. `Tests and commands`
+9. `Smoke`
+10. `Logs`
+11. `Artifacts`
+12. `Security review`
+13. `Dependencies`
+14. `Unrelated-file check`
+15. `Known limitations`
+16. `Recommended Conventional Commit`
+17. `Final readiness`
+18. `Version status`
+
+Describe every correction in this format:
+
+```text
+Файл:
+`path/to/file`
+
+Было:
+<previous incorrect behavior>
+
+Стало:
+<implemented required behavior>
+
+Почему:
+<current-Issue requirement and verification evidence>
+```
+
+Do not include a diff.
+
+When no correction was required, state:
+
+```text
+Правки не потребовались.
+```
+
+End with:
+
+```text
+version not changed
+```
+
+unless the approved Issue explicitly requires release versioning.
