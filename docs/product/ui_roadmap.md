@@ -2587,7 +2587,97 @@ Targeted checks must cover:
 * malformed date;
 * Queue filtering remains inclusive;
 * generated HTML preserves `name="date_from"` and `name="date_to"`;
-* generated HTML contains the generic BeeUI Datepicker markers;
+* generated HTML contains the### Итерация UI-8.3 — Canonical ROP Queue table toolbar and shared table presentation
+
+**Status:** PLANNED
+
+**Depends on:** BeeUI Iteration 13.11 and the first published BeeUI release containing that contract.
+
+#### Goal
+
+Adopt the BeeUI canonical Tabler table and functional toolbar contract for the ROP Queue without changing filtering, sorting, pagination or read-only behavior.
+
+#### Context
+
+ROP Queue currently emits a standalone `filter_form` card followed by a separate `data_table` card. The controls preserve the correct GET query state but do not match the intended Tabler table-toolbar presentation.
+
+BeeAgent must continue to own ROP semantics while delegating generic markup and visual behavior to BeeUI.
+
+#### Scope
+
+Included:
+
+* replace the Queue `filter_form + data_table` layout with one `data_table` containing a functional toolbar;
+* preserve date, search, classification, priority, Bitrix status, column visibility, sorting and pagination behavior;
+* place the column chooser under an ellipsis action immediately after search;
+* remove visible `Диапазон дат` and `Поиск` labels while preserving accessible field names;
+* remove the Queue Apply button;
+* retain automatic date filtering after selecting or clearing either date;
+* use canonical Tabler dropdown buttons for Classification, Priority and Bitrix Status;
+* use a standard Tabler button for Reset;
+* use the shared BeeUI table presentation for all BeeAgent adapter-backed tables;
+* keep functional search/filter toolbar exclusive to ROP Queue unless another page explicitly opts in later;
+* update product UI tests and documentation;
+* update the BeeUI dependency only after the required BeeUI release is published.
+
+Excluded:
+
+* changes to ROP classification logic;
+* changes to filter values or query parameter names;
+* changes to event ordering or pagination semantics;
+* changes to Bitrix reconciliation;
+* write actions;
+* product-specific Jinja templates;
+* legacy web removal;
+* unrelated UI redesign.
+
+#### Deliverable
+
+The ROP Queue is rendered as a single canonical Tabler table card with an embedded functional toolbar, while all existing product behavior and query-state contracts remain unchanged.
+
+Other BeeAgent tables use the same canonical table presentation without receiving Queue controls.
+
+#### Acceptance criteria
+
+* Queue returns one table block rather than separate filter and table cards.
+* Search works through the existing `q` GET parameter.
+* Date fields use `date_from` and `date_to`.
+* Selecting or clearing a date refreshes the table automatically.
+* Classification, Priority and Bitrix Status retain existing URL-driven behavior.
+* Column visibility retains existing state and links.
+* The column chooser is opened through the ellipsis action.
+* Reset clears product filters through the existing safe reset URL.
+* Apply is absent from Queue.
+* Sorting, pagination, `run_id`, `period` and `lang` are preserved.
+* Empty and degraded Queue states use the same table shell.
+* Other BeeAgent tables do not show search, filter or column controls.
+* No ROP-specific rendering logic is added to BeeUI.
+* The route remains read-only.
+* No source artifacts are modified by GET requests.
+
+#### Checks
+
+* `uv run pytest -q`
+* `./start.sh doctor`
+* ROP Queue HTML route smoke
+* query-state tests for every supported filter
+* combined-filter tests
+* sorting and pagination tests
+* empty/degraded Queue tests
+* HTML escaping and unsafe-link tests
+* dependency/lock review
+* visual review in Russian and English locales
+* light, dark and responsive layout review
+
+#### Definition of Done
+
+* BeeUI dependency points to a release containing Iteration 13.11;
+* Queue uses one canonical table card;
+* all previous GET behavior is preserved;
+* other tables remain toolbar-free;
+* tests and route smoke pass;
+* product UI documentation is updated;
+* unrelated existing `uv.lock` changes are not overwritten or mixed into the implementation. generic BeeUI Datepicker markers;
 * sorting preserves both dates;
 * pagination preserves both dates;
 * Event Detail and return navigation preserve both dates;
@@ -2654,6 +2744,98 @@ Security/quality:
 * no external CDN or tracking resource added;
 * `beeagent-rop` unchanged;
 * `pyproject.toml.version` unchanged.
+
+### Итерация UI-8.3 — Canonical ROP Queue table toolbar and shared table presentation
+
+**Status:** PLANNED
+
+**Depends on:** BeeUI Iteration 13.11 and the first published BeeUI release containing that contract.
+
+#### Goal
+
+Adopt the BeeUI canonical Tabler table and functional toolbar contract for the ROP Queue without changing filtering, sorting, pagination or read-only behavior.
+
+#### Context
+
+ROP Queue currently emits a standalone `filter_form` card followed by a separate `data_table` card. The controls preserve the correct GET query state but do not match the intended Tabler table-toolbar presentation.
+
+BeeAgent must continue to own ROP semantics while delegating generic markup and visual behavior to BeeUI.
+
+#### Scope
+
+Included:
+
+* replace the Queue `filter_form + data_table` layout with one `data_table` containing a functional toolbar;
+* preserve date, search, classification, priority, Bitrix status, column visibility, sorting and pagination behavior;
+* place the column chooser under an ellipsis action immediately after search;
+* remove visible `Диапазон дат` and `Поиск` labels while preserving accessible field names;
+* remove the Queue Apply button;
+* retain automatic date filtering after selecting or clearing either date;
+* use canonical Tabler dropdown buttons for Classification, Priority and Bitrix Status;
+* use a standard Tabler button for Reset;
+* use the shared BeeUI table presentation for all BeeAgent adapter-backed tables;
+* keep functional search/filter toolbar exclusive to ROP Queue unless another page explicitly opts in later;
+* update product UI tests and documentation;
+* update the BeeUI dependency only after the required BeeUI release is published.
+
+Excluded:
+
+* changes to ROP classification logic;
+* changes to filter values or query parameter names;
+* changes to event ordering or pagination semantics;
+* changes to Bitrix reconciliation;
+* write actions;
+* product-specific Jinja templates;
+* legacy web removal;
+* unrelated UI redesign.
+
+#### Deliverable
+
+The ROP Queue is rendered as a single canonical Tabler table card with an embedded functional toolbar, while all existing product behavior and query-state contracts remain unchanged.
+
+Other BeeAgent tables use the same canonical table presentation without receiving Queue controls.
+
+#### Acceptance criteria
+
+* Queue returns one table block rather than separate filter and table cards.
+* Search works through the existing `q` GET parameter.
+* Date fields use `date_from` and `date_to`.
+* Selecting or clearing a date refreshes the table automatically.
+* Classification, Priority and Bitrix Status retain existing URL-driven behavior.
+* Column visibility retains existing state and links.
+* The column chooser is opened through the ellipsis action.
+* Reset clears product filters through the existing safe reset URL.
+* Apply is absent from Queue.
+* Sorting, pagination, `run_id`, `period` and `lang` are preserved.
+* Empty and degraded Queue states use the same table shell.
+* Other BeeAgent tables do not show search, filter or column controls.
+* No ROP-specific rendering logic is added to BeeUI.
+* The route remains read-only.
+* No source artifacts are modified by GET requests.
+
+#### Checks
+
+* `uv run pytest -q`
+* `./start.sh doctor`
+* ROP Queue HTML route smoke
+* query-state tests for every supported filter
+* combined-filter tests
+* sorting and pagination tests
+* empty/degraded Queue tests
+* HTML escaping and unsafe-link tests
+* dependency/lock review
+* visual review in Russian and English locales
+* light, dark and responsive layout review
+
+#### Definition of Done
+
+* BeeUI dependency points to a release containing Iteration 13.11;
+* Queue uses one canonical table card;
+* all previous GET behavior is preserved;
+* other tables remain toolbar-free;
+* tests and route smoke pass;
+* product UI documentation is updated;
+* unrelated existing `uv.lock` changes are not overwritten or mixed into the implementation.
 
 ---
 
