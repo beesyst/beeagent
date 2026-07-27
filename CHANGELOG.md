@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.46.0...beeagent-v0.47.0) (2026-07-27)
+
+
+### Features
+
+* **ui:** integrate BeeUI Tabler date range picker ([6c54696](https://github.com/beesyst/beeagent/commit/6c546966a90f170520c729cea3e01f55e446c666))
+
 ## [0.46.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.45.0...beeagent-v0.46.0) (2026-07-22)
 
 
