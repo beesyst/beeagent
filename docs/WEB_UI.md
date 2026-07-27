@@ -79,6 +79,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 - legacy `src/beeagent_module/web` заморожен;
 - auth boundary реализован через BeeUI session/role layer;
 - нет non-auth operator POST/write actions и runtime control endpoints;
+- Queue `date_range` filter (UI-8.2) использует generic BeeUI Tabler Datepicker contract (Iteration 13.10) через `beeui>=0.23.0`;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
 - recommendations tab является частью ROP dashboard;
 - recommendations tab читает delivery recommendations из `rop_recommendations.json`;

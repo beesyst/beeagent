@@ -39,6 +39,18 @@ Obtain:
 * related repository context when explicitly requested;
 * previous blocking findings for re-review.
 
+## Working contract
+
+Read every declared file completely before forming findings. Keep a file inventory; when another file becomes necessary, add it to the inventory and read it completely before evaluating it.
+
+Map the review to the supplied current roadmap iteration and evaluate only its approved scope. Determine `low-risk`, `runtime-risk` or `security-sensitive` from the Issue and changed files, and derive required evidence from `docs/SDLC.md` and `docs/SECURITY.md`.
+
+Require the smallest complete KISS change. Treat unrelated refactoring, formatter churn, newly introduced first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators as blocking findings. Preserve required license, provenance and security annotations and unrelated existing comments.
+
+Require proportional tests for acceptance criteria and public behavior, existing test files and helpers unless a new one is demonstrably necessary, and preservation of every existing check unless an explicit task-specific reason authorizes its removal. Confirm client-specific and domain business logic remain outside BeeAgent core; report when requested work belongs to a domain module.
+
+Before returning a verdict, inspect the final diff for prohibited comments and unrelated formatting.
+
 The worktree path, MCP target and Git branch are separate identifiers.
 
 ## Phase 1 — Resolve the exact target
@@ -55,7 +67,7 @@ The worktree path, MCP target and Git branch are separate identifiers.
    * HEAD;
    * dirty state.
 
-If the exact path or mandatory metadata is unavailable, return `REVIEW INCOMPLETE`.
+If the exact path or mandatory metadata is unavailable, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
 
 If the project or branch differs from the expected value, report expected and actual values and do not issue a code verdict.
 
@@ -103,7 +115,7 @@ Verify:
 
 Do not use compatibility `get_review_bundle` as a substitute.
 
-If pagination fails, the snapshot changes or the diff is truncated, return `REVIEW INCOMPLETE`.
+If pagination fails, the snapshot changes or the diff is truncated, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
 
 The manifest is the authoritative file inventory. The complete diff is evidence of the changes.
 
@@ -160,7 +172,7 @@ For renamed files:
 * read the destination file completely;
 * verify updated references.
 
-If a required relevant file is omitted, redacted or unreadable through the available safe MCP interface, return `REVIEW INCOMPLETE`.
+If a required relevant file is omitted, redacted or unreadable through the available safe MCP interface, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
 
 Do not issue a verdict from partial file content.
 
@@ -191,7 +203,7 @@ The implementation report is supporting evidence, not the source of truth.
 
 Bee Dev MCP cannot execute tests.
 
-Do not request, evaluate or treat `uv lock --check` or any dedicated lockfile validation as merge evidence.
+When the approved Issue has no dependency change, do not inspect, regenerate, modify or separately validate `uv.lock`. When it explicitly requires a dependency change, inspect only the necessary minimal registry lock diff. Never request, evaluate or treat `uv lock --check` or any dedicated lockfile validation as merge evidence, and do not treat unrelated lock noise as an independent finding.
 
 Treat supplied command output as reported evidence and never claim MCP ran the commands.
 
@@ -238,6 +250,8 @@ Examples:
 * unintended dependency or version changes;
 * documentation contradicting public behavior;
 * missing required cross-repository dependency.
+* newly introduced first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators;
+* unrelated formatter churn or refactoring.
 
 Do not make blockers from:
 
@@ -272,7 +286,7 @@ Before issuing a code verdict, confirm:
 If any mandatory inspection remains incomplete, return:
 
 ```text
-REVIEW INCOMPLETE
+ПРОВЕРКА НЕ ЗАВЕРШЕНА
 ```
 
 Include:
@@ -293,16 +307,16 @@ Do not include:
 Return exactly one completed-review verdict:
 
 ```text
-APPROVED
+ОДОБРЕНО ДЛЯ PR
 ```
 
 or:
 
 ```text
-CHANGES REQUIRED
+ТРЕБУЮТСЯ ИЗМЕНЕНИЯ
 ```
 
-### APPROVED
+### ОДОБРЕНО ДЛЯ PR
 
 Use only when no blockers remain.
 
@@ -325,7 +339,7 @@ Then provide:
 
 Do not claim MCP ran tests.
 
-### CHANGES REQUIRED
+### ТРЕБУЮТСЯ ИЗМЕНЕНИЯ
 
 Provide every blocker in this format:
 
@@ -461,7 +475,7 @@ For re-review:
 3. verify every previous blocker;
 4. evaluate the original acceptance criteria again;
 5. inspect regressions introduced by corrections;
-6. return `APPROVED` or only the remaining blockers.
+6. return `ОДОБРЕНО ДЛЯ PR` or only the remaining blockers.
 
 Do not introduce unrelated optional findings.
 
@@ -481,7 +495,7 @@ For a completed review:
 
 For incomplete inspection:
 
-1. `REVIEW INCOMPLETE`
+1. `ПРОВЕРКА НЕ ЗАВЕРШЕНА`
 2. `Completed inspection`
 3. `Missing inspection data`
 4. `Reason no code verdict was issued`

@@ -143,7 +143,7 @@ Web console читает только existing artifacts из `storage/` и не
 Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 `./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
 
-> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через форму. Период, выбранный на Overview, не влияет на данные в Queue.
+> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через generic BeeUI Tabler Datepicker форму. Период, выбранный на Overview, не влияет на данные в Queue.
 
 #### Queue tab: filters, sort, pagination
 

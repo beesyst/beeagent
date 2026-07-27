@@ -393,7 +393,7 @@ API artifact маршруты:
 
 - `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
 - run selection доступен через `run_id` там, где это поддерживает read-model/API;
-- **Queue tab** (`/rop?tab=queue`) поддерживает server-side GET фильтрацию, multi-select dropdowns, сортировку и пагинацию через query-параметры: `q`, `case_type`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`, `page`, `page_size`, `sort`, `order`;
+- **Queue tab** (`/rop?tab=queue`) поддерживает server-side GET фильтрацию, generic BeeUI Tabler Datepicker для диапазона `date_from`/`date_to`, multi-select dropdowns, сортировку и пагинацию через query-параметры: `q`, `case_type`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`, `page`, `page_size`, `sort`, `order`;
 - Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
 - `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
 - Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;

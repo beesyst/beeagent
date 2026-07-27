@@ -310,7 +310,7 @@ secret values
 Для текущего BeeAgent UI track это означает:
 
 * BeeUI migration и auth boundary уже выполнены;
-* final decision/operator UX baseline уже выполнен в UI-8/UI-8.1;
+* final decision/operator UX baseline уже выполнен в UI-8/UI-8.2;
 * далее удалить legacy web после подтверждения parity;
 * затем развивать attachment-aware и Bitrix reconciliation views;
 * затем стабилизировать API contract;
@@ -2440,7 +2440,7 @@ Web Console Queue tab с единым URL builder, adapter-level validation, can
 
 ### Итерация UI-8.2 — Tabler Datepicker integration for ROP Queue date-range filtering
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -2640,6 +2640,21 @@ Security/quality:
 * documentation is synchronized;
 * `pyproject.toml.version` is unchanged.
 
+#### Status notes
+
+* `beeui>=0.23.0` consumed through registry (first released version containing Iteration 13.10 Tabler Datepicker contract);
+* `uv.lock` updated via `uv sync` with registry source;
+* BeeAgent `read_model.py` `date_range` payload unchanged: `from_value`, `to_value`, `from_label`, `to_label`;
+* BeeUI renders two Tabler Datepicker inputs with `name="date_from"` and `name="date_to"`;
+* Litepicker is a conditional BeeUI-local asset;
+* no product-local Datepicker templates, JavaScript, CSS or static assets added;
+* existing `date_from`/`date_to` query contract, validation, filtering, sorting, pagination and query-state preservation unchanged;
+* product-level HTML/integration regression tests added in `test_beeui_console.py`;
+* interactive browser verification completed: RU/EN Queue renders generic BeeUI Tabler Datepicker; calendar controls open with local Litepicker; `date_from`/`date_to` values round-trip correctly; equal dates, malformed and reversed ranges handled correctly; classification/priority/sort/pagination combinations preserve date range; Event Detail links contain both date params; Reset clears both dates; light and dark themes work; all Litepicker/Datepicker assets served from local `/static/vendor/litepicker/`; no external CDN, tracking or third-party Datepicker request; GET requests create no runtime artifacts;
+* no external CDN or tracking resource added;
+* `beeagent-rop` unchanged;
+* `pyproject.toml.version` unchanged.
+
 ---
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
@@ -2652,7 +2667,7 @@ Security/quality:
 
 #### Почему это нужно
 
-После UI-4–UI-8.1 BeeAgent имеет BeeUI-backed operator console, auth boundary, ROP final-decision read-model, Queue UX, Event Detail, artifact browser и read-only API.
+После UI-4–UI-8.2 BeeAgent имеет BeeUI-backed operator console, auth boundary, ROP final-decision read-model, Queue UX, Event Detail, artifact browser и read-only API.
 
 Старый package-local web shell:
 
@@ -2673,7 +2688,7 @@ src/beeagent_module/web
 
 #### Depends on
 
-* UI-8.1 — current BeeUI-backed Web Console UX baseline;
+* UI-8.2 — current BeeUI-backed Web Console UX baseline;
 * UI-7 — auth boundary;
 * one successful ROP run smoke;
 * one web smoke on real or synthetic ROP artifacts;
@@ -2803,7 +2818,7 @@ src/beeagent_module/
 
 #### Depends on
 
-* UI-8.1 — current Queue/Event Detail UX baseline;
+* UI-8.2 — current Queue/Event Detail UX baseline;
 * UI-9 preferred before adding new web features;
 * BeeAgent It25 — Attachment extraction artifacts;
 * `beeagent-rop It15 — Use BeeAgent attachment extraction contract in classification`.
@@ -2887,7 +2902,7 @@ src/beeagent_module/
 #### Depends on
 
 * UI-8 — final decision and Bitrix widget payload baseline;
-* UI-8.1 — current Queue/Event Detail UX baseline;
+* UI-8.2 — current Queue/Event Detail UX baseline;
 * UI-9 preferred before adding new web features;
 * `BeeAgent It26 — Bitrix read-only reconciliation artifacts`.
 
@@ -2947,7 +2962,7 @@ ROP dashboard показывает CRM read-only reconciliation поверх art
 
 #### Depends on
 
-* UI-8.1 current HTML/API query and read-model baseline;
+* UI-8.2 current HTML/API query and read-model baseline;
 * UI-9 preferred so the stable API is documented against BeeUI-only architecture;
 * UI-10/UI-11 contracts may be included only if they are completed before API freeze.
 
