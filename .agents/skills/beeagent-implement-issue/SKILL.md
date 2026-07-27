@@ -31,6 +31,18 @@ Obtain:
 - planning constraints;
 - related repository contracts when explicitly supplied.
 
+## Working contract
+
+Before proposing or applying a change, read every declared file completely. Keep a file inventory; when another file becomes necessary, add it to the inventory and read it completely before editing it.
+
+Map the work to the supplied current roadmap iteration and stay inside its approved scope. Before editing, determine `low-risk`, `runtime-risk` or `security-sensitive`, then derive required checks from `docs/SDLC.md` and `docs/SECURITY.md`.
+
+Make the smallest complete KISS change. Do not refactor unrelated code, run formatters over unrelated content, remove an existing check without an explicit task-specific reason, or add first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators. Preserve required license, provenance and security annotations and unrelated existing comments.
+
+Use proportional tests for acceptance criteria and public behavior. Prefer existing test files and helpers; create a file or helper only when demonstrably necessary. Keep client-specific and domain business logic out of BeeAgent core; report explicitly when a requested change belongs to a domain module.
+
+Before reporting completion, inspect the final diff and remove every newly introduced prohibited comment and unrelated formatting change.
+
 ## Target safety gate
 
 Before changing files:
@@ -95,9 +107,7 @@ Requirements:
 - preserve compatibility unless the Issue explicitly permits a breaking change;
 - keep `pyproject.toml.version` unchanged for ordinary feature, fix, docs and chore work.
 
-Dependencies and `uv.lock` must not change unless required by the approved Issue.
-
-Do not run or require `uv lock --check`.
+When the approved Issue has no dependency change, do not inspect, regenerate, modify or separately validate `uv.lock`. When it explicitly requires a dependency change, allow only the necessary minimal registry lock update and inspect only that relevant diff. Never run or require `uv lock --check`, and do not treat unrelated lock noise as an independent finding.
 
 ## Tests and verification
 

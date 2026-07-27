@@ -5096,3 +5096,111 @@ def test_event_detail_uses_canonical_date_and_bitrix_status_fields(tmp_path: Pat
     assert response.status_code == 200
     assert "15.01.2026, 14:30" in response.text
     assert "matched_lead" in response.text
+
+
+def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-datepicker")
+    client = _client(storage_dir)
+
+    for lang in ("en", "ru"):
+        response = client.get(
+            "/rop?tab=queue&run_id=run-datepicker&lang="
+            f"{lang}&date_from=2026-07-01&date_to=2026-07-31"
+        )
+
+        assert response.status_code == 200
+        assert 'name="date_from"' in response.text
+        assert 'name="date_to"' in response.text
+        assert 'value="2026-07-01"' in response.text
+        assert 'value="2026-07-31"' in response.text
+        assert "input-icon-addon" in response.text
+        assert "litepicker" in response.text.lower() or "has_date_ranges" in response.text
+        assert "cdn.jsdelivr.net" not in response.text
+        assert "cdnjs.cloudflare.com" not in response.text
+        assert "unpkg.com" not in response.text
+        assert "googleapis.com" not in response.text
+
+
+def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-parsing-parity")
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": "evt-inside",
+                    "sender": "inside@example.com",
+                    "subject": "Inside range",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "event_date": "2026-07-15T12:00:00Z",
+                },
+                {
+                    "event_id": "evt-outside",
+                    "sender": "outside@example.com",
+                    "subject": "Outside range",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "event_date": "2026-08-01T12:00:00Z",
+                },
+                {
+                    "event_id": "evt-undated",
+                    "sender": "undated@example.com",
+                    "subject": "Undated event",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    for query, expected_ids in (
+        ("date_from=2026-07-15", ["evt-outside", "evt-inside"]),
+        ("date_to=2026-07-15", ["evt-inside"]),
+        ("date_from=2026-07-01&date_to=2026-07-31", ["evt-inside"]),
+        ("date_from=2026-07-15&date_to=2026-07-15", ["evt-inside"]),
+    ):
+        html = client.get(
+            "/rop?tab=queue&run_id=run-parsing-parity&" + query
+        )
+        api = client.get(
+            "/api/rop/dashboard?tab=queue&run_id=run-parsing-parity&" + query
+        )
+
+        assert html.status_code == 200
+        assert api.status_code == 200
+        assert api.json()["data"]["pagination"]["total_items"] == len(expected_ids)
+        assert [
+            row["event_id"] for row in api.json()["data"]["queue_rows"]
+        ] == expected_ids
+        assert ("Inside range" in html.text) is ("evt-inside" in expected_ids)
+        assert ("Outside range" in html.text) is ("evt-outside" in expected_ids)
+        assert "Undated event" not in html.text
+        assert 'name="date_from"' in html.text
+        assert 'name="date_to"' in html.text
+        if "date_from" in query:
+            assert f'value="{query.split("date_from=")[1][:10]}"' in html.text
+        if "date_to" in query:
+            assert f'value="{query.rsplit("date_to=", 1)[1][:10]}"' in html.text
+
+    for query, message in (
+        ("date_from=invalid", "Invalid date_from"),
+        (
+            "date_from=2026-07-31&date_to=2026-07-01",
+            "date_from must not be after date_to",
+        ),
+    ):
+        html = client.get(
+            "/rop?tab=queue&run_id=run-parsing-parity&" + query
+        )
+        api = client.get(
+            "/api/rop/dashboard?tab=queue&run_id=run-parsing-parity&" + query
+        )
+
+        assert html.status_code >= 400
+        assert message in html.text or "invalid_params" in html.text
+        assert api.status_code == 400
+        assert api.json()["error"]["code"] == "invalid_params"
