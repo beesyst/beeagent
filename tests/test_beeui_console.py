@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1040,14 +1040,15 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
 
     layout = build_rop_page_layout(data, tab="queue")
 
-    # First block is the filter form block
-    assert layout[0]["type"] == "filter_form"
-    assert layout[0]["title"] == "Filters"
-
-    # Second block is the data table
-    assert layout[1]["type"] == "data_table"
-    assert layout[1]["title"] == "ROP Work Queue"
-    assert [col["label"] for col in layout[1]["columns"]] == [
+    assert len(layout) == 1
+    assert layout[0]["type"] == "data_table"
+    assert layout[0]["title"] == "ROP Work Queue"
+    assert "toolbar" in layout[0]
+    assert "fields" in layout[0]["toolbar"]
+    assert "column_toggles" in layout[0]["toolbar"]
+    assert "reset" in layout[0]["toolbar"]
+    assert "apply" not in layout[0]["toolbar"]
+    assert [col["label"] for col in layout[0]["columns"]] == [
         "Priority",
         "Sender",
         "Subject",
@@ -1055,12 +1056,11 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
         "Classification",
         "Bitrix status",
     ]
-    assert layout[1]["rows"][0]["classification"] == "new_lead"
-    assert layout[1]["rows"][0]["priority"]["label"] == "high"
+    assert layout[0]["rows"][0]["classification"] == "new_lead"
+    assert layout[0]["rows"][0]["priority"]["label"] == "high"
 
 
 def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events() -> None:
-    """When queues are empty but attention_events exist, show data_table, not state_grid."""
     data = {
         "attention_events": [
             {
@@ -1098,23 +1098,17 @@ def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events(
 
     layout = build_rop_page_layout(data, tab="queue")
 
-    assert len(layout) >= 2
-    # First block: filter form
-    assert layout[0]["type"] == "filter_form"
-    # Second block: data_table, not state_grid
-    assert layout[1]["type"] == "data_table", (
-        f"Expected data_table when queues empty, got {layout[1]['type']}"
-    )
-    assert layout[1]["title"] == "ROP Work Queue"
-    assert len(layout[1]["rows"]) == 2
-    # Verify fallback rows got mapped correctly
-    row_senders = {r["client"]["title"] for r in layout[1]["rows"]}
+    assert len(layout) == 1
+    assert layout[0]["type"] == "data_table"
+    assert "toolbar" in layout[0]
+    assert layout[0]["title"] == "ROP Work Queue"
+    assert len(layout[0]["rows"]) == 2
+    row_senders = {r["client"]["title"] for r in layout[0]["rows"]}
     assert "client@example.com" in row_senders
     assert "buyer@example.com" in row_senders
 
 
 def test_rop_queue_tab_shows_empty_table_when_no_data() -> None:
-    """When both queues and attention_events are empty, show empty data_table."""
     data = {
         "attention_events": [],
         "queues": {},
@@ -1129,15 +1123,14 @@ def test_rop_queue_tab_shows_empty_table_when_no_data() -> None:
 
     layout = build_rop_page_layout(data, tab="queue")
 
-    assert len(layout) >= 2
-    assert layout[0]["type"] == "filter_form"
-    assert layout[1]["type"] == "data_table"
-    assert len(layout[1]["rows"]) == 0
-    assert layout[1]["pagination"]["label"] == "Showing 0–0 of 0"
+    assert len(layout) == 1
+    assert layout[0]["type"] == "data_table"
+    assert "toolbar" in layout[0]
+    assert len(layout[0]["rows"]) == 0
+    assert layout[0]["pagination"]["label"] == "Showing 0–0 of 0"
 
 
 def test_rop_queue_filter_options_from_queue_data() -> None:
-    """filter_options should reflect case_type/priority/bitrix_status from queue data."""
     data = {
         "attention_events": [],
         "queues": {
@@ -1178,13 +1171,556 @@ def test_rop_queue_filter_options_from_queue_data() -> None:
     }
 
     layout = build_rop_page_layout(data, tab="queue")
-    assert layout[0]["type"] == "filter_form"
 
-    # The filter form checkboxes should contain the expected options
-    # We verify by checking that the layout was built without errors
-    # (the filter options passed in data are used downstream)
-    assert layout[1]["type"] == "data_table"
-    assert len(layout[1]["rows"]) == 3
+    assert len(layout) == 1
+    assert layout[0]["type"] == "data_table"
+    assert "toolbar" in layout[0]
+    field_types = {f.get("type") for f in layout[0]["toolbar"].get("fields", [])}
+    assert "checkboxes" in field_types
+    assert len(layout[0]["rows"]) == 3
+
+
+def test_queue_toolbar_contract() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {"q": "test", "date_from": "2026-07-01"},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    assert "fields" in tb
+    assert "hidden" in tb
+    assert "column_toggles" in tb
+    assert "reset" in tb
+    assert "apply" not in tb
+    field_types = [f["type"] for f in tb["fields"]]
+    assert "date_range" in field_types
+    assert "text" in field_types
+    assert "checkboxes" in field_types
+    date_field = next(f for f in tb["fields"] if f["type"] == "date_range")
+    assert date_field["label"] == ""
+    text_field = next(f for f in tb["fields"] if f["type"] == "text")
+    assert text_field["label"] == ""
+    assert tb["hidden"].get("tab") == "queue"
+    assert len(tb["column_toggles"]) > 0
+    assert tb["reset"].get("href")
+
+
+def test_queue_toolbar_no_filter_form() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {},
+        "filter_params": {},
+        "filter_options": {},
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    block_types = [b["type"] for b in layout]
+    assert "filter_form" not in block_types
+
+
+def test_queue_toolbar_other_tabs_no_toolbar() -> None:
+    data = {
+        "run_id": "run-001",
+        "kpis": {},
+        "available_runs": [],
+        "warnings": [],
+        "source_health": [],
+        "funnel": [],
+        "recommendations": [],
+        "evidence_links": [],
+        "classification_distribution": {},
+        "business_kpi": {},
+        "series": {},
+        "period": "7d",
+        "configured_periods": ["7d"],
+    }
+    for tab in ("overview", "sources", "attachments", "evidence", "bitrix"):
+        layout = build_rop_page_layout(data, tab=tab)
+        for block in layout:
+            if block.get("type") == "data_table":
+                assert "toolbar" not in block
+
+
+def test_queue_toolbar_hidden_contains_active_classification() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {"case_type": "new_lead", "q": "test"},
+        "filter_options": {
+            "case_types": ["new_lead", "existing_deal"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("case_type") == "new_lead"
+
+
+def test_queue_toolbar_hidden_contains_active_priority() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {"priority": "high"},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("priority") == "high"
+
+
+def test_queue_toolbar_hidden_contains_active_bitrix_status() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {"bitrix_status": "not_found,ambiguous"},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found", "ambiguous"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("bitrix_status") == "not_found,ambiguous"
+
+
+def test_queue_toolbar_hidden_contains_active_columns() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {"columns": "priority,subject,date"},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("columns") == "priority,subject,date"
+
+
+def test_queue_toolbar_hidden_contains_canonical_params() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 2,
+        "page_size": 50,
+        "sort": "sender",
+        "order": "asc",
+        "period": "7d",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("tab") == "queue"
+    assert hidden.get("page") == "2"
+    assert hidden.get("page_size") == "50"
+    assert hidden.get("sort") == "sender"
+    assert hidden.get("order") == "asc"
+    assert hidden.get("period") == "7d"
+
+
+def test_queue_toolbar_hidden_contains_run_id_and_lang() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+        "run_id": "run-test-001",
+    }
+    layout = build_rop_page_layout(data, tab="queue", locale="ru")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("run_id") == "run-test-001"
+    assert hidden.get("lang") == "ru"
+
+
+def test_queue_toolbar_combined_filters_in_hidden() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {
+            "case_type": "new_lead,existing_deal",
+            "priority": "high",
+            "bitrix_status": "not_found",
+            "columns": "priority,subject,date,classification",
+        },
+        "filter_options": {
+            "case_types": ["new_lead", "existing_deal"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("case_type") == "new_lead,existing_deal"
+    assert hidden.get("priority") == "high"
+    assert hidden.get("bitrix_status") == "not_found"
+    assert hidden.get("columns") == "priority,subject,date,classification"
+    assert "apply" not in tb
+
+
+def test_queue_search_submission_preserves_hidden_filters() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {
+            "q": "test search",
+            "case_type": "new_lead",
+            "priority": "high",
+            "columns": "priority,subject",
+        },
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("q") is None
+    assert hidden.get("case_type") == "new_lead"
+    assert hidden.get("priority") == "high"
+    assert hidden.get("columns") == "priority,subject"
+
+
+def test_queue_date_submission_preserves_hidden_filters() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {
+            "date_from": "2026-07-01",
+            "date_to": "2026-07-31",
+            "case_type": "new_lead",
+            "priority": "high",
+            "columns": "priority,subject",
+        },
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    hidden = tb.get("hidden", {})
+    assert hidden.get("date_from") is None
+    assert hidden.get("case_type") == "new_lead"
+    assert hidden.get("priority") == "high"
+    assert hidden.get("columns") == "priority,subject"
+
+
+def test_queue_toolbar_has_no_apply() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {},
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 1,
+        "page_size": 25,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    assert "apply" not in tb
+
+
+def test_queue_toolbar_reset_preserves_only_tab_run_id_period_lang() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {
+            "q": "test",
+            "date_from": "2026-07-01",
+            "date_to": "2026-07-31",
+            "case_type": "new_lead",
+            "priority": "high",
+            "bitrix_status": "not_found",
+            "columns": "priority,subject",
+        },
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 3,
+        "page_size": 50,
+        "sort": "sender",
+        "order": "asc",
+        "period": "7d",
+        "run_id": "run-reset-test",
+    }
+    layout = build_rop_page_layout(data, tab="queue")
+    tb = layout[0].get("toolbar", {})
+    reset_href = tb["reset"]["href"]
+    assert "tab=queue" in reset_href
+    assert "run_id=run-reset-test" in reset_href
+    assert "period=7d" in reset_href
+    assert "q=" not in reset_href or "q" not in reset_href.split("?")[-1].split("&")
+    assert "date_from" not in reset_href
+    assert "date_to" not in reset_href
+    assert "case_type" not in reset_href
+    assert "priority" not in reset_href
+    assert "bitrix_status" not in reset_href
+    assert "columns" not in reset_href
+    assert "page=" not in reset_href.split("?")[-1].split("&")[0]
+    assert "page_size" not in reset_href
+    assert "sort=" not in reset_href.split("?")[-1].split("&")[0]
+    assert "order=" not in reset_href.split("?")[-1].split("&")[0]
+
+
+def test_queue_toolbar_reset_preserves_lang_ru() -> None:
+    data = {
+        "attention_events": [],
+        "queues": {
+            "high_priority": [
+                {
+                    "event_id": "evt-1",
+                    "sender": "a@b.com",
+                    "subject": "Test",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "bitrix_status": "not_found",
+                }
+            ],
+        },
+        "filter_params": {
+            "q": "test",
+            "case_type": "new_lead",
+            "columns": "priority,subject",
+        },
+        "filter_options": {
+            "case_types": ["new_lead"],
+            "priorities": ["high"],
+            "bitrix_statuses": ["not_found"],
+        },
+        "page": 2,
+        "page_size": 100,
+        "sort": "received_at",
+        "order": "desc",
+        "period": "all",
+    }
+    layout = build_rop_page_layout(data, tab="queue", locale="ru")
+    tb = layout[0].get("toolbar", {})
+    reset_href = tb["reset"]["href"]
+    assert "tab=queue" in reset_href
+    assert "lang=ru" in reset_href
+    assert "q=" not in reset_href or "q" not in reset_href.split("?")[-1].split("&")
+    assert "case_type" not in reset_href
+    assert "columns" not in reset_href
+    assert "page=" not in reset_href.split("?")[-1].split("&")[0]
+    assert "page_size" not in reset_href
+    assert "sort=" not in reset_href.split("?")[-1].split("&")[0]
 
 
 def test_rop_overview_uses_rop_recommendations_detail() -> None:
@@ -2153,7 +2689,11 @@ def test_rop_dashboard_final_decisions_computed_projection(tmp_path: Path) -> No
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rich_rop_run(storage_dir, "run-fd-001")
     adj_artifact = {
-        "counters": {"adjudicator_enabled": 1, "adjudicator_eligible_count": 2, "adjudicator_used_count": 1},
+        "counters": {
+            "adjudicator_enabled": 1,
+            "adjudicator_eligible_count": 2,
+            "adjudicator_used_count": 1,
+        },
         "results": [
             {
                 "event_id": "evt-001",
@@ -2203,9 +2743,33 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
     from beeagent_module.core.rop_final_decision import build_final_decisions
 
     events = [
-        {"event_id": "e1", "case_type": "new_lead", "recommended_queue": "sales", "correct_action": "review_new_lead", "confidence": 0.85, "sender": "a@b.com", "subject": "Inquiry"},
-        {"event_id": "e2", "case_type": "existing_deal", "recommended_queue": "logistics", "correct_action": "attach_to_deal", "confidence": 0.60, "sender": "b@c.com", "subject": "Re: Order"},
-        {"event_id": "e3", "case_type": "irrelevant", "recommended_queue": "ignore", "correct_action": "ignore", "confidence": 0.95, "sender": "noreply@m.com", "subject": "Newsletter"},
+        {
+            "event_id": "e1",
+            "case_type": "new_lead",
+            "recommended_queue": "sales",
+            "correct_action": "review_new_lead",
+            "confidence": 0.85,
+            "sender": "a@b.com",
+            "subject": "Inquiry",
+        },
+        {
+            "event_id": "e2",
+            "case_type": "existing_deal",
+            "recommended_queue": "logistics",
+            "correct_action": "attach_to_deal",
+            "confidence": 0.60,
+            "sender": "b@c.com",
+            "subject": "Re: Order",
+        },
+        {
+            "event_id": "e3",
+            "case_type": "irrelevant",
+            "recommended_queue": "ignore",
+            "correct_action": "ignore",
+            "confidence": 0.95,
+            "sender": "noreply@m.com",
+            "subject": "Newsletter",
+        },
     ]
     adj_results = [
         {
@@ -2404,7 +2968,9 @@ def test_recommendations_layout_enforces_read_only_execution_policy() -> None:
         }
     )
 
-    table = next(block for block in layout if block.get("title") == "Recommendation Items")
+    table = next(
+        block for block in layout if block.get("title") == "Recommendation Items"
+    )
     assert table["rows"][0]["safe"] == "No"
     assert table["rows"][0]["confirm"] == "Yes"
 
@@ -2516,18 +3082,16 @@ def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
     (run_dir / "rop_ai_adjudicator_results.json").write_text(
         json.dumps({"results": []}), encoding="utf-8"
     )
-    (run_dir / "rop_final_decisions.json").write_text(
-        json.dumps({}), encoding="utf-8"
-    )
+    (run_dir / "rop_final_decisions.json").write_text(json.dumps({}), encoding="utf-8")
 
-    data = build_rop_event_detail_read_model(
-        storage_dir, "run-detail-final", "evt-1"
-    )
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-final", "evt-1")
 
     final_decision = data["final_decision"]
     assert final_decision["event_id"] == "evt-1"
     assert final_decision["final_decision_source"] == "deterministic"
-    availability = {item["artifact_id"]: item["available"] for item in data["evidence_links"]}
+    availability = {
+        item["artifact_id"]: item["available"] for item in data["evidence_links"]
+    }
     assert availability["rop_ai_adjudicator_results_json"] is True
     assert availability["rop_final_decisions_json"] is True
 
@@ -2907,11 +3471,26 @@ def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
     assert "priority=high" in html
     assert "&amp;lang=ru" in html
     assert "queue=needs_review" in html
-    assert "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled" in html
-    assert "/rop?tab=bitrix&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru" in html
-    assert "/rop?tab=evidence&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru" in html
-    assert "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=today&amp;lang=ru" in html
-    assert "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=30d&amp;lang=ru" in html
+    assert (
+        "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled"
+        in html
+    )
+    assert (
+        "/rop?tab=bitrix&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru"
+        in html
+    )
+    assert (
+        "/rop?tab=evidence&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru"
+        in html
+    )
+    assert (
+        "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=today&amp;lang=ru"
+        in html
+    )
+    assert (
+        "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=30d&amp;lang=ru"
+        in html
+    )
 
 
 def test_rop_language_switcher_visible(tmp_path: Path) -> None:
@@ -2988,7 +3567,7 @@ def test_get_page_returns_layout(tmp_path: Path) -> None:
 
 def _write_run_with_event_dates(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_run_artifacts(storage_dir, run_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     classified = json.loads(
         (run_dir / "classified_events.json").read_text(encoding="utf-8")
     )
@@ -3063,17 +3642,33 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
     assert "Last 3 months" in html
     assert "Last year" in html
     assert "All time" in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=today"' in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=yesterday"' in html
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=today"' in html
+    )
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=yesterday"'
+        in html
+    )
     assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=7d"' in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=30d"' in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=90d"' in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=365d"' in html
-    assert 'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=all"' in html
-    assert 'run_id=run-period-labels' in html
-    assert 'priority=high' in html
-    assert 'queue=needs_review' in html
-    assert 'bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled' in html
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=30d"' in html
+    )
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=90d"' in html
+    )
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=365d"' in html
+    )
+    assert (
+        'href="/rop?tab=overview&amp;run_id=run-period-labels&amp;period=all"' in html
+    )
+    assert "run_id=run-period-labels" in html
+    assert "priority=high" in html
+    assert "queue=needs_review" in html
+    assert (
+        "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled"
+        in html
+    )
     assert 'href="/rop?tab=bitrix&amp;run_id=run-period-labels&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 
@@ -3846,9 +4441,7 @@ class TestUi6It30:
         # Must contain Russian block title
         assert "Последняя выборка" in html
 
-    def test_latest_selection_block_en_formats_datetime(
-        self, tmp_path: Path
-    ) -> None:
+    def test_latest_selection_block_en_formats_datetime(self, tmp_path: Path) -> None:
         """English locale must show DD.MM.YYYY format without raw ISO."""
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-en-datetime")
@@ -4723,7 +5316,7 @@ def test_widget_api_returns_final_decisions_block(
                 "attention_reason": None,
                 "automation_allowed": False,
                 "bitrix_write_allowed": False,
-            }
+            },
         ],
     }
     (run_dir / "rop_final_decisions.json").write_text(
@@ -4777,14 +5370,17 @@ def test_rop_route_url_state_round_trip_and_selected_run(tmp_path: Path) -> None
     assert "sort=sender" in response.text
 
 
-def test_rop_html_and_api_share_validation_and_canonical_pagination(tmp_path: Path) -> None:
+def test_rop_html_and_api_share_validation_and_canonical_pagination(
+    tmp_path: Path,
+) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-contract")
     client = _client(storage_dir)
 
-    assert client.get(
-        "/rop?tab=queue&run_id=run-contract&queue=unknown"
-    ).status_code >= 400
+    assert (
+        client.get("/rop?tab=queue&run_id=run-contract&queue=unknown").status_code
+        >= 400
+    )
     for path in (
         "/api/rop/dashboard?run_id=run-contract&queue=unknown",
         "/api/rop/dashboard?run_id=run-contract&page=-1",
@@ -4823,7 +5419,10 @@ def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> N
 
     assert response.status_code == 200
     assert "Thread context" in response.text or "Контекст цепочки" in response.text
-    assert "Bitrix evidence" in response.text or "Доказательства из Битрикс" in response.text
+    assert (
+        "Bitrix evidence" in response.text
+        or "Доказательства из Битрикс" in response.text
+    )
     assert "Action draft" in response.text or "Черновик действия" in response.text
     assert "run_id=run-detail-state" in response.text
     assert "page_size=50" in response.text
@@ -4833,15 +5432,20 @@ def test_rop_latest_selection_period_is_rendered(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_run_artifacts(storage_dir, "run-latest-period")
     (run_dir / "mailbox_selection.json").write_text(
-        json.dumps({
-            "sources": [{
-                "source_id": "mailbox", "selected_count": 2,
-                "messages": [
-                    {"internal_date": "2026-06-25T00:00:00+00:00"},
-                    {"internal_date": "2026-06-28T00:00:00+00:00"},
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "mailbox",
+                        "selected_count": 2,
+                        "messages": [
+                            {"internal_date": "2026-06-25T00:00:00+00:00"},
+                            {"internal_date": "2026-06-28T00:00:00+00:00"},
+                        ],
+                    }
                 ],
-            }],
-        }),
+            }
+        ),
         encoding="utf-8",
     )
     client = _client(storage_dir)
@@ -4856,10 +5460,20 @@ def test_queue_sort_links_round_trip_and_keep_atomic_pair(tmp_path: Path) -> Non
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-sort-links")
     (run_dir / "rop_current_state.json").write_text(
-        json.dumps({"queues": {"high_priority": [{
-            "event_id": "evt-1", "sender": "client@example.com",
-            "subject": "Need welding quote", "priority": "high",
-        }]}}),
+        json.dumps(
+            {
+                "queues": {
+                    "high_priority": [
+                        {
+                            "event_id": "evt-1",
+                            "sender": "client@example.com",
+                            "subject": "Need welding quote",
+                            "priority": "high",
+                        }
+                    ]
+                }
+            }
+        ),
         encoding="utf-8",
     )
     client = _client(storage_dir)
@@ -4868,9 +5482,7 @@ def test_queue_sort_links_round_trip_and_keep_atomic_pair(tmp_path: Path) -> Non
     assert initial.status_code == 200
     assert "sort=sender&amp;order=desc" in initial.text
 
-    ascending = client.get(
-        "/rop?tab=queue&run_id=run-sort-links&sort=sender&order=asc"
-    )
+    ascending = client.get("/rop?tab=queue&run_id=run-sort-links&sort=sender&order=asc")
     assert ascending.status_code == 200
     assert "sort=sender&amp;order=desc" in ascending.text
 
@@ -4878,20 +5490,27 @@ def test_queue_sort_links_round_trip_and_keep_atomic_pair(tmp_path: Path) -> Non
 def test_queue_pagination_links_keep_canonical_page_size() -> None:
     rows = [
         {
-            "event_id": f"evt-{index}", "sender": f"sender-{index}",
-            "subject": "Queue item", "priority": "high",
+            "event_id": f"evt-{index}",
+            "sender": f"sender-{index}",
+            "subject": "Queue item",
+            "priority": "high",
         }
         for index in range(51)
     ]
     layout = build_rop_page_layout(
         {
-            "run_id": "run-page-size", "period": "all",
-            "queues": {"high_priority": rows}, "filter_params": {},
-            "page": 1, "page_size": 50, "sort": "received_at", "order": "desc",
+            "run_id": "run-page-size",
+            "period": "all",
+            "queues": {"high_priority": rows},
+            "filter_params": {},
+            "page": 1,
+            "page_size": 50,
+            "sort": "received_at",
+            "order": "desc",
         },
         tab="queue",
     )
-    pages = layout[1]["pagination"]["pages"]
+    pages = layout[0]["pagination"]["pages"]
 
     assert len(pages) == 2
     assert all("page_size=50" in page["href"] for page in pages)
@@ -4900,15 +5519,29 @@ def test_queue_pagination_links_keep_canonical_page_size() -> None:
 def test_queue_uses_all_data_before_validated_date_range(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-queue-all")
-    classified = json.loads((run_dir / "classified_events.json").read_text(encoding="utf-8"))
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
     classified[0]["event_date"] = "2020-01-15T12:00:00Z"
-    (run_dir / "classified_events.json").write_text(json.dumps(classified), encoding="utf-8")
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
     (run_dir / "rop_current_state.json").write_text(
-        json.dumps({"queues": {"high_priority": [{
-            "event_id": "evt-1", "sender": "client@example.com",
-            "subject": "Need welding quote", "priority": "high",
-            "event_date": "2020-01-15T12:00:00Z",
-        }]}}),
+        json.dumps(
+            {
+                "queues": {
+                    "high_priority": [
+                        {
+                            "event_id": "evt-1",
+                            "sender": "client@example.com",
+                            "subject": "Need welding quote",
+                            "priority": "high",
+                            "event_date": "2020-01-15T12:00:00Z",
+                        }
+                    ]
+                }
+            }
+        ),
         encoding="utf-8",
     )
     client = _client(storage_dir)
@@ -4975,8 +5608,7 @@ def test_fallback_queue_rows_share_html_and_api_pagination(
     assert payload["order"] == "asc"
 
     excluded = client.get(
-        "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&"
-        "is_fallback=false"
+        "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&is_fallback=false"
     ).json()["data"]
     assert excluded["pagination"]["total_items"] == 0
 
@@ -4986,9 +5618,7 @@ def test_event_detail_routes_return_client_error_statuses(tmp_path: Path) -> Non
     _write_rop_event_detail_artifacts(storage_dir, "run-event-errors")
     client = _client(storage_dir)
 
-    invalid_query = client.get(
-        "/rop/events/evt-1?run_id=run-event-errors&sort=sender"
-    )
+    invalid_query = client.get("/rop/events/evt-1?run_id=run-event-errors&sort=sender")
     invalid_run = client.get("/rop/events/evt-1?run_id=../outside")
     missing = client.get("/rop/events/missing?run_id=run-event-errors")
     valid = client.get("/rop/events/evt-1?run_id=run-event-errors")
@@ -5012,7 +5642,9 @@ def test_event_detail_routes_return_client_error_statuses(tmp_path: Path) -> Non
     assert "RAW-EML-CONTENT" not in invalid_query.text
 
 
-def test_empty_queue_keeps_canonical_url_state_and_selected_columns(tmp_path: Path) -> None:
+def test_empty_queue_keeps_canonical_url_state_and_selected_columns(
+    tmp_path: Path,
+) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_rop_event_detail_artifacts(storage_dir, "run-empty-queue-state")
     client = _client(storage_dir)
@@ -5039,7 +5671,10 @@ def test_empty_queue_keeps_canonical_url_state_and_selected_columns(tmp_path: Pa
     assert "date_from=2020-01-01" in response.text
     assert "date_to=2020-01-31" in response.text
     assert "case_type=new_lead" in response.text
-    assert "columns=subject%2Cdate" in response.text or "columns=date%2Csubject" in response.text
+    assert (
+        "columns=subject%2Cdate" in response.text
+        or "columns=date%2Csubject" in response.text
+    )
     assert "page_size=50" in response.text
     assert "sort=sender&amp;order=asc" in response.text
 
@@ -5079,14 +5714,22 @@ def test_recommendation_links_are_built_with_current_rop_state(
     assert "lang=ru" in href
 
 
-def test_event_detail_uses_canonical_date_and_bitrix_status_fields(tmp_path: Path) -> None:
+def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
+    tmp_path: Path,
+) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-canonical-detail")
-    normalized = json.loads((run_dir / "normalized_events.json").read_text(encoding="utf-8"))
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
     normalized[0]["received_at"] = "2026-01-15T14:30:00Z"
-    (run_dir / "normalized_events.json").write_text(json.dumps(normalized), encoding="utf-8")
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
     (run_dir / "bitrix_reconciliation.json").write_text(
-        json.dumps({"items": [{"event_id": "evt-1", "bitrix_match_status": "matched_lead"}]}),
+        json.dumps(
+            {"items": [{"event_id": "evt-1", "bitrix_match_status": "matched_lead"}]}
+        ),
         encoding="utf-8",
     )
     client = _client(storage_dir)
@@ -5114,8 +5757,7 @@ def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
         assert 'name="date_to"' in response.text
         assert 'value="2026-07-01"' in response.text
         assert 'value="2026-07-31"' in response.text
-        assert "input-icon-addon" in response.text
-        assert "litepicker" in response.text.lower() or "has_date_ranges" in response.text
+        assert "beeui-datepicker" in response.text
         assert "cdn.jsdelivr.net" not in response.text
         assert "cdnjs.cloudflare.com" not in response.text
         assert "unpkg.com" not in response.text
@@ -5163,9 +5805,7 @@ def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:
         ("date_from=2026-07-01&date_to=2026-07-31", ["evt-inside"]),
         ("date_from=2026-07-15&date_to=2026-07-15", ["evt-inside"]),
     ):
-        html = client.get(
-            "/rop?tab=queue&run_id=run-parsing-parity&" + query
-        )
+        html = client.get("/rop?tab=queue&run_id=run-parsing-parity&" + query)
         api = client.get(
             "/api/rop/dashboard?tab=queue&run_id=run-parsing-parity&" + query
         )
@@ -5193,9 +5833,7 @@ def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:
             "date_from must not be after date_to",
         ),
     ):
-        html = client.get(
-            "/rop?tab=queue&run_id=run-parsing-parity&" + query
-        )
+        html = client.get("/rop?tab=queue&run_id=run-parsing-parity&" + query)
         api = client.get(
             "/api/rop/dashboard?tab=queue&run_id=run-parsing-parity&" + query
         )

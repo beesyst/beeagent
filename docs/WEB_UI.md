@@ -80,6 +80,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 - auth boundary реализован через BeeUI session/role layer;
 - нет non-auth operator POST/write actions и runtime control endpoints;
 - Queue `date_range` filter (UI-8.2) использует generic BeeUI Tabler Datepicker contract (Iteration 13.10) через `beeui>=0.23.0`;
+- Queue toolbar (UI-8.3) использует canonical BeeUI Tabler toolbar contract (Iteration 13.11) через `beeui>=0.24.0`;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
 - recommendations tab является частью ROP dashboard;
 - recommendations tab читает delivery recommendations из `rop_recommendations.json`;
@@ -1082,6 +1083,10 @@ Sanitization rules:
 
 ## ROP Queue filter/sort/pagination contract
 
+### Layout
+
+Queue tab renders as one `data_table` with a functional `toolbar`. No standalone `filter_form` is emitted.
+
 ### Query parameters
 
 Все параметры Queue tab передаются через query string в `/rop?tab=queue`.
@@ -1107,13 +1112,8 @@ Sanitization rules:
 | Param           | Type             | Description                                                                 |
 | --------------- | ---------------- | --------------------------------------------------------------------------- |
 | `columns`        | comma-separated  | Visible column keys: `priority`, `client`, `subject`, `date`, `classification`, `bitrix_status` |
-| `columns_open`   | flag (`1`)       | Open column selector dropdown                                               |
 
-#### Dropdown state
-
-| Param            | Type             | Description                                                |
-| ---------------- | ---------------- | ---------------------------------------------------------- |
-| `open_dropdowns`  | comma-separated  | Which dropdowns are open across page reloads: `case_type`, `priority`, `bitrix_status` |
+Column visibility is managed through the toolbar ellipsis action (column chooser). `columns_open` and `open_dropdowns` are no longer part of the Queue presentation-state contract.
 
 #### Pagination params
 
@@ -1133,6 +1133,20 @@ Sanitization rules:
 - `tab` — active tab name (overview, queue, threads, …)
 - `period` — period value (today, yesterday, 7d, 30d, 90d, 365d, all)
 - `lang` — locale override (en, ru)
+
+### Toolbar contract (BeeUI Iteration 13.11)
+
+Queue toolbar contains:
+
+- `fields`: date_range (no visible label, accessible via `from_label`/`to_label`), `q` text input (no visible label, accessible via `placeholder`), checkboxes dropdowns for Classification (`case_type`), Priority (`priority`), Bitrix Status (`bitrix_status`)
+- `hidden`: preserves `tab`, `run_id`, `period`, `lang`, `page`, `page_size`, `sort`, `order`, а также активные `case_type`, `priority`, `bitrix_status`, `columns` — чтобы GET submission поиска или дат не сбрасывал dropdown filters и column visibility
+- `column_toggles`: column visibility toggles rendered under the ellipsis action
+- `reset`: resets all filter params preserving `tab`, `run_id`, `period`, `lang`
+- No `apply` — datepicker auto-submits on select/clear; text/date input submits on GET
+
+`columns_open` и `open_dropdowns` не являются частью canonical toolbar contract. Они поддерживаются только в legacy accepted inputs adapter contract для обратной совместимости с существующими ссылками и bookmark.
+
+Other BeeAgent adapter-backed tables use the canonical `data_table` presentation but do not receive Queue toolbar controls.
 
 ### Adapter-level validation contract
 
