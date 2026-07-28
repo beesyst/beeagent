@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
 from beeagent_module.cases.rop_dashboard import (
     ALLOWED_BITRIX_STATUSES,
     ALLOWED_QUEUE_IDS,
@@ -14,11 +15,10 @@ from beeagent_module.cases.rop_dashboard import (
     build_rop_dashboard,
     paginate_items,
     sort_queue_items,
-    validate_sort_params,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
 from beeagent_module.interfaces.ui.locale import t
-from beeagent_module.interfaces.ui.url_builder import build_rop_url, build_rop_event_url
+from beeagent_module.interfaces.ui.url_builder import build_rop_event_url, build_rop_url
 
 ATTENTION_EVENTS_MAX = 500
 ALLOWED_EVIDENCE_IDS: tuple[str, ...] = (
@@ -313,7 +313,13 @@ def build_modules_page_layout(
             "type": "status_table",
             "size": "XL",
             "title": t("Modules Overview", locale),
-            "columns": [t("ID", locale), t("Package", locale), t("Entry", locale), t("State", locale), t("Error", locale)],
+            "columns": [
+                t("ID", locale),
+                t("Package", locale),
+                t("Entry", locale),
+                t("State", locale),
+                t("Error", locale),
+            ],
             "rows": table_rows,
         }
     ]
@@ -1746,7 +1752,12 @@ def _build_ai_adjudicator_summary(
         "status_counts": status_counts,
     }
 
-    for key in ("adjudicator_enabled", "adjudicator_eligible_count", "adjudicator_used_count", "adjudicator_degraded_count"):
+    for key in (
+        "adjudicator_enabled",
+        "adjudicator_eligible_count",
+        "adjudicator_used_count",
+        "adjudicator_degraded_count",
+    ):
         if key in counters:
             summary[key] = counters[key]
 
@@ -2711,8 +2722,8 @@ def _parse_utc_datetime(value: Any) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _day_label(value: datetime) -> str:
@@ -2720,7 +2731,7 @@ def _day_label(value: datetime) -> str:
 
 
 def _period_day_labels(period: str, period_end_utc: Any) -> list[str]:
-    end = _parse_utc_datetime(period_end_utc) or datetime.now(timezone.utc)
+    end = _parse_utc_datetime(period_end_utc) or datetime.now(UTC)
     if period == "yesterday":
         return [_day_label(end - timedelta(days=1))]
     if period == "today":
@@ -2808,8 +2819,15 @@ def _rop_event_detail_href(
     order: str | None = None,
 ) -> str:
     return build_rop_event_url(
-        event_id, run_id, lang=locale, period=period, filter_params=filter_params,
-        page=page, page_size=page_size, sort=sort, order=order,
+        event_id,
+        run_id,
+        lang=locale,
+        period=period,
+        filter_params=filter_params,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        order=order,
     )
 
 
@@ -3121,19 +3139,47 @@ def _build_rop_overview_layout(
 
     # Filtered Queue hrefs for each overview card
     queue_urgent_href = build_rop_url(
-        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
-        filter_params={**date_filter, "priority": "high"} if date_filter else {"priority": "high"},
+        tab="queue",
+        period=current_period,
+        lang=locale,
+        run_id=str(data.get("run_id", "")),
+        filter_params={**date_filter, "priority": "high"}
+        if date_filter
+        else {"priority": "high"},
     )
     queue_needs_review_href = build_rop_url(
-        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
-        filter_params={**date_filter, "queue": "needs_review"} if date_filter else {"queue": "needs_review"},
+        tab="queue",
+        period=current_period,
+        lang=locale,
+        run_id=str(data.get("run_id", "")),
+        filter_params={**date_filter, "queue": "needs_review"}
+        if date_filter
+        else {"queue": "needs_review"},
     )
     queue_bitrix_gaps_href = build_rop_url(
-        tab="queue", period=current_period, lang=locale, run_id=str(data.get("run_id", "")),
-        filter_params={**date_filter, "bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"} if date_filter else {"bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"},
+        tab="queue",
+        period=current_period,
+        lang=locale,
+        run_id=str(data.get("run_id", "")),
+        filter_params={
+            **date_filter,
+            "bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled",
+        }
+        if date_filter
+        else {"bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"},
     )
-    bitrix_href = build_rop_url(tab="bitrix", period=current_period, lang=locale, run_id=str(data.get("run_id", "")))
-    evidence_href = build_rop_url(tab="evidence", period=current_period, lang=locale, run_id=str(data.get("run_id", "")))
+    bitrix_href = build_rop_url(
+        tab="bitrix",
+        period=current_period,
+        lang=locale,
+        run_id=str(data.get("run_id", "")),
+    )
+    evidence_href = build_rop_url(
+        tab="evidence",
+        period=current_period,
+        lang=locale,
+        run_id=str(data.get("run_id", "")),
+    )
 
     processed_by_day = series.get("processed_by_day", {})
     workload_labels, workload_series = _bucket_daily_chart_series(
@@ -3180,13 +3226,18 @@ def _build_rop_overview_layout(
                         else t("Emails in period", locale)
                     ),
                     "value": todays_emails,
-                    "progress": min(100, max(8 if _int(todays_emails) else 0, _int(todays_emails) * 20)),
+                    "progress": min(
+                        100,
+                        max(8 if _int(todays_emails) else 0, _int(todays_emails) * 20),
+                    ),
                     "progress_tone": "bg-primary",
                 },
                 {
                     "label": t("NEW LEADS", locale),
                     "value": new_leads,
-                    "progress": min(100, max(8 if _int(new_leads) else 0, _int(new_leads) * 20)),
+                    "progress": min(
+                        100, max(8 if _int(new_leads) else 0, _int(new_leads) * 20)
+                    ),
                     "progress_tone": "bg-success",
                 },
                 {"label": t("Sources", locale), "value": source_summary},
@@ -3233,7 +3284,9 @@ def _build_rop_overview_layout(
             "subtitle": t("Operator queue", locale),
             "status": str(needs_review),
             "items": [{"label": t("Count", locale), "value": needs_review}],
-            "links": [{"label": t("Open Queue", locale), "href": queue_needs_review_href}],
+            "links": [
+                {"label": t("Open Queue", locale), "href": queue_needs_review_href}
+            ],
         },
         {
             "type": "venue_card",
@@ -3427,19 +3480,20 @@ def _build_rop_queue_layout(
 
     queue_rows = _canonical_queue_rows(queues, attention_events, filter_params)
 
+    toolbar = _build_queue_toolbar(
+        filter_params=filter_params,
+        current_period=current_period,
+        filter_options=filter_options,
+        locale=locale,
+        run_id=run_id,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        order=order,
+    )
+
     if not queue_rows:
         return [
-            _queue_filter_form(
-                filter_params=filter_params,
-                current_period=current_period,
-                filter_options=filter_options,
-                locale=locale,
-                run_id=run_id,
-                page=page,
-                page_size=page_size,
-                sort=sort,
-                order=order,
-            ),
             _empty_queue_table(
                 locale=locale,
                 run_id=run_id,
@@ -3449,6 +3503,7 @@ def _build_rop_queue_layout(
                 page_size=page_size,
                 sort=sort,
                 order=order,
+                toolbar=toolbar,
             ),
         ]
 
@@ -3463,21 +3518,7 @@ def _build_rop_queue_layout(
         filtered_rows, page=page, page_size=page_size
     )
 
-    layout: list[dict[str, Any]] = []
-
-    # Build filter form block
-    layout.append(
-        _queue_filter_form(
-            filter_params=filter_params,
-            current_period=current_period,
-            filter_options=filter_options,
-            locale=locale,
-            run_id=run_id, page=page, page_size=page_size, sort=sort, order=order,
-        )
-    )
-
-    # Build the data table with pagination
-    layout.append(
+    return [
         _queue_table(
             t("ROP Work Queue", locale),
             paginated_rows,
@@ -3491,13 +3532,12 @@ def _build_rop_queue_layout(
             order=order,
             filter_params=filter_params,
             current_period=current_period,
-        )
-    )
+            toolbar=toolbar,
+        ),
+    ]
 
-    return layout
 
-
-def _queue_filter_form(
+def _build_queue_toolbar(
     filter_params: dict[str, str],
     current_period: str,
     filter_options: dict[str, Any],
@@ -3508,7 +3548,6 @@ def _queue_filter_form(
     sort: str = "received_at",
     order: str = "desc",
 ) -> dict[str, Any]:
-    """Build a filter_form block for the queue page."""
     case_type_options: list[dict[str, str]] = []
     for ct in filter_options.get("case_types", []):
         case_type_options.append(
@@ -3517,11 +3556,8 @@ def _queue_filter_form(
 
     priority_options: list[dict[str, str]] = []
     for pr in filter_options.get("priorities", []):
-        priority_options.append(
-            {"value": pr, "label": t(pr.title(), locale)}
-        )
+        priority_options.append({"value": pr, "label": t(pr.title(), locale)})
 
-    # bitrix_status isn't embedded in classified events — use allowlist as fallback
     raw_bitrix_statuses = filter_options.get("bitrix_statuses", [])
     if not raw_bitrix_statuses:
         raw_bitrix_statuses = list(ALLOWED_BITRIX_STATUSES)
@@ -3531,42 +3567,13 @@ def _queue_filter_form(
             {"value": bs, "label": bs.replace("_", " ").title()}
         )
 
-    fields: list[dict[str, Any]] = [
-        {
-            "type": "date_range",
-            "name": "date",
-            "label": t("Date range", locale),
-            "from_value": filter_params.get("date_from", ""),
-            "to_value": filter_params.get("date_to", ""),
-            "from_label": t("From", locale),
-            "to_label": t("To", locale),
-        },
-        {
-            "type": "text",
-            "name": "q",
-            "label": t("Search", locale),
-            "value": filter_params.get("q", ""),
-            "placeholder": t("Search by sender or subject...", locale),
-        },
-    ]
-
     def _make_checkboxes(
         param_name: str,
         label: str,
         options: list[dict[str, str]],
-        filter_params: dict[str, str],
-        current_period: str,
-        locale: str,
     ) -> dict[str, Any]:
-        """Build a checkboxes field with toggle hrefs and open state."""
         current_raw = filter_params.get(param_name, "")
         selected = {v.strip() for v in current_raw.split(",") if v.strip()}
-
-        # Track which dropdowns should stay open across page reloads
-        open_raw = filter_params.get("open_dropdowns", "")
-        open_set = {v.strip() for v in open_raw.split(",") if v.strip()}
-        is_open = param_name in open_set
-
         choices: list[dict[str, Any]] = []
         for opt in options:
             val = opt["value"]
@@ -3575,78 +3582,81 @@ def _queue_filter_form(
                 new_set = selected - {val}
             else:
                 new_set = selected | {val}
-
             new_val = ",".join(sorted(new_set))
             toggle_params = dict(filter_params)
             if new_val:
                 toggle_params[param_name] = new_val
             elif param_name in toggle_params:
                 del toggle_params[param_name]
-
-            # Keep only the current dropdown open (not all previously opened ones)
-            toggle_params["open_dropdowns"] = param_name
-
             toggle_href = build_rop_url(
-                tab="queue", period=current_period, lang=locale, run_id=run_id,
-                page=page, page_size=page_size, sort=sort, order=order,
+                tab="queue",
+                period=current_period,
+                lang=locale,
+                run_id=run_id,
+                page=page,
+                page_size=page_size,
+                sort=sort,
+                order=order,
                 filter_params=toggle_params,
             )
-
-            choices.append({
-                "value": val,
-                "label": opt["label"],
-                "checked": checked,
-                "toggle_href": toggle_href,
-            })
-
+            choices.append(
+                {
+                    "value": val,
+                    "label": opt["label"],
+                    "checked": checked,
+                    "toggle_href": toggle_href,
+                }
+            )
         return {
             "type": "checkboxes",
             "name": param_name,
             "label": label,
             "choices": choices,
             "selected_count": len(selected),
-            "open": is_open,
         }
+
+    fields: list[dict[str, Any]] = [
+        {
+            "type": "date_range",
+            "name": "date",
+            "label": "",
+            "from_value": filter_params.get("date_from", ""),
+            "to_value": filter_params.get("date_to", ""),
+            "from_label": t("From", locale),
+            "to_label": t("To", locale),
+        },
+        {
+            "type": "text",
+            "name": "q",
+            "label": "",
+            "value": filter_params.get("q", ""),
+            "placeholder": t("Search by sender or subject...", locale),
+        },
+    ]
 
     if case_type_options:
         fields.append(
             _make_checkboxes(
-                "case_type",
-                t("Classification", locale),
-                case_type_options,
-                filter_params,
-                current_period,
-                locale,
+                "case_type", t("Classification", locale), case_type_options
             )
         )
-
     if priority_options:
         fields.append(
-            _make_checkboxes(
-                "priority",
-                t("Priority", locale),
-                priority_options,
-                filter_params,
-                current_period,
-                locale,
-            )
+            _make_checkboxes("priority", t("Priority", locale), priority_options)
         )
-
     if bitrix_status_options:
         fields.append(
             _make_checkboxes(
-                "bitrix_status",
-                t("Bitrix status", locale),
-                bitrix_status_options,
-                filter_params,
-                current_period,
-                locale,
+                "bitrix_status", t("Bitrix status", locale), bitrix_status_options
             )
         )
 
-    # Build column toggle links
     current_columns = filter_params.get("columns", "")
-    selected_set = {k.strip() for k in current_columns.split(",") if k.strip()} if current_columns else set()
+    selected_set = (
+        {k.strip() for k in current_columns.split(",") if k.strip()}
+        if current_columns
+        else set()
+    )
 
     all_columns = [
         ("priority", "Priority"),
@@ -3657,7 +3667,6 @@ def _queue_filter_form(
         ("bitrix_status", "Bitrix status"),
     ]
 
-    # If no selection, all columns are shown
     if not selected_set:
         selected_set = {key for key, _ in all_columns}
 
@@ -3668,43 +3677,32 @@ def _queue_filter_form(
             new_set = selected_set - {key}
         else:
             new_set = selected_set | {key}
-
         new_columns_str = ",".join(sorted(new_set))
         toggle_params = dict(filter_params)
         if new_columns_str and new_columns_str != ",".join(k for k, _ in all_columns):
             toggle_params["columns"] = new_columns_str
         elif "columns" in toggle_params:
             del toggle_params["columns"]
-
-        # Build href preserving all params + keep dropdown open
         toggle_href = build_rop_url(
-            tab="queue", period=current_period, lang=locale, run_id=run_id,
-            page=page, page_size=page_size, sort=sort, order=order,
-            filter_params=toggle_params, extra={"columns_open": "1"},
+            tab="queue",
+            period=current_period,
+            lang=locale,
+            run_id=run_id,
+            page=page,
+            page_size=page_size,
+            sort=sort,
+            order=order,
+            filter_params=toggle_params,
+        )
+        column_toggles.append(
+            {
+                "key": key,
+                "label": t(label, locale),
+                "visible": visible,
+                "toggle_href": toggle_href,
+            }
         )
 
-        column_toggles.append({
-            "key": key,
-            "label": t(label, locale),
-            "visible": visible,
-            "toggle_href": toggle_href,
-        })
-
-    columns_open = bool(filter_params.get("columns_open", False))
-
-    # Build toggle href for opening/closing the columns dropdown
-    toggle_params = dict(filter_params)
-    if columns_open:
-        toggle_params.pop("columns_open", None)
-    else:
-        toggle_params["columns_open"] = "1"
-    columns_toggle_href = build_rop_url(
-        tab="queue", period=current_period, lang=locale, run_id=run_id,
-        page=page, page_size=page_size, sort=sort, order=order,
-        filter_params=toggle_params,
-    )
-
-    # Hidden fields to preserve tab, period, locale across GET submission
     hidden: dict[str, str] = {"tab": "queue"}
     if run_id:
         hidden["run_id"] = run_id
@@ -3719,27 +3717,25 @@ def _queue_filter_form(
     if sort != "received_at" or order != "desc":
         hidden["sort"] = sort
         hidden["order"] = order
+    for key in ("case_type", "priority", "bitrix_status", "columns"):
+        val = filter_params.get(key, "")
+        if val:
+            hidden[key] = val
 
-    # Reset link — clears all filter params
     reset_href = build_rop_url(
-        tab="queue", run_id=run_id, period=current_period, lang=locale,
-        page=page, page_size=page_size, sort=sort, order=order,
+        tab="queue",
+        run_id=run_id,
+        period=current_period,
+        lang=locale,
     )
 
     return {
-        "type": "filter_form",
-        "size": "XL",
-        "title": t("Filters", locale),
-        "hidden": hidden,
         "fields": fields,
+        "hidden": hidden,
         "column_toggles": column_toggles,
-        "columns_open": columns_open,
-        "columns_toggle_href": columns_toggle_href,
-        "actions": {
-            "reset": {
-                "label": t("Reset", locale),
-                "href": reset_href,
-            },
+        "reset": {
+            "label": t("Reset", locale),
+            "href": reset_href,
         },
     }
 
@@ -3757,14 +3753,16 @@ def _sort_href(
     locale: str = "en",
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> str:
-    """Build a sort href preserving current filter params."""
     if new_sort == current_sort:
         new_order = "asc" if current_order == "desc" else "desc"
     else:
         new_order = "desc"
     return build_rop_url(
         tab="queue",
-        run_id=run_id, period=period, lang=locale, page_size=page_size,
+        run_id=run_id,
+        period=period,
+        lang=locale,
+        page_size=page_size,
         page=page,
         sort=new_sort,
         order=new_order,
@@ -3785,11 +3783,14 @@ def _queue_table(
     order: str = "desc",
     filter_params: dict[str, str] | None = None,
     current_period: str = "",
+    toolbar: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if filter_params is None:
         filter_params = {}
 
-    base_href = _rop_href(tab="queue", period=current_period, locale=locale, run_id=run_id)
+    base_href = _rop_href(
+        tab="queue", period=current_period, locale=locale, run_id=run_id
+    )
 
     rows = []
     for item in rows_source:
@@ -3798,13 +3799,24 @@ def _queue_table(
         event_id = str(item.get("event_id", ""))
         priority = item.get("bot_priority") or item.get("priority", "n/a")
         bitrix_status = item.get("bitrix_status", "unreconciled")
-        raw_date = item.get("date") or item.get("received_at") or item.get("event_date", "")
-        date_display = _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
+        raw_date = (
+            item.get("date") or item.get("received_at") or item.get("event_date", "")
+        )
+        date_display = (
+            _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
+        )
         detail_href = item.get("detail_href")
         if event_id and run_id:
             detail_href = _rop_event_detail_href(
-                event_id, run_id, locale, current_period, filter_params,
-                page, page_size, sort, order,
+                event_id,
+                run_id,
+                locale,
+                current_period,
+                filter_params,
+                page,
+                page_size,
+                sort,
+                order,
             )
         rows.append(
             {
@@ -3838,7 +3850,18 @@ def _queue_table(
             "label": t("Priority", locale),
             "cell": "badge",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "priority", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "priority",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "priority",
             "sort_direction": order if sort == "priority" else "",
         },
@@ -3847,7 +3870,18 @@ def _queue_table(
             "label": t("Sender", locale),
             "cell": "avatar_text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "sender", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "sender",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "sender",
             "sort_direction": order if sort == "sender" else "",
         },
@@ -3856,7 +3890,18 @@ def _queue_table(
             "label": t("Subject", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "subject", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "subject",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "subject",
             "sort_direction": order if sort == "subject" else "",
         },
@@ -3865,7 +3910,18 @@ def _queue_table(
             "label": t("Date", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "received_at", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "received_at",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "received_at",
             "sort_direction": order if sort == "received_at" else "",
         },
@@ -3874,7 +3930,18 @@ def _queue_table(
             "label": t("Classification", locale),
             "cell": "text",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "case_type", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "case_type",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "case_type",
             "sort_direction": order if sort == "case_type" else "",
         },
@@ -3883,16 +3950,25 @@ def _queue_table(
             "label": t("Bitrix status", locale),
             "cell": "status",
             "sortable": True,
-            "sort_href": _sort_href(base_href, sort, "bitrix_status", order, filter_params, page, run_id=run_id, period=current_period, locale=locale, page_size=page_size),
+            "sort_href": _sort_href(
+                base_href,
+                sort,
+                "bitrix_status",
+                order,
+                filter_params,
+                page,
+                run_id=run_id,
+                period=current_period,
+                locale=locale,
+                page_size=page_size,
+            ),
             "sort_active": sort == "bitrix_status",
             "sort_direction": order if sort == "bitrix_status" else "",
         },
     ]
 
     # Build pagination
-    pagination_label = t(
-        "Showing {start}–{end} of {total}", locale
-    ).format(
+    pagination_label = t("Showing {start}–{end} of {total}", locale).format(
         start=(page - 1) * page_size + 1 if total_count > 0 else 0,
         end=min(page * page_size, total_count),
         total=total_count,
@@ -3901,8 +3977,14 @@ def _queue_table(
     pagination_pages: list[dict[str, Any]] = []
     for p in range(1, total_pages + 1):
         href = build_rop_url(
-            tab="queue", period=current_period, lang=locale, run_id=run_id,
-            page=p, page_size=page_size, sort=sort, order=order,
+            tab="queue",
+            period=current_period,
+            lang=locale,
+            run_id=run_id,
+            page=p,
+            page_size=page_size,
+            sort=sort,
+            order=order,
             filter_params=filter_params,
         )
         pagination_pages.append(
@@ -3916,7 +3998,9 @@ def _queue_table(
     # Filter columns based on `columns` param (comma-separated list of keys to show)
     selected_columns_str = filter_params.get("columns", "")
     if selected_columns_str:
-        selected_keys = {k.strip() for k in selected_columns_str.split(",") if k.strip()}
+        selected_keys = {
+            k.strip() for k in selected_columns_str.split(",") if k.strip()
+        }
         columns = [c for c in columns if c["key"] in selected_keys]
 
     # Add detail column if any row has a detail link
@@ -3936,7 +4020,7 @@ def _queue_table(
                     "href": row["detail_href"],
                 }
 
-    return {
+    result: dict[str, Any] = {
         "type": "data_table",
         "size": "XL",
         "title": title,
@@ -3949,6 +4033,9 @@ def _queue_table(
             "pages": pagination_pages,
         },
     }
+    if toolbar:
+        result["toolbar"] = toolbar
+    return result
 
 
 def _empty_queue_table(
@@ -3960,8 +4047,8 @@ def _empty_queue_table(
     page_size: int = DEFAULT_PAGE_SIZE,
     sort: str = "received_at",
     order: str = "desc",
+    toolbar: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build an empty data table block for the queue page when no events exist."""
     columns = [
         {"key": "priority", "label": t("Priority", locale), "cell": "badge"},
         {"key": "client", "label": t("Sender", locale), "cell": "avatar_text"},
@@ -3973,12 +4060,14 @@ def _empty_queue_table(
     if filter_params is None:
         filter_params = {}
     selected_columns = {
-        key.strip() for key in filter_params.get("columns", "").split(",") if key.strip()
+        key.strip()
+        for key in filter_params.get("columns", "").split(",")
+        if key.strip()
     }
     if selected_columns:
         columns = [column for column in columns if column["key"] in selected_columns]
     _, pagination = paginate_items([], page=page, page_size=page_size)
-    return {
+    result: dict[str, Any] = {
         "type": "data_table",
         "size": "XL",
         "title": t("ROP Work Queue", locale),
@@ -3992,9 +4081,14 @@ def _empty_queue_table(
                 {
                     "label": "1",
                     "href": build_rop_url(
-                        tab="queue", run_id=run_id, period=current_period,
-                        lang=locale, page=pagination["page"], page_size=pagination["page_size"],
-                        sort=sort, order=order,
+                        tab="queue",
+                        run_id=run_id,
+                        period=current_period,
+                        lang=locale,
+                        page=pagination["page"],
+                        page_size=pagination["page_size"],
+                        sort=sort,
+                        order=order,
                         filter_params=filter_params,
                     ),
                     "active": True,
@@ -4002,6 +4096,9 @@ def _empty_queue_table(
             ],
         },
     }
+    if toolbar:
+        result["toolbar"] = toolbar
+    return result
 
 
 def _build_rop_sources_layout(
@@ -4094,7 +4191,10 @@ def _build_rop_attachments_layout(
         },
         {"label": t("Refused", locale), "value": att_summary.get("refused_count", 0)},
         {"label": t("Blocked", locale), "value": att_summary.get("blocked_count", 0)},
-        {"label": t("Unsupported", locale), "value": att_summary.get("unsupported_count", 0)},
+        {
+            "label": t("Unsupported", locale),
+            "value": att_summary.get("unsupported_count", 0),
+        },
         {
             "label": t("Extraction Errors", locale),
             "value": att_summary.get("extraction_error_count", 0),
@@ -4186,7 +4286,10 @@ def _build_rop_bitrix_layout(
                     {
                         "label": t("Not reconciled", locale),
                         "value": (
-                            t("Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.", locale)
+                            t(
+                                "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.",
+                                locale,
+                            )
                         ),
                         "status": "read-only",
                     }
@@ -4275,7 +4378,12 @@ def _build_rop_bitrix_layout(
                 "type": "status_table",
                 "size": "XL",
                 "title": title,
-                "columns": [t("Event ID", locale), t("Case Type", locale), t("Priority", locale), t("Bitrix Status", locale)],
+                "columns": [
+                    t("Event ID", locale),
+                    t("Case Type", locale),
+                    t("Priority", locale),
+                    t("Bitrix Status", locale),
+                ],
                 "rows": rows,
             }
         )
@@ -4557,9 +4665,7 @@ def _build_rop_recommendations_layout(
             "ai_used": t("Yes", locale) if item.get("ai_used") else t("No", locale),
             "safe": t("Yes", locale) if safe_to_execute else t("No", locale),
             "confirm": (
-                t("Yes", locale)
-                if requires_human_confirmation
-                else t("No", locale)
+                t("Yes", locale) if requires_human_confirmation else t("No", locale)
             ),
             "reason": str(item.get("reason", ""))[:140],
         }
@@ -4651,10 +4757,22 @@ def _build_rop_ai_assist_layout(
         adj_summary = {}
     if isinstance(adj_summary, dict) and adj_summary.get("available"):
         adj_kpi = [
-            {"label": t("Eligible events", locale), "value": _int(adj_summary.get("eligible_count", 0))},
-            {"label": t("AI used", locale), "value": _int(adj_summary.get("used_count", 0))},
-            {"label": t("Degraded", locale), "value": _int(adj_summary.get("degraded_count", 0))},
-            {"label": t("Total events", locale), "value": _int(adj_summary.get("total_events", 0))},
+            {
+                "label": t("Eligible events", locale),
+                "value": _int(adj_summary.get("eligible_count", 0)),
+            },
+            {
+                "label": t("AI used", locale),
+                "value": _int(adj_summary.get("used_count", 0)),
+            },
+            {
+                "label": t("Degraded", locale),
+                "value": _int(adj_summary.get("degraded_count", 0)),
+            },
+            {
+                "label": t("Total events", locale),
+                "value": _int(adj_summary.get("total_events", 0)),
+            },
         ]
         layout.append(
             {
@@ -4669,7 +4787,10 @@ def _build_rop_ai_assist_layout(
         adj_status_counts = adj_summary.get("status_counts", {})
         if isinstance(adj_status_counts, dict) and adj_status_counts:
             status_items = [
-                {"label": t(str(key).replace("_", " ").title(), locale), "value": _int(val)}
+                {
+                    "label": t(str(key).replace("_", " ").title(), locale),
+                    "value": _int(val),
+                }
                 for key, val in adj_status_counts.items()
                 if _int(val) > 0
             ]
@@ -4680,14 +4801,12 @@ def _build_rop_ai_assist_layout(
                         "size": "XL",
                         "title": t("AI Adjudicator Status Breakdown", locale),
                         "items": status_items,
-                }
-            )
+                    }
+                )
 
     final_decisions = data.get("final_decisions", {})
     final_summary = (
-        final_decisions.get("summary", {})
-        if isinstance(final_decisions, dict)
-        else {}
+        final_decisions.get("summary", {}) if isinstance(final_decisions, dict) else {}
     )
     if isinstance(final_summary, dict) and final_summary.get("total_events", 0) > 0:
         decision_source_items = []
@@ -4702,8 +4821,14 @@ def _build_rop_ai_assist_layout(
                         }
                     )
         final_kpi = [
-            {"label": t("Total events", locale), "value": _int(final_summary.get("total_events", 0))},
-            {"label": t("Needs attention", locale), "value": _int(final_summary.get("attention_count", 0))},
+            {
+                "label": t("Total events", locale),
+                "value": _int(final_summary.get("total_events", 0)),
+            },
+            {
+                "label": t("Needs attention", locale),
+                "value": _int(final_summary.get("attention_count", 0)),
+            },
         ]
         if decision_source_items:
             final_kpi.extend(decision_source_items)
@@ -4719,24 +4844,28 @@ def _build_rop_ai_assist_layout(
         )
 
     status_counts = ai_summary.get("status_counts", {})
-    legacy_activity = bool(ai_events) or any(
-        _int(ai_summary.get(key, 0)) > 0
-        for key in (
-            "request_count",
-            "decision_count",
-            "result_count",
-            "ok_count",
-            "used_count",
-            "low_confidence_count",
-            "invalid_output_count",
-            "provider_unavailable_count",
-            "module_contract_unavailable_count",
-            "blocked_count",
-            "degraded_count",
+    legacy_activity = (
+        bool(ai_events)
+        or any(
+            _int(ai_summary.get(key, 0)) > 0
+            for key in (
+                "request_count",
+                "decision_count",
+                "result_count",
+                "ok_count",
+                "used_count",
+                "low_confidence_count",
+                "invalid_output_count",
+                "provider_unavailable_count",
+                "module_contract_unavailable_count",
+                "blocked_count",
+                "degraded_count",
+            )
         )
-    ) or (
-        isinstance(status_counts, dict)
-        and any(_int(value) > 0 for value in status_counts.values())
+        or (
+            isinstance(status_counts, dict)
+            and any(_int(value) > 0 for value in status_counts.values())
+        )
     )
     if not legacy_activity:
         if not layout:
@@ -4766,12 +4895,30 @@ def _build_rop_ai_assist_layout(
             "columns": 3,
             "title": t("AI Assist Summary", locale),
             "items": [
-                {"label": t("Eligible events", locale), "value": ai_summary.get("eligible_count", 0)},
-                {"label": t("Requests made", locale), "value": ai_summary.get("request_count", 0)},
-                {"label": t("Results OK", locale), "value": ai_summary.get("ok_count", 0)},
-                {"label": t("AI used", locale), "value": ai_summary.get("used_count", 0)},
-                {"label": t("Low confidence", locale), "value": ai_summary.get("low_confidence_count", 0)},
-                {"label": t("Degraded", locale), "value": ai_summary.get("degraded_count", 0)},
+                {
+                    "label": t("Eligible events", locale),
+                    "value": ai_summary.get("eligible_count", 0),
+                },
+                {
+                    "label": t("Requests made", locale),
+                    "value": ai_summary.get("request_count", 0),
+                },
+                {
+                    "label": t("Results OK", locale),
+                    "value": ai_summary.get("ok_count", 0),
+                },
+                {
+                    "label": t("AI used", locale),
+                    "value": ai_summary.get("used_count", 0),
+                },
+                {
+                    "label": t("Low confidence", locale),
+                    "value": ai_summary.get("low_confidence_count", 0),
+                },
+                {
+                    "label": t("Degraded", locale),
+                    "value": ai_summary.get("degraded_count", 0),
+                },
             ],
         }
     )
@@ -4818,10 +4965,14 @@ def _build_rop_ai_assist_layout(
                 "size": "XL",
                 "title": t("AI Assist Events", locale),
                 "columns": [
-                    t("Event ID", locale), t("Source", locale),
-                    t("Sender", locale), t("Subject", locale),
-                    t("Case type", locale), t("AI status", locale),
-                    t("AI used", locale), t("Final type", locale),
+                    t("Event ID", locale),
+                    t("Source", locale),
+                    t("Sender", locale),
+                    t("Subject", locale),
+                    t("Case type", locale),
+                    t("AI status", locale),
+                    t("AI used", locale),
+                    t("Final type", locale),
                     t("Review reason", locale),
                 ],
                 "rows": event_rows,

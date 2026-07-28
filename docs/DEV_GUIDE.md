@@ -143,19 +143,26 @@ Web console читает только existing artifacts из `storage/` и не
 Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
 `./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
 
-> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через generic BeeUI Tabler Datepicker форму. Период, выбранный на Overview, не влияет на данные в Queue.
+> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через embedded toolbar. Период, выбранный на Overview, не влияет на данные в Queue.
 
-#### Queue tab: filters, sort, pagination
+#### Queue tab: toolbar, filters, sort, pagination
 
-Queue tab поддерживает server-side GET фильтрацию, multi-select dropdowns, сортировку и пагинацию.
+Queue tab отображается как один `data_table` с functional `toolbar` (BeeUI Iteration 13.11). Отдельный `filter_form` больше не используется. Toolbar содержит:
+
+- date range с календарём (visible label отсутствует, accessible name сохранён);
+- поиск по `q` (visible label отсутствует, accessible name через placeholder);
+- Classification, Priority, Bitrix Status — dropdown кнопки;
+- column chooser через ellipsis action;
+- Reset без Apply (datepicker auto-submit).
 
 Параметры запроса:
 
 - Filter params: `q`, `sender`, `subject`, `case_type`/`classification`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`
-- Column params: `columns` (comma-separated keys), `columns_open`
-- Dropdown state: `open_dropdowns` (comma-separated param names)
+- Column params: `columns` (comma-separated keys)
 - Pagination: `page` (>=1), `page_size` (25/50/100), `sort`, `order` (asc/desc)
 - Canonical params: `run_id`, `tab`, `period`, `lang`
+
+Активные `case_type`, `priority`, `bitrix_status` и `columns` сохраняются через `toolbar.hidden` (hidden GET inputs), чтобы поиск или дата не сбрасывали dropdown filters и column visibility. `columns_open` и `open_dropdowns` поддерживаются только в legacy accepted inputs adapter contract для обратной совместимости.
 
 Все URL формируются через единый `build_rop_url()` из `src/beeagent_module/interfaces/ui/url_builder.py`, использующий `urllib.parse.urlencode` для корректного экранирования специальных символов.
 
