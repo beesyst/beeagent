@@ -2932,7 +2932,6 @@ security-sensitive
     - bitrix_status;
     - attention_reason;
     - recommended_action;
-
 - сортировать очередь внимания в следующем порядке:
   1. высокий приоритет;
   2. событие не найдено в Bitrix;
@@ -2953,26 +2952,17 @@ security-sensitive
 ```
 
 - сохранить существующие `/api/bitrix/rop/widget*` routes обратно совместимыми;
-
 - использовать server-rendered HTML без отдельного frontend приложения;
-
 - проверять Bitrix launch context на стороне BeeAgent;
-
 - не передавать внутренний BeeAgent widget token через URL, HTML или JavaScript;
-
 - разрешать iframe embedding только для настроенного Bitrix portal;
-
 - добавить для embedded routes:
   - route-specific CSP `frame-ancestors`;
   - `Cache-Control: no-store`;
   - `Referrer-Policy: no-referrer`;
-
 - ограничить вывод данных безопасным allowlist;
-
 - документировать запуск BeeAgent по HTTPS и одноразовое добавление двух placements в Bitrix;
-
 - placement setup не должен выполняться автоматически при каждом запуске `./start.sh web`;
-
 - добавить tests и обновить документацию.
 
 **Разрешённые данные:**
