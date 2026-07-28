@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.47.0...beeagent-v0.48.0) (2026-07-28)
+
+
+### Features
+
+* **ui:** adopt canonical ROP Queue table toolbar ([#161](https://github.com/beesyst/beeagent/issues/161)) ([f6b7694](https://github.com/beesyst/beeagent/commit/f6b7694381a4276573b3e832f22d33c92cff16e4))
+
 ## [0.47.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.46.0...beeagent-v0.47.0) (2026-07-27)
 
 
