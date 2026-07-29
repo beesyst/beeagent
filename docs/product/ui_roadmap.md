@@ -310,8 +310,8 @@ secret values
 Для текущего BeeAgent UI track это означает:
 
 - BeeUI migration, auth boundary, final-decision UX и canonical Queue baseline выполнены в UI-4–UI-8.3;
-- следующий product increment — UI-8.4 embedded Bitrix ROP widgets;
-- после UI-8.4 удалить legacy web в UI-9 после подтверждения parity;
+- следующий product increment — UI-8.5 embedded Bitrix ROP widgets;
+- после UI-8.5 удалить legacy web в UI-9 после подтверждения parity;
 - затем завершить event-level attachment и Bitrix reconciliation UX;
 - затем стабилизировать API contract;
 - затем добавлять bounded operator controls поверх существующей auth boundary;
@@ -2670,7 +2670,93 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - product UI documentation is updated;
 - unrelated existing `uv.lock` changes are not overwritten or mixed into the implementation.
 
-### Итерация UI-8.4 — Embedded Bitrix ROP widgets
+### Итерация UI-8.4 — Locale-aware ROP decision explanations
+
+**Статус:** PLANNED
+
+#### Goal
+
+Сделать причины классификации, решения AI арбитра и итогового внимания детерминированно локализуемыми в RU/EN без дополнительных AI-вызовов и без хранения отдельных AI-объяснений для каждого языка.
+
+Итерация выполняется после UI-8.3 и до UI-8.5, поскольку embedded Bitrix widgets также будут использовать `attention_reason`.
+
+#### Scope
+
+- использовать существующий `ClassificationReasonCode` как источник локализуемой причины классификации;
+- расширить AI adjudicator output стабильным `reason_code` и bounded `evidence_codes`;
+- сохранить raw AI reason только как audit/backward-compatible evidence;
+- расширить final decision projection полями `attention_reason_code` и `attention_evidence_codes`;
+- добавить BeeAgent-owned RU/EN reason catalog;
+- добавить locale-aware display fields в Event Detail read-model и API;
+- использовать текущий `lang` для формирования display values;
+- обеспечить backward-compatible чтение старых adjudicator и final-decision artifacts;
+- показывать локализованный legacy fallback без provider calls и без изменения artifacts;
+- сохранить BeeUI generic renderer без ROP-specific semantics;
+- change level: `security-sensitive`;
+- обновить UI contract documentation и tests.
+
+#### Excluded
+
+- второй AI-вызов для перевода или генерации другого языка;
+- runtime translation из GET routes;
+- отдельные RU/EN AI decisions;
+- изменение classification taxonomy или rules в `beeagent-rop`;
+- ROP-specific localization в BeeUI;
+- новые config keys;
+- dependency или lockfile changes;
+- CRM/Bitrix write-back;
+- mailbox actions;
+- изменение auth или authority policy;
+- перевод всех исторических raw artifact previews.
+
+#### Deliverable
+
+Один ROP run содержит единый набор semantic reason codes. Event Detail показывает `Причина`, `Причина AI арбитра` и `Причина внимания` на выбранном языке интерфейса, сохраняя raw evidence и backward compatibility.
+
+#### Acceptance criteria
+
+- `lang=ru` показывает три основные причины на русском языке;
+- `lang=en` показывает те же semantic reasons на английском языке;
+- переключение языка не вызывает AI provider, mailbox, Bitrix или module execution;
+- один eligible event по-прежнему вызывает adjudicator provider не более одного раза;
+- новые adjudicator artifacts содержат validated reason/evidence codes;
+- новые final-decision artifacts содержат structured attention reason fields;
+- старые artifacts продолжают открываться без mutation и crash;
+- неизвестные или legacy reasons дают explicit localized fallback и warning;
+- raw AI reason не является primary HTML display value;
+- API сохраняет raw fields и добавляет codes и localized display fields;
+- BeeUI и `beeagent-rop` не меняются.
+
+#### Checks
+
+- targeted adjudicator schema and validation tests;
+- catalog coverage для всех текущих `ClassificationReasonCode`;
+- RU/EN Event Detail HTML и API tests;
+- old/new/malformed artifact compatibility tests;
+- single-provider-call regression test;
+- unknown-code и legacy fallback tests;
+- HTML escaping и bounded evidence tests;
+- GET no-mutation checks;
+- route smoke для Event Detail;
+- full `uv run pytest -q`;
+- `./start.sh doctor`;
+- route listing;
+- SAST и DAST-style locale/artifact misuse review.
+
+#### DoD
+
+- structured reason contract реализован в `beeagent`;
+- все три Event Detail reason values следуют выбранному locale;
+- дополнительные AI token costs для локализации отсутствуют;
+- UI-8.5 может использовать structured `attention_reason_code`;
+- old runs остаются читаемыми;
+- GET routes остаются read-only;
+- secrets, raw email и attachment content не раскрываются;
+- dependencies и lockfile не изменены;
+- `pyproject.toml.version` не изменён;
+- tests и documentation обновлены.
+
+### Итерация UI-8.5 — Embedded Bitrix ROP widgets
 
 **Статус:** PLANNED
 
@@ -2910,7 +2996,7 @@ BeeAgent предоставляет два безопасных read-only HTML-�
 
 #### Почему это нужно
 
-После UI-4–UI-8.4 BeeAgent имеет BeeUI-backed operator console, auth boundary, final-decision read-model, canonical Queue UX, Event Detail, artifact browser, read-only API и embedded Bitrix widget routes.
+После UI-4–UI-8.5 BeeAgent имеет BeeUI-backed operator console, auth boundary, final-decision read-model, canonical Queue UX, Event Detail, artifact browser, read-only API и embedded Bitrix widget routes.
 
 Старый package-local web shell:
 
@@ -2931,7 +3017,7 @@ src/beeagent_module/web
 
 #### Depends on
 
-- UI-8.4 — current BeeUI-backed Web Console and embedded widget baseline;
+- UI-8.5 — current BeeUI-backed Web Console and embedded widget baseline;
 - UI-7 — auth boundary;
 - one successful ROP run smoke;
 - one web smoke on real or synthetic ROP artifacts;
@@ -3142,7 +3228,7 @@ src/beeagent_module/
 
 - UI-8 — final decision and Bitrix widget payload baseline;
 - UI-8.3 — current canonical Queue and Event Detail baseline;
-- UI-8.4 — embedded Bitrix widget/read-model baseline;
+- UI-8.5 — embedded Bitrix widget/read-model baseline;
 - UI-9 — BeeUI-only architecture;
 - `BeeAgent It26 — Bitrix read-only reconciliation artifacts`.
 
@@ -3215,7 +3301,7 @@ ROP dashboard показывает CRM read-only reconciliation поверх art
 
 #### Depends on
 
-- UI-8.4 — current HTML/API/widget route baseline;
+- UI-8.5 — current HTML/API/widget route baseline;
 - UI-9 — BeeUI-only route ownership;
 - UI-10 and UI-11 must be either completed or explicitly excluded from v1 before API freeze.
 
@@ -3588,7 +3674,7 @@ Do not add BeeAgent- or ROP-specific behavior to generic BeeUI components.
 - один запуск `.agents/prompts/02-implementation-tests.md` обслуживает только один Issue и один implementation target;
 - не смешивать BeeUI migration, auth, dashboard-specific features, controls и frontend split в одной задаче;
 - текущая последовательность future work:
-  - UI-8.4 embedded Bitrix widgets;
+  - UI-8.5 embedded Bitrix widgets;
   - UI-9 legacy web removal;
   - UI-10 attachment event-level integration;
   - UI-11 Bitrix reconciliation detail and filtering;
