@@ -94,6 +94,24 @@ ROADMAP не дублирует полные правила процесса и 
 - **DONE** — завершено
 - **DONE (partial)** — завершено частично, есть осознанные ограничения
 
+## Roadmap item format
+
+Исторические итерации со статусом `DONE` сохраняют существующую структуру и не переписываются задним числом только ради форматирования.
+
+Новые итерации и materially refined незавершённые итерации используют компактную структуру:
+
+- `Goal`
+- `Scope`
+- `Excluded`
+- `Deliverable`
+- `Acceptance criteria`
+- `Checks`
+- `DoD`
+
+ROADMAP фиксирует iteration-level contract.
+
+Подробные implementation requirements, конкретные файлы, полные payload examples, расширенные test matrices и verification evidence принадлежат Issue, implementation handoff и PR.
+
 ## Global Definition of Done
 
 Итерация считается завершённой, если:
@@ -124,22 +142,22 @@ ROADMAP не дублирует полные правила процесса и 
 
 ## Product phases
 
-| Phase                                     | Status  | What it means                                                                                                                      |
-| ----------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase A — Demo skeleton**               | DONE    | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.        |
-| **Phase B — Reusable orchestration core** | DONE    | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.          |
-| **Phase C — Module platform**             | DONE    | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.   |
-| **Phase D — First real client delivery**  | PLANNED | Подключается первый реальный доменный модуль (`beeagent-rop`), делается Discovery → MVP → Pilot flow под клиента.                  |
-| **Phase E — Operator / product shell**    | PLANNED | Появляются operator-facing и client-facing controlled interfaces: summaries, status, bounded actions, stable backend contracts.    |
-| **Phase F — Multi-module platform**       | FUTURE  | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts. |
+| Phase                                     | Status      | What it means                                                                                                                                                                                |
+| ----------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase A — Demo skeleton**               | DONE        | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.                                                                  |
+| **Phase B — Reusable orchestration core** | DONE        | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.                                                                    |
+| **Phase C — Module platform**             | DONE        | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.                                                             |
+| **Phase D — First real client delivery**  | DONE        | Первый реальный доменный модуль (`beeagent-rop`) интегрирован; реализованы controlled source flow, operator artifacts, read-only Bitrix evidence и bounded AI adjudication для ROP MVP.      |
+| **Phase E — Operator / product shell**    | IN PROGRESS | Read-only BeeUI-backed operator shell, auth boundary, ROP dashboard и widget payload baseline реализованы; stable API, legacy web removal и bounded operator controls остаются в UI roadmap. |
+| **Phase F — Multi-module platform**       | FUTURE      | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts.                                                           |
 
 ## Stages
 
 - **Этап 1 (Итерации 0–4):** pre-MVP каркас + запуск + transport + mock/demo flow.
 - **Этап 2 (Итерации 5–10):** reusable core: cases/adapters/scheduler/observability/multi-agent + quiz + explainable recommendations.
 - **Этап 3 (Итерации 11–14):** module platform v0 (module contract, registry, context, artifact API, capability boundary).
-- **Этап 4 (Итерации 15–18):** интеграция первого реального доменного модуля (`beeagent-rop`) и client-ready orchestration flow.
-- **Этап 5 (ориентир):** operator/product shell v1.
+- **Этап 4 (Итерации 15–34):** интеграция первого реального доменного модуля (`beeagent-rop`) и развитие ROP flow до read-only customer-delivery MVP с source ingestion, artifacts, Bitrix evidence и bounded AI adjudication.
+- **Этап 5 (ориентир):** оставшиеся core-side operator/product contracts; подробное развитие Web Console и operator UI ведётся в `docs/product/ui_roadmap.md`.
 - **Этап 6 (ориентир):** multi-module scaling (`beescan`, `merch`, другие модули).
 
 ---
@@ -1021,7 +1039,7 @@ BeeAgent получает минимальный capability boundary v0: мод�
 
 ---
 
-## Этап 4 — First real client module integration (итерации 15–18)
+## Этап 4 — First real client module integration (итерации 15–34)
 
 ### Purpose of stage
 
@@ -1642,199 +1660,6 @@ Artifacts:
 - `rop.sources` остаётся source of truth для источников;
 - BeeAgent core не содержит ROP business rules;
 - artifacts создаются воспроизводимо и консистентны с логами;
-- secrets не попадают в logs/artifacts;
-- docs обновлены.
-- override `items_max` через `--items-max` без изменения `settings.yml`;
-- override `period` через `--period` без изменения `settings.yml`;
-- explicit `--run-id`;
-- terminal output:
-  - `run_id`;
-  - source id/type;
-  - loaded/classified/failed counts;
-  - module status;
-  - summary;
-  - artifact paths;
-- команда `summary`:
-  - читает `storage/runs/<run_id>/operator_summary.json`;
-  - выводит краткий readable summary;
-- команда `export-review`:
-  - читает `normalized_events.json`;
-  - читает `classified_events.json`;
-  - создаёт `rop_review_table.tsv`;
-- TSV columns для human review:
-  - `event_id`;
-  - `source_id`;
-  - `sender`;
-  - `subject`;
-  - `bot_case_type`;
-  - `bot_reason_code`;
-  - `bot_confidence`;
-  - `bot_is_fallback`;
-  - `human_case_type`;
-  - `should_rop_see`;
-  - `bitrix_status`;
-  - `notes`;
-  - `correct_action`;
-- degraded behavior:
-  - source not found;
-  - source disabled;
-  - no active source;
-  - missing mailbox credentials;
-  - mailbox unavailable;
-  - module missing;
-  - partial classification failure;
-  - missing run artifacts for `summary` / `export-review`;
-- docs update:
-  - `docs/ROADMAP.md`;
-  - `README.ru.md`;
-  - `docs/DEV_GUIDE.md`.
-
-**Не включено:**
-
-- Telegram requirement for ROP CLI;
-- Telegram UI changes, кроме сохранения существующего поведения;
-- web UI;
-- scheduler / listener / polling daemon;
-- Bitrix API;
-- 1C;
-- CRM write-back;
-- automatic task creation;
-- OCR;
-- attachment deep parsing;
-- AI classification;
-- ROP business rules в BeeAgent;
-- изменения classification logic в `beeagent-rop`;
-- multi-mailbox routing beyond existing `source_id`.
-
-#### Deliverable
-
-Оператор может выполнить ROP MVP flow без Telegram и без `test.py`:
-
-```bash
-./start.sh rop run \
-  --source-id hotline_mailbox \
-  --items-max 20 \
-  --run-id live-review-2026-05-15-welding-20 \
-  --period 2026-05
-```
-
-После запуска появляются стандартные artifacts:
-
-```text
-storage/runs/<run_id>/source_diagnostics.json
-storage/runs/<run_id>/intake_metadata.json
-storage/runs/<run_id>/normalized_events.json
-storage/runs/<run_id>/classified_events.json
-storage/runs/<run_id>/module-beeagent-rop/module_result.json
-storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json
-storage/runs/<run_id>/operator_summary.json
-```
-
-И отдельной командой можно получить TSV для human review:
-
-```bash
-./start.sh rop export-review \
-  --run-id live-review-2026-05-15-welding-20 \
-  --format tsv
-```
-
-Artifact:
-
-```text
-storage/runs/<run_id>/rop_review_table.tsv
-```
-
-#### Expected commands
-
-```bash
-./start.sh
-```
-
-Сохраняет текущее поведение: использует `run.mode` из `config/settings.yml`.
-
-```bash
-./start.sh telegram
-```
-
-Явно запускает Telegram transport.
-
-```bash
-./start.sh rop run \
-  --source-id hotline_mailbox \
-  --items-max 20 \
-  --run-id live-review-2026-05-15-welding-20 \
-  --period 2026-05
-```
-
-Запускает ROP source flow.
-
-```bash
-./start.sh rop summary \
-  --run-id live-review-2026-05-15-welding-20
-```
-
-Показывает summary по готовому run.
-
-```bash
-./start.sh rop export-review \
-  --run-id live-review-2026-05-15-welding-20 \
-  --format tsv
-```
-
-Создаёт review TSV.
-
-#### Artifacts
-
-- `storage/runs/<run_id>/source_diagnostics.json`
-- `storage/runs/<run_id>/intake_metadata.json`
-- `storage/runs/<run_id>/normalized_events.json`
-- `storage/runs/<run_id>/classified_events.json`
-- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`
-- `storage/runs/<run_id>/operator_summary.json`
-- `storage/runs/<run_id>/rop_review_table.tsv`
-- `logs/app.log`
-
-#### Checks
-
-- `uv run pytest -q`
-- targeted CLI tests:
-  - `./start.sh` backward compatibility;
-  - `./start.sh telegram`;
-  - `./start.sh rop run` with `json_batch`;
-  - `./start.sh rop summary`;
-  - `./start.sh rop export-review`;
-  - missing run id;
-  - missing artifacts;
-  - source not found;
-  - disabled source;
-  - missing mailbox credentials;
-
-- live smoke with `mailbox_readonly`, if credentials are available:
-  - `folder=welding`;
-  - `items_max=20`;
-
-- artifact inspection;
-- log verification;
-- secret leakage check;
-- no raw `.eml` artifacts;
-- no CRM/destructive mailbox actions;
-- SAST mindset review;
-- SCA only if dependencies changed.
-
-#### DoD
-
-- `test.py` больше не нужен для обычного ROP run;
-- ROP можно запустить через `./start.sh rop run`;
-- Telegram credentials не нужны для ROP CLI;
-- `run.mode: telegram` не мешает CLI override;
-- existing `./start.sh` behavior не сломан;
-- CLI использует existing `run_rop_batch_case(...)`, а не дублирует orchestration;
-- `rop.sources` остаётся source of truth для источников;
-- CLI overrides не создают второй source of truth;
-- BeeAgent core не содержит ROP business rules;
-- artifacts создаются воспроизводимо;
-- `rop_review_table.tsv` пригоден для human review / customer validation;
 - secrets не попадают в logs/artifacts;
 - docs обновлены.
 
@@ -8054,40 +7879,40 @@ no automatic CRM actions
 
 **Включено в BeeAgent**
 
-* OpenAI provider execution через BeeAgent-owned provider layer;
-* Responses API / structured JSON output;
-* config-driven AI adjudicator settings;
-* env/secret handling;
-* fail-fast validation when AI adjudicator is enabled;
-* bounded/sanitized AI request payload;
-* timeout/error/invalid JSON handling;
-* deterministic result preservation on provider failure;
-* AI result validation against allowed ROP taxonomy/config/contract;
-* `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`;
-* deterministic-vs-AI comparison fields in TSV;
-* AI evidence artifacts:
+- OpenAI provider execution через BeeAgent-owned provider layer;
+- Responses API / structured JSON output;
+- config-driven AI adjudicator settings;
+- env/secret handling;
+- fail-fast validation when AI adjudicator is enabled;
+- bounded/sanitized AI request payload;
+- timeout/error/invalid JSON handling;
+- deterministic result preservation on provider failure;
+- AI result validation against allowed ROP taxonomy/config/contract;
+- `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`;
+- deterministic-vs-AI comparison fields in TSV;
+- AI evidence artifacts:
+  - `rop_ai_adjudicator_requests.json`;
+  - `rop_ai_adjudicator_decisions.json`;
+  - `rop_ai_adjudicator_results.json`;
 
-  * `rop_ai_adjudicator_requests.json`;
-  * `rop_ai_adjudicator_decisions.json`;
-  * `rop_ai_adjudicator_results.json`;
-* fake provider tests;
-* smoke with AI disabled and fake AI enabled;
-* docs update.
+- fake provider tests;
+- smoke with AI disabled and fake AI enabled;
+- docs update.
 
 **Не включено**
 
-* changes to `beeagent-rop`, unless a public contract is already available and can be used without private imports;
-* private imports from `beeagent-rop`;
-* new deterministic ROP rules in BeeAgent;
-* CRM/Bitrix write-back;
-* mailbox delete/archive/reply/mark-as-read;
-* OCR;
-* RAG;
-* attachment content parsing;
-* web-triggered run;
-* POST/operator actions;
-* saving human review decisions;
-* customer-specific sender/domain hardcoding.
+- changes to `beeagent-rop`, unless a public contract is already available and can be used without private imports;
+- private imports from `beeagent-rop`;
+- new deterministic ROP rules in BeeAgent;
+- CRM/Bitrix write-back;
+- mailbox delete/archive/reply/mark-as-read;
+- OCR;
+- RAG;
+- attachment content parsing;
+- web-triggered run;
+- POST/operator actions;
+- saving human review decisions;
+- customer-specific sender/domain hardcoding.
 
 #### Deliverable
 
@@ -8160,61 +7985,61 @@ security-sensitive
 
 Reason:
 
-* external AI provider call;
-* env/secret handling;
-* email-derived input sent to provider;
-* structured model output parsing/validation;
-* artifact serialization of customer operational data;
-* future action/write-back boundary must stay blocked.
+- external AI provider call;
+- env/secret handling;
+- email-derived input sent to provider;
+- structured model output parsing/validation;
+- artifact serialization of customer operational data;
+- future action/write-back boundary must stay blocked.
 
 #### DoD
 
-* AI adjudicator is disabled by default;
-* enabling AI without required env fails fast;
-* OpenAI provider execution exists in BeeAgent;
-* OpenAI API key is never stored in artifacts/logs/API/HTML;
-* only bounded/sanitized payload is sent;
-* strict JSON response is required and validated;
-* invalid/timeout/error result degrades safely;
-* AI is called only for eligible grey-zone events;
-* AI is not called for every event;
-* deterministic result is preserved when AI fails;
-* TSV contains deterministic and AI comparison columns;
-* AI artifacts are created and safe;
-* no CRM/mailbox/Bitrix mutation exists;
-* no `beeagent-rop` private internals are imported;
-* BeeAgent core does not add ROP business classification rules;
-* tests, smoke, docs and required security checks are completed;
-* `pyproject.toml.version` is not changed.
+- AI adjudicator is disabled by default;
+- enabling AI without required env fails fast;
+- OpenAI provider execution exists in BeeAgent;
+- OpenAI API key is never stored in artifacts/logs/API/HTML;
+- only bounded/sanitized payload is sent;
+- strict JSON response is required and validated;
+- invalid/timeout/error result degrades safely;
+- AI is called only for eligible grey-zone events;
+- AI is not called for every event;
+- deterministic result is preserved when AI fails;
+- TSV contains deterministic and AI comparison columns;
+- AI artifacts are created and safe;
+- no CRM/mailbox/Bitrix mutation exists;
+- no `beeagent-rop` private internals are imported;
+- BeeAgent core does not add ROP business classification rules;
+- tests, smoke, docs and required security checks are completed;
+- `pyproject.toml.version` is not changed.
 
 #### Implementation notes (It34)
 
 Config:
 
-* `rop.ai_assist.adjudicator` — config block внутри существующего `rop.ai_assist`, не создаёт второй source of truth;
-* `ai.prompts` и `ai.profiles` — shared BeeAgent AI source of truth для prompt/provider/model config;
-* AI disabled by default.
+- `rop.ai_assist.adjudicator` — config block внутри существующего `rop.ai_assist`, не создаёт второй source of truth;
+- `ai.prompts` и `ai.profiles` — shared BeeAgent AI source of truth для prompt/provider/model config;
+- AI disabled by default.
 
 New module:
 
-* `src/beeagent_module/core/rop_ai_adjudicator.py` — OpenAI Responses API execution, bounded payload, JSON schema validation, deterministic fallback, safe artifacts;
-* `call_openai_responses_api()` — HTTP call к `/v1/responses` с `json_object` format;
-* `run_adjudicator_for_event()` — per-event adjudication: eligibility → prompt → API → parse → validate → merge/degrade;
-* `run_adjudicator_batch()` — batch wrapper с `max_events_per_run`;
-* `write_adjudicator_artifacts()` — `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`.
+- `src/beeagent_module/core/rop_ai_adjudicator.py` — OpenAI Responses API execution, bounded payload, JSON schema validation, deterministic fallback, safe artifacts;
+- `call_openai_responses_api()` — HTTP call к `/v1/responses` с `json_object` format;
+- `run_adjudicator_for_event()` — per-event adjudication: eligibility → prompt → API → parse → validate → merge/degrade;
+- `run_adjudicator_batch()` — batch wrapper с `max_events_per_run`;
+- `write_adjudicator_artifacts()` — `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`.
 
 Integration:
 
-* `run_rop_batch_case()` в `rop_operator.py` вызывает `run_adjudicator_batch()` после AI assist, до summary;
-* adjudicator counters записываются в `classification_diagnostics`.
+- `run_rop_batch_case()` в `rop_operator.py` вызывает `run_adjudicator_batch()` после AI assist, до summary;
+- adjudicator counters записываются в `classification_diagnostics`.
 
 TSV:
 
-* 13 новых колонок: `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `deterministic_case_type`, `deterministic_case_subtype`, `deterministic_recommended_queue`, `deterministic_correct_action`, `deterministic_confidence`, `deterministic_reason_code`.
+- 13 новых колонок: `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `deterministic_case_type`, `deterministic_case_subtype`, `deterministic_recommended_queue`, `deterministic_correct_action`, `deterministic_confidence`, `deterministic_reason_code`.
 
 Tests:
 
-* `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
+- `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

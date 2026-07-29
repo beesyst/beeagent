@@ -309,10 +309,10 @@ secret values
 
 Для текущего BeeAgent UI track это означает:
 
-- BeeUI migration и auth boundary уже выполнены;
-- final decision/operator UX baseline уже выполнен в UI-8/UI-8.2;
-- далее удалить legacy web после подтверждения parity;
-- затем развивать attachment-aware и Bitrix reconciliation views;
+- BeeUI migration, auth boundary, final-decision UX и canonical Queue baseline выполнены в UI-4–UI-8.3;
+- следующий product increment — UI-8.4 embedded Bitrix ROP widgets;
+- после UI-8.4 удалить legacy web в UI-9 после подтверждения parity;
+- затем завершить event-level attachment и Bitrix reconciliation UX;
 - затем стабилизировать API contract;
 - затем добавлять bounded operator controls поверх существующей auth boundary;
 - затем добавлять support/admin surfaces;
@@ -329,6 +329,28 @@ secret values
 - **DONE (partial)** — завершено частично, есть ограничения
 - **DEFERRED** — отложено до появления evidence/стабилизации контрактов
 - **RETIRED** — будущий item снят как устаревший или уже покрытый выполненной итерацией; ID не переиспользуется
+
+## Roadmap item format
+
+Исторические итерации со статусом `DONE` сохраняют существующую структуру и не переписываются задним числом только ради форматирования.
+
+Новые итерации и materially refined незавершённые итерации используют компактную структуру:
+
+- `Goal`
+- `Depends on`, если есть реальные prerequisites
+- `Change level`
+- `Scope`
+- `Excluded`
+- `Deliverable`
+- `Acceptance criteria`
+- `Checks`
+- `DoD`
+
+ROADMAP фиксирует iteration-level product contract.
+
+Конкретные файлы, полные payload examples, подробные implementation requirements, расширенные test matrices и verification evidence принадлежат Issue, implementation handoff и PR.
+
+Целевой размер новой итерации — 40–60 строк, максимум 80 строк без обоснованной необходимости.
 
 ## Global Definition of Done
 
@@ -562,7 +584,7 @@ Escalate to `security-sensitive` only if implementation changes file/path semant
 
 ---
 
-## Этап 2 — ROP operator dashboards
+## Этап 2 — BeeUI operator console and ROP surfaces
 
 ### Итерация UI-2 — ROP multi-source dashboard v1
 
@@ -2736,9 +2758,21 @@ security-sensitive
 
 - сохранить существующие `/api/bitrix/rop/widget*` routes обратно совместимыми;
 - использовать server-rendered HTML без отдельного frontend приложения;
-- проверять Bitrix launch context на стороне BeeAgent;
-- не передавать внутренний BeeAgent widget token через URL, HTML или JavaScript;
-- разрешать iframe embedding только для настроенного Bitrix portal;
+- разделить authentication boundaries:
+  - существующие `/api/bitrix/rop/widget*` routes сохраняют текущую server-to-server Bearer-token protection;
+  - новые embedded HTML routes используют validated Bitrix launch context и не получают внутренний BeeAgent Bearer token в browser;
+  - новые `/api/bitrix/rop/widgets/*` routes не должны становиться anonymous и используют либо validated embedded session/context, либо существующую server-to-server token boundary;
+- до реализации зафиксировать explicit Bitrix launch-context contract:
+  - какие поля launch request принимаются;
+  - как проверяется их подлинность;
+  - как ограничивается срок действия;
+  - как предотвращается replay;
+  - какой portal origin разрешён;
+  - какой safe response возвращается при invalid context;
+- все новые обязательные параметры embedding policy хранить в `config/settings.yml -> bitrix.widget`;
+- secret values хранить только в env;
+- новые обязательные config keys валидировать fail-fast;
+- разрешать iframe embedding только для явно настроенного Bitrix portal;
 - добавить для embedded routes:
   - route-specific CSP `frame-ancestors`;
   - `Cache-Control: no-store`;
@@ -2850,7 +2884,7 @@ BeeAgent предоставляет два безопасных read-only HTML-�
 - HTTPS deployment smoke;
 - manual smoke of both placements in Bitrix.
 
-#### Definition of Done
+#### DoD
 
 - два Bitrix ROP widgets реализованы в `beeagent`;
 - два HTML routes и два JSON routes работают;
@@ -2865,225 +2899,6 @@ BeeAgent предоставляет два безопасных read-only HTML-�
 - `beeagent-rop` unchanged;
 - tests и documentation обновлены;
 - `pyproject.toml.version` не изменён.
-
-### Итерация UI-8.4 — Embedded Bitrix ROP widgets
-
-**Статус:** PLANNED
-
-#### Goal
-
-Добавить в Bitrix два компактных read-only виджета для РОПа:
-
-1. `Пульс продаж` — краткая картина продаж за последние 7 дней.
-2. `Контроль рисков и Bitrix` — основные проблемы и очередь событий, требующих внимания.
-
-Оба виджета используют существующий BeeAgent ROP read-model и не содержат отдельной бизнес-логики.
-
-#### Depends on
-
-- UI-8 — ROP final decision read-model and Bitrix widget payload;
-- UI-8.3 — current canonical ROP Queue presentation;
-- existing ROP final-decision, recommendation and Bitrix reconciliation artifacts;
-- configured HTTPS deployment of BeeAgent Web Console.
-
-#### Change level
-
-```text
-security-sensitive
-```
-
-Причины:
-
-- BeeAgent routes будут встраиваться во внешний Bitrix portal;
-- требуется отдельная проверка Bitrix launch context;
-- данные из почты, классификации и CRM считаются untrusted input;
-- необходимо ограничить iframe embedding только разрешённым Bitrix portal.
-
-#### Scope
-
-**Включено:**
-
-- реализовать в `beeagent` две product-specific проекции существующего ROP read-model;
-
-- добавить виджет `Пульс продаж` за последние 7 дней:
-  - время последнего обновления;
-  - статус последнего ROP run;
-  - обработано писем или событий;
-  - новые лиды;
-  - высокий приоритет;
-  - требуют внимания;
-  - компактная разбивка:
-    - новые лиды;
-    - существующие клиенты;
-    - повторные обращения;
-    - требуют внимания;
-
-- добавить виджет `Контроль рисков и Bitrix`:
-  - потеряно в Bitrix;
-  - неоднозначные решения или дубликаты;
-  - несверенные события;
-  - ошибки Bitrix;
-  - очередь максимум из 10 событий с полями:
-    - priority;
-    - sender;
-    - subject;
-    - final_case_type;
-    - final_queue;
-    - bitrix_status;
-    - attention_reason;
-    - recommended_action;
-- сортировать очередь внимания в следующем порядке:
-  1. высокий приоритет;
-  2. событие не найдено в Bitrix;
-  3. неоднозначность или дубликат;
-  4. событие требует внимания;
-  5. событие не сверено;
-  6. более новое событие;
-  7. `event_id` как стабильный tie-breaker;
-
-- добавить read-only routes:
-
-```text
-/bitrix/rop/widgets/sales-pulse
-/bitrix/rop/widgets/risk-control
-
-/api/bitrix/rop/widgets/sales-pulse
-/api/bitrix/rop/widgets/risk-control
-```
-
-- сохранить существующие `/api/bitrix/rop/widget*` routes обратно совместимыми;
-- использовать server-rendered HTML без отдельного frontend приложения;
-- проверять Bitrix launch context на стороне BeeAgent;
-- не передавать внутренний BeeAgent widget token через URL, HTML или JavaScript;
-- разрешать iframe embedding только для настроенного Bitrix portal;
-- добавить для embedded routes:
-  - route-specific CSP `frame-ancestors`;
-  - `Cache-Control: no-store`;
-  - `Referrer-Policy: no-referrer`;
-- ограничить вывод данных безопасным allowlist;
-- документировать запуск BeeAgent по HTTPS и одноразовое добавление двух placements в Bitrix;
-- placement setup не должен выполняться автоматически при каждом запуске `./start.sh web`;
-- добавить tests и обновить документацию.
-
-**Разрешённые данные:**
-
-```text
-aggregated counters
-run status
-updated timestamp
-sender
-subject
-priority
-final_case_type
-final_queue
-bitrix_status
-attention_reason
-recommended_action
-event_id
-```
-
-**Запрещённые данные:**
-
-```text
-raw email body
-raw .eml
-attachment content
-mailbox credentials
-Bitrix credentials
-environment values
-provider tokens
-raw AI prompts or responses
-full Bitrix API payloads
-arbitrary artifact content
-```
-
-**Не включено:**
-
-- CRM/Bitrix write-back;
-- создание или изменение lead, deal, contact или task;
-- автоматическое объединение дубликатов;
-- mailbox actions;
-- web-triggered ROP run;
-- scheduler или mailbox listener;
-- OAuth/OIDC lifecycle Bitrix application;
-- отдельный React/Reflex frontend;
-- изменения в `beeagent-rop`;
-- изменения в BeeUI;
-- изменение ROP classification rules;
-- автоматическая регистрация placements при обычном старте BeeAgent.
-
-#### Deliverable
-
-BeeAgent предоставляет два безопасных read-only HTML-виджета, которые можно разместить в Bitrix как отдельные placements.
-
-РОП видит:
-
-```text
-Пульс продаж
-→ что обработано за 7 дней
-→ сколько новых и важных обращений
-→ сколько событий требуют внимания
-
-Контроль рисков и Bitrix
-→ где потеряны или не сверены события
-→ где есть неоднозначность или ошибки
-→ какие конкретные события проверить первыми
-```
-
-#### Acceptance criteria
-
-- оба виджета открываются через BeeAgent HTTPS deployment;
-- оба виджета размещены как отдельные Bitrix placements;
-- данные строятся из существующего BeeAgent ROP read-model;
-- `Пульс продаж` использует период 7 дней;
-- `Контроль рисков и Bitrix` возвращает не более 10 событий;
-- порядок очереди детерминирован;
-- empty, degraded и unavailable состояния отображаются явно;
-- существующие Bitrix widget API routes не сломаны;
-- виджеты не выполняют Bitrix, mailbox, AI или ROP runtime calls;
-- GET routes не изменяют artifacts, config или runtime state;
-- внутренний Bearer token не появляется в browser URL или HTML;
-- iframe embedding разрешён только настроенному Bitrix portal;
-- raw email, attachments, secrets и raw AI data не выводятся;
-- BeeUI и `beeagent-rop` не требуют изменений.
-
-#### Checks
-
-- `uv run pytest -q`;
-- targeted widget projection tests;
-- targeted HTML and JSON route tests;
-- 7-day aggregation tests;
-- deterministic risk queue ordering tests;
-- maximum 10 queue items test;
-- empty, degraded and unavailable scenarios;
-- malformed and missing artifact scenarios;
-- HTML escaping tests;
-- authentication and invalid launch-context tests;
-- CSP and response-header tests;
-- no GET mutation;
-- no mailbox, Bitrix, AI provider or module execution;
-- no raw content or secret leakage;
-- route listing;
-- HTTPS deployment smoke;
-- manual smoke of both placements in Bitrix.
-
-#### Definition of Done
-
-- два Bitrix ROP widgets реализованы в `beeagent`;
-- два HTML routes и два JSON routes работают;
-- оба placements проверены в Bitrix;
-- существующий widget API обратно совместим;
-- данные ограничены безопасным allowlist;
-- browser не получает внутренний BeeAgent token;
-- GET routes остаются read-only;
-- no Bitrix write-back;
-- no mailbox or AI execution;
-- BeeUI unchanged;
-- `beeagent-rop` unchanged;
-- tests и documentation обновлены;
-- `pyproject.toml.version` не изменён.
-
----
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
@@ -3095,7 +2910,7 @@ BeeAgent предоставляет два безопасных read-only HTML-�
 
 #### Почему это нужно
 
-После UI-4–UI-8.2 BeeAgent имеет BeeUI-backed operator console, auth boundary, ROP final-decision read-model, Queue UX, Event Detail, artifact browser и read-only API.
+После UI-4–UI-8.4 BeeAgent имеет BeeUI-backed operator console, auth boundary, final-decision read-model, canonical Queue UX, Event Detail, artifact browser, read-only API и embedded Bitrix widget routes.
 
 Старый package-local web shell:
 
@@ -3116,7 +2931,7 @@ src/beeagent_module/web
 
 #### Depends on
 
-- UI-8.2 — current BeeUI-backed Web Console UX baseline;
+- UI-8.4 — current BeeUI-backed Web Console and embedded widget baseline;
 - UI-7 — auth boundary;
 - one successful ROP run smoke;
 - one web smoke on real or synthetic ROP artifacts;
@@ -3169,9 +2984,10 @@ src/beeagent_module/interfaces/ui/
   - `docs/product/ui_roadmap.md`;
   - `README.ru.md`;
   - `docs/DEV_GUIDE.md`;
-
 - выполнить BeeUI-only route/API tests;
 - проверить отсутствие stale import `beeagent_module.web`;
+- удалить legacy import и compatibility start path из `src/beeagent_module/core/app.py`;
+- подтвердить, что canonical `config/start.py web` использует только `beeagent_module.cli.web.run_web`;
 - проверить package install/import.
 
 **Не включено:**
@@ -3236,18 +3052,18 @@ src/beeagent_module/
 - docs reflect BeeUI-only architecture;
 - `pyproject.toml.version` unchanged.
 
-### Итерация UI-10 — Attachment-aware ROP dashboard
+### Итерация UI-10 — Attachment detail integration for ROP Queue and Event Detail
 
 **Статус:** PLANNED
 
 #### Goal
 
-Показать attachment preview / extraction status / refusal status в BeeUI-backed ROP dashboard без raw attachment content leakage.
+Дополнить существующий aggregate Attachment tab event-level представлением: показать безопасные attachment metadata, extraction/refusal evidence и bounded preview в ROP Queue и Event Detail без raw attachment content leakage.
 
 #### Depends on
 
-- UI-8.2 — current Queue/Event Detail UX baseline;
-- UI-9 preferred before adding new web features;
+- UI-8.3 — current canonical Queue toolbar/table baseline;
+- UI-9 — BeeUI-only architecture;
 - BeeAgent It25 — Attachment extraction artifacts;
 - `beeagent-rop It15 — Use BeeAgent attachment extraction contract in classification`.
 
@@ -3264,23 +3080,19 @@ src/beeagent_module/
   - refusal_reason;
   - reason_code;
   - is_refused if present;
-
 - show bounded preview only if artifact contract explicitly marks it safe;
-
 - show classification reason codes affected by attachment preview;
-
 - warnings for unsupported, refused, blocked, oversized and failed extraction scenarios;
-
 - source artifact links;
-
 - integrate with ROP Queue and Event Detail;
-
-- aggregate attachment KPIs;
-
+- сохранить существующие aggregate attachment KPI и не реализовывать их повторно;
 - no raw files served;
-
 - no arbitrary attachment download;
-
+- связать attachment items с `event_id`;
+- показать per-attachment metadata в Event Detail;
+- добавить безопасный attachment status indicator в Queue;
+- показывать bounded preview только при explicit `preview_available=true`;
+- ссылаться на существующий `attachment_extraction_json` evidence artifact;
 - tests and docs update.
 
 **Не включено:**
@@ -3318,26 +3130,40 @@ src/beeagent_module/
 - UI remains artifact-only/read-only;
 - source artifacts remain traceable.
 
-### Итерация UI-11 — ROP Bitrix reconciliation dashboard
+### Итерация UI-11 — ROP Bitrix reconciliation detail and filtering
 
 **Статус:** PLANNED
 
 #### Goal
 
-Показать read-only Bitrix reconciliation evidence в BeeUI-backed ROP dashboard: найден ли lead/deal/contact, есть ли дубликат, кто ответственный, какой статус и где требуется ручная проверка.
+Дополнить существующий Bitrix Evidence Board event-level reconciliation details, filters и связью с Queue/Event Detail: показать найденную CRM entity, match quality, ответственного, статус и причины manual review.
 
 #### Depends on
 
 - UI-8 — final decision and Bitrix widget payload baseline;
-- UI-8.2 — current Queue/Event Detail UX baseline;
-- UI-9 preferred before adding new web features;
+- UI-8.3 — current canonical Queue and Event Detail baseline;
+- UI-8.4 — embedded Bitrix widget/read-model baseline;
+- UI-9 — BeeUI-only architecture;
 - `BeeAgent It26 — Bitrix read-only reconciliation artifacts`.
 
 #### Scope
 
 **Включено:**
 
-- Bitrix reconciliation summary;
+- сохранить существующий Bitrix Evidence Board и aggregate KPI;
+- добавить event-level reconciliation fields:
+  - entity type;
+  - entity id;
+  - match status;
+  - match quality;
+  - confidence;
+  - responsible;
+  - stage/status;
+  - safe_to_use_as_target;
+  - needs_manual_review;
+  - reconciliation reason;
+- добавить фильтры по match status, quality, responsible и manual review;
+- добавить ссылки между Queue, Bitrix tab и Event Detail;
 - per-event reconciliation fields;
 - matched/unmatched/duplicate/responsible/status/review filters;
 - Queue and Event Detail integration;
@@ -3389,9 +3215,9 @@ ROP dashboard показывает CRM read-only reconciliation поверх art
 
 #### Depends on
 
-- UI-8.2 current HTML/API query and read-model baseline;
-- UI-9 preferred so the stable API is documented against BeeUI-only architecture;
-- UI-10/UI-11 contracts may be included only if they are completed before API freeze.
+- UI-8.4 — current HTML/API/widget route baseline;
+- UI-9 — BeeUI-only route ownership;
+- UI-10 and UI-11 must be either completed or explicitly excluded from v1 before API freeze.
 
 #### Scope
 
@@ -3496,8 +3322,8 @@ UI-13 удалён из active plan и не должен переиспольз�
 #### Depends on
 
 - UI-7 auth boundary already completed and must be reused;
-- UI-12 stable API contract preferred;
-- UI-9 BeeUI-only architecture preferred;
+- UI-9 — BeeUI-only route ownership;
+- UI-12 — stable BeeAgent Web API contract v1;
 - existing BeeAgent backend action/case boundaries;
 - existing ROP source, artifact and authority contracts.
 
@@ -3508,29 +3334,26 @@ UI-13 удалён из active plan и не должен переиспольз�
 - Control Panel page:
   - `/control`;
   - `/api/operator/actions`;
-
 - action catalog:
   - `view_runs`;
   - `view_rop_dashboard`;
   - `export_review_tsv`;
   - `run_rop_source_flow`;
   - unsupported future actions as denied/not implemented;
-
 - action statuses:
   - `allowed`;
   - `blocked`;
   - `denied`;
-
 - action preview:
   - source_id;
   - items_max;
   - expected authority;
   - expected artifacts;
-
 - bounded POST action for ROP run only if explicitly allowed by config:
   - `operator_controls.enabled`;
   - `operator_controls.allow`;
-
+- использовать существующую BeeUI CSRF boundary для каждого state-changing POST;
+- запретить action execution без valid auth, role, CSRF, confirmation и server-side authority check;
 - audit artifacts for every accepted/rejected action:
 
 ```text
@@ -3765,13 +3588,14 @@ Do not add BeeAgent- or ROP-specific behavior to generic BeeUI components.
 - один запуск `.agents/prompts/02-implementation-tests.md` обслуживает только один Issue и один implementation target;
 - не смешивать BeeUI migration, auth, dashboard-specific features, controls и frontend split в одной задаче;
 - текущая последовательность future work:
-  - remove legacy web;
-  - attachment/Bitrix dashboards;
-  - stable API;
-  - bounded controls through existing auth boundary;
-  - support/admin diagnostics;
-  - deferred standalone frontend;
-
+  - UI-8.4 embedded Bitrix widgets;
+  - UI-9 legacy web removal;
+  - UI-10 attachment event-level integration;
+  - UI-11 Bitrix reconciliation detail and filtering;
+  - UI-12 stable API;
+  - UI-14 bounded controls through existing auth boundary;
+  - UI-15 support/admin diagnostics;
+  - UI-16/UI-17 deferred platform work;
 - existing UI-7 auth boundary must be reused;
 - controls require explicit backend contract, confirmation and audit artifacts;
 - GET/read-model routes must not mutate state;
