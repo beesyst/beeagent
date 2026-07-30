@@ -1662,7 +1662,5 @@ def _apply_ai_adjudicator_results(
 
             if result.get("ai_confidence") is not None:
                 event["confidence"] = result["ai_confidence"]
-            if result.get("merge_reason"):
-                event["reason_code"] = result["merge_reason"]
             if result.get("ai_reason"):
                 event["reasoning"] = result["ai_reason"]

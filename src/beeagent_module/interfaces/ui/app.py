@@ -713,6 +713,8 @@ def _register_bitrix_widget_routes(
     def serialize_final_decision(item: dict[str, Any]) -> dict[str, Any]:
         final_case_subtype = item.get("final_case_subtype")
         attention_reason = item.get("attention_reason")
+        attention_reason_code = item.get("attention_reason_code")
+        attention_evidence_codes = item.get("attention_evidence_codes")
         return {
             "event_id": str(item.get("event_id", "")),
             "final_case_type": str(item.get("final_case_type", "")),
@@ -726,6 +728,14 @@ def _register_bitrix_widget_routes(
             "needs_attention": bool(item.get("needs_attention", False)),
             "attention_reason": (
                 attention_reason if isinstance(attention_reason, str) else None
+            ),
+            "attention_reason_code": (
+                attention_reason_code if isinstance(attention_reason_code, str) else None
+            ),
+            "attention_evidence_codes": (
+                [str(c) for c in attention_evidence_codes if isinstance(c, str)]
+                if isinstance(attention_evidence_codes, list)
+                else None
             ),
             "automation_allowed": False,
             "bitrix_write_allowed": False,

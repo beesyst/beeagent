@@ -296,6 +296,36 @@ New allowlisted artifacts:
 - AI Adjudicator section when adjudicator data exists for the event
 - Final Decision section with final fields, nullable subtype/attention reason and decision source
 
+### Locale-aware reason display (UI-8.4)
+
+`/rop/events/{event_id}?run_id=<run_id>&lang=ru` and `?lang=en` now render three key explanations in the requested locale using structured reason codes instead of raw AI prose:
+
+- **Classification reason** — derived from `reason_code` via the product-owned BeeAgent reason catalog
+- **AI Adjudicator reason** — derived from `ai_reason_code` and `ai_evidence_codes`
+- **Final Decision attention reason** — derived from `attention_reason_code` and `attention_evidence_codes`
+
+New adjudicator artifacts (`rop_ai_adjudicator_results.json`) contain additive fields:
+
+- `ai_reason_code` — structured reason code from the allowlist
+- `ai_evidence_codes` — bounded evidence code array
+
+New final-decision artifacts (`rop_final_decisions.json`) contain additive fields:
+
+- `attention_reason_code` — structured reason code derived from the merge/policy decision
+- `attention_evidence_codes` — evidence codes forwarded from the adjudicator
+
+The Event Detail read-model and JSON API expose new localized display fields:
+
+- `classification.reason_display`
+- `ai_adjudicator.ai_adjudicator_reason_display`
+- `final_decision.attention_reason_display`
+
+Raw reason fields (`reason`, `ai_reason`, `attention_reason`) and structured codes remain available in the API for audit and backward compatibility.
+
+Legacy artifacts without structured codes render a localized generic fallback and emit an explicit warning. Unknown codes render a localized unavailable explanation and a warning.
+
+Locale switching remains a read-only artifact projection and does not call the AI provider, mailbox, Bitrix, module or capability.
+
 ### ROP dashboard API changes (UI-8)
 
 `/api/rop/dashboard` now exposes:

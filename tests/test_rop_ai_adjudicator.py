@@ -366,10 +366,14 @@ class TestValidation:
                 "confidence": 0.85,
                 "reason": "Clear RFQ content",
                 "risk_flags": [],
+                "reason_code": "customer_request_detected",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"] == []
         assert validated["case_type"] == "new_lead"
+        assert validated["reason_code"] == "customer_request_detected"
+        assert validated["evidence_codes"] == ["low_signal"]
 
     def test_invalid_taxonomy_adds_errors(self) -> None:
         validated = _validate_ai_output(
@@ -380,6 +384,8 @@ class TestValidation:
                 "should_rop_see": "yes",
                 "confidence": 0.95,
                 "risk_flags": [],
+                "reason_code": "insufficient_business_signal",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"]
@@ -401,6 +407,8 @@ class TestValidation:
                     "forwarded_wrapper_present",
                     "missing_body_preview",
                 ],
+                "reason_code": "non_actionable_bulk_or_newsletter",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"] == []
@@ -410,6 +418,122 @@ class TestValidation:
             "missing_body_preview",
         ]
         assert validated["warnings"]
+
+    def test_valid_reason_code_accepted(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+                "reason_code": "customer_request_detected",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+        assert validated["errors"] == []
+        assert validated["reason_code"] == "customer_request_detected"
+        assert validated["evidence_codes"] == ["low_signal"]
+
+    def test_invalid_reason_code_adds_error(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+                "reason_code": "nonexistent_code",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+        assert validated["errors"]
+        assert any("reason_code" in e for e in validated["errors"])
+        assert validated["reason_code"] == ""
+
+    def test_reason_code_must_match_case_type(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+                "reason_code": "non_actionable_supplier_outreach",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+        assert any("incompatible" in error for error in validated["errors"])
+        assert validated["reason_code"] == ""
+
+    def test_unknown_evidence_codes_are_dropped(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.95,
+                "reason": "Bulk content",
+                "risk_flags": [],
+                "reason_code": "non_actionable_bulk_or_newsletter",
+                "evidence_codes": ["low_signal", "nonexistent_flag"],
+            }
+        )
+        assert validated["errors"] == []
+        assert validated["evidence_codes"] == ["low_signal"]
+        assert validated.get("dropped_evidence_codes", []) == ["nonexistent_flag"]
+
+    def test_missing_reason_code_defaults(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+            }
+        )
+        assert validated["errors"]
+        assert validated["reason_code"] == ""
+
+    def test_evidence_codes_max_items_enforced(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.95,
+                "reason": "Bulk content",
+                "risk_flags": [],
+                "reason_code": "non_actionable_bulk_or_newsletter",
+                "evidence_codes": [
+                    "low_signal",
+                    "marketing_conflict",
+                    "spam_rfq_conflict",
+                    "supplier_outreach",
+                    "ambiguous_bitrix",
+                    "newsletter_bulk",
+                ],
+            }
+        )
+        assert validated["errors"] == []
+        assert len(validated["evidence_codes"]) <= 5
 
 
 class TestProviderCall:
@@ -556,6 +680,22 @@ class TestSchemaContract:
             "review_new_lead",
             "review_tender",
         ]
+        assert "reason_code" in fmt["schema"]["required"]
+        assert "evidence_codes" in fmt["schema"]["required"]
+        assert schema["evidence_codes"]["maxItems"] == 5
+        assert schema["evidence_codes"]["items"]["enum"] == sorted(
+            {
+                "marketing_conflict",
+                "spam_rfq_conflict",
+                "supplier_outreach",
+                "low_signal",
+                "ambiguous_bitrix",
+                "newsletter_bulk",
+                "finance_sales_conflict",
+                "business_ignore_conflict",
+                "attachment_mismatch",
+            }
+        )
 
 
 class TestAdjudicatorForEvent:
@@ -613,6 +753,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -648,6 +790,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.90,
                     "reason": "Looks like procurement continuation",
                     "risk_flags": [],
+                    "reason_code": "existing_deal_continuation",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -684,6 +828,8 @@ class TestAdjudicatorForEvent:
                         "threshold."
                     ),
                     "risk_flags": ["low_signal"],
+                    "reason_code": "non_actionable_bulk_or_newsletter",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -720,6 +866,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.31,
                     "reason": "Bulk newsletter with no customer request.",
                     "risk_flags": ["newsletter_bulk", "ambiguous_sender_identity"],
+                    "reason_code": "non_actionable_bulk_or_newsletter",
+                    "evidence_codes": ["newsletter_bulk"],
                 }
             )
 
@@ -776,6 +924,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.95,
                     "reason": "Bad taxonomy",
                     "risk_flags": [],
+                    "reason_code": "existing_deal_continuation",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -806,6 +956,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.78,
                     "reason": "Looks like supplier spam",
                     "risk_flags": ["supplier_outreach", "unknown_flag"],
+                    "reason_code": "non_actionable_supplier_outreach",
+                    "evidence_codes": ["supplier_outreach"],
                 }
             )
 
@@ -842,6 +994,8 @@ class TestAdjudicatorForEvent:
                         "marketing_conflict",
                         "forwarded_wrapper_present",
                     ],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -875,6 +1029,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.93,
                     "reason": "Supplier outreach with no customer demand.",
                     "risk_flags": ["supplier_outreach"],
+                    "reason_code": "non_actionable_supplier_outreach",
+                    "evidence_codes": ["supplier_outreach"],
                 }
             )
 
@@ -908,6 +1064,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.91,
                     "reason": "Newsletter and seminar invitation with no actionable business signal.",
                     "risk_flags": ["newsletter_bulk"],
+                    "reason_code": "non_actionable_bulk_or_newsletter",
+                    "evidence_codes": ["newsletter_bulk"],
                 }
             )
 
@@ -940,6 +1098,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.94,
                     "reason": "Looks noisy.",
                     "risk_flags": [],
+                    "reason_code": "insufficient_business_signal",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -1010,6 +1170,8 @@ class TestAdjudicatorBatch:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -1043,6 +1205,8 @@ class TestAdjudicatorBatch:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -1071,6 +1235,176 @@ class TestAdjudicatorBatch:
 
 
 class TestArtifacts:
+    def test_unparseable_provider_output_is_not_retained_in_artifacts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        marker = "UNPARSEABLE-PROVIDER-MARKER"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                lambda **kwargs: marker,
+            ):
+                output = run_adjudicator_for_event(
+                    event=_sample_eligible_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+
+        assert marker not in json.dumps(output)
+        assert "raw_response_preview" not in output["decision"]
+        write_adjudicator_artifacts(
+            storage_dir=tmp_path,
+            run_id="unparseable-provider",
+            requests=[output["request"]],
+            decisions=[output["decision"]],
+            results=[output["result"]],
+            counters={"adjudicator_enabled": 1},
+            logger=_null_logger(),
+        )
+        run_dir = tmp_path / "runs" / "unparseable-provider"
+        for artifact_name in (
+            "rop_ai_adjudicator_requests.json",
+            "rop_ai_adjudicator_decisions.json",
+            "rop_ai_adjudicator_results.json",
+        ):
+            content = (run_dir / artifact_name).read_text(encoding="utf-8")
+            assert marker not in content
+            assert "raw_response_preview" not in content
+
+    def test_incompatible_reason_code_is_cleared_from_outputs_and_artifacts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        def _incompatible_response(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "rfq",
+                    "recommended_queue": "sales",
+                    "should_rop_see": True,
+                    "correct_action": "review_new_lead",
+                    "confidence": 0.85,
+                    "reason": "Customer request",
+                    "risk_flags": [],
+                    "reason_code": "non_actionable_supplier_outreach",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _incompatible_response,
+            ):
+                output = run_adjudicator_for_event(
+                    event=_sample_eligible_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+
+        assert output["decision"]["ai_reason_code"] == ""
+        assert output["result"]["ai_reason_code"] == ""
+        write_adjudicator_artifacts(
+            storage_dir=tmp_path,
+            run_id="incompatible-reason",
+            requests=[output["request"]],
+            decisions=[output["decision"]],
+            results=[output["result"]],
+            counters={"adjudicator_enabled": 1},
+            logger=_null_logger(),
+        )
+        run_dir = tmp_path / "runs" / "incompatible-reason"
+        decisions = json.loads(
+            (run_dir / "rop_ai_adjudicator_decisions.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        results = json.loads(
+            (run_dir / "rop_ai_adjudicator_results.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert decisions["decisions"][0]["ai_reason_code"] == ""
+        assert results["results"][0]["ai_reason_code"] == ""
+
+    def test_oversized_provider_reason_diagnostics_are_bounded_in_artifacts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reason_marker = "OVERSIZED-REASON-MARKER-" + "r" * 200
+        evidence_marker = "OVERSIZED-EVIDENCE-MARKER-" + "e" * 200
+
+        def _oversized_response(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "unknown",
+                    "case_subtype": "",
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "confidence": 0.85,
+                    "reason": "Ambiguous request",
+                    "risk_flags": [],
+                    "reason_code": reason_marker,
+                    "evidence_codes": [evidence_marker],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _oversized_response,
+            ):
+                output = run_adjudicator_for_event(
+                    event=_sample_eligible_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+
+        serialized = json.dumps(output)
+        assert reason_marker not in serialized
+        assert evidence_marker not in serialized
+        assert all(
+            len(value.rsplit(": ", 1)[-1]) <= 80
+            for value in output["decision"]["validation_errors"]
+            if value.startswith("invalid reason_code:")
+        )
+        assert all(
+            len(value.rsplit(": ", 1)[-1]) <= 80
+            for value in output["decision"]["validation_warnings"]
+            if value.startswith("dropped unknown evidence_code:")
+        )
+        assert all(
+            len(value) <= 80
+            for value in output["decision"]["dropped_evidence_codes"]
+        )
+
+        write_adjudicator_artifacts(
+            storage_dir=tmp_path,
+            run_id="oversized-provider-output",
+            requests=[output["request"]],
+            decisions=[output["decision"]],
+            results=[output["result"]],
+            counters={"adjudicator_enabled": 1},
+            logger=_null_logger(),
+        )
+        run_dir = tmp_path / "runs" / "oversized-provider-output"
+        for artifact_name in (
+            "rop_ai_adjudicator_requests.json",
+            "rop_ai_adjudicator_decisions.json",
+            "rop_ai_adjudicator_results.json",
+        ):
+            content = (run_dir / artifact_name).read_text(encoding="utf-8")
+            assert reason_marker not in content
+            assert evidence_marker not in content
+
     def test_write_adjudicator_artifacts(self, tmp_path: Path) -> None:
         refs = write_adjudicator_artifacts(
             storage_dir=tmp_path,

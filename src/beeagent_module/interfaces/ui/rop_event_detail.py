@@ -11,6 +11,16 @@ from beeagent_module.core.rop_final_decision import (
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.reason_catalog import (
+    get_ai_evidence_display,
+    get_ai_reason_display,
+    get_attention_reason_display,
+    get_classification_reason_display,
+)
+from beeagent_module.core.rop_reason_contract import (
+    AI_EVIDENCE_CODES,
+    AI_EVIDENCE_CODES_MAX,
+)
 from beeagent_module.interfaces.ui.url_builder import build_rop_url
 
 _PRIORITY_TONE = {
@@ -33,6 +43,8 @@ _QUEUE_ACTION_TONE = {
     "manual_review": "warning",
     "ignore": "muted",
 }
+_MAX_REASON_TEXT_LENGTH = 600
+_MAX_REASON_CODE_LENGTH = 80
 
 
 def _bool_display(value: Any, lang: str) -> str:
@@ -109,6 +121,12 @@ def _str(value: Any) -> str:
     if isinstance(value, str):
         return value
     return ""
+
+
+def _bounded_str(value: Any, max_chars: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:max_chars]
 
 
 def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
@@ -270,16 +288,26 @@ def build_rop_event_detail_read_model(
 
     classification_section: dict[str, Any] = {}
     if class_event:
-        reason = _str(
-            class_event.get("reasoning") or class_event.get("reason_code", "")
+        reason = _bounded_str(
+            class_event.get("reasoning") or class_event.get("reason_code", ""),
+            _MAX_REASON_TEXT_LENGTH,
         )
+        reason_code_str = _bounded_str(
+            class_event.get("reason_code"), _MAX_REASON_CODE_LENGTH
+        )
+        reason_display, reason_warning = get_classification_reason_display(
+            reason_code_str, lang
+        )
+        if reason_warning:
+            warnings.append(reason_warning)
         classification_section = {
             "case_type": _str(class_event.get("case_type")),
             "case_subtype": _str(class_event.get("case_subtype")),
             "priority": _str(class_event.get("priority")),
             "confidence": class_event.get("confidence"),
-            "reason_code": _str(class_event.get("reason_code")),
+            "reason_code": reason_code_str,
             "reason": reason,
+            "reason_display": reason_display,
             "is_fallback": bool(class_event.get("is_fallback")),
             "recommended_queue": _str(class_event.get("recommended_queue", "")),
             "recommended_next_step": _str(class_event.get("recommended_queue", "")),
@@ -341,28 +369,124 @@ def build_rop_event_detail_read_model(
 
     final_decision_section: dict[str, Any] = {}
     adj_section: dict[str, Any] = {}
+    matched_adjudicator: dict[str, Any] | None = None
 
     if isinstance(ai_adjudicator_results, dict):
-        matched = _match_by_event_id(ai_adjudicator_results, event_id)
-        if matched:
-            adj_section = {
-                "ai_adjudicator_used": _nullable_bool(matched.get("ai_used")),
-                "ai_adjudicator_status": _str(matched.get("ai_status", "")),
-                "ai_adjudicator_confidence": matched.get("ai_confidence"),
-                "ai_adjudicator_reason": _str(matched.get("ai_reason", "")),
-                "final_case_type": _str(matched.get("final_case_type", "")),
-                "final_case_subtype": _str(matched.get("final_case_subtype", "")),
-                "final_recommended_queue": _str(
-                    matched.get("final_recommended_queue", "")
+        matched_adjudicator = _match_by_event_id(
+            ai_adjudicator_results,
+            event_id,
+        )
+        if matched_adjudicator:
+            ai_reason_code_str = _bounded_str(
+                matched_adjudicator.get("ai_reason_code", ""),
+                _MAX_REASON_CODE_LENGTH,
+            )
+            ai_evidence_list = matched_adjudicator.get(
+                "ai_evidence_codes",
+                [],
+            )
+            if not isinstance(ai_evidence_list, list):
+                ai_evidence_list = []
+
+            if len(ai_evidence_list) > AI_EVIDENCE_CODES_MAX:
+                warnings.append("ai_evidence_codes exceeded maximum; truncated")
+
+            ai_reason_display_val, ai_reason_warn = get_ai_reason_display(
+                ai_reason_code_str if ai_reason_code_str else None,
+                lang,
+                _bounded_str(
+                    matched_adjudicator.get("ai_status", ""),
+                    _MAX_REASON_CODE_LENGTH,
                 ),
-                "final_correct_action": _str(matched.get("final_correct_action", "")),
+                _bounded_str(
+                    matched_adjudicator.get("merge_reason", ""),
+                    _MAX_REASON_CODE_LENGTH,
+                ),
+            )
+            if ai_reason_warn:
+                warnings.append(ai_reason_warn)
+
+            ai_evidence_display_list: list[dict[str, str]] = []
+            for code in ai_evidence_list[:AI_EVIDENCE_CODES_MAX]:
+                if not isinstance(code, str) or code not in AI_EVIDENCE_CODES:
+                    warnings.append("unknown ai evidence code ignored")
+                    continue
+
+                ev_display, ev_warn = get_ai_evidence_display(code, lang)
+                if ev_warn:
+                    warnings.append(ev_warn)
+
+                ai_evidence_display_list.append(
+                    {"code": code, "display": ev_display}
+                )
+            adj_section = {
+                "ai_adjudicator_used": _nullable_bool(
+                    matched_adjudicator.get("ai_used")
+                ),
+                "ai_adjudicator_status": _bounded_str(
+                    matched_adjudicator.get("ai_status", ""),
+                    _MAX_REASON_CODE_LENGTH,
+                ),
+                "ai_adjudicator_confidence": matched_adjudicator.get(
+                    "ai_confidence"
+                ),
+                "ai_adjudicator_reason": _bounded_str(
+                    matched_adjudicator.get("ai_reason", ""),
+                    _MAX_REASON_TEXT_LENGTH,
+                ),
+                "ai_adjudicator_reason_code": ai_reason_code_str,
+                "ai_adjudicator_evidence_codes": ai_evidence_display_list,
+                "ai_adjudicator_reason_display": ai_reason_display_val,
+                "final_case_type": _str(
+                    matched_adjudicator.get("final_case_type", "")
+                ),
+                "final_case_subtype": _str(
+                    matched_adjudicator.get("final_case_subtype", "")
+                ),
+                "final_recommended_queue": _str(
+                    matched_adjudicator.get("final_recommended_queue", "")
+                ),
+                "final_correct_action": _str(
+                    matched_adjudicator.get("final_correct_action", "")
+                ),
             }
 
     final_decisions, _ = load_or_build_final_decisions(run_dir)
     final_decision = find_final_decision(final_decisions, event_id)
     if final_decision:
         final_case_subtype = final_decision.get("final_case_subtype")
-        attention_reason = final_decision.get("attention_reason")
+        attention_reason = _bounded_str(
+            final_decision.get("attention_reason"), _MAX_REASON_TEXT_LENGTH
+        )
+        attention_reason_code = _bounded_str(
+            final_decision.get("attention_reason_code"), _MAX_REASON_CODE_LENGTH
+        )
+        attention_evidence_list = final_decision.get("attention_evidence_codes")
+        if not isinstance(attention_evidence_list, list):
+            attention_evidence_list = []
+        needs_attention = final_decision.get("needs_attention") is True
+        attn_reason_display_val: str | None = None
+        attn_reason_warn: str | None = None
+        if needs_attention:
+            attn_reason_display_val, attn_reason_warn = get_attention_reason_display(
+                attention_reason_code or None,
+                lang,
+                _bounded_str(
+                    matched_adjudicator.get("merge_reason", ""),
+                    _MAX_REASON_CODE_LENGTH,
+                )
+                if matched_adjudicator
+                else None,
+            )
+        if attn_reason_warn:
+            warnings.append(attn_reason_warn)
+        attn_evidence_display_list: list[dict[str, str]] = []
+        for code in attention_evidence_list:
+            if isinstance(code, str):
+                ev_display, ev_warn = get_ai_evidence_display(code, lang)
+                if ev_warn:
+                    warnings.append(ev_warn)
+                attn_evidence_display_list.append({"code": code, "display": ev_display})
         final_decision_section = {
             "event_id": _str(final_decision.get("event_id", "")),
             "final_case_type": _str(final_decision.get("final_case_type", "")),
@@ -375,10 +499,11 @@ def build_rop_event_detail_read_model(
             "final_decision_source": _str(
                 final_decision.get("final_decision_source", "")
             ),
-            "needs_attention": final_decision.get("needs_attention"),
-            "attention_reason": (
-                attention_reason if isinstance(attention_reason, str) else None
-            ),
+            "needs_attention": needs_attention,
+            "attention_reason": attention_reason or None,
+            "attention_reason_code": attention_reason_code or None,
+            "attention_evidence_codes": attn_evidence_display_list,
+            "attention_reason_display": attn_reason_display_val,
             "automation_allowed": False,
             "bitrix_write_allowed": False,
         }
@@ -622,7 +747,11 @@ def build_rop_event_detail_page_model(
                         hint="confidence",
                     ),
                     _kv(t("Reason code", lang), classification.get("reason_code")),
-                    _kv(t("Reason", lang), classification.get("reason")),
+                    _kv(
+                        t("Reason", lang),
+                        classification.get("reason_display"),
+                        hint="localized_reason",
+                    ),
                     _kv(
                         t("Recommended queue", lang),
                         classification.get("recommended_queue"),
@@ -718,7 +847,15 @@ def build_rop_event_detail_page_model(
                     ),
                     _kv(
                         t("AI adjudicator reason", lang),
+                        ai_adjudicator.get("ai_adjudicator_reason_display"),
+                        hint="localized_reason",
+                    ),
+                    _kv(
+                        t("Reasoning", lang),
                         ai_adjudicator.get("ai_adjudicator_reason"),
+                        variant="long_text",
+                        collapsible=True,
+                        display=ai_adjudicator.get("ai_adjudicator_reason", ""),
                     ),
                     _kv(
                         t("AI proposed case type", lang),
@@ -788,9 +925,16 @@ def build_rop_event_detail_page_model(
                         if final_decision.get("needs_attention") is True
                         else "muted",
                     ),
-                    _kv(
-                        t("Attention reason", lang),
-                        final_decision.get("attention_reason"),
+                    *(
+                        [
+                            _kv(
+                                t("Attention reason", lang),
+                                final_decision.get("attention_reason_display"),
+                                hint="localized_reason",
+                            )
+                        ]
+                        if final_decision.get("needs_attention") is True
+                        else []
                     ),
                     _kv(
                         t("Automation allowed", lang),

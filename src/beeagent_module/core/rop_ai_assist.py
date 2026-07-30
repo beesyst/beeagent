@@ -416,7 +416,6 @@ def run_ai_assist_for_event(
             "event_id": event.get("event_id", ""),
             "status": "invalid",
             "reason_code": "unparseable_response",
-            "raw_response_preview": raw_response[:500],
         }
         result = {
             "event_id": event.get("event_id", ""),

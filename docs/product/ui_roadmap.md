@@ -2649,7 +2649,6 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 #### Checks
 
 - `uv run pytest -q`
-- `./start.sh doctor`
 - ROP Queue HTML route smoke
 - query-state tests for every supported filter
 - combined-filter tests
@@ -2672,7 +2671,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 
 ### Итерация UI-8.4 — Locale-aware ROP decision explanations
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -2739,7 +2738,6 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - GET no-mutation checks;
 - route smoke для Event Detail;
 - full `uv run pytest -q`;
-- `./start.sh doctor`;
 - route listing;
 - SAST и DAST-style locale/artifact misuse review.
 
@@ -2773,6 +2771,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 
 - UI-8 — ROP final decision read-model and Bitrix widget payload;
 - UI-8.3 — current canonical ROP Queue presentation;
+- **UI-8.4 — structured `attention_reason_code` and `attention_evidence_codes` in final decisions;**
 - existing ROP final-decision, recommendation and Bitrix reconciliation artifacts;
 - configured HTTPS deployment of BeeAgent Web Console.
 

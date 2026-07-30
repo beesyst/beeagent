@@ -296,6 +296,52 @@ def test_provider_failure_preserves_deterministic_result(
     assert result["result"]["final_case_type"] == "unknown"
 
 
+def test_unparseable_provider_output_is_not_retained_in_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    marker = "LEGACY-AI-ASSIST-PROVIDER-MARKER"
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda ai_cfg, prompt, logger: marker,
+    )
+    cfg = resolve_ai_profile(_default_ai_cfg(), _default_ai_settings())
+    cfg["dry_run"] = False
+
+    output = run_ai_assist_for_event(
+        event={
+            "event_id": "evt-invalid-provider",
+            "case_type": "unknown",
+            "is_fallback": True,
+        },
+        ai_cfg=cfg,
+        thread_context=None,
+        min_ai_confidence=0.70,
+        logger=_null_logger(),
+    )
+
+    assert marker not in json.dumps(output)
+    assert "raw_response_preview" not in output["decision"]
+    write_ai_assist_artifacts(
+        storage_dir=tmp_path,
+        run_id="invalid-provider-output",
+        requests=[output["request"]],
+        decisions=[output["decision"]],
+        results=[output["result"]],
+        counters={},
+        logger=_null_logger(),
+    )
+    run_dir = tmp_path / "runs" / "invalid-provider-output"
+    for artifact_name in (
+        "rop_ai_assist_requests.json",
+        "rop_ai_assist_decisions.json",
+        "rop_ai_assist_results.json",
+    ):
+        content = (run_dir / artifact_name).read_text(encoding="utf-8")
+        assert marker not in content
+        assert "raw_response_preview" not in content
+
+
 def test_write_ai_assist_artifacts(tmp_path: Path) -> None:
     refs = write_ai_assist_artifacts(
         storage_dir=tmp_path,
