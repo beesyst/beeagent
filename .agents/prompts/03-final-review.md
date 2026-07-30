@@ -42,6 +42,7 @@
 ```
 
 Правила:
+
 - Проведи один полный read-only review pass.
 - Для дополнительных targets соблюдай указанные `Role`, `Mode` и `Skill`.
 - Фактические manifest, diff, files, templates, static assets, package contents и public contracts имеют приоритет над Issue, PR и отчётами.

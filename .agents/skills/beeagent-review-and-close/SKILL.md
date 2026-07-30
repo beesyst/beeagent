@@ -34,7 +34,8 @@ Obtain:
 * expected branch;
 * expected base branch;
 * mode;
-* full Issue;
+* approved Issue content or GitHub Issue URL;
+* current PR description, GitHub Pull Request URL or `none`;
 * implementation evidence;
 * related repository context when explicitly requested;
 * previous blocking findings for re-review.
@@ -52,6 +53,39 @@ Require proportional tests for acceptance criteria and public behavior, existing
 Before returning a verdict, inspect the final diff for prohibited comments and unrelated formatting.
 
 The worktree path, MCP target and Git branch are separate identifiers.
+
+## Phase 0 — Resolve supplied GitHub context
+
+Follow the GitHub context resolution contract from `AGENTS.md`.
+
+When the approved Issue input contains a GitHub Issue URL:
+
+1. call `get_github_context`;
+2. read the Issue title;
+3. read the complete Issue body;
+4. read all Issue comments;
+5. use explicit accepted clarifications from comments when establishing the approved scope.
+
+When the current PR input contains a GitHub Pull Request URL:
+
+1. call `get_github_context`;
+2. read the PR title;
+3. read the complete PR body;
+4. read all conversation comments;
+5. read reviews;
+6. read inline review comments.
+
+The approved Issue establishes the required scope and Acceptance Criteria.
+
+The PR provides delivery, implementation and reviewer context. It does not override the approved Issue or the actual target worktree.
+
+When pasted content and a URL are supplied together, consider both. Report a material conflict instead of silently discarding either source.
+
+If required GitHub context cannot be read completely, return:
+
+```text
+ПРОВЕРКА НЕ ЗАВЕРШЕНА
+```
 
 ## Phase 1 — Resolve the exact target
 
@@ -335,7 +369,8 @@ Then provide:
 5. reviewed branch;
 6. recommended squash commit;
 7. completed PR body using the repository template;
-8. merge readiness.
+8. merge readiness;
+9. explicit next actions: commit the reviewed changes, push the feature branch, open or update the PR, wait for CI and squash merge after approval.
 
 Do not claim MCP ran tests.
 
@@ -343,23 +378,39 @@ Do not claim MCP ran tests.
 
 Provide every blocker in this format:
 
-```text
 ### <Finding title>
 
 Файл:
+
 `path/to/file`
 
+Точное место:
+
+<existing function, class, template block or configuration section>
+
 Было:
-<current incorrect behavior>
 
-Стало:
-<required behavior within the Issue>
-
-Почему:
-<evidence and impact>
+```<language>
+<exact bounded current code, configuration or template fragment>
 ```
 
-Then provide one consolidated correction prompt.
+Стало:
+
+```<language>
+<complete bounded replacement or insertion>
+```
+
+Почему:
+
+<Acceptance Criterion, existing contract and concrete blocking impact>
+
+For a code, configuration or template blocker, include the exact bounded current fragment and the complete bounded replacement or insertion.
+
+For a behavior-only blocker, describe the exact observed and required behavior.
+
+For an evidence-only blocker, provide the exact missing command or verification scenario instead of inventing a code change.
+
+Do not return only the correction prompt. Present every real current-Issue blocker and its exact correction first, then provide one consolidated correction prompt.
 
 Do not prepare a final PR body while blockers remain.
 
@@ -413,27 +464,21 @@ For every blocker use:
 Файл:
 `<path>`
 
+Точное место:
+<existing function, class, template block or configuration section>
+
 Было:
-<current incorrect behavior>
+<exact bounded current fragment or observed behavior>
 
 Стало:
-<exact required behavior>
+<complete bounded replacement, insertion or required behavior>
 
 Почему:
 <acceptance criterion, contract violation or concrete impact>
 
-Requirements:
+For code, configuration or template blockers, include the bounded current fragment and complete replacement or insertion supplied by the review.
 
-- make only minimal in-scope corrections;
-- follow KISS and PEP 8;
-- reuse existing configuration, contracts, helpers and parameters;
-- do not hardcode values that belong to an existing source of truth;
-- do not add unnecessary defaults, abstractions or comments;
-- do not duplicate existing logic;
-- use existing test files and helpers where practical;
-- do not treat unrelated `uv.lock` noise as a finding;
-- do not report `except json_mod.JSONDecodeError, OSError:` as invalid solely because additional parentheses are absent;
-- do not add optional polish, preventive closing patches or another review round “just in case”.
+For behavior-only or evidence-only blockers, include the exact required behavior, command or verification scenario instead of inventing code.
 
 Required verification:
 

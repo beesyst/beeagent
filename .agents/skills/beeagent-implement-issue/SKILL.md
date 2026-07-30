@@ -27,7 +27,8 @@ Obtain:
 - exact target worktree;
 - expected branch;
 - base branch;
-- approved Issue;
+- approved Issue or normalized approved task contract;
+- Issue source when supplied;
 - planning constraints;
 - related repository contracts when explicitly supplied.
 
@@ -66,7 +67,7 @@ Do not silently switch branches or substitute another worktree.
 Read before implementation:
 
 - `AGENTS.md`;
-- the approved Issue;
+- the approved Issue or normalized approved task contract;
 - the relevant `docs/ROADMAP.md` section;
 - `docs/SDLC.md`;
 - `docs/SECURITY.md`;

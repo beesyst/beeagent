@@ -11,7 +11,7 @@ Use this workflow after initial implementation or after a read-only review has r
 
 The executor may inspect files, modify the exact target worktree and run local checks.
 
-This workflow can be repeated until the implementation is ready for final Bee Dev MCP review.
+Use this workflow once for independent post-implementation verification. Reuse it only to address explicit blocking findings returned by a completed final review.
 
 Do not:
 
@@ -25,23 +25,34 @@ Do not:
 
 ## Required inputs
 
-Obtain:
+For every run obtain:
 
 - project;
 - exact target worktree;
 - expected branch;
 - base branch;
-- approved Issue;
-- implementation report;
-- previous verification reports when supplied;
-- previous review blockers when supplied;
 - related repository contracts when explicitly supplied.
+
+For initial independent verification also obtain:
+
+- approved Issue or normalized approved task contract;
+- planning constraints.
+
+For a correction run also obtain:
+
+- explicit blocking findings from the completed final review.
+
+Do not require an implementation report or previous verification report.
 
 ## Working contract
 
 Before proposing or applying a change, read every declared file completely. Keep a file inventory; when another file becomes necessary, add it to the inventory and read it completely before editing it.
 
-Map the work to the supplied current roadmap iteration and stay inside its approved scope. Before editing, determine `low-risk`, `runtime-risk` or `security-sensitive`, then derive required checks from `docs/SDLC.md` and `docs/SECURITY.md`.
+For initial verification, map the work to the supplied roadmap context and approved task contract.
+
+For a correction run, treat the supplied final-review blockers as the complete correction scope. Do not require the full Issue or planning context and do not reopen already reviewed scope.
+
+Before editing, determine `low-risk`, `runtime-risk` or `security-sensitive`, then derive required checks from `docs/SDLC.md` and `docs/SECURITY.md`.
 
 Make the smallest complete KISS change. Do not refactor unrelated code, run formatters over unrelated content, remove an existing check without an explicit task-specific reason, or add first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators. Preserve required license, provenance and security annotations and unrelated existing comments.
 
@@ -63,36 +74,52 @@ Stop when:
 
 - the path or branch differs from the requested target;
 - unrelated changes prevent safe verification;
-- mandatory Issue or target information is missing.
+- mandatory target information is missing;
+- the approved task contract is missing for initial verification;
+- explicit final-review blockers are missing for a correction run.
 
 Do not silently switch branches or replace the requested worktree.
 
 ## Required reading
 
-Read:
+Read for every run:
 
 - `AGENTS.md`;
-- the approved Issue;
-- the relevant `docs/ROADMAP.md` section;
 - `docs/SDLC.md`;
 - `docs/SECURITY.md`;
 - all changed and untracked files;
-- directly related contracts, callers and tests;
-- supplied implementation and review evidence.
+- directly related contracts, callers and tests.
 
-Reports are supporting evidence only.
+For initial independent verification also read:
 
-The current files, diff, tests, logs and artifacts are authoritative.
+- the approved Issue or normalized approved task contract;
+- the relevant roadmap section;
+- supplied planning constraints.
+
+For a correction run also read:
+
+- every supplied final-review blocker;
+- the directly related current files, contracts and tests.
+
+Do not request or depend on an implementation report or previous verification report.
+
+The current target worktree, diff, tests, logs and artifacts are authoritative.
 
 ## Verification
 
-Evaluate every Acceptance Criterion as:
+For initial verification, evaluate every Acceptance Criterion as:
 
 - satisfied;
 - partially satisfied;
 - not satisfied;
 - not verifiable;
 - not applicable.
+
+For a correction run, verify:
+
+- every supplied blocking finding;
+- every affected Acceptance Criterion explicitly named in those findings;
+- regressions in the behavior touched by the corrections.
 
 Verify as applicable:
 
