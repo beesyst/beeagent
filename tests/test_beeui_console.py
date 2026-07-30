@@ -32,6 +32,20 @@ def _make_storage(tmp_path: Path) -> Path:
     return storage_dir
 
 
+def _find_section_items(page: dict[str, Any], title: str) -> list[dict[str, Any]]:
+    for sec in page.get("sections", []):
+        if sec.get("title") == title:
+            return sec.get("items", [])
+    return []
+
+
+def _item_by_label(items: list[dict[str, Any]], label: str) -> dict[str, Any]:
+    for item in items:
+        if item.get("label") == label:
+            return item
+    return {}
+
+
 def _write_modules_artifact(storage_dir: Path) -> None:
     payload = {
         "registry": [
@@ -842,9 +856,7 @@ def test_rop_overview_buckets_7d_and_30d_chart_series() -> None:
     for period, expected_count in (("7d", 7), ("30d", 30)):
         data = {**base_data, "period": period}
         layout = build_rop_page_layout(data, tab="overview")
-        chart = next(
-            block for block in layout if block["title"] == "Email Workload"
-        )
+        chart = next(block for block in layout if block["title"] == "Email Workload")
         assert len(chart["categories"]) == expected_count
         assert chart["categories"][-1] == "2026-06-21"
         for series_item in chart["series"]:
@@ -975,9 +987,7 @@ def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None
     action_block = next(
         block for block in layout if block.get("title") == "Action Required"
     )
-    queue_block = next(
-        block for block in layout if block.get("type") == "data_table"
-    )
+    queue_block = next(block for block in layout if block.get("type") == "data_table")
 
     assert action_block["series"] == [2, 0]
     assert "2 items need review" in action_block["subtitle"]
@@ -1060,7 +1070,9 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
     assert layout[0]["rows"][0]["priority"]["label"] == "high"
 
 
-def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events() -> None:
+def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events() -> (
+    None
+):
     data = {
         "attention_events": [
             {
@@ -5714,6 +5726,720 @@ def test_recommendation_links_are_built_with_current_rop_state(
     assert "lang=ru" in href
 
 
+def test_rop_event_detail_page_model_localized_bool_en(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-en")
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-en", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    should_rop = _item_by_label(cls_items, "Should ROP see")
+    assert should_rop["value"] == "Yes"
+    assert should_rop["variant"] == "badge"
+    assert should_rop["tone"] == "warning"
+
+
+def test_rop_event_detail_page_model_localized_bool_ru(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-ru")
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-ru", "evt-1", lang="ru"
+    )
+    cls_items = _find_section_items(page, t("Classification", "ru"))
+    should_rop = _item_by_label(cls_items, "Должен увидеть РОП")
+    assert should_rop["value"] == "Да"
+    assert should_rop["variant"] == "badge"
+    assert should_rop["tone"] == "warning"
+
+
+def test_rop_event_detail_page_model_bool_none(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-none")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["should_rop_see"] = None
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-none", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    should_rop = _item_by_label(cls_items, "Should ROP see")
+    assert should_rop["value"] == "n/a"
+    assert should_rop["tone"] == "muted"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-none", "evt-1", lang="ru"
+    )
+    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
+    assert should_rop_ru["value"] == "н/д"
+
+
+def test_rop_event_detail_page_model_bool_malformed_string(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-str")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["should_rop_see"] = "false"
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-str", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    should_rop = _item_by_label(cls_items, "Should ROP see")
+    assert should_rop["value"] == "n/a"
+    assert should_rop["tone"] == "muted"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-str", "evt-1", lang="ru"
+    )
+    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
+    assert should_rop_ru["value"] == "н/д"
+
+
+def test_rop_event_detail_page_model_bool_missing_field(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-miss")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    del classified[0]["should_rop_see"]
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-miss", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    should_rop = _item_by_label(cls_items, "Should ROP see")
+    assert should_rop["value"] == "n/a"
+    assert should_rop["tone"] == "muted"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-miss", "evt-1", lang="ru"
+    )
+    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
+    assert should_rop_ru["value"] == "н/д"
+
+
+def test_rop_event_detail_page_model_thread_bool_none(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-null")
+    (run_dir / "mail_thread_context.json").write_text(
+        json.dumps(
+            {
+                "contexts": [
+                    {
+                        "event_id": "evt-1",
+                        "thread_id": "t-1",
+                        "reply_or_forward": None,
+                        "thread_connection": "reply",
+                        "reason_codes": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-thread-null", "evt-1", lang="en"
+    )
+    thr_items = _find_section_items(page_en, "Thread context")
+    rf = _item_by_label(thr_items, "Reply/forward")
+    assert rf["value"] == "n/a"
+    assert rf["variant"] == "boolean"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-thread-null", "evt-1", lang="ru"
+    )
+    thr_items_ru = _find_section_items(page_ru, t("Thread context", "ru"))
+    rf_ru = _item_by_label(thr_items_ru, "Ответ/пересылка")
+    assert rf_ru["value"] == "н/д"
+
+
+def test_rop_event_detail_page_model_thread_bool_missing(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-miss")
+    (run_dir / "mail_thread_context.json").write_text(
+        json.dumps(
+            {
+                "contexts": [
+                    {
+                        "event_id": "evt-1",
+                        "thread_id": "t-1",
+                        "thread_connection": "reply",
+                        "reason_codes": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-thread-miss", "evt-1", lang="en"
+    )
+    thr_items = _find_section_items(page_en, "Thread context")
+    rf = _item_by_label(thr_items, "Reply/forward")
+    assert rf["value"] == "n/a"
+    assert rf["variant"] == "boolean"
+
+
+def test_rop_event_detail_page_model_ai_assist_used_none(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-none")
+    (run_dir / "rop_ai_assist_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_assist_status": "ok",
+                        "ai_assist_used": None,
+                        "ai_assist_confidence": 0.5,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-ai-used-none", "evt-1", lang="en"
+    )
+    ai_items = _find_section_items(page, "AI Assist")
+    used_item = _item_by_label(ai_items, "AI used")
+    assert used_item["value"] == "n/a"
+    assert used_item["variant"] == "boolean"
+
+
+def test_rop_event_detail_page_model_ai_assist_used_missing(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-miss")
+    (run_dir / "rop_ai_assist_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_assist_status": "ok",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-ai-used-miss", "evt-1", lang="en"
+    )
+    ai_items = _find_section_items(page, "AI Assist")
+    used_item = _item_by_label(ai_items, "AI used")
+    assert used_item["value"] == "n/a"
+    assert used_item["variant"] == "boolean"
+
+
+def test_rop_event_detail_page_model_ai_assist_used_malformed(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-bad")
+    (run_dir / "rop_ai_assist_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_assist_status": "ok",
+                        "ai_assist_used": "false",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-ai-used-bad", "evt-1", lang="en"
+    )
+    ai_items = _find_section_items(page, "AI Assist")
+    used_item = _item_by_label(ai_items, "AI used")
+    assert used_item["value"] == "n/a"
+    assert used_item["variant"] == "boolean"
+
+
+def test_rop_event_detail_page_model_adjudicator_used_none(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-adj-none")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_used": None,
+                        "ai_status": "ok",
+                        "final_case_type": "new_lead",
+                        "final_recommended_queue": "",
+                        "final_correct_action": "",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-adj-none", "evt-1", lang="en"
+    )
+    adj_items = _find_section_items(page, "AI Adjudicator")
+    used_item = _item_by_label(adj_items, "AI adjudicator used")
+    assert used_item["value"] == "n/a"
+    assert used_item["variant"] == "badge"
+    assert used_item["tone"] == "muted"
+
+
+def test_rop_event_detail_page_model_bool_false_exact(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-bool-false")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["should_rop_see"] = False
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-false", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    should_rop = _item_by_label(cls_items, "Should ROP see")
+    assert should_rop["value"] == "No"
+    assert should_rop["tone"] == "muted"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-bool-false", "evt-1", lang="ru"
+    )
+    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
+    assert should_rop_ru["value"] == "Нет"
+
+
+def test_rop_event_detail_page_model_priority_tone(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    for priority, expected_tone in [
+        ("low", "muted"),
+        ("medium", "warning"),
+        ("high", "danger"),
+        ("critical", "danger"),
+        ("unknown_val", "muted"),
+    ]:
+        run_id = f"run-prio-{priority}"
+        run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        classified[0]["priority"] = priority
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        page = build_rop_event_detail_page_model(
+            storage_dir, run_id, "evt-1", lang="en"
+        )
+        cls_items = _find_section_items(page, "Classification")
+        prio_item = _item_by_label(cls_items, "Priority")
+        assert prio_item["tone"] == expected_tone, (
+            f"priority={priority!r} expected tone={expected_tone!r} "
+            f"got={prio_item['tone']!r}"
+        )
+        assert prio_item["variant"] == "badge"
+
+
+def test_rop_event_detail_page_model_adjudicator_status_tone(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    test_cases = [
+        ("ok", "success"),
+        ("low_confidence_preserve", "warning"),
+        ("manual_review_degrade", "warning"),
+        ("invalid_output", "danger"),
+        ("provider_unavailable", "danger"),
+        ("module_contract_unavailable", "danger"),
+        ("unknown_status", "default"),
+        ("", "default"),
+    ]
+    for status, expected_tone in test_cases:
+        run_id = f"run-adj-status-{status.replace('_', '-')}"
+        run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
+        (run_dir / "rop_ai_adjudicator_results.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "event_id": "evt-1",
+                            "ai_used": True,
+                            "ai_status": status,
+                            "ai_confidence": 0.5,
+                            "ai_reason": "test",
+                            "final_case_type": "new_lead",
+                            "final_recommended_queue": "manual_review",
+                            "final_correct_action": "manual_review",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        page = build_rop_event_detail_page_model(
+            storage_dir, run_id, "evt-1", lang="en"
+        )
+        adj_items = _find_section_items(page, "AI Adjudicator")
+        status_item = _item_by_label(adj_items, "AI adjudicator status")
+        assert status_item["tone"] == expected_tone, (
+            f"status={status!r} expected tone={expected_tone!r} "
+            f"got={status_item['tone']!r}"
+        )
+        assert status_item["variant"] == "badge"
+
+
+def test_rop_event_detail_page_model_queue_action_tone(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    test_cases = [
+        ("manual_review", "warning"),
+        ("ignore", "muted"),
+        ("high_priority", "default"),
+        ("sales", "default"),
+        ("", "default"),
+    ]
+    for action, expected_tone in test_cases:
+        run_id = f"run-qa-{action.replace('_', '-')}"
+        run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        classified[0]["correct_action"] = action
+        classified[0]["recommended_queue"] = action
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        page = build_rop_event_detail_page_model(
+            storage_dir, run_id, "evt-1", lang="en"
+        )
+        cls_items = _find_section_items(page, "Classification")
+        rec_act = _item_by_label(cls_items, "Recommended action")
+        rec_queue = _item_by_label(cls_items, "Recommended queue")
+        assert rec_act["tone"] == expected_tone, (
+            f"correct_action={action!r} expected tone={expected_tone!r} "
+            f"got={rec_act['tone']!r}"
+        )
+        assert rec_act["variant"] == "badge"
+        assert rec_queue["tone"] == expected_tone
+        assert rec_queue["variant"] == "badge"
+
+
+def test_rop_event_detail_page_model_recommended_action_label(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-rec-act-label")
+    page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-rec-act-label", "evt-1", lang="en"
+    )
+    cls_items_en = _find_section_items(page_en, "Classification")
+    labels_en = [i["label"] for i in cls_items_en]
+    assert "Recommended action" in labels_en
+    assert "Correct action" not in labels_en
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-rec-act-label", "evt-1", lang="ru"
+    )
+    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    labels_ru = [i["label"] for i in cls_items_ru]
+    assert "Рекомендуемое действие" in labels_ru
+    assert "Верное действие" not in labels_ru
+
+
+def test_rop_event_detail_page_model_final_decision_badge_tones(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-fd-tones")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps({"results": []}), encoding="utf-8"
+    )
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "total_events": 1,
+                    "decision_source_counts": {"ai_adjudicator": 1},
+                    "attention_count": 1,
+                },
+                "events": [
+                    {
+                        "event_id": "evt-1",
+                        "final_case_type": "new_lead",
+                        "final_case_subtype": None,
+                        "final_queue": "manual_review",
+                        "final_action": "manual_review",
+                        "final_decision_source": "ai_adjudicator",
+                        "final_confidence": 0.85,
+                        "needs_attention": True,
+                        "attention_reason": "conflict",
+                        "automation_allowed": False,
+                        "bitrix_write_allowed": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-fd-tones", "evt-1", lang="en"
+    )
+    fd_items = _find_section_items(page, "Final decision")
+    needs_attn = _item_by_label(fd_items, "Needs attention")
+    assert needs_attn["value"] == "Yes"
+    assert needs_attn["tone"] == "warning"
+    assert needs_attn["variant"] == "badge"
+
+    auto_allowed = _item_by_label(fd_items, "Automation allowed")
+    assert auto_allowed["value"] == "No"
+    assert auto_allowed["tone"] == "muted"
+    assert auto_allowed["variant"] == "badge"
+
+    bitrix_allowed = _item_by_label(fd_items, "Bitrix write allowed")
+    assert bitrix_allowed["value"] == "No"
+    assert bitrix_allowed["tone"] == "muted"
+    assert bitrix_allowed["variant"] == "badge"
+
+    fd_type = _item_by_label(fd_items, "Final case type")
+    assert fd_type["variant"] == "badge"
+    assert fd_type["tone"] == "default"
+
+    fd_queue = _item_by_label(fd_items, "Final queue")
+    assert fd_queue["variant"] == "badge"
+    assert fd_queue["tone"] == "warning"
+
+    decision_source = _item_by_label(fd_items, "Decision source")
+    assert decision_source["variant"] == "badge"
+    assert decision_source["tone"] == "muted"
+
+
+def test_rop_event_detail_page_model_adjudicator_used_tone(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    for used, expected_tone in [(True, "default"), (False, "muted")]:
+        run_id = f"run-adj-used-{used}"
+        run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
+        (run_dir / "rop_ai_adjudicator_results.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "event_id": "evt-1",
+                            "ai_used": used,
+                            "ai_status": "ok",
+                            "ai_confidence": 0.5,
+                            "ai_reason": "test",
+                            "final_case_type": "new_lead",
+                            "final_recommended_queue": "manual_review",
+                            "final_correct_action": "manual_review",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        page = build_rop_event_detail_page_model(
+            storage_dir, run_id, "evt-1", lang="en"
+        )
+        adj_items = _find_section_items(page, "AI Adjudicator")
+        used_item = _item_by_label(adj_items, "AI adjudicator used")
+        assert used_item["tone"] == expected_tone
+        assert used_item["variant"] == "badge"
+        assert used_item["value"] == ("Yes" if used else "No")
+
+
+def test_rop_event_detail_page_model_thread_bool_localized(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import t
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-bool")
+    (run_dir / "mail_thread_context.json").write_text(
+        json.dumps(
+            {
+                "contexts": [
+                    {
+                        "event_id": "evt-1",
+                        "thread_id": "t-1",
+                        "reply_or_forward": True,
+                        "thread_connection": "reply",
+                        "reason_codes": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-thread-bool", "evt-1", lang="en"
+    )
+    thr_items = _find_section_items(page_en, "Thread context")
+    rf = _item_by_label(thr_items, "Reply/forward")
+    assert rf["value"] == "Yes"
+    assert rf["variant"] == "boolean"
+
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-thread-bool", "evt-1", lang="ru"
+    )
+    thr_items_ru = _find_section_items(page_ru, t("Thread context", "ru"))
+    rf_ru = _item_by_label(thr_items_ru, "Ответ/пересылка")
+    assert rf_ru["value"] == "Да"
+
+
+def test_rop_event_detail_page_model_case_type_default_badge(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ct-badge")
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-ct-badge", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    ct = _item_by_label(cls_items, "Case type")
+    assert ct["variant"] == "badge"
+    assert ct["tone"] == "default"
+
+
+def test_rop_event_detail_api_booleans_remain_raw(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-api-bool")
+    client = _client(storage_dir)
+
+    response = client.get("/api/rop/events/evt-1?run_id=run-api-bool")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    cls = data["classification"]
+    assert cls["should_rop_see"] is True
+    assert cls["correct_action"] == "review"
+    assert "recommended_queue" in cls
+    assert "Recommended action" not in json.dumps(data)
+
+
+def test_rop_event_detail_page_model_unknown_values_degrades_safely(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-unknown-safe")
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["priority"] = "bogus_value"
+    classified[0]["correct_action"] = "bogus_action"
+    classified[0]["recommended_queue"] = "bogus_queue"
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-unknown-safe", "evt-1", lang="en"
+    )
+    cls_items = _find_section_items(page, "Classification")
+    prio = _item_by_label(cls_items, "Priority")
+    assert prio["tone"] == "muted"
+    assert prio["variant"] == "badge"
+    rec_queue = _item_by_label(cls_items, "Recommended queue")
+    assert rec_queue["tone"] == "default"
+    assert rec_queue["variant"] == "badge"
+    rec_act = _item_by_label(cls_items, "Recommended action")
+    assert rec_act["tone"] == "default"
+    assert rec_act["variant"] == "badge"
+
+
 def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
     tmp_path: Path,
 ) -> None:
@@ -5842,3 +6568,128 @@ def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:
         assert message in html.text or "invalid_params" in html.text
         assert api.status_code == 400
         assert api.json()["error"]["code"] == "invalid_params"
+
+
+def _assert_badge_in(html: str, css_class: str, value: str) -> None:
+    assert f'class="badge {css_class}">{value}<' in html
+
+
+def test_event_detail_route_badges_classification_only(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-route-cls-only")
+    client = _client(storage_dir)
+
+    for lang, expected_yes in [("en", "Yes"), ("ru", "Да")]:
+        response = client.get(
+            f"/rop/events/evt-1?run_id=run-route-cls-only&lang={lang}"
+        )
+        assert response.status_code == 200
+        html = response.text
+
+        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
+        _assert_badge_in(html, "bg-danger-lt", "high")
+        _assert_badge_in(html, "bg-warning-lt", expected_yes)
+
+
+def test_event_detail_route_badges_full_data(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-route-full")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_used": True,
+                        "ai_status": "ok",
+                        "ai_confidence": 0.92,
+                        "ai_reason": "ai review complete",
+                        "final_case_type": "new_lead",
+                        "final_recommended_queue": "manual_review",
+                        "final_correct_action": "manual_review",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "total_events": 1,
+                    "decision_source_counts": {"ai_adjudicator": 1},
+                    "attention_count": 0,
+                },
+                "events": [
+                    {
+                        "event_id": "evt-1",
+                        "final_case_type": "new_lead",
+                        "final_case_subtype": None,
+                        "final_queue": "manual_review",
+                        "final_action": "manual_review",
+                        "final_decision_source": "ai_adjudicator",
+                        "final_confidence": 0.92,
+                        "needs_attention": False,
+                        "attention_reason": None,
+                        "automation_allowed": False,
+                        "bitrix_write_allowed": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    for lang, expected_yes, expected_no in [
+        ("en", "Yes", "No"),
+        ("ru", "Да", "Нет"),
+    ]:
+        response = client.get(f"/rop/events/evt-1?run_id=run-route-full&lang={lang}")
+        assert response.status_code == 200
+        html = response.text
+
+        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
+        _assert_badge_in(html, "bg-danger-lt", "high")
+        _assert_badge_in(html, "bg-warning-lt", expected_yes)
+
+        _assert_badge_in(html, "bg-secondary-lt", expected_yes)
+        _assert_badge_in(html, "bg-success-lt", "ok")
+        _assert_badge_in(html, "bg-warning-lt", "manual_review")
+
+        _assert_badge_in(html, "bg-secondary-lt", "ai_adjudicator")
+        _assert_badge_in(html, "bg-secondary-lt", expected_no)
+
+
+def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-route-no-adj")
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps({"results": []}), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+
+    for lang, expected_yes, expected_no, fd_title in [
+        ("en", "Yes", "No", "Final decision"),
+        ("ru", "Да", "Нет", "Итоговое решение"),
+    ]:
+        response = client.get(f"/rop/events/evt-1?run_id=run-route-no-adj&lang={lang}")
+        assert response.status_code == 200
+        html = response.text
+
+        assert fd_title in html
+
+        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
+        badge_new_lead = 'class="badge bg-secondary-lt">new_lead<'
+        assert html.count(badge_new_lead) >= 2
+
+        _assert_badge_in(html, "bg-danger-lt", "high")
+        _assert_badge_in(html, "bg-warning-lt", expected_yes)
+
+        _assert_badge_in(html, "bg-secondary-lt", "deterministic")
+        _assert_badge_in(html, "bg-secondary-lt", "high_priority")
+        _assert_badge_in(html, "bg-secondary-lt", "review")
+        _assert_badge_in(html, "bg-secondary-lt", expected_no)
+
+        assert "bg-success-lt" not in html
