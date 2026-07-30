@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.0...beeagent-v0.48.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **ui:** render semantic statuses in ROP Event Detail ([#165](https://github.com/beesyst/beeagent/issues/165)) ([6374efd](https://github.com/beesyst/beeagent/commit/6374efde380527ce5b5f39ee00a48e8292e6d462))
+
 ## [0.48.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.47.0...beeagent-v0.48.0) (2026-07-28)
 
 
