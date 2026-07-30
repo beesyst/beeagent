@@ -11,6 +11,12 @@ from beeagent_module.core.rop_final_decision import (
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.reason_catalog import (
+    get_ai_evidence_display,
+    get_ai_reason_display,
+    get_attention_reason_display,
+    get_classification_reason_display,
+)
 from beeagent_module.interfaces.ui.url_builder import build_rop_url
 
 _PRIORITY_TONE = {
@@ -273,13 +279,20 @@ def build_rop_event_detail_read_model(
         reason = _str(
             class_event.get("reasoning") or class_event.get("reason_code", "")
         )
+        reason_code_str = _str(class_event.get("reason_code"))
+        reason_display, reason_warning = get_classification_reason_display(
+            reason_code_str, lang
+        )
+        if reason_warning:
+            warnings.append(reason_warning)
         classification_section = {
             "case_type": _str(class_event.get("case_type")),
             "case_subtype": _str(class_event.get("case_subtype")),
             "priority": _str(class_event.get("priority")),
             "confidence": class_event.get("confidence"),
-            "reason_code": _str(class_event.get("reason_code")),
+            "reason_code": reason_code_str,
             "reason": reason,
+            "reason_display": reason_display,
             "is_fallback": bool(class_event.get("is_fallback")),
             "recommended_queue": _str(class_event.get("recommended_queue", "")),
             "recommended_next_step": _str(class_event.get("recommended_queue", "")),
@@ -345,11 +358,33 @@ def build_rop_event_detail_read_model(
     if isinstance(ai_adjudicator_results, dict):
         matched = _match_by_event_id(ai_adjudicator_results, event_id)
         if matched:
+            ai_reason_code_str = _str(matched.get("ai_reason_code", ""))
+            ai_evidence_list = matched.get("ai_evidence_codes", [])
+            if not isinstance(ai_evidence_list, list):
+                ai_evidence_list = []
+            ai_reason_display_val, ai_reason_warn = get_ai_reason_display(
+                ai_reason_code_str if ai_reason_code_str else None, lang
+            )
+            if ai_reason_warn:
+                warnings.append(ai_reason_warn)
+            # Populate as dict for per-item evidence display
+            ai_evidence_display_list: list[dict[str, str]] = []
+            for code in ai_evidence_list:
+                if isinstance(code, str):
+                    ev_display, ev_warn = get_ai_evidence_display(code, lang)
+                    if ev_warn:
+                        warnings.append(ev_warn)
+                    ai_evidence_display_list.append(
+                        {"code": code, "display": ev_display}
+                    )
             adj_section = {
                 "ai_adjudicator_used": _nullable_bool(matched.get("ai_used")),
                 "ai_adjudicator_status": _str(matched.get("ai_status", "")),
                 "ai_adjudicator_confidence": matched.get("ai_confidence"),
                 "ai_adjudicator_reason": _str(matched.get("ai_reason", "")),
+                "ai_adjudicator_reason_code": ai_reason_code_str,
+                "ai_adjudicator_evidence_codes": ai_evidence_display_list,
+                "ai_adjudicator_reason_display": ai_reason_display_val,
                 "final_case_type": _str(matched.get("final_case_type", "")),
                 "final_case_subtype": _str(matched.get("final_case_subtype", "")),
                 "final_recommended_queue": _str(
@@ -363,6 +398,23 @@ def build_rop_event_detail_read_model(
     if final_decision:
         final_case_subtype = final_decision.get("final_case_subtype")
         attention_reason = final_decision.get("attention_reason")
+        attention_reason_code = final_decision.get("attention_reason_code")
+        attention_evidence_list = final_decision.get("attention_evidence_codes")
+        if not isinstance(attention_evidence_list, list):
+            attention_evidence_list = []
+        attn_reason_display_val, attn_reason_warn = get_attention_reason_display(
+            attention_reason_code if isinstance(attention_reason_code, str) else None,
+            lang,
+        )
+        if attn_reason_warn:
+            warnings.append(attn_reason_warn)
+        attn_evidence_display_list: list[dict[str, str]] = []
+        for code in attention_evidence_list:
+            if isinstance(code, str):
+                ev_display, ev_warn = get_ai_evidence_display(code, lang)
+                if ev_warn:
+                    warnings.append(ev_warn)
+                attn_evidence_display_list.append({"code": code, "display": ev_display})
         final_decision_section = {
             "event_id": _str(final_decision.get("event_id", "")),
             "final_case_type": _str(final_decision.get("final_case_type", "")),
@@ -379,6 +431,13 @@ def build_rop_event_detail_read_model(
             "attention_reason": (
                 attention_reason if isinstance(attention_reason, str) else None
             ),
+            "attention_reason_code": (
+                attention_reason_code
+                if isinstance(attention_reason_code, str)
+                else None
+            ),
+            "attention_evidence_codes": attn_evidence_display_list,
+            "attention_reason_display": attn_reason_display_val,
             "automation_allowed": False,
             "bitrix_write_allowed": False,
         }
@@ -622,7 +681,12 @@ def build_rop_event_detail_page_model(
                         hint="confidence",
                     ),
                     _kv(t("Reason code", lang), classification.get("reason_code")),
-                    _kv(t("Reason", lang), classification.get("reason")),
+                    _kv(
+                        t("Reason", lang),
+                        classification.get("reason_display")
+                        or classification.get("reason"),
+                        hint="localized_reason",
+                    ),
                     _kv(
                         t("Recommended queue", lang),
                         classification.get("recommended_queue"),
@@ -718,7 +782,16 @@ def build_rop_event_detail_page_model(
                     ),
                     _kv(
                         t("AI adjudicator reason", lang),
+                        ai_adjudicator.get("ai_adjudicator_reason_display")
+                        or ai_adjudicator.get("ai_adjudicator_reason"),
+                        hint="localized_reason",
+                    ),
+                    _kv(
+                        t("Reasoning", lang),
                         ai_adjudicator.get("ai_adjudicator_reason"),
+                        variant="long_text",
+                        collapsible=True,
+                        display=ai_adjudicator.get("ai_adjudicator_reason", ""),
                     ),
                     _kv(
                         t("AI proposed case type", lang),
@@ -790,7 +863,9 @@ def build_rop_event_detail_page_model(
                     ),
                     _kv(
                         t("Attention reason", lang),
-                        final_decision.get("attention_reason"),
+                        final_decision.get("attention_reason_display")
+                        or final_decision.get("attention_reason"),
+                        hint="localized_reason",
                     ),
                     _kv(
                         t("Automation allowed", lang),

@@ -2428,6 +2428,8 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
                 "confidence": 0.91,
                 "reason": "Clear RFQ content",
                 "risk_flags": ["marketing_conflict"],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": ["low_signal"],
             }
         ),
     )

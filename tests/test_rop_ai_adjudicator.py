@@ -366,10 +366,14 @@ class TestValidation:
                 "confidence": 0.85,
                 "reason": "Clear RFQ content",
                 "risk_flags": [],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"] == []
         assert validated["case_type"] == "new_lead"
+        assert validated["reason_code"] == "ai_low_confidence_preserve"
+        assert validated["evidence_codes"] == ["low_signal"]
 
     def test_invalid_taxonomy_adds_errors(self) -> None:
         validated = _validate_ai_output(
@@ -380,6 +384,8 @@ class TestValidation:
                 "should_rop_see": "yes",
                 "confidence": 0.95,
                 "risk_flags": [],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"]
@@ -401,6 +407,8 @@ class TestValidation:
                     "forwarded_wrapper_present",
                     "missing_body_preview",
                 ],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": ["low_signal"],
             }
         )
         assert validated["errors"] == []
@@ -410,6 +418,104 @@ class TestValidation:
             "missing_body_preview",
         ]
         assert validated["warnings"]
+
+    def test_valid_reason_code_accepted(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+        assert validated["errors"] == []
+        assert validated["reason_code"] == "ai_low_confidence_preserve"
+        assert validated["evidence_codes"] == ["low_signal"]
+
+    def test_invalid_reason_code_adds_error(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+                "reason_code": "nonexistent_code",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+        assert validated["errors"]
+        assert any("reason_code" in e for e in validated["errors"])
+        assert validated["reason_code"] == "manual_review_degrade"
+
+    def test_unknown_evidence_codes_are_dropped(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.95,
+                "reason": "Bulk content",
+                "risk_flags": [],
+                "reason_code": "ai_low_confidence_safe_ignore_preserved",
+                "evidence_codes": ["low_signal", "nonexistent_flag"],
+            }
+        )
+        assert validated["errors"] == []
+        assert validated["evidence_codes"] == ["low_signal"]
+        assert validated.get("dropped_evidence_codes", []) == ["nonexistent_flag"]
+
+    def test_missing_reason_code_defaults(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.85,
+                "reason": "Clear RFQ content",
+                "risk_flags": [],
+            }
+        )
+        assert validated["errors"]
+        assert validated["reason_code"] == "manual_review_degrade"
+
+    def test_evidence_codes_max_items_enforced(self) -> None:
+        validated = _validate_ai_output(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.95,
+                "reason": "Bulk content",
+                "risk_flags": [],
+                "reason_code": "ai_low_confidence_preserve",
+                "evidence_codes": [
+                    "low_signal",
+                    "marketing_conflict",
+                    "spam_rfq_conflict",
+                    "supplier_outreach",
+                    "ambiguous_bitrix",
+                    "newsletter_bulk",
+                ],
+            }
+        )
+        assert validated["errors"] == []
+        assert len(validated["evidence_codes"]) <= 5
 
 
 class TestProviderCall:
@@ -613,6 +719,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -648,6 +756,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.90,
                     "reason": "Looks like procurement continuation",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -684,6 +794,8 @@ class TestAdjudicatorForEvent:
                         "threshold."
                     ),
                     "risk_flags": ["low_signal"],
+                    "reason_code": "ai_low_confidence_safe_ignore_preserved",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -720,6 +832,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.31,
                     "reason": "Bulk newsletter with no customer request.",
                     "risk_flags": ["newsletter_bulk", "ambiguous_sender_identity"],
+                    "reason_code": "ai_low_confidence_safe_ignore_preserved",
+                    "evidence_codes": ["newsletter_bulk"],
                 }
             )
 
@@ -776,6 +890,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.95,
                     "reason": "Bad taxonomy",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -806,6 +922,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.78,
                     "reason": "Looks like supplier spam",
                     "risk_flags": ["supplier_outreach", "unknown_flag"],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["supplier_outreach"],
                 }
             )
 
@@ -842,6 +960,8 @@ class TestAdjudicatorForEvent:
                         "marketing_conflict",
                         "forwarded_wrapper_present",
                     ],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -875,6 +995,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.93,
                     "reason": "Supplier outreach with no customer demand.",
                     "risk_flags": ["supplier_outreach"],
+                    "reason_code": "ai_resolved_risky_false_positive",
+                    "evidence_codes": ["supplier_outreach"],
                 }
             )
 
@@ -908,6 +1030,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.91,
                     "reason": "Newsletter and seminar invitation with no actionable business signal.",
                     "risk_flags": ["newsletter_bulk"],
+                    "reason_code": "ai_resolved_risky_false_positive",
+                    "evidence_codes": ["newsletter_bulk"],
                 }
             )
 
@@ -940,6 +1064,8 @@ class TestAdjudicatorForEvent:
                     "confidence": 0.94,
                     "reason": "Looks noisy.",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -1010,6 +1136,8 @@ class TestAdjudicatorBatch:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 
@@ -1043,6 +1171,8 @@ class TestAdjudicatorBatch:
                     "confidence": 0.85,
                     "reason": "Clear RFQ content",
                     "risk_flags": [],
+                    "reason_code": "ai_low_confidence_preserve",
+                    "evidence_codes": ["low_signal"],
                 }
             )
 

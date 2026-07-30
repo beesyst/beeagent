@@ -335,6 +335,7 @@ _LABELS_EN: dict[str, str] = {
     "Filename": "Filename",
     "Content type": "Content type",
     "Size": "Size",
+    "Reasoning": "Explanation",
     # ── Filter labels ──────────────────────────────────────────────────────
     "Filters": "Filters",
     "Date range": "Date range",
@@ -690,6 +691,7 @@ _LABELS_RU: dict[str, str] = {
     "Filename": "Имя файла",
     "Content type": "Тип содержимого",
     "Size": "Размер",
+    "Reasoning": "Объяснение",
     # ── Filter labels ──────────────────────────────────────────────────────
     "Filters": "Фильтры",
     "Date range": "Диапазон дат",

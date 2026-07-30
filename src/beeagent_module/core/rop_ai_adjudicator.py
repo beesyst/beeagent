@@ -199,11 +199,39 @@ _VALID_RISK_FLAGS = frozenset(
         "attachment_mismatch",
     }
 )
+_VALID_AI_REASON_CODES = frozenset(
+    {
+        "ai_low_confidence_preserve",
+        "manual_review_degrade",
+        "provider_unavailable",
+        "invalid_output",
+        "low_confidence",
+        "ai_resolved_risky_false_positive",
+        "ai_low_confidence_safe_ignore_preserved",
+        "ai_output_conflict_manual_review",
+        "ai_low_confidence_manual_review",
+    }
+)
+_VALID_AI_EVIDENCE_CODES = frozenset(
+    {
+        "marketing_conflict",
+        "spam_rfq_conflict",
+        "supplier_outreach",
+        "low_signal",
+        "ambiguous_bitrix",
+        "newsletter_bulk",
+        "finance_sales_conflict",
+        "business_ignore_conflict",
+        "attachment_mismatch",
+    }
+)
 _MAX_CASE_SUBTYPE_LENGTH = 80
 _MAX_REASON_LENGTH = 600
 _MAX_RISK_FLAGS = 8
 _MAX_RISK_FLAG_LENGTH = 64
 _MAX_CONFLICT_SIGNALS = 12
+_MAX_AI_EVIDENCE_CODES = 5
+_MAX_AI_EVIDENCE_CODE_LENGTH = 80
 _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -216,6 +244,8 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
         "confidence",
         "reason",
         "risk_flags",
+        "reason_code",
+        "evidence_codes",
     ],
     "properties": {
         "case_type": {
@@ -245,6 +275,7 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
         "reason": {
             "type": "string",
             "maxLength": _MAX_REASON_LENGTH,
+            "description": "Concise canonical English audit reason. Must not copy full email or attachment content.",
         },
         "risk_flags": {
             "type": "array",
@@ -253,6 +284,20 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "maxLength": _MAX_RISK_FLAG_LENGTH,
             },
+        },
+        "reason_code": {
+            "type": "string",
+            "enum": sorted(_VALID_AI_REASON_CODES),
+            "description": "Structured reason code for the AI adjudicator decision.",
+        },
+        "evidence_codes": {
+            "type": "array",
+            "maxItems": _MAX_AI_EVIDENCE_CODES,
+            "items": {
+                "type": "string",
+                "maxLength": _MAX_AI_EVIDENCE_CODE_LENGTH,
+            },
+            "description": "Bounded evidence codes supporting the AI adjudicator decision.",
         },
     },
 }
@@ -898,9 +943,37 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
         warnings.append("risk_flags was not a list; replaced with []")
         validated["risk_flags"] = []
 
+    reason_code = data.get("reason_code")
+    if isinstance(reason_code, str) and reason_code in _VALID_AI_REASON_CODES:
+        validated["reason_code"] = reason_code
+    elif isinstance(reason_code, str):
+        errors.append(f"invalid reason_code: {reason_code}")
+        validated["reason_code"] = "manual_review_degrade"
+    else:
+        errors.append(f"invalid reason_code type: {type(reason_code).__name__}")
+        validated["reason_code"] = "manual_review_degrade"
+
+    evidence_codes = data.get("evidence_codes", [])
+    cleaned_evidence: list[str] = []
+    dropped_evidence: list[str] = []
+    if isinstance(evidence_codes, list):
+        for code in evidence_codes:
+            if len(cleaned_evidence) >= _MAX_AI_EVIDENCE_CODES:
+                break
+            if isinstance(code, str) and code in _VALID_AI_EVIDENCE_CODES:
+                cleaned_evidence.append(code)
+            elif isinstance(code, str):
+                dropped_evidence.append(code)
+                warnings.append(f"dropped unknown evidence_code: {code}")
+        validated["evidence_codes"] = cleaned_evidence[:_MAX_AI_EVIDENCE_CODES]
+    else:
+        warnings.append("evidence_codes was not a list; replaced with []")
+        validated["evidence_codes"] = []
+
     validated["errors"] = errors
     validated["warnings"] = warnings
     validated["dropped_risk_flags"] = dropped_risk_flags[:_MAX_RISK_FLAGS]
+    validated["dropped_evidence_codes"] = dropped_evidence[:_MAX_AI_EVIDENCE_CODES]
     return validated
 
 
@@ -1040,6 +1113,8 @@ def _build_result(
     ai_status: str,
     ai_confidence: float | None,
     ai_reason: str,
+    ai_reason_code: str,
+    ai_evidence_codes: list[str],
     ai_risk_flags: list[str],
     ai_error: str,
     final_case_type: Any,
@@ -1060,6 +1135,8 @@ def _build_result(
         "ai_status": ai_status,
         "ai_confidence": ai_confidence,
         "ai_reason": ai_reason,
+        "ai_reason_code": ai_reason_code,
+        "ai_evidence_codes": ai_evidence_codes,
         "ai_risk_flags": ai_risk_flags,
         "ai_error": ai_error,
         "deterministic_case_type": _deterministic_value(event, "case_type", "unknown"),
@@ -1171,6 +1248,8 @@ def run_adjudicator_for_event(
                 ai_status="not_eligible",
                 ai_confidence=None,
                 ai_reason="",
+                ai_reason_code="",
+                ai_evidence_codes=[],
                 ai_risk_flags=[],
                 ai_error="",
                 final_case_type=final_case_type,
@@ -1207,6 +1286,8 @@ def run_adjudicator_for_event(
                 ai_status="degraded",
                 ai_confidence=None,
                 ai_reason="",
+                ai_reason_code="",
+                ai_evidence_codes=[],
                 ai_risk_flags=[],
                 ai_error=error,
                 final_case_type=final_case_type,
@@ -1250,6 +1331,8 @@ def run_adjudicator_for_event(
                 ai_status="degraded",
                 ai_confidence=None,
                 ai_reason="",
+                ai_reason_code="",
+                ai_evidence_codes=[],
                 ai_risk_flags=[],
                 ai_error=error,
                 final_case_type=final_case_type,
@@ -1286,6 +1369,8 @@ def run_adjudicator_for_event(
                 ai_status="invalid",
                 ai_confidence=None,
                 ai_reason="",
+                ai_reason_code="",
+                ai_evidence_codes=[],
                 ai_risk_flags=[],
                 ai_error=error,
                 final_case_type=final_case_type,
@@ -1404,11 +1489,17 @@ def run_adjudicator_for_event(
         "ai_confidence": ai_confidence,
         "ai_reason": ai_reason,
         "ai_risk_flags": ai_risk_flags,
+        "ai_reason_code": str(validated.get("reason_code", "")),
+        "ai_evidence_codes": list(validated.get("evidence_codes", [])),
         "validation_errors": validation_errors,
         "validation_warnings": validation_warnings,
         "dropped_risk_flags": dropped_risk_flags,
+        "dropped_evidence_codes": list(validated.get("dropped_evidence_codes", [])),
         "error": ai_error,
     }
+
+    ai_reason_code = str(validated.get("reason_code", "manual_review_degrade"))
+    ai_evidence_codes = list(validated.get("evidence_codes", []))
 
     return {
         "request": request_artifact,
@@ -1421,6 +1512,8 @@ def run_adjudicator_for_event(
             ai_status=status,
             ai_confidence=ai_confidence,
             ai_reason=ai_reason,
+            ai_reason_code=ai_reason_code,
+            ai_evidence_codes=ai_evidence_codes,
             ai_risk_flags=ai_risk_flags,
             ai_error=ai_error,
             final_case_type=final_case_type,

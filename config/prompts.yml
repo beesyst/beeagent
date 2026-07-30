@@ -16,7 +16,17 @@ rop:
     user: >
       Analyze this bounded ROP event and return only JSON with fields:
       case_type, case_subtype, recommended_queue, should_rop_see, correct_action,
-      confidence, reason, risk_flags.
+      confidence, reason, risk_flags, reason_code, evidence_codes.
+
+      reason_code must be one of: ai_low_confidence_preserve, manual_review_degrade,
+      provider_unavailable, invalid_output, low_confidence,
+      ai_resolved_risky_false_positive, ai_low_confidence_safe_ignore_preserved,
+      ai_output_conflict_manual_review, ai_low_confidence_manual_review.
+      evidence_codes must be a subset of: marketing_conflict, spam_rfq_conflict,
+      supplier_outreach, low_signal, ambiguous_bitrix, newsletter_bulk,
+      finance_sales_conflict, business_ignore_conflict, attachment_mismatch.
+      reason must be concise canonical English audit text. Do not copy full email
+      or attachment content into reason.
 
       The event payload uses keys like body_preview, attachment_filenames,
       attachment_mime_types, deterministic_case_type,

@@ -24,6 +24,8 @@ _FINAL_DECISION_EVENT_KEYS = frozenset(
         "final_confidence",
         "needs_attention",
         "attention_reason",
+        "attention_reason_code",
+        "attention_evidence_codes",
         "automation_allowed",
         "bitrix_write_allowed",
     }
@@ -120,6 +122,9 @@ def build_final_decisions(
         needs_attention = False
         attention_reason: str | None = None
 
+        attention_reason_code: str | None = None
+        attention_evidence_codes: list[str] | None = None
+
         if isinstance(adj, dict):
             ai_status = adj.get("ai_status")
             if ai_status == "ok":
@@ -147,6 +152,12 @@ def build_final_decisions(
             elif ai_status == "low_confidence_preserve":
                 needs_attention = True
                 attention_reason = "ai_low_confidence_preserve"
+                attention_reason_code = "ai_low_confidence_preserve"
+                ai_evidence = adj.get("ai_evidence_codes", [])
+                if isinstance(ai_evidence, list):
+                    attention_evidence_codes = [
+                        str(c) for c in ai_evidence if isinstance(c, str)
+                    ]
                 final_decision_source = "deterministic_preserved"
             elif ai_status == "manual_review_degrade":
                 needs_attention = True
@@ -156,6 +167,12 @@ def build_final_decisions(
                     if isinstance(ai_reason, str) and ai_reason.strip()
                     else "manual_review_degrade"
                 )
+                attention_reason_code = "manual_review_degrade"
+                ai_evidence = adj.get("ai_evidence_codes", [])
+                if isinstance(ai_evidence, list):
+                    attention_evidence_codes = [
+                        str(c) for c in ai_evidence if isinstance(c, str)
+                    ]
                 final_decision_source = "deterministic_preserved"
             else:
                 needs_attention = True
@@ -163,6 +180,12 @@ def build_final_decisions(
                 attention_reason = (
                     f"ai_adjudicator_unexpected_status:{status_label or 'unknown'}"
                 )
+                attention_reason_code = "ai_adjudicator_unexpected_status"
+                ai_evidence = adj.get("ai_evidence_codes", [])
+                if isinstance(ai_evidence, list):
+                    attention_evidence_codes = [
+                        str(c) for c in ai_evidence if isinstance(c, str)
+                    ]
                 final_decision_source = "fallback_policy"
 
         if needs_attention:
@@ -196,6 +219,8 @@ def build_final_decisions(
                 "final_confidence": final_confidence,
                 "needs_attention": needs_attention,
                 "attention_reason": attention_reason,
+                "attention_reason_code": attention_reason_code,
+                "attention_evidence_codes": attention_evidence_codes,
                 "automation_allowed": False,
                 "bitrix_write_allowed": False,
             }
@@ -292,9 +317,10 @@ def _is_final_decisions_payload(payload: Any) -> bool:
         ):
             return False
         if event["needs_attention"]:
+            attention_reason_val = event.get("attention_reason")
             if (
-                not isinstance(event.get("attention_reason"), str)
-                or not event["attention_reason"].strip()
+                not isinstance(attention_reason_val, str)
+                or not attention_reason_val.strip()
             ):
                 return False
             actual_attention_count += 1
@@ -345,6 +371,7 @@ def _is_final_decisions_payload(payload: Any) -> bool:
 def load_or_build_final_decisions(run_dir: Path) -> tuple[dict[str, Any], str]:
     artifact = _read_json(run_dir / "rop_final_decisions.json")
     if _is_final_decisions_payload(artifact):
+        assert isinstance(artifact, dict)
         return artifact, "artifact"
 
     events = _read_json(run_dir / "classified_events.json")
