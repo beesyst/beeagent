@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.1...beeagent-v0.48.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **ui-8.4:** localize ROP decision explanations without duplicate AI … ([#167](https://github.com/beesyst/beeagent/issues/167)) ([b80f21a](https://github.com/beesyst/beeagent/commit/b80f21a68dc44373543fd7208bcd4eb3f1c5565d))
+
 ## [0.48.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.0...beeagent-v0.48.1) (2026-07-30)
 
 
