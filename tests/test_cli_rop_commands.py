@@ -225,6 +225,8 @@ class TestRopCliRun:
     ) -> None:
         import argparse
 
+        import beeagent_module.core.cli as cli_module
+
         settings = load_settings(_project_root() / "config" / "settings.yml")
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
@@ -248,6 +250,9 @@ class TestRopCliRun:
         settings["rop"]["sources"][0]["batch"]["path"] = str(batch_file)
         settings["rop"]["sources"][0]["enabled"] = True
 
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+
         args = argparse.Namespace(
             source_id="rop_batch_sample",
             all_sources=False,
@@ -266,6 +271,16 @@ class TestRopCliRun:
                 or "module" in str(exc).lower()
                 or "beeagent-rop" in str(exc)
             )
+
+        run_dir = tmp_path / "runs" / "test-cli-run-batch"
+        assert run_dir.is_dir()
+        project_run_dir = (
+            Path(__file__).resolve().parents[1]
+            / "storage"
+            / "runs"
+            / "test-cli-run-batch"
+        )
+        assert not project_run_dir.exists()
 
     def test_rop_run_exports_review_tsv_by_default(
         self,
