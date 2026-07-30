@@ -24,6 +24,7 @@ SENSITIVE_KEY_PATTERNS = frozenset(
         "content_bytes",
         "payload_bytes",
         "attachment_content",
+        "raw_response_preview",
     }
 )
 RAW_CONTENT_KEYS = frozenset({"content", "raw_eml", "content_bytes", "payload_bytes"})

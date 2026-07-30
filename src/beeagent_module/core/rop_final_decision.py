@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.core.rop_reason_contract import (
+    AI_EVIDENCE_CODES,
+    AI_EVIDENCE_CODES_MAX,
+    ATTENTION_REASON_CODES,
+)
+
 _FINAL_DECISION_EVENT_KEYS = frozenset(
     {
         "event_id",
@@ -30,6 +36,37 @@ _FINAL_DECISION_EVENT_KEYS = frozenset(
         "bitrix_write_allowed",
     }
 )
+_MAX_ATTENTION_REASON_CODE_LENGTH = 80
+_MAX_ATTENTION_REASON_LENGTH = 600
+_MAX_AI_EVIDENCE_CODE_LENGTH = 80
+
+
+def _attention_evidence_codes(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        code for code in value
+        if isinstance(code, str)
+        and len(code) <= _MAX_AI_EVIDENCE_CODE_LENGTH
+        and code in AI_EVIDENCE_CODES
+    ][:AI_EVIDENCE_CODES_MAX]
+
+
+def _attention_reason_code(adj: dict[str, Any]) -> str:
+    merge_reason = adj.get("merge_reason")
+    if (
+        isinstance(merge_reason, str)
+        and len(merge_reason) <= _MAX_ATTENTION_REASON_CODE_LENGTH
+        and merge_reason in ATTENTION_REASON_CODES
+    ):
+        return merge_reason
+    return "ai_adjudicator_unexpected_status"
+
+
+def _bounded_attention_reason(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:_MAX_ATTENTION_REASON_LENGTH]
 
 
 def _deterministic_value(event: dict[str, Any], key: str, fallback: Any) -> Any:
@@ -151,41 +188,32 @@ def build_final_decisions(
                 final_decision_source = "ai_adjudicator"
             elif ai_status == "low_confidence_preserve":
                 needs_attention = True
-                attention_reason = "ai_low_confidence_preserve"
-                attention_reason_code = "ai_low_confidence_preserve"
-                ai_evidence = adj.get("ai_evidence_codes", [])
-                if isinstance(ai_evidence, list):
-                    attention_evidence_codes = [
-                        str(c) for c in ai_evidence if isinstance(c, str)
-                    ]
+                attention_reason_code = _attention_reason_code(adj)
+                attention_reason = attention_reason_code
+                attention_evidence_codes = _attention_evidence_codes(
+                    adj.get("ai_evidence_codes")
+                )
                 final_decision_source = "deterministic_preserved"
             elif ai_status == "manual_review_degrade":
                 needs_attention = True
-                ai_reason = adj.get("ai_reason")
+                attention_reason_code = _attention_reason_code(adj)
+                ai_reason = _bounded_attention_reason(adj.get("ai_reason"))
                 attention_reason = (
                     ai_reason
-                    if isinstance(ai_reason, str) and ai_reason.strip()
-                    else "manual_review_degrade"
+                    if ai_reason
+                    else attention_reason_code
                 )
-                attention_reason_code = "manual_review_degrade"
-                ai_evidence = adj.get("ai_evidence_codes", [])
-                if isinstance(ai_evidence, list):
-                    attention_evidence_codes = [
-                        str(c) for c in ai_evidence if isinstance(c, str)
-                    ]
+                attention_evidence_codes = _attention_evidence_codes(
+                    adj.get("ai_evidence_codes")
+                )
                 final_decision_source = "deterministic_preserved"
             else:
                 needs_attention = True
-                status_label = ai_status if isinstance(ai_status, str) else "unknown"
-                attention_reason = (
-                    f"ai_adjudicator_unexpected_status:{status_label or 'unknown'}"
+                attention_reason_code = _attention_reason_code(adj)
+                attention_reason = attention_reason_code
+                attention_evidence_codes = _attention_evidence_codes(
+                    adj.get("ai_evidence_codes")
                 )
-                attention_reason_code = "ai_adjudicator_unexpected_status"
-                ai_evidence = adj.get("ai_evidence_codes", [])
-                if isinstance(ai_evidence, list):
-                    attention_evidence_codes = [
-                        str(c) for c in ai_evidence if isinstance(c, str)
-                    ]
                 final_decision_source = "fallback_policy"
 
         if needs_attention:
@@ -312,10 +340,34 @@ def _is_final_decisions_payload(payload: Any) -> bool:
             return False
         if not isinstance(event.get("needs_attention"), bool):
             return False
-        if event["attention_reason"] is not None and not isinstance(
-            event["attention_reason"], str
-        ):
-            return False
+        if event["attention_reason"] is not None:
+            attention_reason = event["attention_reason"]
+            if (
+                not isinstance(attention_reason, str)
+                or len(attention_reason) > _MAX_ATTENTION_REASON_LENGTH
+            ):
+                return False
+        if "attention_reason_code" in event:
+            attention_reason_code = event["attention_reason_code"]
+            if attention_reason_code is not None and (
+                not isinstance(attention_reason_code, str)
+                or not attention_reason_code.strip()
+                or len(attention_reason_code) > _MAX_ATTENTION_REASON_CODE_LENGTH
+            ):
+                return False
+        if "attention_evidence_codes" in event:
+            evidence_codes = event["attention_evidence_codes"]
+            if evidence_codes is not None and (
+                not isinstance(evidence_codes, list)
+                or len(evidence_codes) > AI_EVIDENCE_CODES_MAX
+                or any(
+                    not isinstance(code, str)
+                    or len(code) > _MAX_AI_EVIDENCE_CODE_LENGTH
+                    or code not in AI_EVIDENCE_CODES
+                    for code in evidence_codes
+                )
+            ):
+                return False
         if event["needs_attention"]:
             attention_reason_val = event.get("attention_reason")
             if (

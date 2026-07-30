@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from hashlib import sha256
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -548,6 +549,302 @@ def test_api_rop_event_detail_route_remains_json(tmp_path: Path) -> None:
     assert response.headers["content-type"].startswith("application/json")
     data = response.json()
     assert data["data"]["message"]["subject"] == "Need welding quote"
+
+
+def test_rop_event_detail_synthetic_reason_contract_is_read_only(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-reason-contract")
+    classified_path = run_dir / "classified_events.json"
+    classified = json.loads(classified_path.read_text(encoding="utf-8"))
+    classified[0]["reason_code"] = "new_lead_request_signal"
+    classified_path.write_text(json.dumps(classified), encoding="utf-8")
+    raw_reason = "<script>provider_reason()</script>"
+    adjudicator = {
+        "results": [
+            {
+                "event_id": "evt-1",
+                "ai_used": True,
+                "ai_status": "manual_review_degrade",
+                "ai_confidence": 0.9,
+                "ai_reason": raw_reason,
+                "ai_reason_code": "conflicting_business_signals",
+                "ai_evidence_codes": [
+                    "low_signal",
+                    "not_allowed",
+                    7,
+                    "supplier_outreach",
+                    "marketing_conflict",
+                    "spam_rfq_conflict",
+                ],
+                "merge_reason": "ai_output_conflict_manual_review",
+                "final_case_type": "new_lead",
+                "final_recommended_queue": "manual_review",
+                "final_correct_action": "manual_review",
+            }
+        ]
+    }
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(adjudicator), encoding="utf-8"
+    )
+    final_decisions = build_final_decisions(classified, adjudicator)
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(final_decisions), encoding="utf-8"
+    )
+    legacy_dir = _write_rop_event_detail_artifacts(storage_dir, "run-reason-legacy")
+    (legacy_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_status": "manual_review_degrade",
+                        "ai_reason": "legacy raw reason",
+                        "merge_reason": "ai_output_conflict_manual_review",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_classified = json.loads(
+        (legacy_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    legacy_adjudicator = json.loads(
+        (legacy_dir / "rop_ai_adjudicator_results.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    legacy_final = build_final_decisions(legacy_classified, legacy_adjudicator)
+    legacy_final["events"][0].pop("attention_reason_code")
+    legacy_final["events"][0].pop("attention_evidence_codes")
+    (legacy_dir / "rop_final_decisions.json").write_text(
+        json.dumps(legacy_final), encoding="utf-8"
+    )
+    unknown_dir = _write_rop_event_detail_artifacts(storage_dir, "run-reason-unknown")
+    (unknown_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_reason_code": "<script>unknown()</script>",
+                        "ai_evidence_codes": ["<script>unknown()</script>"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    unknown_final = {
+        "summary": {
+            "total_events": 1,
+            "decision_source_counts": {"legacy": 1},
+            "attention_count": 1,
+        },
+        "events": [
+            {
+                "event_id": "evt-1",
+                "final_case_type": "new_lead",
+                "final_case_subtype": None,
+                "final_queue": "manual_review",
+                "final_action": "manual_review",
+                "final_decision_source": "legacy",
+                "final_confidence": 0.0,
+                "needs_attention": True,
+                "attention_reason": "legacy raw attention",
+                "attention_reason_code": "unknown_final_attention_code",
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+            }
+        ],
+    }
+    (unknown_dir / "rop_final_decisions.json").write_text(
+        json.dumps(unknown_final), encoding="utf-8"
+    )
+    legacy_status_dir = _write_rop_event_detail_artifacts(
+        storage_dir,
+        "run-reason-legacy-status",
+    )
+    legacy_status_adjudicator = {
+        "results": [
+            {
+                "event_id": "evt-1",
+                "ai_status": "manual_review_degrade",
+                "ai_reason": "legacy status raw reason",
+            }
+        ]
+    }
+    (legacy_status_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(legacy_status_adjudicator), encoding="utf-8"
+    )
+    legacy_status_classified = json.loads(
+        (legacy_status_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    legacy_status_final = build_final_decisions(
+        legacy_status_classified,
+        legacy_status_adjudicator,
+    )
+    legacy_status_final["events"][0].pop("attention_reason_code")
+    legacy_status_final["events"][0].pop("attention_evidence_codes")
+    (legacy_status_dir / "rop_final_decisions.json").write_text(
+        json.dumps(legacy_status_final), encoding="utf-8"
+    )
+    paths = [
+        run_dir / "normalized_events.json",
+        run_dir / "classified_events.json",
+        run_dir / "rop_ai_adjudicator_results.json",
+        run_dir / "rop_final_decisions.json",
+        legacy_dir / "rop_ai_adjudicator_results.json",
+        legacy_dir / "rop_final_decisions.json",
+        unknown_dir / "rop_ai_adjudicator_results.json",
+        unknown_dir / "rop_final_decisions.json",
+        legacy_status_dir / "rop_ai_adjudicator_results.json",
+        legacy_status_dir / "rop_final_decisions.json",
+    ]
+    before = {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in paths
+    }
+    client = _client(storage_dir)
+
+    ru_html = client.get("/rop/events/evt-1?run_id=run-reason-contract&lang=ru")
+    en_html = client.get("/rop/events/evt-1?run_id=run-reason-contract&lang=en")
+    invalid_html = client.get("/rop/events/evt-1?run_id=run-reason-contract&lang=bad")
+    ru_api = client.get("/api/rop/events/evt-1?run_id=run-reason-contract&lang=ru")
+    legacy_api = client.get("/api/rop/events/evt-1?run_id=run-reason-legacy&lang=ru")
+    legacy_api_en = client.get(
+        "/api/rop/events/evt-1?run_id=run-reason-legacy&lang=en"
+    )
+    unknown_api = client.get("/api/rop/events/evt-1?run_id=run-reason-unknown&lang=ru")
+    unknown_api_en = client.get(
+        "/api/rop/events/evt-1?run_id=run-reason-unknown&lang=en"
+    )
+    unknown_html_ru = client.get("/rop/events/evt-1?run_id=run-reason-unknown&lang=ru")
+    unknown_html_en = client.get("/rop/events/evt-1?run_id=run-reason-unknown&lang=en")
+    legacy_status_ru = client.get(
+        "/api/rop/events/evt-1?run_id=run-reason-legacy-status&lang=ru"
+    )
+    legacy_status_en = client.get(
+        "/api/rop/events/evt-1?run_id=run-reason-legacy-status&lang=en"
+    )
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-reason-contract", "evt-1", lang="ru"
+    )
+    page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-reason-contract", "evt-1", lang="en"
+    )
+    legacy_page_ru = build_rop_event_detail_page_model(
+        storage_dir, "run-reason-legacy", "evt-1", lang="ru"
+    )
+    legacy_page_en = build_rop_event_detail_page_model(
+        storage_dir, "run-reason-legacy", "evt-1", lang="en"
+    )
+
+    assert ru_html.status_code == 200
+    assert en_html.status_code == 200
+    assert invalid_html.status_code == 200
+    assert "AI арбитр" in ru_html.text
+    assert "AI adjudicator reason" in en_html.text
+    assert "AI adjudicator reason" in invalid_html.text
+    assert _item_by_label(
+        _find_section_items(page_ru, "Классификация"), "Причина"
+    )["value"] == "Новый лид: обнаружен сигнал запроса или RFQ"
+    assert _item_by_label(
+        _find_section_items(page_ru, "AI арбитр"), "Причина"
+    )["value"] == "Обнаружены противоречивые бизнес-сигналы"
+    assert _item_by_label(
+        _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
+    )["value"] == "Результат ИИ противоречит сигналам; требуется ручная проверка"
+    assert _item_by_label(
+        _find_section_items(page_en, "Classification"), "Reason"
+    )["value"] == "New lead: request or RFQ signal detected"
+    assert raw_reason not in ru_html.text
+    assert "&lt;script&gt;provider_reason()&lt;/script&gt;" in ru_html.text
+    data = ru_api.json()["data"]
+    assert data["ai_adjudicator"]["ai_adjudicator_reason"] == raw_reason
+    assert data["final_decision"]["attention_reason"] == raw_reason
+    assert data["final_decision"]["attention_reason_code"] == (
+        "ai_output_conflict_manual_review"
+    )
+    assert [item["code"] for item in data["ai_adjudicator"]["ai_adjudicator_evidence_codes"]] == [
+        "low_signal",
+        "supplier_outreach",
+        "marketing_conflict",
+    ]
+    assert not any(
+        "attention reason code" in warning.lower()
+        or "код причины внимания" in warning.lower()
+        for warning in data["warnings"]
+    )
+    assert len(data["ai_adjudicator"]["ai_adjudicator_evidence_codes"]) <= 5
+    assert "ai_evidence_codes exceeded maximum; truncated" in data["warnings"]
+    assert "unknown ai evidence code ignored" in data["warnings"]
+    assert "not_allowed" not in data["warnings"]
+    assert any("legacy ai_reason_code missing" in warning for warning in legacy_api.json()["data"]["warnings"])
+    assert (
+        "Старый формат итогового решения: код причины внимания отсутствует. "
+        "Показано совместимое объяснение; данные не изменялись."
+    ) in legacy_api.json()["data"]["warnings"]
+    legacy_data = legacy_api.json()["data"]
+    assert legacy_data["final_decision"]["attention_reason"] == "legacy raw reason"
+    assert legacy_data["final_decision"]["attention_reason_display"] == (
+        "Результат ИИ противоречит сигналам; требуется ручная проверка"
+    )
+    assert legacy_api_en.json()["data"]["final_decision"][
+        "attention_reason_display"
+    ] == "AI output conflicted with signals; manual review required"
+    assert (
+        "Legacy final-decision format: the attention reason code is missing. "
+        "A compatible explanation is shown; no data was modified."
+    ) in legacy_api_en.json()["data"]["warnings"]
+    assert _item_by_label(
+        _find_section_items(legacy_page_ru, "Итоговое решение"),
+        "Причина внимания",
+    )["value"] == "Результат ИИ противоречит сигналам; требуется ручная проверка"
+    assert _item_by_label(
+        _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
+    )["value"] == "AI output conflicted with signals; manual review required"
+    assert any("unknown ai_reason_code" in warning for warning in unknown_api.json()["data"]["warnings"])
+    assert unknown_html_ru.status_code == 200
+    assert unknown_html_en.status_code == 200
+    unknown_data = unknown_api.json()["data"]
+    assert unknown_data["final_decision"]["attention_reason_code"] == (
+        "unknown_final_attention_code"
+    )
+    assert "Неизвестный код причины" in unknown_html_ru.text
+    assert "Unknown reason code" in unknown_html_en.text
+    assert (
+        "Код причины внимания неизвестен. "
+        "Показано безопасное совместимое объяснение."
+    ) in unknown_data["warnings"]
+    assert (
+        "The attention reason code is unknown. "
+        "A safe compatible explanation is shown."
+    ) in unknown_api_en.json()["data"]["warnings"]
+    assert "unknown attention_reason_code" not in unknown_html_ru.text
+    assert "unknown attention_reason_code" not in unknown_html_en.text
+    assert legacy_status_ru.status_code == 200
+    assert legacy_status_en.status_code == 200
+    assert legacy_status_ru.json()["data"]["ai_adjudicator"][
+        "ai_adjudicator_reason_display"
+    ] == "ИИ-арбитр направил событие на ручную проверку"
+    assert legacy_status_en.json()["data"]["ai_adjudicator"][
+        "ai_adjudicator_reason_display"
+    ] == "AI adjudicator routed the event to manual review"
+    assert "legacy ai_reason_code missing" in legacy_status_ru.json()["data"]["warnings"]
+    client.close()
+    after = {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in paths
+    }
+    assert after == before
 
 
 def test_rop_queue_detail_link_is_localized_in_ru(tmp_path: Path) -> None:
@@ -1950,6 +2247,53 @@ def test_no_raw_eml_in_artifacts(tmp_path: Path) -> None:
     assert "[REDACTED]" in text
 
 
+def test_historical_ai_assist_provider_preview_is_redacted(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.bounded_read import read_bounded_json
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-ai-assist-redaction")
+    marker = "HISTORICAL-AI-ASSIST-PROVIDER-MARKER"
+    artifact_path = run_dir / "rop_ai_assist_decisions.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-ai-assist-redaction",
+                "counters": {},
+                "decisions": [
+                    {
+                        "event_id": "evt-1",
+                        "status": "invalid",
+                        "reason_code": "unparseable_response",
+                        "raw_response_preview": marker,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    text, warning, error = read_bounded_json(artifact_path)
+    client = _client(storage_dir)
+    api_response = client.get(
+        "/api/runs/run-ai-assist-redaction/artifacts/rop_ai_assist_decisions_json"
+    )
+    html_response = client.get(
+        "/runs/run-ai-assist-redaction/artifacts/rop_ai_assist_decisions_json"
+    )
+
+    assert text is not None
+    assert warning is None
+    assert error is None
+    assert marker not in text
+    assert "[REDACTED]" in text
+    assert api_response.status_code == 200
+    assert html_response.status_code == 200
+    assert marker not in api_response.text
+    assert marker not in html_response.text
+    assert "[REDACTED]" in api_response.text
+    assert "[REDACTED]" in html_response.text
+
+
 def test_malformed_json_warning(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.bounded_read import read_bounded_json
 
@@ -2796,6 +3140,15 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
             "event_id": "e2",
             "ai_status": "manual_review_degrade",
             "ai_reason": "conflict_signals_detected",
+            "merge_reason": "ai_output_conflict_manual_review",
+            "ai_evidence_codes": [
+                "low_signal",
+                "marketing_conflict",
+                "spam_rfq_conflict",
+                "supplier_outreach",
+                "ambiguous_bitrix",
+                "not_allowed",
+            ],
             "ai_confidence": 0.35,
             "final_case_type": "existing_deal",
             "final_recommended_queue": "manual_review",
@@ -2826,6 +3179,14 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
     assert e2["final_decision_source"] == "deterministic_preserved"
     assert e2["needs_attention"] is True
     assert e2["attention_reason"] == "conflict_signals_detected"
+    assert e2["attention_reason_code"] == "ai_output_conflict_manual_review"
+    assert e2["attention_evidence_codes"] == [
+        "low_signal",
+        "marketing_conflict",
+        "spam_rfq_conflict",
+        "supplier_outreach",
+        "ambiguous_bitrix",
+    ]
     assert e2["final_queue"] == "logistics"
     assert e2["final_action"] == "attach_to_deal"
     assert e2["automation_allowed"] is False
@@ -2836,6 +3197,36 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
     assert e3["needs_attention"] is False
     assert e3["automation_allowed"] is False
     assert e3["bitrix_write_allowed"] is False
+
+
+def test_build_final_decisions_bounds_manual_review_attention_reason() -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    raw_reason = "<script>oversized-attention</script>" + "x" * 700
+    artifact = build_final_decisions(
+        [
+            {
+                "event_id": "e1",
+                "case_type": "unknown",
+                "recommended_queue": "manual_review",
+                "correct_action": "manual_review",
+                "confidence": 0.0,
+            }
+        ],
+        [
+            {
+                "event_id": "e1",
+                "ai_status": "manual_review_degrade",
+                "ai_reason": raw_reason,
+                "merge_reason": "ai_output_conflict_manual_review",
+            }
+        ],
+    )
+
+    decision = artifact["events"][0]
+    assert decision["attention_reason"] == raw_reason[:600]
+    assert len(decision["attention_reason"]) == 600
+    assert decision["attention_reason_code"] == "ai_output_conflict_manual_review"
 
 
 def test_dashboard_prefers_final_decisions_artifact(tmp_path: Path) -> None:
@@ -2911,6 +3302,78 @@ def test_unsafe_final_decisions_artifact_uses_computed_projection(
     assert source == "computed"
     assert final_decisions["events"][0]["automation_allowed"] is False
     assert final_decisions["events"][0]["bitrix_write_allowed"] is False
+
+
+def test_oversized_final_attention_reason_uses_bounded_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-fd-oversized")
+    marker = "<script>OVERSIZED-ATTENTION-MARKER</script>" + "x" * 700
+    artifact = {
+        "summary": {
+            "total_events": 1,
+            "decision_source_counts": {"legacy": 1},
+            "attention_count": 1,
+        },
+        "events": [
+            {
+                "event_id": "evt-1",
+                "final_case_type": "new_lead",
+                "final_case_subtype": None,
+                "final_queue": "manual_review",
+                "final_action": "manual_review",
+                "final_decision_source": "legacy",
+                "final_confidence": 0.0,
+                "needs_attention": True,
+                "attention_reason": marker,
+                "attention_reason_code": "unknown_final_attention_code",
+                "automation_allowed": False,
+                "bitrix_write_allowed": False,
+            }
+        ],
+    }
+    artifact_path = run_dir / "rop_final_decisions.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    before = (sha256(artifact_path.read_bytes()).hexdigest(), artifact_path.stat().st_mtime_ns)
+    settings = _build_settings()
+    settings["bitrix"] = {
+        "widget": {
+            "enabled": True,
+            "token_env": "BITRIX_ROP_WIDGET_TOKEN",
+            "default_period": "7d",
+            "max_items": 50,
+        }
+    }
+    monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
+    client = _client(storage_dir, settings=settings)
+
+    api_response = client.get("/api/rop/events/evt-1?run_id=run-fd-oversized&lang=en")
+    html_response = client.get("/rop/events/evt-1?run_id=run-fd-oversized&lang=en")
+    widget_response = client.get(
+        "/api/bitrix/rop/widget",
+        params={"run_id": "run-fd-oversized"},
+        headers={"Authorization": "Bearer widget-token"},
+    )
+    final_decisions, source = load_or_build_final_decisions(run_dir)
+    after = (sha256(artifact_path.read_bytes()).hexdigest(), artifact_path.stat().st_mtime_ns)
+
+    assert api_response.status_code == 200
+    assert html_response.status_code == 200
+    assert widget_response.status_code == 200
+    assert source == "computed"
+    assert marker not in api_response.text
+    assert marker not in html_response.text
+    assert after == before
+    assert final_decisions["events"][0]["attention_reason"] is None
+    assert all(
+        event["attention_reason"] is None
+        or len(event["attention_reason"]) <= 600
+        for event in widget_response.json()["data"]["final_decisions"]["events"]
+    )
 
 
 def test_dashboard_rejects_final_decisions_artifact_with_unexpected_fields(
@@ -3074,12 +3537,80 @@ def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
     response = client.get("/rop/events/evt-1?run_id=run-detail-ru-ui8&lang=ru")
 
     assert response.status_code == 200
-    assert "Статус AI арбитра" in response.text
-    assert "Предложенная AI очередь" in response.text
+    for label in (
+        "Использован",
+        "Статус",
+        "Уверенность",
+        "Причина",
+        "Тип",
+        "Очередь",
+        "Действие",
+    ):
+        assert label in response.text
+    for label in (
+        "AI арбитр использован",
+        "Статус AI арбитра",
+        "Уверенность AI арбитра",
+        "Причина AI арбитра",
+        "Предложенный AI тип",
+        "Предложенная AI очередь",
+        "Предложенное AI действие",
+    ):
+        assert label not in response.text
     assert "Причина внимания" in response.text
     assert "AI adjudicator status" not in response.text
     assert "AI proposed queue" not in response.text
     assert "Attention reason" not in response.text
+    client.close()
+
+
+def test_rop_event_detail_without_attention_omits_attention_reason(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(
+        storage_dir,
+        "run-detail-no-attention",
+    )
+    before = {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in run_dir.rglob("*")
+        if path.is_file()
+    }
+    data = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-no-attention",
+        "evt-1",
+        lang="ru",
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir,
+        "run-detail-no-attention",
+        "evt-1",
+        lang="ru",
+    )
+    after = {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in run_dir.rglob("*")
+        if path.is_file()
+    }
+
+    assert data["final_decision"]["needs_attention"] is False
+    assert data["final_decision"]["attention_reason_code"] is None
+    assert data["final_decision"]["attention_reason_display"] is None
+    assert not any(
+        "attention reason code" in warning.lower()
+        or "код причины внимания" in warning.lower()
+        for warning in data["warnings"]
+    )
+    final_items = _find_section_items(page, "Итоговое решение")
+    assert _item_by_label(final_items, "Причина внимания") == {}
+    assert after == before
 
 
 def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(

@@ -2649,7 +2649,6 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 #### Checks
 
 - `uv run pytest -q`
-- `./start.sh doctor`
 - ROP Queue HTML route smoke
 - query-state tests for every supported filter
 - combined-filter tests
@@ -2739,7 +2738,6 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - GET no-mutation checks;
 - route smoke для Event Detail;
 - full `uv run pytest -q`;
-- `./start.sh doctor`;
 - route listing;
 - SAST и DAST-style locale/artifact misuse review.
 

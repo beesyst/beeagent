@@ -18,10 +18,13 @@ rop:
       case_type, case_subtype, recommended_queue, should_rop_see, correct_action,
       confidence, reason, risk_flags, reason_code, evidence_codes.
 
-      reason_code must be one of: ai_low_confidence_preserve, manual_review_degrade,
-      provider_unavailable, invalid_output, low_confidence,
-      ai_resolved_risky_false_positive, ai_low_confidence_safe_ignore_preserved,
-      ai_output_conflict_manual_review, ai_low_confidence_manual_review.
+      reason_code must be one of: customer_request_detected, tender_or_rfq_detected,
+      existing_deal_continuation, logistics_or_finance_continuation,
+      non_actionable_supplier_outreach, non_actionable_bulk_or_newsletter,
+      non_actionable_service_notification, insufficient_business_signal,
+      conflicting_business_signals. reason_code explains why the event was
+      classified and must not contain provider, validation, confidence-threshold,
+      degrade, fallback, or merge-policy statuses.
       evidence_codes must be a subset of: marketing_conflict, spam_rfq_conflict,
       supplier_outreach, low_signal, ambiguous_bitrix, newsletter_bulk,
       finance_sales_conflict, business_ignore_conflict, attachment_mismatch.

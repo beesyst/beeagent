@@ -11,6 +11,12 @@ from urllib import request
 import yaml
 
 from beeagent_module.core.paths import get_project_root
+from beeagent_module.core.rop_reason_contract import (
+    AI_EVIDENCE_CODES,
+    AI_EVIDENCE_CODES_MAX,
+    AI_REASON_CODES,
+    AI_REASON_CODES_BY_CASE_TYPE,
+)
 from beeagent_module.core.settings import (
     apply_runtime_settings_overrides,
     get_rop_ai_adjudicator_runtime_state,
@@ -199,39 +205,13 @@ _VALID_RISK_FLAGS = frozenset(
         "attachment_mismatch",
     }
 )
-_VALID_AI_REASON_CODES = frozenset(
-    {
-        "ai_low_confidence_preserve",
-        "manual_review_degrade",
-        "provider_unavailable",
-        "invalid_output",
-        "low_confidence",
-        "ai_resolved_risky_false_positive",
-        "ai_low_confidence_safe_ignore_preserved",
-        "ai_output_conflict_manual_review",
-        "ai_low_confidence_manual_review",
-    }
-)
-_VALID_AI_EVIDENCE_CODES = frozenset(
-    {
-        "marketing_conflict",
-        "spam_rfq_conflict",
-        "supplier_outreach",
-        "low_signal",
-        "ambiguous_bitrix",
-        "newsletter_bulk",
-        "finance_sales_conflict",
-        "business_ignore_conflict",
-        "attachment_mismatch",
-    }
-)
 _MAX_CASE_SUBTYPE_LENGTH = 80
 _MAX_REASON_LENGTH = 600
 _MAX_RISK_FLAGS = 8
 _MAX_RISK_FLAG_LENGTH = 64
 _MAX_CONFLICT_SIGNALS = 12
-_MAX_AI_EVIDENCE_CODES = 5
 _MAX_AI_EVIDENCE_CODE_LENGTH = 80
+_MAX_AI_REASON_CODE_LENGTH = 80
 _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -287,17 +267,20 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
         },
         "reason_code": {
             "type": "string",
-            "enum": sorted(_VALID_AI_REASON_CODES),
+            "enum": sorted(AI_REASON_CODES),
             "description": "Structured reason code for the AI adjudicator decision.",
         },
         "evidence_codes": {
             "type": "array",
-            "maxItems": _MAX_AI_EVIDENCE_CODES,
+            "maxItems": AI_EVIDENCE_CODES_MAX,
             "items": {
                 "type": "string",
-                "maxLength": _MAX_AI_EVIDENCE_CODE_LENGTH,
+                "enum": sorted(AI_EVIDENCE_CODES),
             },
-            "description": "Bounded evidence codes supporting the AI adjudicator decision.",
+            "description": (
+                "Bounded allowlisted evidence codes supporting "
+                "the AI adjudicator decision."
+            ),
         },
     },
 }
@@ -943,29 +926,43 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
         warnings.append("risk_flags was not a list; replaced with []")
         validated["risk_flags"] = []
 
-    reason_code = data.get("reason_code")
-    if isinstance(reason_code, str) and reason_code in _VALID_AI_REASON_CODES:
-        validated["reason_code"] = reason_code
-    elif isinstance(reason_code, str):
-        errors.append(f"invalid reason_code: {reason_code}")
-        validated["reason_code"] = "manual_review_degrade"
+    reason_code = _sanitize_output_text(
+        data.get("reason_code"), _MAX_AI_REASON_CODE_LENGTH
+    )
+    reason_code_diagnostic = reason_code or "<invalid>"
+    if reason_code in AI_REASON_CODES:
+        allowed_reason_codes = AI_REASON_CODES_BY_CASE_TYPE[validated["case_type"]]
+        if reason_code in allowed_reason_codes:
+            validated["reason_code"] = reason_code
+        else:
+            errors.append(
+                "reason_code incompatible with case_type: "
+                f"{reason_code}/{validated['case_type']}"
+            )
+            validated["reason_code"] = ""
     else:
-        errors.append(f"invalid reason_code type: {type(reason_code).__name__}")
-        validated["reason_code"] = "manual_review_degrade"
+        errors.append(f"invalid reason_code: {reason_code_diagnostic}")
+        validated["reason_code"] = ""
 
     evidence_codes = data.get("evidence_codes", [])
     cleaned_evidence: list[str] = []
     dropped_evidence: list[str] = []
     if isinstance(evidence_codes, list):
         for code in evidence_codes:
-            if len(cleaned_evidence) >= _MAX_AI_EVIDENCE_CODES:
+            if len(cleaned_evidence) >= AI_EVIDENCE_CODES_MAX:
                 break
-            if isinstance(code, str) and code in _VALID_AI_EVIDENCE_CODES:
-                cleaned_evidence.append(code)
+            cleaned_code = _sanitize_output_text(
+                code, _MAX_AI_EVIDENCE_CODE_LENGTH
+            )
+            if cleaned_code in AI_EVIDENCE_CODES:
+                cleaned_evidence.append(cleaned_code)
             elif isinstance(code, str):
-                dropped_evidence.append(code)
-                warnings.append(f"dropped unknown evidence_code: {code}")
-        validated["evidence_codes"] = cleaned_evidence[:_MAX_AI_EVIDENCE_CODES]
+                if cleaned_code:
+                    dropped_evidence.append(cleaned_code)
+                    warnings.append(
+                        f"dropped unknown evidence_code: {cleaned_code}"
+                    )
+        validated["evidence_codes"] = cleaned_evidence[:AI_EVIDENCE_CODES_MAX]
     else:
         warnings.append("evidence_codes was not a list; replaced with []")
         validated["evidence_codes"] = []
@@ -973,7 +970,7 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
     validated["errors"] = errors
     validated["warnings"] = warnings
     validated["dropped_risk_flags"] = dropped_risk_flags[:_MAX_RISK_FLAGS]
-    validated["dropped_evidence_codes"] = dropped_evidence[:_MAX_AI_EVIDENCE_CODES]
+    validated["dropped_evidence_codes"] = dropped_evidence[:AI_EVIDENCE_CODES_MAX]
     return validated
 
 
@@ -1359,7 +1356,6 @@ def run_adjudicator_for_event(
                 "status": "invalid",
                 "reason_code": "unparseable_response",
                 "error": error,
-                "raw_response_preview": raw_response[:500],
             },
             "result": _build_result(
                 event,
@@ -1498,7 +1494,7 @@ def run_adjudicator_for_event(
         "error": ai_error,
     }
 
-    ai_reason_code = str(validated.get("reason_code", "manual_review_degrade"))
+    ai_reason_code = str(validated.get("reason_code", ""))
     ai_evidence_codes = list(validated.get("evidence_codes", []))
 
     return {

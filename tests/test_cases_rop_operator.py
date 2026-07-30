@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import types
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -2416,9 +2417,11 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
-        lambda **kwargs: json.dumps(
+    provider_calls: list[None] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(None)
+        return "```json\n" + json.dumps(
             {
                 "case_type": "new_lead",
                 "case_subtype": "tender",
@@ -2428,10 +2431,14 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
                 "confidence": 0.91,
                 "reason": "Clear RFQ content",
                 "risk_flags": ["marketing_conflict"],
-                "reason_code": "ai_low_confidence_preserve",
+                "reason_code": "customer_request_detected",
                 "evidence_codes": ["low_signal"],
             }
-        ),
+        ) + "\n```"
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -2512,7 +2519,7 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
                     "correct_action": "manual_review",
                     "priority": "medium",
                     "confidence": 0.2,
-                    "reason_code": "deterministic_fallback",
+                    "reason_code": "fallback_low_signal",
                     "is_fallback": True,
                 },
             )
@@ -2551,12 +2558,15 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         assert event["recommended_queue"] == "tender"
         assert event["correct_action"] == "review_tender"
         assert event["confidence"] == 0.91
-        assert event["reason_code"] == "validated_ai_adjudicator_output"
+        assert event["reason_code"] == "fallback_low_signal"
         assert event["reasoning"] == "Clear RFQ content"
         assert event["deterministic_case_type"] == "unknown"
         assert event["deterministic_recommended_queue"] == "manual_review"
         assert event["ai_adjudicator_status"] == "ok"
         assert event["ai_adjudicator_reason"] == "Clear RFQ content"
+        assert event["ai_adjudicator_merge_reason"] == (
+            "validated_ai_adjudicator_output"
+        )
 
         ai_results = json.loads(
             (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
@@ -2566,8 +2576,74 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         assert result["ai_model"] == settings["ai"]["profiles"]["openai"]["model"]
         assert result["ai_confidence"] == 0.91
         assert result["ai_reason"] == "Clear RFQ content"
+        assert result["ai_reason_code"] == "customer_request_detected"
         assert result["ai_risk_flags"] == ["marketing_conflict"]
         assert result["ai_error"] == ""
+        assert provider_calls == [None]
+        assert "```json" not in (
+            run_dir / "rop_ai_adjudicator_requests.json"
+        ).read_text(encoding="utf-8")
+        assert "```json" not in (
+            run_dir / "rop_ai_adjudicator_decisions.json"
+        ).read_text(encoding="utf-8")
+        assert "```json" not in (
+            run_dir / "rop_ai_adjudicator_results.json"
+        ).read_text(encoding="utf-8")
+
+        artifacts_before = {
+            path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+        from beeagent_module.interfaces.ui.rop_event_detail import (
+            build_rop_event_detail_page_model,
+            build_rop_event_detail_read_model,
+        )
+        ru_api = build_rop_event_detail_read_model(
+            tmp_path,
+            "run-adjudicator-ok",
+            "evt-adj-001",
+            lang="ru",
+        )
+        en_api = build_rop_event_detail_read_model(
+            tmp_path,
+            "run-adjudicator-ok",
+            "evt-adj-001",
+            lang="en",
+        )
+        ru_html = build_rop_event_detail_page_model(
+            tmp_path,
+            "run-adjudicator-ok",
+            "evt-adj-001",
+            lang="ru",
+        )
+        en_html = build_rop_event_detail_page_model(
+            tmp_path,
+            "run-adjudicator-ok",
+            "evt-adj-001",
+            lang="en",
+        )
+        artifacts_after = {
+            path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        }
+
+        assert ru_api["classification"]["reason_code"] == (
+            "fallback_low_signal"
+        )
+        assert ru_api["classification"]["reason_display"] == (
+            "Резерв: слабый сигнал, применена резервная классификация"
+        )
+        assert en_api["classification"]["reason_display"] == (
+            "Fallback: low signal, fallback classification applied"
+        )
+        assert "Unknown reason code" not in str(en_html)
+        assert "Неизвестный код причины" not in str(ru_html)
+        assert ru_api["ai_adjudicator"][
+            "ai_adjudicator_reason_code"
+        ] == "customer_request_detected"
+        assert artifacts_after == artifacts_before
 
         final_decisions = json.loads(
             (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
@@ -3048,7 +3124,7 @@ def test_ai_adjudicator_ok_result_can_clear_optional_case_subtype() -> None:
             "correct_action": "check_bitrix",
             "should_rop_see": True,
             "confidence": 0.42,
-            "reason_code": "deterministic_follow_up",
+            "reason_code": "existing_deal_reference_signal",
         }
     ]
     results = [
@@ -3076,7 +3152,10 @@ def test_ai_adjudicator_ok_result_can_clear_optional_case_subtype() -> None:
     assert events[0]["correct_action"] == "review_new_lead"
     assert events[0]["should_rop_see"] is True
     assert events[0]["confidence"] == 0.91
-    assert events[0]["reason_code"] == "validated_ai_adjudicator_output"
+    assert events[0]["reason_code"] == "existing_deal_reference_signal"
+    assert events[0]["ai_adjudicator_merge_reason"] == (
+        "validated_ai_adjudicator_output"
+    )
     assert events[0]["reasoning"] == "AI accepted no subtype"
 
 
@@ -3181,20 +3260,94 @@ def test_ai_adjudicator_low_confidence_preserve_keeps_deterministic_result() -> 
 
 
 def test_no_direct_beeagent_rop_imports() -> None:
-    import subprocess
+    import ast
 
-    result = subprocess.run(
-        [
-            "grep",
-            "-r",
-            "-n",
-            "from beeagent_rop\\|import beeagent_rop",
-            str(_project_root() / "src" / "beeagent_module"),
-        ],
-        capture_output=True,
-        text=True,
+    allowed = {
+        "src/beeagent_module/interfaces/ui/reason_catalog.py": {
+            ("beeagent_rop.contracts", "ClassificationReasonCode"),
+        },
+    }
+    violations = []
+    source_root = _project_root() / "src" / "beeagent_module"
+    for path in source_root.rglob("*.py"):
+        relative_path = str(path.relative_to(_project_root()))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("beeagent_rop"):
+                for alias in node.names:
+                    if (node.module, alias.name) not in allowed.get(relative_path, set()):
+                        violations.append(f"{relative_path}: from {node.module} import {alias.name}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("beeagent_rop"):
+                        violations.append(f"{relative_path}: import {alias.name}")
+
+    assert not violations, f"Found direct beeagent_rop imports:\n{'\n'.join(violations)}"
+
+
+def test_classification_reason_catalog_covers_public_contract() -> None:
+    from beeagent_module.interfaces.ui.reason_catalog import (
+        check_classification_coverage,
+        check_reason_catalog_coverage,
     )
 
-    assert result.returncode == 1, (
-        f"Found direct beeagent_rop imports:\n{result.stdout}"
+    assert check_classification_coverage() == []
+    assert check_reason_catalog_coverage() == []
+
+
+def test_reason_catalog_distinguishes_legacy_and_unknown_codes() -> None:
+    from beeagent_module.interfaces.ui.reason_catalog import (
+        get_ai_reason_display,
+        get_attention_reason_display,
     )
+
+    legacy_display, legacy_warning = get_ai_reason_display(
+        None,
+        "ru",
+        merge_reason="ai_output_conflict_manual_review",
+    )
+    unknown_display, unknown_warning = get_attention_reason_display(
+        "unavailable_code",
+        "ru",
+    )
+    legacy_attention_display, legacy_attention_warning = (
+        get_attention_reason_display(
+            None,
+            "ru",
+            merge_reason="ai_output_conflict_manual_review",
+        )
+    )
+
+    assert "ручн" in legacy_display.lower()
+    assert legacy_warning == "legacy ai_reason_code missing"
+    assert "Неизвестный" in unknown_display
+    assert unknown_warning == (
+        "Код причины внимания неизвестен. "
+        "Показано безопасное совместимое объяснение."
+    )
+    assert "ручн" in legacy_attention_display.lower()
+    assert legacy_attention_warning == (
+        "Старый формат итогового решения: код причины внимания отсутствует. "
+        "Показано совместимое объяснение; данные не изменялись."
+    )
+
+
+def test_reason_catalog_bounds_unknown_codes_and_uses_legacy_status() -> None:
+    from beeagent_module.interfaces.ui.reason_catalog import (
+        get_ai_reason_display,
+        get_classification_reason_display,
+    )
+
+    oversized_code = "<script>unknown</script>" + "x" * 100
+    display, warning = get_classification_reason_display(oversized_code, "en")
+    legacy_display, legacy_warning = get_ai_reason_display(
+        None,
+        "en",
+        ai_status="manual_review_degrade",
+    )
+
+    assert display == "Unknown reason code; localized explanation unavailable"
+    assert warning == (
+        "unknown classification reason_code: " + oversized_code[:80]
+    )
+    assert legacy_display == "AI adjudicator routed the event to manual review"
+    assert legacy_warning == "legacy ai_reason_code missing"
