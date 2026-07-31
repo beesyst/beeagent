@@ -9,36 +9,36 @@ description: Perform a complete read-only BeeAgent review against an approved Is
 
 Use this workflow after implementation is complete and the user has supplied:
 
-* an approved Issue or acceptance criteria;
-* implementation evidence;
-* exact worktree information;
-* expected branch and base branch.
+- an approved Issue or acceptance criteria;
+- implementation evidence;
+- exact worktree information;
+- expected branch and base branch.
 
 This workflow is read-only.
 
 Do not:
 
-* modify files;
-* run repository commands;
-* switch branches;
-* create commits;
-* push;
-* create or merge a PR.
+- modify files;
+- run repository commands;
+- switch branches;
+- create commits;
+- push;
+- create or merge a PR.
 
 ## Required inputs
 
 Obtain:
 
-* project;
-* expected worktree path;
-* expected branch;
-* expected base branch;
-* mode;
-* approved Issue content or GitHub Issue URL;
-* current PR description, GitHub Pull Request URL or `none`;
-* implementation evidence;
-* related repository context when explicitly requested;
-* previous blocking findings for re-review.
+- project;
+- expected worktree path;
+- expected branch;
+- expected base branch;
+- mode;
+- approved Issue content or GitHub Issue URL;
+- current PR description, GitHub Pull Request URL or `none`;
+- implementation evidence;
+- related repository context when explicitly requested;
+- previous blocking findings for re-review.
 
 ## Working contract
 
@@ -94,12 +94,11 @@ If required GitHub context cannot be read completely, return:
 3. Use the returned MCP `target`.
 4. Call `get_project_context` for that target and mode.
 5. Verify:
-
-   * project;
-   * path;
-   * branch;
-   * HEAD;
-   * dirty state.
+   - project;
+   - path;
+   - branch;
+   - HEAD;
+   - dirty state.
 
 If the exact path or mandatory metadata is unavailable, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
 
@@ -121,19 +120,19 @@ Do not substitute the main worktree for a requested feature worktree.
 
 Verify:
 
-* project;
-* target;
-* branch;
-* HEAD;
-* expected base branch;
-* dirty state;
-* committed files;
-* staged files;
-* unstaged files;
-* untracked files;
-* deleted files;
-* renamed files;
-* omitted or redacted paths.
+- project;
+- target;
+- branch;
+- HEAD;
+- expected base branch;
+- dirty state;
+- committed files;
+- staged files;
+- unstaged files;
+- untracked files;
+- deleted files;
+- renamed files;
+- omitted or redacted paths.
 
 ### Review diff
 
@@ -142,10 +141,9 @@ Verify:
 3. Continue with the exact `next_cursor` while `has_more=true`.
 4. Require the same snapshot as the manifest.
 5. Finish only when:
-
-   * `has_more=false`;
-   * `next_cursor=null`;
-   * `truncated=false`.
+   - `has_more=false`;
+   - `next_cursor=null`;
+   - `truncated=false`.
 
 Do not use compatibility `get_review_bundle` as a substitute.
 
@@ -164,9 +162,8 @@ If they are absent because the feature worktree predates their introduction, use
 2. verify its exact path and `main` branch through `get_project_context`;
 
 3. read:
-
-   * `AGENTS.md`;
-   * `.agents/skills/beeagent-review-and-close/SKILL.md`;
+   - `AGENTS.md`;
+   - `.agents/skills/beeagent-review-and-close/SKILL.md`;
 
 4. use them only as review instructions;
 
@@ -184,27 +181,27 @@ When it returns `next_line` or `next_column`, continue with those exact values u
 
 Read completely:
 
-* `AGENTS.md`;
-* this skill;
-* `.github/PULL_REQUEST_TEMPLATE/pr.md`;
-* relevant ROADMAP section;
-* `docs/SDLC.md`;
-* `docs/SECURITY.md`;
-* relevant architecture, UI, API, configuration and module contracts;
-* every changed and untracked text file;
-* relevant tests;
-* directly related unchanged imports, schemas, configuration, contracts and callers.
+- `AGENTS.md`;
+- this skill;
+- `.github/PULL_REQUEST_TEMPLATE/pr.md`;
+- relevant ROADMAP section;
+- `docs/SDLC.md`;
+- `docs/SECURITY.md`;
+- relevant architecture, UI, API, configuration and module contracts;
+- every changed and untracked text file;
+- relevant tests;
+- directly related unchanged imports, schemas, configuration, contracts and callers.
 
 For deleted files:
 
-* inspect the complete diff;
-* inspect affected current imports, contracts and callers.
+- inspect the complete diff;
+- inspect affected current imports, contracts and callers.
 
 For renamed files:
 
-* inspect old and new paths in the manifest and diff;
-* read the destination file completely;
-* verify updated references.
+- inspect old and new paths in the manifest and diff;
+- read the destination file completely;
+- verify updated references.
 
 If a required relevant file is omitted, redacted or unreadable through the available safe MCP interface, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
 
@@ -224,10 +221,10 @@ If the primary implementation depends on code or a public contract absent from t
 
 For BeeAgent UI work:
 
-* BeeAgent owns product adapters, read-models and product semantics.
-* BeeUI owns generic rendering and reusable UI primitives.
-* Domain business rules belong in the domain module.
-* Product-specific behavior must not be added to generic BeeUI components.
+- BeeAgent owns product adapters, read-models and product semantics.
+- BeeUI owns generic rendering and reusable UI primitives.
+- Domain business rules belong in the domain module.
+- Product-specific behavior must not be added to generic BeeUI components.
 
 ## Phase 6 — Evidence and acceptance criteria
 
@@ -243,26 +240,26 @@ Treat supplied command output as reported evidence and never claim MCP ran the c
 
 Evaluate every acceptance criterion as:
 
-* satisfied;
-* partially satisfied;
-* not satisfied;
-* not verifiable;
-* not applicable.
+- satisfied;
+- partially satisfied;
+- not satisfied;
+- not verifiable;
+- not applicable.
 
 Check as applicable:
 
-* observable behavior;
-* runtime compatibility;
-* UI and API contracts;
-* configuration source of truth;
-* fail-fast validation;
-* architecture ownership;
-* backward compatibility;
-* artifact schema;
-* authority and security boundaries;
-* documentation;
-* required tests, smoke, logs and artifacts;
-* version declarations.
+- observable behavior;
+- runtime compatibility;
+- UI and API contracts;
+- configuration source of truth;
+- fail-fast validation;
+- architecture ownership;
+- backward compatibility;
+- artifact schema;
+- authority and security boundaries;
+- documentation;
+- required tests, smoke, logs and artifacts;
+- version declarations.
 
 `Not verifiable` is a blocker only when the Issue, SDLC or security rules require that evidence for merge readiness.
 
@@ -272,29 +269,29 @@ A blocker must affect readiness of the current Issue.
 
 Examples:
 
-* unmet acceptance criteria;
-* incorrect or unsafe behavior;
-* security or authority bypass;
-* core, module or UI ownership violation;
-* conflicting source of truth;
-* missing fail-fast validation;
-* incompatible public contract;
-* missing required verification;
-* unrelated changes entering the PR;
-* unintended dependency or version changes;
-* documentation contradicting public behavior;
-* missing required cross-repository dependency.
-* newly introduced first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators;
-* unrelated formatter churn or refactoring.
+- unmet acceptance criteria;
+- incorrect or unsafe behavior;
+- security or authority bypass;
+- core, module or UI ownership violation;
+- conflicting source of truth;
+- missing fail-fast validation;
+- incompatible public contract;
+- missing required verification;
+- unrelated changes entering the PR;
+- unintended dependency or version changes;
+- documentation contradicting public behavior;
+- missing required cross-repository dependency.
+- newly introduced first-party production/test comments, explanatory docstrings, `TODO`, `FIXME`, `NOTE` or decorative separators;
+- unrelated formatter churn or refactoring.
 
 Do not make blockers from:
 
-* optional polish;
-* personal style preferences;
-* speculative future architecture;
-* unrelated cleanup;
-* requirements absent from the Issue;
-* MCP limitations themselves.
+- optional polish;
+- personal style preferences;
+- speculative future architecture;
+- unrelated cleanup;
+- requirements absent from the Issue;
+- MCP limitations themselves.
 
 Find and consolidate all real blockers before returning the verdict.
 
@@ -302,20 +299,20 @@ Find and consolidate all real blockers before returning the verdict.
 
 Before issuing a code verdict, confirm:
 
-* exact target and branch verified;
-* expected base branch verified;
-* complete manifest consumed;
-* complete non-truncated diff consumed;
-* manifest and diff use the same snapshot;
-* changed and untracked files fully inventoried;
-* required changed files fully read;
-* deleted and renamed paths inspected;
-* relevant unchanged contracts read;
-* requested related-repository context evaluated;
-* every acceptance criterion evaluated;
-* verification evidence evaluated;
-* version scope checked;
-* all blockers consolidated.
+- exact target and branch verified;
+- expected base branch verified;
+- complete manifest consumed;
+- complete non-truncated diff consumed;
+- manifest and diff use the same snapshot;
+- changed and untracked files fully inventoried;
+- required changed files fully read;
+- deleted and renamed paths inspected;
+- relevant unchanged contracts read;
+- requested related-repository context evaluated;
+- every acceptance criterion evaluated;
+- verification evidence evaluated;
+- version scope checked;
+- all blockers consolidated.
 
 If any mandatory inspection remains incomplete, return:
 
@@ -325,16 +322,16 @@ If any mandatory inspection remains incomplete, return:
 
 Include:
 
-* completed inspection;
-* exact missing tool, metadata, file or continuation;
-* reason no code verdict was issued.
+- completed inspection;
+- exact missing tool, metadata, file or continuation;
+- reason no code verdict was issued.
 
 Do not include:
 
-* implementation findings based on partial inspection;
-* correction prompt;
-* PR body;
-* code verdict.
+- implementation findings based on partial inspection;
+- correction prompt;
+- PR body;
+- code verdict.
 
 ## Phase 9 — Verdict
 
@@ -420,17 +417,17 @@ The correction prompt is an executor prompt for Copilot or Codex, not a continua
 
 Select and name the executor:
 
-* Copilot for localized, clearly specified corrections;
-* Codex for broad diagnosis, multi-subsystem changes or security-sensitive corrections.
+- Copilot for localized, clearly specified corrections;
+- Codex for broad diagnosis, multi-subsystem changes or security-sensitive corrections.
 
 The prompt must authorize the executor to modify files and run repository checks in the exact target worktree using its available local tools.
 
 Do not copy reviewer-only restrictions into the correction prompt, including:
 
-* `Use only Bee Dev MCP`;
-* read-only mode;
-* MCP target identifiers;
-* review mode.
+- `Use only Bee Dev MCP`;
+- read-only mode;
+- MCP target identifiers;
+- review mode.
 
 The correction prompt must be concise, complete and ready for direct use by Copilot or Codex.
 

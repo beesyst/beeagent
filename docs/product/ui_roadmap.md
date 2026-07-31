@@ -2754,236 +2754,96 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - `pyproject.toml.version` не изменён;
 - tests и documentation обновлены.
 
-### Итерация UI-8.5 — Embedded Bitrix ROP widgets
+### Итерация UI-8.5 — Embedded Bitrix ROP Console with SSO
 
 **Статус:** PLANNED
 
 #### Goal
 
-Добавить в Bitrix два компактных read-only виджета для РОПа:
-
-1. `Пульс продаж` — краткая картина продаж за последние 7 дней.
-2. `Контроль рисков и Bitrix` — основные проблемы и очередь событий, требующих внимания.
-
-Оба виджета используют существующий BeeAgent ROP read-model и не содержат отдельной бизнес-логики.
-
-#### Depends on
-
-- UI-8 — ROP final decision read-model and Bitrix widget payload;
-- UI-8.3 — current canonical ROP Queue presentation;
-- **UI-8.4 — structured `attention_reason_code` and `attention_evidence_codes` in final decisions;**
-- existing ROP final-decision, recommendation and Bitrix reconciliation artifacts;
-- configured HTTPS deployment of BeeAgent Web Console.
-
-#### Change level
-
-```text
-security-sensitive
-```
-
-Причины:
-
-- BeeAgent routes будут встраиваться во внешний Bitrix portal;
-- требуется отдельная проверка Bitrix launch context;
-- данные из почты, классификации и CRM считаются untrusted input;
-- необходимо ограничить iframe embedding только разрешённым Bitrix portal.
+Открыть существующую BeeAgent ROP Web Console внутри Bitrix24 как Server-Side Local Application with User Interface и автоматически создавать ограниченную BeeUI session из проверенного Bitrix OAuth user context.
 
 #### Scope
 
-**Включено:**
+- использовать существующую `/rop` Web UI без второго frontend и без новых ROP projections;
+- добавить one-time handler `/bitrix/rop/install` для привязки Local Application к одному Bitrix portal;
+- добавить `POST /bitrix/rop/launch` для обработки application launch context;
+- принимать bounded `AUTH_ID`, `AUTH_EXPIRES`, `DOMAIN` и `member_id`;
+- сверять `DOMAIN` с настроенным portal origin;
+- сверять `member_id` с автоматически сохранённой installation state;
+- проверять `AUTH_ID` через current-user REST call к настроенному Bitrix portal;
+- отклонять inactive, invalid, expired и cross-portal launches;
+- использовать доступ к приложению, настроенный в Bitrix24, без списка Bitrix user ID в BeeAgent;
+- назначать проверенному пользователю least-privileged BeeUI role;
+- создавать bounded BeeUI session и выполнять `303 Redirect` на `/rop`;
+- поддержать iframe-compatible secure session cookie;
+- разрешать framing только настроенному Bitrix portal;
+- сохранить Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix и Recommendations;
+- сохранить Event Detail, filters, sorting, pagination и allowlisted artifact links;
+- сохранить существующие `/api/bitrix/rop/widget*` routes backward-compatible;
+- обновить dependency до выпущенного BeeUI contract с external-principal session и controlled embedding;
+- обновить tests и documentation.
 
-- реализовать в `beeagent` две product-specific проекции существующего ROP read-model;
+#### Excluded
 
-- добавить виджет `Пульс продаж` за последние 7 дней:
-  - время последнего обновления;
-  - статус последнего ROP run;
-  - обработано писем или событий;
-  - новые лиды;
-  - высокий приоритет;
-  - требуют внимания;
-  - компактная разбивка:
-    - новые лиды;
-    - существующие клиенты;
-    - повторные обращения;
-    - требуют внимания;
-
-- добавить виджет `Контроль рисков и Bitrix`:
-  - потеряно в Bitrix;
-  - неоднозначные решения или дубликаты;
-  - несверенные события;
-  - ошибки Bitrix;
-  - очередь максимум из 10 событий с полями:
-    - priority;
-    - sender;
-    - subject;
-    - final_case_type;
-    - final_queue;
-    - bitrix_status;
-    - attention_reason;
-    - recommended_action;
-
-- сортировать очередь внимания в следующем порядке:
-  1. высокий приоритет;
-  2. событие не найдено в Bitrix;
-  3. неоднозначность или дубликат;
-  4. событие требует внимания;
-  5. событие не сверено;
-  6. более новое событие;
-  7. `event_id` как стабильный tie-breaker;
-
-- добавить read-only routes:
-
-```text
-/bitrix/rop/widgets/sales-pulse
-/bitrix/rop/widgets/risk-control
-
-/api/bitrix/rop/widgets/sales-pulse
-/api/bitrix/rop/widgets/risk-control
-```
-
-- сохранить существующие `/api/bitrix/rop/widget*` routes обратно совместимыми;
-- использовать server-rendered HTML без отдельного frontend приложения;
-- разделить authentication boundaries:
-  - существующие `/api/bitrix/rop/widget*` routes сохраняют текущую server-to-server Bearer-token protection;
-  - новые embedded HTML routes используют validated Bitrix launch context и не получают внутренний BeeAgent Bearer token в browser;
-  - новые `/api/bitrix/rop/widgets/*` routes не должны становиться anonymous и используют либо validated embedded session/context, либо существующую server-to-server token boundary;
-- до реализации зафиксировать explicit Bitrix launch-context contract:
-  - какие поля launch request принимаются;
-  - как проверяется их подлинность;
-  - как ограничивается срок действия;
-  - как предотвращается replay;
-  - какой portal origin разрешён;
-  - какой safe response возвращается при invalid context;
-- все новые обязательные параметры embedding policy хранить в `config/settings.yml -> bitrix.widget`;
-- secret values хранить только в env;
-- новые обязательные config keys валидировать fail-fast;
-- разрешать iframe embedding только для явно настроенного Bitrix portal;
-- добавить для embedded routes:
-  - route-specific CSP `frame-ancestors`;
-  - `Cache-Control: no-store`;
-  - `Referrer-Policy: no-referrer`;
-- ограничить вывод данных безопасным allowlist;
-- документировать запуск BeeAgent по HTTPS и одноразовое добавление двух placements в Bitrix;
-- placement setup не должен выполняться автоматически при каждом запуске `./start.sh web`;
-- добавить tests и обновить документацию.
-
-**Разрешённые данные:**
-
-```text
-aggregated counters
-run status
-updated timestamp
-sender
-subject
-priority
-final_case_type
-final_queue
-bitrix_status
-attention_reason
-recommended_action
-event_id
-```
-
-**Запрещённые данные:**
-
-```text
-raw email body
-raw .eml
-attachment content
-mailbox credentials
-Bitrix credentials
-environment values
-provider tokens
-raw AI prompts or responses
-full Bitrix API payloads
-arbitrary artifact content
-```
-
-**Не включено:**
-
+- два отдельных Sales Pulse / Risk Control widget;
+- новый ROP read-model или новые KPI projections;
+- per-user Bitrix ID lists в `settings.yml`;
+- сохранение `AUTH_ID` или `REFRESH_ID`;
+- background OAuth token refresh;
+- Bitrix events и subscriptions;
 - CRM/Bitrix write-back;
-- создание или изменение lead, deal, contact или task;
-- автоматическое объединение дубликатов;
-- mailbox actions;
-- web-triggered ROP run;
-- scheduler или mailbox listener;
-- OAuth/OIDC lifecycle Bitrix application;
-- отдельный React/Reflex frontend;
+- автоматическая регистрация Local Application;
+- отдельный frontend или отдельный application service;
 - изменения в `beeagent-rop`;
-- изменения в BeeUI;
-- изменение ROP classification rules;
-- автоматическая регистрация placements при обычном старте BeeAgent.
+- ROP classification или recommendation changes.
 
 #### Deliverable
 
-BeeAgent предоставляет два безопасных read-only HTML-виджета, которые можно разместить в Bitrix как отдельные placements.
-
-РОП видит:
-
-```text
-Пульс продаж
-→ что обработано за 7 дней
-→ сколько новых и важных обращений
-→ сколько событий требуют внимания
-
-Контроль рисков и Bitrix
-→ где потеряны или не сверены события
-→ где есть неоднозначность или ошибки
-→ какие конкретные события проверить первыми
-```
+Администратор регистрирует `BeeAgent — ROP` как Local Application. Разрешённый пользователь открывает приложение из Bitrix24 и без повторного BeeAgent login получает существующую read-only `/rop` console внутри iframe.
 
 #### Acceptance criteria
 
-- оба виджета открываются через BeeAgent HTTPS deployment;
-- оба виджета размещены как отдельные Bitrix placements;
-- данные строятся из существующего BeeAgent ROP read-model;
-- `Пульс продаж` использует период 7 дней;
-- `Контроль рисков и Bitrix` возвращает не более 10 событий;
-- порядок очереди детерминирован;
-- empty, degraded и unavailable состояния отображаются явно;
-- существующие Bitrix widget API routes не сломаны;
-- виджеты не выполняют Bitrix, mailbox, AI или ROP runtime calls;
-- GET routes не изменяют artifacts, config или runtime state;
-- внутренний Bearer token не появляется в browser URL или HTML;
-- iframe embedding разрешён только настроенному Bitrix portal;
-- raw email, attachments, secrets и raw AI data не выводятся;
-- BeeUI и `beeagent-rop` не требуют изменений.
+- Local Application install и launch handlers доступны только по HTTPS deployment;
+- portal binding создаётся один раз и не содержит OAuth secrets;
+- copied `/rop` URL без valid BeeUI session не предоставляет доступ;
+- valid launch определяет текущего пользователя через Bitrix REST;
+- настройки BeeAgent не содержат списков Bitrix user ID;
+- invalid domain, member, token, user или launch payload отклоняется;
+- `AUTH_ID` и `REFRESH_ID` отсутствуют в URL, HTML, logs и artifacts;
+- session cookie работает в supported Bitrix iframe browser;
+- framing разрешено только configured portal origin;
+- существующая ROP navigation работает без функциональной регрессии;
+- existing widget APIs остаются совместимыми;
+- GET routes остаются read-only;
+- BeeUI используется через опубликованный public contract;
+- `beeagent-rop` не меняется.
 
 #### Checks
 
+- targeted settings, install, launch, OAuth verification и session tests;
+- malformed, expired, cross-portal и inactive-user scenarios;
+- cookie, CSP, `X-Frame-Options`, cache и referrer header tests;
+- no-token-leakage и no-GET-mutation tests;
+- existing ROP tabs, Event Detail и artifact-link regression tests;
+- existing widget API compatibility tests;
 - `uv run pytest -q`;
-- targeted widget projection tests;
-- targeted HTML and JSON route tests;
-- 7-day aggregation tests;
-- deterministic risk queue ordering tests;
-- maximum 10 queue items test;
-- empty, degraded and unavailable scenarios;
-- malformed and missing artifact scenarios;
-- HTML escaping tests;
-- authentication and invalid launch-context tests;
-- CSP and response-header tests;
-- no GET mutation;
-- no mailbox, Bitrix, AI provider or module execution;
-- no raw content or secret leakage;
-- route listing;
-- HTTPS deployment smoke;
-- manual smoke of both placements in Bitrix.
+- `./start.sh doctor`;
+- `./start.sh routes`;
+- HTTPS route smoke;
+- Chrome/Edge manual smoke inside the real Bitrix Local Application.
 
 #### DoD
 
-- два Bitrix ROP widgets реализованы в `beeagent`;
-- два HTML routes и два JSON routes работают;
-- оба placements проверены в Bitrix;
-- существующий widget API обратно совместим;
-- данные ограничены безопасным allowlist;
-- browser не получает внутренний BeeAgent token;
-- GET routes остаются read-only;
-- no Bitrix write-back;
-- no mailbox or AI execution;
-- BeeUI unchanged;
+- BeeUI prerequisite выпущен и подключён;
+- Local Application installation и launch flow реализован в `beeagent`;
+- verified Bitrix user получает bounded BeeUI viewer session;
+- вся существующая ROP console работает внутри Bitrix iframe;
+- user access управляется Bitrix24, а не duplicated BeeAgent user list;
+- OAuth secrets не сохраняются и не раскрываются;
+- iframe и session policies протестированы;
+- documentation синхронизирована;
 - `beeagent-rop` unchanged;
-- tests и documentation обновлены;
-- `pyproject.toml.version` не изменён.
+- `pyproject.toml.version` unchanged.
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 

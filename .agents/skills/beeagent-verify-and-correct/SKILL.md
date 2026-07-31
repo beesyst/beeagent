@@ -149,22 +149,22 @@ except json_mod.JSONDecodeError, OSError:
 
 Apply corrections only when required by:
 
-* an unsatisfied Acceptance Criterion;
-* incorrect or unsafe current-Issue behavior;
-* an architecture or source-of-truth violation;
-* a public-contract incompatibility;
-* missing required verification;
-* a supplied valid review blocker.
+- an unsatisfied Acceptance Criterion;
+- incorrect or unsafe current-Issue behavior;
+- an architecture or source-of-truth violation;
+- a public-contract incompatibility;
+- missing required verification;
+- a supplied valid review blocker.
 
 Corrections must be:
 
-* limited to the current Issue;
-* minimal and complete;
-* consistent with existing configuration and contracts;
-* free of duplicated logic;
-* free of unnecessary defaults and hardcoding;
-* PEP 8 compliant;
-* free of new comments.
+- limited to the current Issue;
+- minimal and complete;
+- consistent with existing configuration and contracts;
+- free of duplicated logic;
+- free of unnecessary defaults and hardcoding;
+- PEP 8 compliant;
+- free of new comments.
 
 If a new function or class is necessary, identify its exact insertion location in the report.
 
@@ -176,17 +176,17 @@ Run all checks required by the actual change level.
 
 Include as applicable:
 
-* targeted regression tests;
-* `uv run pytest -q`;
-* expected entrypoint or smoke scenario;
-* logs inspection;
-* artifacts inspection;
-* configuration and contract checks;
-* SAST;
-* SCA;
-* DAST;
-* IAST;
-* fuzzing.
+- targeted regression tests;
+- `uv run pytest -q`;
+- expected entrypoint or smoke scenario;
+- logs inspection;
+- artifacts inspection;
+- configuration and contract checks;
+- SAST;
+- SCA;
+- DAST;
+- IAST;
+- fuzzing.
 
 Use existing tests and helpers when practical.
 
