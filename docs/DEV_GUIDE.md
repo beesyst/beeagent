@@ -405,7 +405,7 @@ Dashboard автоматически обновляется после `rop run`
 ./start.sh rop evaluate-review --tsv storage/runs/<run_id>/rop_review_table.tsv
 ```
 
-Создаёт `rop_evaluation.json` в `storage/runs/<run_id>/`. Рассчитывает метрики: `case_type_accuracy`, `critical_false_negative_rate`, `existing_deal_as_irrelevant_count` и др. 
+Создаёт `rop_evaluation.json` в `storage/runs/<run_id>/`. Рассчитывает метрики: `case_type_accuracy`, `critical_false_negative_rate`, `existing_deal_as_irrelevant_count` и др.
 Missing optional human columns → `not_evaluable`, не ошибка.
 
 **`./start.sh rop recommendations`** — построить read-only/draft-only рекомендации:
@@ -415,6 +415,7 @@ Missing optional human columns → `not_evaluable`, не ошибка.
 ```
 
 Создаёт:
+
 - `storage/interfaces/rop_routing_map.json` — routing map из `config/settings.yml → rop.routing`;
 - `storage/runs/<run_id>/rop_context_enrichment.json` — per-event enrichment evidence;
 - `storage/runs/<run_id>/rop_recommendations.json` — рекомендации.
