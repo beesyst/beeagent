@@ -1,15 +1,15 @@
-# DEV_GUIDE — запуск, окружение, модули, SDLC-light
+# DEV_GUIDE — разработка модуля, тесты, интеграция с BeeAgent
 
 ## Purpose
 
 Этот документ описывает:
 
-- как запускать `beeagent`;
+- как разрабатывать `beeagent-rop`;
 - как работать с окружением и зависимостями через `uv`;
-- где смотреть логи и артефакты;
-- как подключать и разрабатывать внешние доменные модули;
-- как вести разработку в рамках текущего SDLC-light процесса;
-- как формулировать задачи для Copilot / AI так, чтобы изменения были консистентны с архитектурой проекта, `docs/ROADMAP.md`, `docs/SDLC.md` и `docs/SECURITY.md`.
+- как гонять тесты;
+- как держать границу между модулем и BeeAgent core;
+- как подключать модуль к `beeagent`;
+- как вести разработку в рамках текущего SDLC-light процесса.
 
 ## Related project docs
 
@@ -21,7 +21,7 @@
 
 Правило:
 
-> `DEV_GUIDE` не заменяет `ROADMAP`, `SDLC` и `SECURITY`, а помогает разработчику быстро применять их на практике.
+> `DEV_GUIDE` не заменяет `ROADMAP`, `SDLC` и `SECURITY`, а помогает быстро и безопасно разрабатывать модуль.
 
 ## Требования
 
@@ -30,9 +30,9 @@
 
 ## Установка (dev)
 
-В корне проекта:
+В корне модуля:
 
-```
+```bash
 uv sync
 ```
 
@@ -40,688 +40,335 @@ uv sync
 
 ## Управление зависимостями (`uv`)
 
-> ⚠️ Пример выше требует, чтобы source `rop_batch_sample` был включён (`enabled: true`) в `config/settings.yml`. По умолчанию он выключен (enabled: false) для безопасности. Включите его вручную для теста/dev запуска.
-> Источник правды по зависимостям:
+Источник правды по зависимостям:
 
-- `pyproject.toml` — список зависимостей и constraints
-- `uv.lock` — зафиксированные версии для воспроизводимой установки
+- `pyproject.toml`
+- `uv.lock`
 
 Правило проекта:
 
-> После `uv add`, `uv remove`, `uv lock --upgrade` всегда коммить **и** `pyproject.toml`, **и** `uv.lock`.
+> После изменения зависимостей коммить и `pyproject.toml`, и `uv.lock`.
 
 ### Базовые команды
 
-| Что сделать                    | Команда                          | Что произойдёт / что проверить          |
-| ------------------------------ | -------------------------------- | --------------------------------------- |
-| Поставить зависимости по lock  | `uv sync`                        | Ставит ровно то, что в `uv.lock`.       |
-| Запустить проект               | `uv run python3 config/start.py` | Запуск без активации venv.              |
-| Добавить runtime-зависимость   | `uv add <pkg>`                   | Обновит `pyproject.toml` и `uv.lock`.   |
-| Добавить dev-зависимость       | `uv add --dev <pkg>`             | Добавит зависимость для разработки.     |
-| Удалить зависимость            | `uv remove <pkg>`                | Обновит `pyproject.toml` и `uv.lock`.   |
-| Посмотреть дерево зависимостей | `uv tree`                        | Диагностика зависимостей.               |
-| Апгрейднуть lock               | `uv lock --upgrade`              | Обновит `uv.lock` в рамках constraints. |
+| Что сделать                    | Команда              |
+| ------------------------------ | -------------------- |
+| Поставить зависимости          | `uv sync`            |
+| Запустить тесты                | `uv run pytest -q`   |
+| Добавить зависимость           | `uv add <pkg>`       |
+| Добавить dev-зависимость       | `uv add --dev <pkg>` |
+| Удалить зависимость            | `uv remove <pkg>`    |
+| Посмотреть дерево зависимостей | `uv tree`            |
 
-## Запуск
+## Что такое `beeagent-rop`
 
-Основной запуск:
+`beeagent-rop` — это **не отдельный runtime** и не отдельный UI.
 
-```bash
-bash start.sh
-```
+Это доменный модуль для BeeAgent, который отвечает за:
 
-`start.sh` должен делать:
+- inbound event understanding;
+- lead classification;
+- duplicate resolution;
+- attachment-aware triage;
+- ROP summary;
+- bounded recommendations;
+- bounded AI assist contract for ambiguous/fallback classification (It17+).
 
-- проверку наличия `uv`;
-- `uv sync`;
-- `uv run python3 config/start.py`.
+Правило:
 
-### Прямой запуск
+> Модуль не должен брать на себя orchestration, session management, общий artifact lifecycle и capability transport. Это зона BeeAgent core.
 
-```
-uv run python3 config/start.py
-```
+## Где проходит граница модуля
 
-### Operator Web Console v0 (UI-4 BeeUI-backed)
+### Это зона `beeagent-rop`
 
-Для запуска read-only operator web console используй:
+- `contracts.py`
+- `domain/*`
+- `services/*`
+- `cases/*`
+- client-specific fixture logic
+- classification rules
+- duplicate/entity resolution
+- attachment-aware logic
+- rop summary
+- client-facing recommendation draft
+- AI assist contract: eligibility, request builder, decision validation, merge (It17+)
+- human-reviewed taxonomy contract (It18+)
+- thread context contract (It18+)
 
-```bash
-./start.sh web
-# или
-uv run python3 config/start.py web
-```
+### Это зона `beeagent`
 
-CLI overrides:
+- module contract
+- module registry
+- run/session context
+- artifact API
+- transport/UI
+- capability abstraction
+- approvals / policy / authority boundaries
+- общий orchestration flow
 
-```bash
-./start.sh web --host 127.0.0.1 --port 8780 --no-open
-```
+Правило:
 
-ROP dashboard (`rop dashboard`):
+> Если изменение нужно только для логики РОП/клиента, оно должно жить в `beeagent-rop`. Если оно нужно для всех модулей — тогда это кандидат в core.
 
-```bash
-./start.sh rop dashboard --period 7d
-./start.sh rop dashboard --period today
-./start.sh rop dashboard --period all --run-id <run_id>
-```
+## Как тестировать модуль
 
-Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`.
-
-Артефакт: `storage/interfaces/rop_dashboard.json`.
-
-Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
-
-Route listing diagnostic:
-
-```bash
-./start.sh routes
-```
-
-Web Console построен на BeeUI (FastAPI + Jinja2 + Tabler).
-
-HTML маршруты:
-
-- `/` — dashboard
-- `/health` — health check
-- `/runs` — run history
-- `/runs/<run_id>` — run detail
-- `/rop` — ROP operator dashboard
-- `/modules` — module diagnostics
-
-JSON API маршруты:
-
-- `/api/dashboard`
-- `/api/runs`
-- `/api/runs/{run_id}`
-- `/api/runs/{run_id}/artifacts`
-- `/api/runs/{run_id}/artifacts/{artifact_id}`
-- `/api/modules`
-- `/api/rop/dashboard`
-
-Web console читает только existing artifacts из `storage/` и не выполняет runtime actions.
-Источник правды для bind/runtime-настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
-`./start.sh rop run` остаётся CLI pipeline командой и не открывает браузер автоматически.
-
-> **Queue tab & period:** Вкладка Queue (`/rop?tab=queue`) всегда загружает события за **все периоды** (period=`all`), независимо от выбранного периода на Overview. Это сделано намеренно: очередь имеет собственный фильтр дат (`date_from`/`date_to`) и должна показывать все доступные события, которые пользователь может отфильтровать через embedded toolbar. Период, выбранный на Overview, не влияет на данные в Queue.
-
-#### Queue tab: toolbar, filters, sort, pagination
-
-Queue tab отображается как один `data_table` с functional `toolbar` (BeeUI Iteration 13.11). Отдельный `filter_form` больше не используется. Toolbar содержит:
-
-- date range с календарём (visible label отсутствует, accessible name сохранён);
-- поиск по `q` (visible label отсутствует, accessible name через placeholder);
-- Classification, Priority, Bitrix Status — dropdown кнопки;
-- column chooser через ellipsis action;
-- Reset без Apply (datepicker auto-submit).
-
-Параметры запроса:
-
-- Filter params: `q`, `sender`, `subject`, `case_type`/`classification`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`
-- Column params: `columns` (comma-separated keys)
-- Pagination: `page` (>=1), `page_size` (25/50/100), `sort`, `order` (asc/desc)
-- Canonical params: `run_id`, `tab`, `period`, `lang`
-
-Активные `case_type`, `priority`, `bitrix_status` и `columns` сохраняются через `toolbar.hidden` (hidden GET inputs), чтобы поиск или дата не сбрасывали dropdown filters и column visibility. `columns_open` и `open_dropdowns` поддерживаются только в legacy accepted inputs adapter contract для обратной совместимости.
-
-Все URL формируются через единый `build_rop_url()` из `src/beeagent_module/interfaces/ui/url_builder.py`, использующий `urllib.parse.urlencode` для корректного экранирования специальных символов.
-
-Валидация параметров выполняется в adapter-level contract (`_extract_and_validate_params` в `adapter.py`). Невалидные значения возвращают ошибку, а не молча расширяют выборку.
-
-Missing/malformed dates при сортировке всегда после валидных (как asc, так и desc).
-
-#### Web Console Auth (UI-7, dev smoke)
-
-По умолчанию auth отключён (`web.auth.enabled: false`). Для локального теста:
+Основной способ:
 
 ```bash
-export BEEAGENT_WEB_SESSION_SECRET="dev-only-secret"
-export BEEAGENT_WEB_ADMIN1_TOKEN="dev-admin-token"
-./start.sh web
+uv run pytest -q
 ```
 
-В `config/settings.yml` `web.auth.enabled` уже `false` по умолчанию. Для проверки работы auth временно установи `enabled: true` в YAML и передай токен при входе на `/auth/login`.
+### Что должно тестироваться внутри модуля
 
-При `web.auth.enabled: false` все routes доступны без аутентификации (current dev behavior). При `enabled: true` HTML routes без сессии редиректят на `/auth/login`, API routes возвращают 401.
+- domain contracts;
+- classification cases;
+- duplicate cases;
+- attachment-aware cases;
+- summary generation;
+- recommendation generation;
+- AI assist eligibility, request builder, decision validation, merge;
+- human review taxonomy validation;
+- thread context validation and classification integration;
+- fixture-based edge cases.
 
-### ROP operator flow v0
+### Что не должно тестироваться как responsibility модуля
 
-Для первого operator-facing ROP прогона используй existing transport path:
+- Telegram UI;
+- общий run lifecycle BeeAgent;
+- module registry;
+- MCP transport;
+- n8n execution engine.
 
-1. в `config/settings.yml` оставь `run.mode: "telegram"`;
-2. запусти `uv run python3 config/start.py`;
-3. отправь команду `/run_rop` в Telegram.
+Это тестируется в `beeagent`.
 
-Результат пишется как readable operator output в лог и как артефакт `storage/runs/<run_id>/operator_summary.json`.
+## Fixture-driven разработка
 
-### ROP source handoff v0 (итерации 17-18)
+Для `beeagent-rop` fixture-driven подход обязателен.
 
-Для запуска ROP flow через configured source в `rop.sources`:
+Почему:
 
-1. убедись, что в `config/settings.yml` есть блок `rop.sources` с ровно одним `enabled: true` источником;
-2. убедись, что каждый `rop.sources[]` содержит обязательный profile contract:
+- клиентские кейсы грязные;
+- входящий поток нестабилен;
+- правила надо проверять не “в голове”, а на воспроизводимых примерах.
 
-- `source_role`;
-- `client_id`;
-- `display_name`;
+### Практика
 
-3. для `json_batch` убедись, что batch файл существует по пути, указанному в `rop.sources[].batch.path`;
-4. для `mailbox_readonly` задай `mailbox.username_env` и `mailbox.password_env`, а значения credentials положи только в env;
-5. запусти flow напрямую через case invocation:
+Для каждой значимой итерации полезно иметь fixture-наборы:
 
-```python
-from pathlib import Path
-from beeagent_module.core.settings import load_settings
-from beeagent_module.cases.rop_operator import run_rop_batch_case
-import logging
+- новый лид;
+- existing deal;
+- duplicate;
+- irrelevant / spam;
+- ambiguous case;
+- attachment-heavy case;
+- “смотри вложение” case;
+- dirty input case.
 
-settings = load_settings(Path("config/settings.yml"))
-result = run_rop_batch_case(
-    settings=settings,
-    storage_dir=Path("storage"),
-    project_root=Path(".").resolve(),
-    logger=logging.getLogger("rop_batch"),
-)
-print(result["operator_text"])
-```
+Для inbound contract baseline Iteration 2 fixture-источник живёт в `tests/fixtures/inbound_email_v0/`.
+Такие fixtures должны содержать только санитизированный input и ожидаемый normalized result без classification labels.
 
-Ожидаемые артефакты:
+Для Iteration 3 explainable classification fixture-источник живёт в `tests/fixtures/lead_classification_v1/`.
+Такие fixtures должны содержать нормализуемый inbound input и ожидаемый classification result c `case_type`, `priority`, `reason_code` и `is_fallback`.
 
-- `storage/runs/<run_id>/source_diagnostics.json` — статус источника, counts и degraded reason без секретов;
-- `storage/runs/<run_id>/intake_metadata.json` — метаданные загрузки источника;
-- `storage/runs/<run_id>/attachment_extraction.json` — bounded preview/refusal evidence per attachment без raw content;
-- `storage/runs/<run_id>/normalized_events.json` — нормализованные события;
-- `storage/runs/<run_id>/module-beeagent-rop/module_result.json` — результат модуля;
-- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` — case artifact от beeagent-rop;
-- `storage/runs/<run_id>/operator_summary.json` — operator-facing summary.
+Для Iteration 4 duplicate resolution fixture-источник живёт в `tests/fixtures/duplicate_resolution_v1/`.
+Такие fixtures должны содержать inbound input, доступные `existing_records` и ожидаемый duplicate result c `candidate`, `confidence`, `reason_code`, `reason_path` и fallback semantics.
 
-Минимальные metadata fields для source artifacts (`source_diagnostics.json`, `intake_metadata.json`, `operator_summary.json.source`):
+Для Iteration 5 attachment reader decision fixture-источник живёт в `tests/fixtures/attachment_reader_v0/`.
+Такие fixtures должны содержать attachment metadata input и ожидаемый `AttachmentReadResult` c `status`, `reason_code`, `is_supported`, `is_refused`, `needs_manual_review`.
+Fixture-примеры покрывают: PDF supported, DOCX supported, XLSX metadata_only, JPG unsupported (no OCR), inline/logo skipped, unknown content type unsupported, oversized refused.
 
-- `source_id`
-- `source_type`
-- `source_role`
-- `source_display_name`
-- `client_id`
-- `authority`
-- `mailbox_folder`
-- `items_max`
-- `fetched_count`
-- `loaded_count`
-- `malformed_count`
+Для Iteration 7 attachment-aware classification fixture-источник живёт в `tests/fixtures/attachment_aware_classification_v1/`.
+Такие fixtures должны содержать нормализуемый inbound input с вложениями и ожидаемый classification result.
+Attachment context поступает через:
 
-Пример batch файла (`storage/mock/rop_batch_sample.json`):
+- `attachment.filename` — имя файла;
+- `attachment.raw_metadata.text_preview` / `attachment_text` / `summary` — legacy preview keys;
+- BeeAgent It25-like downstream keys в `event.raw_metadata` и `attachment.raw_metadata`:
+  `attachment_extraction_status`, `attachment_preview_available`,
+  `attachment_text_preview`, `attachment_refusal_reasons`,
+  `extraction_status`, `preview_available`, `text_preview`,
+  `reason_code`, `refusal_reason`.
+  Classifier не читает файлы, не генерирует `attachment_extraction.json` и не выполняет OCR — только работает с уже переданными в payload безопасными preview/status/refusal данными.
+  Fixture-примеры покрывают: weak body + request filename → new_lead; weak body + invoice filename → existing_deal; text_preview с заявкой → new_lead; text_preview со счётом → existing_deal; refused/unreadable attachment → safe fallback/manual-review.
+
+Для Iteration 8 ROP summary v1 fixture-источник живёт в `tests/fixtures/rop_summary_v1/`.
+Такие fixtures должны содержать список classified inbound items и ожидаемый `SummaryResult` с `total_leads`, `counts` и highlighted `items`.
+Входной контракт элемента: `event_id`, `case_type`, `priority`, `is_fallback`, `is_attachment_aware`.
+Fixture-примеры покрывают: empty input; mixed flow (new_lead/existing_deal/duplicate/irrelevant); high-priority new lead; fallback/low-confidence → needs_manual_review; duplicate highlighted; attachment-aware item.
+
+Для Iteration 9 recommendation builder v0 fixture-источник живёт в `tests/fixtures/recommendation_builder_v0/`.
+Такие fixtures должны содержать список classified events и ожидаемый список `RecommendationResult`.
+Входной контракт элемента: `event_id`, `case_type`, `priority`, `confidence`, `is_fallback`, `is_attachment_aware`, `reason_code`.
+Fixture-примеры покрывают: empty input; new_lead_next_step; existing_deal_follow_up; duplicate_review; irrelevant_no_action; manual_review_required; attachment_aware_review; mixed_recommendations.
+
+Для Iteration 10 BeeAgent integration contract smoke v0 fixture-источник живёт в `tests/fixtures/integration_smoke_v0/`.
+
+Для Iteration 17 AI assist v1 fixture-источник живёт в `tests/fixtures/ai_assist_v1/`.
+Такие fixtures должны содержать deterministic classification result, expected AI assist eligibility, optional AI decision и expected merge outcome.
+Fixture-примеры покрывают: fallback reply eligible; fallback low signal eligible; ambiguous existing deal eligible; confidential spam not eligible; confident new_lead not eligible; confident existing_deal not eligible; invalid AI decision degraded; AI low confidence degraded; spam cannot be AI-promoted; tender/RFQ remains deterministic; refused attachment with weak body; AI decision with CRM action rejected.
+Такие fixtures должны содержать BeeAgent-compatible payload для `RopModule.handle(...)` и ожидаемую shape-структуру `rop_summary` результата.
+Smoke-примеры покрывают: `rop_summary` output shape (`period`, `total_leads`, `counts`, `items`, `recommendations`), artifact write через `context.artifact_api.write_json(...)`, unsupported `case_type`, missing/non-list `events`, artifact write failure без crash.
+
+Для Iteration 19 ROP case subtype taxonomy v1 fixture-источник живёт в `tests/fixtures/reviewed_tsv_subtype_v1/`.
+Такие fixtures должны содержать inbound event input, expected classification result включая `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action` и `reviewed_expected.json` с ожидаемыми evaluation counts.
+Fixture-примеры покрывают: ETS/SAP tender → `new_lead_tender`; RFQ/quotation → `new_lead_rfq`; WARUITE shipping → `existing_deal_logistics`; Pentagon freight/invoice → `existing_deal_invoice`; ESAB lot clarification → `existing_deal_procurement`; Qarmet delivery deadline → `existing_deal_logistics`; Voestalpine product order → `existing_deal_procurement`; supplier promo → `supplier_offer`; Facebook/WPK/HR → `service_notification`; Kemppi order confirmation → `existing_deal_invoice`; finance reconciliation → `finance_document`; bulk newsletter → `spam_or_bulk`; internal memo → `internal_employee_correspondence`; document request → `existing_deal_document`; malformed subtype → degraded validation path.
+Subtype resolver детерминирован и explainable: использует `case_type`, `reason_code`, subject/body markers для выбора subtype без дублирования `rules.py`.
+
+Для Iteration 18 human-reviewed taxonomy v1 fixture-источник живёт в `tests/fixtures/human_review_taxonomy_v1/`.
+Такие fixtures должны содержать human review payload и ожидаемый validation result.
+Fixture-примеры покрывают: confirmed new_lead; confirmed existing_deal; confirmed irrelevant; confirmed duplicate; manual_review/ambiguous; false_positive; false_negative; deferred review; malformed/missing label; malformed/invalid label; malformed/invalid status.
+Human review labels не влияют на live production classification и используются только как fixture/evaluation evidence.
+
+Для Iteration 18 thread context v1 fixture-источник живёт в `tests/fixtures/thread_context_v1/`.
+Такие fixtures должны содержать thread context payload, ожидаемый validation result и expected_supportive флаг для ambiguous existing-deal helper.
+Fixture-примеры покрывают: reply chain с previous existing_deal; forward-only weak; supplier noise with thread context (не должен promote); tender/RFQ with thread context (детерминированный new_lead); weak continuation без CRM; CRM hint with reply; malformed payloads; empty thread_id.
+
+Для Iteration 12 live mailbox fixture hardening v1 fixture-источник живёт в `tests/fixtures/live_mailbox_hardening_v1/`.
+Такие fixtures должны содержать только sanitized/signal-reduced payload и expected outcomes по live mailbox scenario groups.
+Минимальный набор групп: supplier promo, tender/procurement notifications, HR/service noise, operational documents, attachment-only manual-review cases, spam-like sales.
+Fixture-контракт должен быть explainable: `input` -> deterministic rules -> `expected` без AI-only path.
+
+Для Iteration 13 human-reviewed live classification hardening v1 fixture-источник живёт в `tests/fixtures/live_human_review_v1/`.
+Такие fixtures должны содержать только sanitized human-reviewed payload и expected deterministic outcomes по first-pass live review.
+Минимальный набор групп: supplier promo, HR/service noise, finance/accounting documents, logistics notifications, tender/procurement, client continuation, attachment-only manual-review, duplicate-candidate finance noise.
+Fixture-контракт должен оставаться explainable: `input` -> deterministic rules -> `expected`, а кейсы с открытым бизнес-вопросом должны явно помечаться через `review_status = needs_business_confirmation`.
+
+Санитизация для live mailbox fixtures обязательна:
+
+- только synthetic senders в домене `example.test`;
+- без реальных телефонов и live URL;
+- без raw `.eml` и full raw message bodies;
+- без секретов/токенов/паролей.
+
+Ожидаемое поведение artifact в module-side integration smoke:
+
+- если `context.artifact_api` передан, модуль вызывает `write_json("<case_type>_result.json", ...)`;
+- ошибка записи артефакта не должна ронять `RopModule.handle(...)`;
+- structured module result остаётся основным output path.
+
+Output shape `rop_summary` (с Iteration 9) включает ключ `recommendations`:
 
 ```json
 {
   "period": "2026-05",
-  "items": [
+  "total_leads": 2,
+  "counts": {"new_lead": 1, "existing_deal": 1},
+  "items": [...],
+  "recommendations": [
     {
-      "event_id": "evt-001",
-      "case_type": "new_lead",
-      "priority": "high",
-      "confidence": 0.95,
-      "is_fallback": false,
-      "reason_code": "new_contact_no_existing_lead"
+      "title": "New lead: qualify and contact",
+      "body": "High priority new lead. ROP should contact and qualify this lead promptly.",
+      "status": "draft",
+      "reason_code": "new_lead_next_step",
+      "target_event_id": "evt-001",
+      "source_case_type": "new_lead",
+      "confidence": 0.92
     }
   ]
 }
 ```
 
-Для `mailbox_readonly` normalizer сохраняет safe fields: `event_id`, `source`, `source_id`, `message_id`, `sender`, `to`, `cc`, `subject`, `clean_subject`, `transport_labels`, `spam_label_present`, `reply_label_present`, `forwarded_wrapper`, `original_sender`, `original_recipient`, `original_message_date`, `date_source`, `x_email_id`, `date`, `body_preview`, `attachments`. Attachment content не читается, raw `.eml` не сохраняется.
+Правило:
 
-После It33 mailbox normalizer также извлекает forwarded wrapper поля из тела письма и вычисляет `clean_subject` и `transport_labels` из темы. Эти поля передаются в `beeagent-rop` `lead_classification` payload как transport evidence, не как business labels.
+> Если логика меняется, должен быть fixture или тест, который объясняет, зачем именно она поменялась.
 
-`run.mode` остаётся transport/runtime selector. ROP source flow запускается через case/test/dev invocation, не через run.mode.
+## AI в модуле
 
-### ROP CLI v1
+AI допустим только как bounded assistive layer.
 
-Для запуска ROP flow без Telegram и без `test.py` используй BeeAgent CLI:
+### Разрешено
 
-```bash
-./start.sh rop run \
-  --source-id hotline_mailbox \
-  --items-max 20 \
-  --period 2026-05 \
-  --run-id live-review-2026-05-15-welding-20
+- classification assist;
+- summary drafting;
+- recommendation drafting;
+- enrichment поверх контролируемого pipeline.
 
-# Запуск всех enabled источников за один run
-./start.sh rop run \
-  --all-sources \
-  --items-max 20 \
-  --period 2026-05 \
-  --run-id live-review-2026-05-15-multi
-```
+### Не разрешено
 
-Команда запустит configured ROP source, загрузит события, классифицирует их через `beeagent-rop`, сохранит все артефакты и создаст `rop_review_table.tsv`.
-
-#### ROP CLI команды
-
-**`./start.sh rop run`** — запустить ROP batch с опциональными overrides и автоматически создать TSV для human review:
-
-```bash
-./start.sh rop run [--source-id SOURCE_ID | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id RUN_ID]
-```
-
-- `--source-id` — override configured source (если не указан, используется первый enabled источник)
-- `--all-sources` — запустить все enabled источники из `rop.sources`
-- `--items-max` — override `items_max` для выбранного источника
-- `--period` — override period для batch источника
-- `--run-id` — explicit run_id (если не указан, генерируется автоматически)
-
-Пример:
-
-```bash
-./start.sh rop run --source-id rop_batch_sample --items-max 2
-```
-
-**`./start.sh rop summary`** — показать summary для готового run:
-
-```bash
-./start.sh rop summary --run-id live-review-2026-05-15-welding-20
-```
-
-Читает `operator_summary.json` и выводит readable summary в terminal.
-
-**`./start.sh rop export-review`** — вручную повторно экспортировать TSV для human review:
-
-```bash
-./start.sh rop export-review --run-id live-review-2026-05-15-welding-20 [--format tsv]
-```
-
-Создаёт `rop_review_table.tsv` в `storage/runs/<run_id>/` с колонками:
-
-- `event_id`, `source_id`, `sender`, `subject`
-- `bot_case_type`, `bot_reason_code`, `bot_confidence`, `bot_is_fallback`
-- `human_case_type`, `should_rop_see`, `bitrix_status`, `notes`, `correct_action`
-
-Последние 5 колонок — пусто, оператор заполняет вручную для validation.
-
-Если для run существует `bitrix_reconciliation.json`, колонки `bitrix_status`, `bitrix_lead_id`, `bitrix_deal_id`, `bitrix_responsible` заполняются автоматически.
-
-**`./start.sh rop reconcile-bitrix`** — выполнить read-only сверку существующего ROP run с Bitrix CRM:
-
-```bash
-./start.sh rop reconcile-bitrix --run-id <run_id>
-```
-
-Читает `normalized_events.json` и `classified_events.json`, выполняет поиск кандидатов в Bitrix CRM по email/phone/subject, создаёт `bitrix_reconciliation.json` в `storage/runs/<run_id>/`.
-
-Для работы требуется настроенный `bitrix` блок в `config/settings.yml` и переменная окружения `BITRIX_WEBHOOK_URL`. Если Bitrix отключён (`bitrix.enabled: false`), команда всё равно выполняется (если env доступен), но выдаёт предупреждение.
-
-**`./start.sh rop mvp-pack`** — собрать MVP handoff/readiness pack v0 из existing ROP artifacts (BeeAgent-owned):
-
-```bash
-./start.sh rop mvp-pack --run-id <run_id> [--period 7d]
-```
-
-Создаёт артефакты:
-
-- `storage/runs/<run_id>/rop_mvp_pack.json` — JSON-сводка
-- `storage/runs/<run_id>/rop_mvp_report.md` — Markdown-отчёт
-- `storage/interfaces/rop_mvp_latest.json` — интерфейсный артефакт
-
-Pack включает: source coverage (из `config/settings.yml → rop.sources[]`, не хардкод), business KPI, очереди, first actions, demo readiness, evidence links и known limitations. Pack read-only, non-production, без write-back.
-
-**`./start.sh rop current`** — построить current-state index для указанного ROP run:
-
-```bash
-./start.sh rop current --run-id <run_id>
-```
-
-Читает все существующие артефакты run (`normalized_events.json`, `classified_events.json`, `source_diagnostics.json`, `intake_metadata.json`, `bitrix_reconciliation.json`) и создаёт artifact-level projection `rop_current_state.json` в директории run, а также интерфейсные артефакты:
-
-- `storage/interfaces/rop_current.json` — полный current-state
-- `storage/interfaces/rop_latest.json` — lightweight latest summary
-- `storage/interfaces/rop_index.json` — index всех current-state
-
-Current-state автоматически строится после успешного `rop run` и успешного `reconcile-bitrix`. После неудачного `reconcile-bitrix` current-state не обновляется.
-
-ROP dashboard использует current-state для вкладки Bitrix / Bitrix Evidence Board: matched, lost in Bitrix, ambiguous, connector degraded и unreconciled очереди остаются read-only.
-
-**`./start.sh rop dashboard`** — построить ROP dashboard read-model с period analytics:
-
-```bash
-./start.sh rop dashboard --period 7d
-./start.sh rop dashboard --period today
-./start.sh rop dashboard --period all --run-id <run_id>
-```
-
-Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `365d`, `all` (задаются в `config/settings.yml` → `rop.dashboard`).  
-Артефакт: `storage/interfaces/rop_dashboard.json` с полями `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.  
-Dashboard автоматически обновляется после `rop run`, `rop current` и `reconcile-bitrix`.
-
-**`./start.sh rop action-drafts`** — сгенерировать ROP action draft артефакты из Bitrix reconciliation:
-
-```bash
-./start.sh rop action-drafts --run-id <run_id>
-```
-
-Создаёт `rop_action_drafts.json` в `storage/runs/<run_id>/` с draft action items. Действия read-only/draft-only, no CRM write-back.
-
-**`./start.sh rop evaluate-review`** — оценить качество классификации по reviewed TSV:
-
-```bash
-./start.sh rop evaluate-review --run-id <run_id>
-./start.sh rop evaluate-review --tsv storage/runs/<run_id>/rop_review_table.tsv
-```
-
-Создаёт `rop_evaluation.json` в `storage/runs/<run_id>/`. Рассчитывает метрики: `case_type_accuracy`, `critical_false_negative_rate`, `existing_deal_as_irrelevant_count` и др.
-Missing optional human columns → `not_evaluable`, не ошибка.
-
-**`./start.sh rop recommendations`** — построить read-only/draft-only рекомендации:
-
-```bash
-./start.sh rop recommendations --run-id <run_id>
-```
-
-Создаёт:
-
-- `storage/interfaces/rop_routing_map.json` — routing map из `config/settings.yml → rop.routing`;
-- `storage/runs/<run_id>/rop_context_enrichment.json` — per-event enrichment evidence;
-- `storage/runs/<run_id>/rop_recommendations.json` — рекомендации.
-
-Рекомендации: `safe_to_execute=false`, `requires_human_confirmation=true` для non-ignore items.
-
-#### Bitrix widget API (It32)
-
-Read-only endpoints:
-
-```text
-GET /api/bitrix/rop/widget
-GET /api/bitrix/rop/widget/events
-GET /api/bitrix/rop/widget/events/{event_id}
-```
-
-Требуется токен через `Authorization: Bearer <token>` при `bitrix.widget.enabled=true`.
-Токен задаётся через env `BITRIX_ROP_WIDGET_TOKEN`.
-
-#### CLI overrides — в памяти только
-
-CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) **не меняют** `config/settings.yml`:
-
-- применяются только на один run;
-- если source disabled в config, CLI его не включит (fail-fast);
-- если source не найден, CLI вернёт ошибку.
-- `--source-id` и `--all-sources` взаимоисключающие.
-
-#### Backward compatibility
-
-```bash
-./start.sh
-
-./start.sh telegram
-
-./start.sh rop run
-./start.sh rop summary --run-id ...
-./start.sh rop export-review --run-id ...
-```
-
-`./start.sh rop run` уже создаёт TSV автоматически.
-
-## Архитектурное правило проекта
-
-`beeagent` — это **ядро оркестрации**, а не доменный модуль.
-
-Схема:
-
-`UI/Transport -> BeeAgent core -> module -> capability/MCP/n8n -> external systems`
-
-Это означает:
-
-- core отвечает за:
-  - orchestration;
-  - state;
-  - run/session context;
-  - artifacts;
-  - policy / approval / authority boundaries;
-  - module loading;
-  - capability boundary.
-
-- доменная логика живёт в отдельных пакетах:
-  - `beeagent-rop`
-  - будущие `beescan`
-  - будущие `merch`
+- подменять deterministic rules там, где они обязательны;
+- оставлять critical decision полностью на black-box AI;
+- скрывать за AI отсутствие нормального contract/rule path.
 
 Правило:
 
-> Не тащи клиентскую бизнес-логику в `beeagent_module/core`, если она должна жить в отдельном доменном модуле.
+> Сначала deterministic path, потом bounded AI assist поверх него, а не наоборот.
 
-## Подключение внешних модулей
+## Подключение модуля к BeeAgent
 
-`beeagent` должен уметь работать с внешними package-based модулями.
+`beeagent-rop` живёт как отдельная репа и ставится в `beeagent` как editable package.
 
-Базовый dev-путь:
-
-1. рядом с `beeagent` существует отдельный репозиторий модуля, например:
-   - `/home/bee/Projects/beeagent-rop`
-
-2. модуль ставится в окружение `beeagent` как editable package:
+Из `beeagent`:
 
 ```
 uv add --editable ../beeagent-rop
 ```
 
-После этого `beeagent` может импортировать модуль как обычный python package.
+После этого BeeAgent может импортировать пакет `beeagent_rop`.
 
-### Правило
+### Рабочая модель
 
-- `beeagent` — отдельная репа;
-- `beeagent-rop` — отдельная репа;
-- интеграция идёт через package install + module contract;
-- не копируй код модуля внутрь `beeagent`.
+- разработка доменной логики — в `beeagent-rop`
+- orchestration/integration changes — в `beeagent`
+- интеграционные проверки — запускать уже из `beeagent`
 
-### Module execution: Runtime Context and Artifact API
+## Логи и артефакты
 
-When a module executes inside BeeAgent core, it receives a **RuntimeContext** envelope and can write artifacts safely using **ArtifactAPI**.
+Сам модуль не должен хаотично писать свои файлы куда попало.
 
-#### RuntimeContext
+Правильная модель:
 
-BeeAgent core builds and passes a `RuntimeContext` to module execution. This context contains:
-
-- `run_id` — unique identifier for this orchestration run (generated by core)
-- `session_id` — session identifier (may persist across multiple runs)
-- `case_type` — the case type being handled (e.g., "lead_classification", "oos_summary")
-- `module_id` — the module being executed
-- `authority` — authority level (read_only, draft_only, execution_capable)
-- `payload` — input payload for the case (dict with case-specific data)
-
-#### Artifact API
-
-Modules must use **ArtifactAPI** to write and read artifacts safely. The API ensures:
-
-- Artifacts are stored in a predictable, module-isolated directory
-- Module code cannot escape the controlled path: `storage/runs/<run_id>/module-<module_id>/`
-- Write/read operations are logged for observability
-
-Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.write_json()`, `ArtifactAPI.write_text()`, `ArtifactAPI.read_json()`, or `ArtifactAPI.read_text()`.
-
-## Настройка
-
-Источник правды для runtime-поведения:
-
-- `config/settings.yml`
-
-Это означает:
-
-- обязательные ключи не должны “магически” появляться из кода;
-- для новых обязательных ключей должна быть явная валидация в `src/beeagent_module/core/settings.py`;
-- если обязательного ключа нет — приложение должно падать fail-fast с понятной ошибкой на старте.
-
-### Правило по конфигу
-
-Не создавай второй source of truth.
-
-Если добавляешь новый config key:
-
-- опиши его в `config/settings.yml`;
-- добавь fail-fast validation в `src/beeagent_module/core/settings.py`;
-- обнови docs, если меняется runtime contract.
-
-## Логи
-
-Основные места:
-
-- `stdout`
-- `logs/app.log`
-
-### Правила по логам
-
-Логи должны быть:
-
-- понятными;
-- на английском языке;
-- достаточными для диагностики текущей итерации;
-- без утечки секретов.
-
-Не добавляй:
-
-- сырые secret/env values;
-- дампы токенов, ключей и чувствительных payload;
-- лишний debug noise без необходимости.
-
-## Артефакты в `storage/`
-
-Типовые директории:
-
-- `storage/runs/<run_id>/` — runtime артефакты запуска
-- `storage/artifacts/<run_id>/` — человекочитаемые отчёты / вывод
-- `storage/sessions/` — session state
-- `storage/telemetry/` — transport telemetry
-- `storage/mock/` — mock datasets
-
-Для ROP operator flow v0 ожидаемый минимальный linkage:
-
-- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/lead_classification_result.json` (если case пишет свой artifact)
-- `storage/runs/<run_id>/operator_summary.json`
-
-Для ROP batch handoff v0 (итерация 17) ожидаемый linkage:
-
-- `storage/runs/<run_id>/intake_metadata.json` — метаданные загруженного источника
-- `storage/runs/<run_id>/normalized_events.json` — нормализованные события batch
-- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json` (если case пишет свой artifact)
-- `storage/runs/<run_id>/operator_summary.json`
-
-Для multi-source run (итерация 24):
-
-- `storage/runs/<run_id>/source_diagnostics.json` содержит `aggregate` и `sources[]` с per-source diagnostics;
-- `storage/runs/<run_id>/intake_metadata.json` содержит aggregate counts и `sources[]` rollup;
-- `storage/runs/<run_id>/normalized_events.json` содержит source metadata в каждом событии:
-  - `source_id`
-  - `source_type`
-  - `source_role`
-  - `source_display_name`
-  - `client_id`
-
-Пример `intake_metadata.json`:
-
-```json
-{
-  "source_id": "rop_batch_sample",
-  "source_type": "json_batch",
-  "authority": "read_only",
-  "batch_path": "storage/mock/rop_batch_sample.json",
-  "period": "2026-05",
-  "raw_item_count": 4,
-  "loaded_item_count": 4,
-  "items_max": 100,
-  "loaded_at": "2026-05-08T10:00:00+00:00"
-}
-```
-
-### Правила по артефактам
-
-Артефакты должны быть:
-
-- воспроизводимыми;
-- объяснимыми;
-- консистентными с логами;
-- согласованными с текущей итерацией ROADMAP;
-- безопасными по содержимому.
-
-Не допускается:
-
-- утечка секретов;
-- хаотичная запись файлов без linkage к `run_id`/`session_id`;
-- скрытое изменение JSON/JSONL contract без обновления docs.
-
-## Граница между core и module
-
-### Это относится к `beeagent`
-
-- `core/*`
-- `cases/*`
-- `adapters/*` общего назначения
-- transport/UI слой
-- module contract
-- module registry
-- runtime context
-- artifact API
-- capability abstraction
-- approvals / policies / execution boundaries
-
-### Это относится к доменному модулю (`beeagent-rop`)
-
-- client-specific contracts
-- lead classification
-- duplicate resolution
-- attachment-aware triage
-- rop summary
-- client-specific recommendations
-- fixture cases клиента
+- unit/fixture tests живут внутри `beeagent-rop`;
+- production artifacts модуля пишутся через BeeAgent artifact API;
+- linkage идёт через `run_id`, `module_id`, `case_type`.
 
 Правило:
 
-> Если изменение нужно только для логики клиента Welding/ROP, по умолчанию оно должно жить в `beeagent-rop`, а не в core.
+> Если модуль начал сам себе придумывать свой runtime storage lifecycle в обход BeeAgent, это архитектурная ошибка.
 
 ## SDLC-light workflow
 
-В проекте используется упрощённый, но дисциплинированный процесс:
+1. открыть `docs/ROADMAP.md`
+2. выбрать текущую итерацию
+3. создать issue
+4. определить `change level`
+5. создать ветку
+6. внести изменения
+7. прогнать:
+   - `uv run pytest -q`
+   - нужные fixture tests
 
-1. `ROADMAP` фиксирует итерацию
-2. под итерацию создаётся `Issue`
-3. работа идёт в отдельной ветке
-4. изменения ограничиваются scope текущей итерации
-5. определяется `change level`
-6. выполняются tests, smoke-check, log/artifact check и required quality/security checks
-7. результат оформляется в `PR`
-8. итерация считается закрытой после merge и выполнения DoD
+8. проверить, что логика не вылезла за scope
+9. оформить PR
+10. после review — merge
 
 ## Change levels
 
 ### low-risk
 
-Примеры:
-
-- docs;
-- локальные тесты;
-- naming / comments;
-- безопасные косметические изменения.
+- docs
+- naming cleanup
+- local tests
+- harmless refactor
 
 ### runtime-risk
 
-Примеры:
-
-- orchestrator;
-- config validation;
-- CLI / transport;
-- artifacts;
-- module loading;
-- case dispatch;
-- session/run flow.
+- classification logic
+- duplicate logic
+- summary generation
+- result contracts
+- module integration surface
+- fixture-driven behavior changes
 
 ### security-sensitive
 
-Примеры:
-
-- secrets / env handling;
-- MCP/tool boundaries;
-- external connectors;
-- file parsing;
-- serialization / deserialization;
-- file/path handling;
-- authority paths.
+- attachment parsing
+- email/file input handling
+- file/path handling
+- external connectors
+- secret/env handling
+- serialization/deserialization
+- trust-boundary changes
 
 ## Что проверять перед PR
 
@@ -729,68 +376,43 @@ Do not access `storage_dir` directly in module code. Always use `ArtifactAPI.wri
 
 ```
 uv run pytest -q
-bash start.sh
 ```
 
 Плюс:
 
-- ручная проверка `logs/app.log`
-- ручная проверка relevant files в `storage/`
+- проверить fixture coverage по своей итерации;
+- проверить, что deterministic path остался explainable;
+- проверить, что изменение не тащит client-specific костыли в общий contract без причины.
 
-### Типовой verification checklist
+### Типовой checklist
 
-- конфиг читается корректно;
-- новые обязательные ключи валидируются fail-fast;
-- run/session/artifact linkage не сломан;
-- storage-артефакты пишутся туда, куда ожидается;
-- логи понятны;
-- секреты не протекли;
+- кейсы клиента покрыты тестами;
+- classification/reason path объясним;
+- duplicate logic воспроизводима;
+- attachment path bounded и безопасен;
+- AI не размывает deterministic contract;
 - изменение не вылезло за scope текущей итерации;
 - required checks по change level действительно выполнены.
 
-## Workspace и работа с двумя репами
-
-Рекомендуемый вариант:
-
-- один VS Code workspace;
-- две папки:
-  - `beeagent`
-  - `beeagent-rop`
-
-Рабочая модель:
-
-- core changes делаешь в `beeagent`
-- domain changes делаешь в `beeagent-rop`
-- запускаешь runtime из `beeagent`
-- модуль подтягивается как editable dependency
-
-### Практическое правило
-
-Если хочешь проверить интеграцию:
-
-1. обновляешь код модуля;
-2. запускаешь тесты в `beeagent-rop`;
-3. запускаешь `beeagent` через `bash start.sh`;
-4. проверяешь, что core видит и вызывает модуль корректно.
-
-## Copilot / AI prompt template (beeagent)
+## Copilot / AI prompt template (beeagent-rop)
 
 ```
-Нужно внести изменения в проект `beeagent` (НЕ только в текущий файл).
+Нужно внести изменения в проект `beeagent-rop` (НЕ только в текущий файл).
 
 ### Контекст
 
-- Проект: `beeagent` (`Python 3.14+`, `uv`)
-- Архитектура: stateful orchestrator, артефакты в `storage/`, логи в `logs/app.log`
+- Проект: `beeagent-rop` (`Python 3.14+`, `uv`)
+- Это отдельный доменный модуль для BeeAgent
+- Архитектура: модуль живёт отдельно от `beeagent`, подключается как package-based module и не является отдельным runtime или MCP server
 - SDLC-light: `ROADMAP → Issue → branch → code → tests → artifacts → PR → merge`
-- Источник правды для runtime/config: `config/settings.yml`
-- `beeagent` = core/orchestrator/runtime/module platform
-- Доменные модули (`beeagent-rop`, будущие `beescan`, `merch`) живут отдельно и не должны без причины затаскиваться в core
-- Основные process/security rules:
+- Источник правды:
+  - domain contracts
+  - business rules
+  - fixture cases
   - `docs/ROADMAP.md`
   - `docs/SDLC.md`
   - `docs/SECURITY.md`
-- Итерация закрывается через `PR`, поэтому изменения должны быть проверяемыми, воспроизводимыми и согласованными с логами/артефактами
+- Итерация закрывается через `PR`, поэтому изменения должны быть проверяемыми, воспроизводимыми и согласованными с fixture/tests/artifacts
 
 ### Правила
 
@@ -806,50 +428,54 @@ bash start.sh
 - Тесты должны быть минимальными и пропорциональными изменению: покрывай acceptance criteria и публичное поведение, не создавай новые test-файлы/test-helpers без явной необходимости.
 - Не меняй чужой scope итерации и не протаскивай “на будущее” недоделанную архитектуру.
 - Не убирай существующие проверки без явной причины.
-- Не тащи client-specific бизнес-логику в `beeagent`, если она должна жить в отдельном модуле.
-- Если видишь, что изменение относится к доменному модулю, а не к core, прямо укажи это в ответе.
+- Не тащи orchestration/runtime/module-registry/capability-transport логику в `beeagent-rop`, если она должна жить в `beeagent`.
+- Если видишь, что изменение относится к `beeagent` core, а не к доменному модулю, прямо укажи это в ответе.
 
-### Config / source of truth rules
+### Source of truth rules
 
-- Источник правды: `config/settings.yml`. Обязательные ключи не должны иметь скрытых дефолтов в коде.
-- Перед добавлением нового config-блока сначала проверь, нельзя ли переиспользовать уже существующий top-level/shared контракт.
-- Не создавай второй source of truth и не дублируй общий runtime/system-level контракт внутри module/case/adapter, если это не требуется текущей итерацией.
-- Если добавляется новый обязательный config key, он должен:
-  - быть явно описан в `config/settings.yml`;
-  - валидироваться в `src/beeagent_module/core/settings.py`;
-  - падать fail-fast с понятной ошибкой при отсутствии.
-- Если предлагаешь новый config key, сначала объясни, почему нельзя переиспользовать существующий контракт.
-- В ответе явно укажи, какой блок после изменения является source of truth.
+- Источник правды в модуле:
+  - domain contracts;
+  - fixture cases;
+  - agreed business rules;
+  - явные deterministic paths;
+  - bounded AI assist only where justified.
+- Не создавай hidden behavior, который нельзя объяснить через input → rules → result.
+- Не подменяй обязательные deterministic paths чистым AI output.
+- Если добавляешь новый rule/config-like contract внутри модуля, сначала объясни:
+  - где он должен жить;
+  - почему он относится к модулю, а не к `beeagent`;
+  - почему это не создаёт второй source of truth для core runtime.
 
 ### Core / module boundary rules
 
-- `beeagent` отвечает за:
+- `beeagent-rop` отвечает за:
+  - inbound event understanding;
+  - lead classification;
+  - new vs existing deal logic;
+  - duplicate resolution;
+  - attachment-aware triage;
+  - rop summary;
+  - bounded recommendations;
+  - fixture-driven client behavior.
+- `beeagent-rop` НЕ должен без причины брать на себя:
   - orchestration;
-  - state / session / run context;
-  - module contract;
+  - run/session lifecycle;
+  - global artifact management;
   - module registry;
-  - artifact API;
-  - capability boundary;
-  - approvals / authority / policy;
-  - transport/UI integration.
-- `beeagent` НЕ должен без причины брать на себя:
-  - клиентскую классификацию;
-  - клиентские rules;
-  - client-specific summary/recommendation logic;
-  - attachment/business parsing, относящийся к одному модулю.
-- Если задача касается reusable contract/platform behavior — это `beeagent`.
-- Если задача касается только одного клиентского модуля — это не `beeagent`, а отдельный модульный репозиторий.
+  - MCP/tool transport;
+  - global approvals / authority / policy.
+- Если задача требует изменения общих contracts платформы — это `beeagent`, а не `beeagent-rop`.
 
 ### Docs / contracts / artifacts
 
-- Если меняется runtime-поведение, config-контракт, module contract, CLI/entrypoint, storage artifacts или docs-contract, проверь, нужно ли обновить:
+- Если меняется module behavior, contract, fixture contract, result shape или docs-contract, проверь, нужно ли обновить:
   - `docs/ROADMAP.md`
-  - `README.ru.md` или `README.md`
+  - `README.md`
   - `docs/DEV_GUIDE.md`
   - `docs/SDLC.md`
   - `docs/SECURITY.md`
-- Если меняются артефакты, покажи какие именно файлы появятся/изменятся в `storage/`.
-- Если меняется JSON/JSONL/meta-контракт, покажи пример одного объекта/строки.
+- Если меняется shape результата, покажи пример объекта результата.
+- Если меняются fixture contracts, покажи пример fixture input/output.
 - После работы дай короткий чеклист для PR/отчёта.
 
 ### Code style / execution rules
@@ -857,8 +483,18 @@ bash start.sh
 - Соблюдай PEP 8: имена, длина строк, структура.
 - Не добавляй никаких комментариев.
 - Логи, имена полей, JSON/JSONL, runtime messages — на английском языке.
-- Все команды запуска, тестов и smoke-check указывай через `uv run`, если это применимо.
-- Не предлагай второй runtime, второй orchestrator или отдельный service/container без явной необходимости по итерации.
+- Все команды запуска и тестов указывай через `uv run`, если это применимо.
+- Не предлагай hidden side effects во внешних системах без явной задачи на это.
+
+### AI / deterministic rules
+
+- Сначала deterministic path, потом bounded AI assist поверх него.
+- Если AI используется:
+  - явно укажи, где именно;
+  - что остаётся deterministic;
+  - каков fallback path;
+  - как результат будет проверяемым.
+- Не делай black-box решение единственным путём для критичной классификации.
 
 ### Release / versioning rules
 
@@ -888,10 +524,10 @@ bash start.sh
 - Без лишних рассуждений
 - Если нужна новая функция/класс — укажи точное место вставки (до/после какого блока)
 - Для тестов перечисли, какие именно тесты нужно добавить/обновить
-- Для каждого нового или изменённого config key укажи:
+- Для каждого нового правила/контракта укажи:
   - где он живёт;
   - почему именно там;
-  - почему это не создаёт второй source of truth
+  - почему это относится к модулю, а не к `beeagent`
 - Для PR кратко перечисли, что должно попасть в:
   - `Summary`
   - `Tests`
@@ -921,94 +557,65 @@ bash start.sh
 - `docs/SDLC.md`
 - `docs/SECURITY.md`
 - `docs/DEV_GUIDE.md`
-- `README.md` или `README.ru.md`
+- `README.md`
 - `pyproject.toml`
-- `config/start.py`
-- `config/settings.yml`
-- `src/beeagent_module/core/settings.py`
-- `src/beeagent_module/core/app.py`
+- `src/beeagent_rop/module.py`
+- `src/beeagent_rop/contracts.py`
+- `src/beeagent_rop/domain/models.py`
+- `src/beeagent_rop/domain/enums.py`
+- `src/beeagent_rop/domain/rules.py`
 
 Если нужно, добавь и прочитай также:
 
-- `src/beeagent_module/core/log.py`
-- `src/beeagent_module/core/paths.py`
-- `src/beeagent_module/core/llm.py`
-- `src/beeagent_module/cases/*`
-- `src/beeagent_module/adapters/*`
-- `src/beeagent_module/ui/*`
-- `tests/test_smoke.py`
-- другие релевантные тесты
+- `src/beeagent_rop/cases/*`
+- `src/beeagent_rop/services/*`
+- `src/beeagent_rop/adapters/*`
+- `tests/*`
 
 ### Ожидаемый результат
 
-- работает ожидаемый entrypoint (`uv run ...` / `bash start.sh` или нужный transport/CLI path)
 - `uv run pytest -q` проходит
-- логи остаются понятными
-- артефакты в `storage/` создаются и консистентны
-- новые обязательные ключи валидируются fail-fast
+- ключевые fixture/case scenarios покрыты тестами
+- deterministic path остаётся explainable
+- AI, если используется, остаётся bounded и имеет fallback path
+- изменение не ломает границу между модулем и BeeAgent core
 - required checks для данного `change level` определены и перечислены
 - изменение готово к оформлению в PR по текущей итерации
 ```
 
 ## Чего не делать
 
-- не тащи ROP/Welding-специфику в `beeagent_module/core`;
-- не добавляй обязательные config keys только в коде без `settings.yml`;
-- не делай hidden coupling между core и одним клиентским модулем;
-- не закрывай итерацию словами “вроде работает”;
-- не оставляй runtime changes без tests / smoke / artifact check;
-- не допускай утечки секретов в логи и storage;
-- не смешивай scope нескольких итераций в одном PR.
+- не тащи client-specific логику в `beeagent` core без причины;
+- не подменяй обязательные rules чистым AI output;
+- не делай hidden write-back в внешние системы;
+- не строй второй runtime внутри модуля;
+- не закрывай итерацию без fixture-based tests;
+- не смешивай scope нескольких итераций в одном PR;
+- не допускай небезопасный file parsing.
 
 ## Быстрый рабочий сценарий
 
 1. открыть `docs/ROADMAP.md`
 2. выбрать текущую итерацию
-3. открыть или создать issue
+3. открыть issue
 4. определить `change level`
 5. создать ветку
 6. внести изменения
 7. прогнать:
    - `uv run pytest -q`
-   - `bash start.sh`
-   - required checks из `docs/SDLC.md` / `docs/SECURITY.md`
 
-8. проверить:
-   - `logs/app.log`
-   - relevant artifacts in `storage/`
-
+8. проверить fixture coverage
 9. оформить PR
 10. после review — merge
 
 ## Резюме
 
-`beeagent` развивается маленькими, проверяемыми итерациями.
+`beeagent-rop` развивается как отдельный explainable доменный модуль.
 
-Ключевая дисциплина проекта:
+Ключевая дисциплина:
 
-- core остаётся универсальным;
-- модульная логика живёт в отдельных репах;
-- конфиг — источник правды;
-- fail-fast валидация обязательна;
-- логи и артефакты должны быть объяснимыми;
-- изменения проверяются по change level;
-- итерации закрываются через PR.
-
-### ROP review TSV (enriched)
-
-BeeAgent CLI автоматически создаёт enriched TSV для human review:
-
-- Файл: `storage/runs/<run_id>/rop_review_table.tsv`
-- Формат: tab-separated, 22 колонны (input, bot decision, human/Bitrix placeholders)
-- Основные группы колонок:
-  - event_id, source_id, sender, subject, body_short, attachments
-  - bot_case_type, bot_reason_code, bot_priority, bot_confidence, bot_is_fallback, bot_reasoning
-  - human_case_type, should_rop_see, bitrix_status, notes, bitrix_lead_id, bitrix_deal_id, bitrix_responsible, is_duplicate, duplicate_of, correct_action
-- Security constraints:
-  - `body_short` всегда bounded (≤500 chars) и sanitized (нет табов/переводов строк)
-  - `attachments` только metadata (filename, content_type, size_bytes), sanitized
-  - нет raw `.eml` файлов
-  - нет attachment content
-  - нет полных raw headers
-
-TSV пригоден для загрузки в Google Sheets, все поля безопасны для operator review.
+- доменная логика живёт в модуле;
+- orchestration живёт в BeeAgent;
+- fixture-driven разработка обязательна;
+- deterministic path важнее black-box магии;
+- изменения должны быть объяснимыми, тестируемыми и bounded.
