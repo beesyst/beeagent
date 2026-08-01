@@ -608,6 +608,54 @@ uv run pytest -q
 9. оформить PR
 10. после review — merge
 
+## Bitrix24 Local Application registration (UI-8.5)
+
+Чтобы открыть read-only ROP Web Console внутри Bitrix24 как Server-Side Local Application with User Interface:
+
+1. Настроить `config/settings.yml`:
+
+```yaml
+web:
+  auth:
+    enabled: true
+    mode: beeui_session
+    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
+    principals:
+      - id: admin_1
+        username: admin1
+        role: admin
+        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
+bitrix:
+  embedded_app:
+    enabled: true
+    portal_origin: "https://<your-portal>.bitrix24.ru"
+    default_role: "viewer"
+    request_timeout: 10
+```
+
+2. Обеспечить HTTPS deployment BeeAgent web console (`./start.sh web` за HTTPS-прокси, который передаёт `X-Forwarded-Proto: https`). Install/launch handlers требуют HTTPS.
+
+3. Зарегистрировать Local Application в Bitrix24 вручную:
+
+| Поле | Значение |
+| --- | --- |
+| Name | BeeAgent — ROP |
+| Handler | `https://<beeagent-host>/bitrix/rop/launch` |
+| Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
+| Uses API only | false |
+
+3a. В правах приложения обязательно указать **`user`** (Пользователи) — без него `user.current` при входе отклоняется (`insufficient_scope`). После изменения прав приложение нужно переустановить.
+
+4. Установить приложение на портале. Bitrix пришлёт `POST /bitrix/rop/install` с `DOMAIN` и `member_id`; BeeAgent сохранит one-time binding в `storage/interfaces/bitrix_rop_app.json` (без OAuth credentials).
+
+5. Пользователь открывает приложение из Bitrix24. Bitrix пришлёт `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` (поля `DOMAIN` Bitrix не шлёт — привязка по `member_id`, домен из config). Запрос может прийти на `/bitrix/rop/launch` (GET или POST) или на `/bitrix/rop/install` (в этом случае install тоже выполняет launch flow и редиректит). BeeAgent проверит current user через Bitrix REST и создаст bounded BeeUI viewer session, после чего вернёт `303` на `/rop` внутри iframe.
+
+Ограничения:
+
+- access управляется Bitrix24; BeeAgent не хранит список Bitrix user ID;
+- OAuth credentials не сохраняются и не логируются;
+- existing local BeeAgent login сохраняется.
+
 ## Резюме
 
 `beeagent-rop` развивается как отдельный explainable доменный модуль.

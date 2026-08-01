@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -54,6 +55,10 @@ REQUIRED_KEYS = (
     ("bitrix", "widget", "token_env"),
     ("bitrix", "widget", "default_period"),
     ("bitrix", "widget", "max_items"),
+    ("bitrix", "embedded_app", "enabled"),
+    ("bitrix", "embedded_app", "portal_origin"),
+    ("bitrix", "embedded_app", "default_role"),
+    ("bitrix", "embedded_app", "request_timeout"),
 )
 _REQUIRED_ROP_ROUTING_QUEUES: tuple[str, ...] = (
     "sales",
@@ -69,6 +74,19 @@ _SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
 _ROP_AI_ADJUDICATOR_ENV = "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED"
 _ENV_TRUE_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on", "enabled"})
 _ENV_FALSE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off", "disabled"})
+
+_HTTPS_ORIGIN_RE = re.compile(
+    r"^https://[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::[0-9]{1,5})?$"
+)
+_ALLOWED_EMBEDDED_ROLES: frozenset[str] = frozenset({"viewer", "operator", "admin"})
+_EMBEDDED_REQUEST_TIMEOUT_MIN = 1
+_EMBEDDED_REQUEST_TIMEOUT_MAX = 60
+
+
+def is_valid_https_origin(value: str) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    return bool(_HTTPS_ORIGIN_RE.fullmatch(value))
 
 
 def load_settings(settings_path: Path) -> dict:
@@ -365,6 +383,7 @@ def validate_settings(settings: dict) -> None:
 
     _validate_bitrix_settings(settings)
     _validate_bitrix_widget_settings(settings)
+    _validate_bitrix_embedded_app_settings(settings)
 
     _validate_web_auth_settings(settings)
 
@@ -904,6 +923,67 @@ def _validate_bitrix_widget_settings(settings: dict) -> None:
                 f"Missing required env var '{token_env}' "
                 f"when bitrix.widget.enabled=true"
             )
+
+
+def _validate_bitrix_embedded_app_settings(settings: dict) -> None:
+    emb_cfg = _get_nested_value(settings, ("bitrix", "embedded_app"))
+    if emb_cfg is None:
+        return
+    if not isinstance(emb_cfg, dict):
+        raise RuntimeError("Invalid type for bitrix.embedded_app, expected mapping")
+
+    if not isinstance(emb_cfg.get("enabled"), bool):
+        raise RuntimeError(
+            "Invalid type for bitrix.embedded_app.enabled, expected bool"
+        )
+
+    portal_origin = emb_cfg.get("portal_origin")
+    if not isinstance(portal_origin, str):
+        raise RuntimeError(
+            "Invalid type for bitrix.embedded_app.portal_origin, expected string"
+        )
+
+    default_role = emb_cfg.get("default_role")
+    if not isinstance(default_role, str) or not default_role.strip():
+        raise RuntimeError(
+            "Invalid or missing bitrix.embedded_app.default_role, "
+            "expected non-empty string"
+        )
+    if default_role not in _ALLOWED_EMBEDDED_ROLES:
+        raise RuntimeError(
+            "Invalid bitrix.embedded_app.default_role, expected one of: "
+            + ", ".join(sorted(_ALLOWED_EMBEDDED_ROLES))
+        )
+
+    request_timeout = emb_cfg.get("request_timeout")
+    if (
+        not isinstance(request_timeout, int)
+        or request_timeout < _EMBEDDED_REQUEST_TIMEOUT_MIN
+        or request_timeout > _EMBEDDED_REQUEST_TIMEOUT_MAX
+    ):
+        raise RuntimeError(
+            "Invalid bitrix.embedded_app.request_timeout, "
+            f"expected int in {_EMBEDDED_REQUEST_TIMEOUT_MIN}.."
+            f"{_EMBEDDED_REQUEST_TIMEOUT_MAX}"
+        )
+
+    if not emb_cfg.get("enabled"):
+        return
+
+    if not is_valid_https_origin(portal_origin):
+        raise RuntimeError(
+            "Invalid bitrix.embedded_app.portal_origin, "
+            "expected exact HTTPS origin when enabled"
+        )
+    if default_role != "viewer":
+        raise RuntimeError(
+            "Invalid bitrix.embedded_app.default_role, "
+            "only 'viewer' is supported in the current scope"
+        )
+    if _get_nested_value(settings, ("web", "auth", "enabled")) is not True:
+        raise RuntimeError(
+            "bitrix.embedded_app.enabled requires web.auth.enabled: true"
+        )
 
 
 def _validate_rop_ai_adjudicator_settings(settings: dict) -> None:

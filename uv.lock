@@ -57,7 +57,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", specifier = ">=0.24.0,<0.30" },
+    { name = "beeui", specifier = ">=0.25.0,<0.30" },
     { name = "fastapi", specifier = ">=0.136.3,<0.137" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langgraph", specifier = "==1.2.4" },

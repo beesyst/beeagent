@@ -309,9 +309,8 @@ secret values
 
 Для текущего BeeAgent UI track это означает:
 
-- BeeUI migration, auth boundary, final-decision UX и canonical Queue baseline выполнены в UI-4–UI-8.3;
-- следующий product increment — UI-8.5 embedded Bitrix ROP widgets;
-- после UI-8.5 удалить legacy web в UI-9 после подтверждения parity;
+- BeeUI migration, auth boundary, final-decision UX, canonical Queue baseline и embedded Bitrix ROP console выполнены в UI-4–UI-8.5;
+- следующий product increment — UI-9 legacy web removal после подтверждения parity;
 - затем завершить event-level attachment и Bitrix reconciliation UX;
 - затем стабилизировать API contract;
 - затем добавлять bounded operator controls поверх существующей auth boundary;
@@ -2756,7 +2755,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 
 ### Итерация UI-8.5 — Embedded Bitrix ROP Console with SSO
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -3533,7 +3532,6 @@ Do not add BeeAgent- or ROP-specific behavior to generic BeeUI components.
 - один запуск `.agents/prompts/02-implementation-tests.md` обслуживает только один Issue и один implementation target;
 - не смешивать BeeUI migration, auth, dashboard-specific features, controls и frontend split в одной задаче;
 - текущая последовательность future work:
-  - UI-8.5 embedded Bitrix widgets;
   - UI-9 legacy web removal;
   - UI-10 attachment event-level integration;
   - UI-11 Bitrix reconciliation detail and filtering;
