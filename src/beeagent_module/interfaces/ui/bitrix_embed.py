@@ -14,12 +14,16 @@ from beeagent_module.core.settings import is_valid_https_origin
 
 CONTRACT_VERSION = 1
 INSTALL_ARTIFACT_NAME = "bitrix_rop_app.json"
+MAX_INSTALL_STATE_BYTES = 8192
+MAX_INSTALL_STATE_FIELD_LENGTH = 512
 MAX_FORM_VALUE_LENGTH = 2048
 MAX_FORM_BODY_BYTES = 8192
 MAX_FORM_FIELDS = 64
 MAX_TOKEN_LIFETIME_SECONDS = 30 * 86400
 EMBEDDED_SESSION_AGE_MAX_SECONDS = 86400
 _UNIX_EPOCH_THRESHOLD = 1_000_000_000
+MAX_BITRIX_RESPONSE_BYTES = 65536
+MAX_BITRIX_USER_ID_LENGTH = 20
 
 INSTALL_FORM_KEYS: frozenset[str] = frozenset(
     {
@@ -100,11 +104,21 @@ class InstallState:
             raise BitrixEmbedError("Unsupported installation state contract version")
         if not isinstance(portal_origin, str) or not is_valid_https_origin(portal_origin):
             raise BitrixEmbedError("Invalid installation state portal origin")
+        if len(portal_origin) > MAX_INSTALL_STATE_FIELD_LENGTH:
+            raise BitrixEmbedError("Invalid installation state portal origin")
         if not isinstance(portal_domain, str) or not portal_domain.strip():
+            raise BitrixEmbedError("Invalid installation state portal domain")
+        if len(portal_domain) > MAX_INSTALL_STATE_FIELD_LENGTH:
+            raise BitrixEmbedError("Invalid installation state portal domain")
+        if portal_domain != portal_origin.removeprefix("https://"):
             raise BitrixEmbedError("Invalid installation state portal domain")
         if not isinstance(member_id, str) or not member_id.strip():
             raise BitrixEmbedError("Invalid installation state member id")
+        if len(member_id) > MAX_INSTALL_STATE_FIELD_LENGTH:
+            raise BitrixEmbedError("Invalid installation state member id")
         if not isinstance(installed_at, str) or not installed_at.strip():
+            raise BitrixEmbedError("Invalid installation state timestamp")
+        if len(installed_at) > MAX_INSTALL_STATE_FIELD_LENGTH:
             raise BitrixEmbedError("Invalid installation state timestamp")
 
         return cls(
@@ -236,7 +250,7 @@ def verify_bitrix_current_user(
     )
     try:
         with urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
+            raw = resp.read(MAX_BITRIX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         error_code = _http_error_code(exc)
         if exc.code in (401, 403):
@@ -264,6 +278,12 @@ def verify_bitrix_current_user(
         raise BitrixLaunchError(
             "Bitrix user verification failed",
             reason="transport",
+        )
+
+    if len(raw) > MAX_BITRIX_RESPONSE_BYTES:
+        raise BitrixLaunchError(
+            "Bitrix returned oversized user response",
+            reason="response_too_large",
         )
 
     try:
@@ -297,22 +317,45 @@ def verify_bitrix_current_user(
             "Bitrix returned malformed user response",
             reason="malformed_response",
         )
+
     user_id = result.get("ID")
-    if user_id is None or not str(user_id).strip():
+    if isinstance(user_id, bool):
         raise BitrixLaunchError(
             "Bitrix returned malformed user response",
             reason="malformed_response",
         )
+
+    user_id_text = str(user_id).strip() if user_id is not None else ""
+    if (
+        not user_id_text
+        or len(user_id_text) > MAX_BITRIX_USER_ID_LENGTH
+        or not user_id_text.isdigit()
+    ):
+        raise BitrixLaunchError(
+            "Bitrix returned malformed user response",
+            reason="malformed_response",
+        )
+
     if not _is_active_user(result.get("ACTIVE")):
         raise BitrixLaunchError(
             "Bitrix user is not active",
             reason="inactive_user",
         )
-    return result
+
+    verified_user = dict(result)
+    verified_user["ID"] = user_id_text
+    return verified_user
 
 
 def principal_user_id(user: dict[str, Any]) -> str:
-    return str(user.get("ID"))
+    user_id = user.get("ID")
+    if (
+        not isinstance(user_id, str)
+        or not user_id
+        or len(user_id) > MAX_BITRIX_USER_ID_LENGTH
+    ):
+        raise BitrixLaunchError("Invalid principal user id")
+    return user_id
 
 
 def install_state_path(storage_dir: Path) -> Path:
@@ -324,18 +367,25 @@ def load_install_state(storage_dir: Path) -> InstallState | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_INSTALL_STATE_BYTES + 1)
+        if len(raw) > MAX_INSTALL_STATE_BYTES:
+            raise BitrixEmbedError("Installation state is oversized")
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
         raise BitrixEmbedError("Installation state is malformed") from exc
     if not isinstance(data, dict):
         raise BitrixEmbedError("Installation state is malformed")
     return InstallState.from_dict(data)
 
 
-def save_install_state(storage_dir: Path, state: InstallState) -> None:
+def create_install_state(storage_dir: Path, state: InstallState) -> bool:
     path = install_state_path(storage_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    payload = json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n"
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(payload)
+    except FileExistsError:
+        return False
+    return True

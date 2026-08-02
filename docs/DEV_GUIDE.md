@@ -633,7 +633,7 @@ bitrix:
     request_timeout: 10
 ```
 
-2. Обеспечить HTTPS deployment BeeAgent web console (`./start.sh web` за HTTPS-прокси, который передаёт `X-Forwarded-Proto: https`). Install/launch handlers требуют HTTPS.
+2. Обеспечить HTTPS deployment BeeAgent web console (`./start.sh web` за trusted HTTPS-прокси, который настраивает scheme ASGI запроса на `https`). Install/launch handlers требуют HTTPS; HTTPS определяется по scheme ASGI запроса, а не по заголовку клиента (`X-Forwarded-Proto` не доверяется).
 
 3. Зарегистрировать Local Application в Bitrix24 вручную:
 
@@ -646,9 +646,9 @@ bitrix:
 
 3a. В правах приложения обязательно указать **`user`** (Пользователи) — без него `user.current` при входе отклоняется (`insufficient_scope`). После изменения прав приложение нужно переустановить.
 
-4. Установить приложение на портале. Bitrix пришлёт `POST /bitrix/rop/install` с `DOMAIN` и `member_id`; BeeAgent сохранит one-time binding в `storage/interfaces/bitrix_rop_app.json` (без OAuth credentials).
+4. Установить приложение на портале. Bitrix пришлёт `POST /bitrix/rop/install` с `member_id`, `AUTH_ID`, `AUTH_EXPIRES` и др.; BeeAgent проверит expiry и active Bitrix current user через `user.current`, после чего атомарно сохранит one-time binding в `storage/interfaces/bitrix_rop_app.json` (без OAuth credentials).
 
-5. Пользователь открывает приложение из Bitrix24. Bitrix пришлёт `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` (поля `DOMAIN` Bitrix не шлёт — привязка по `member_id`, домен из config). Запрос может прийти на `/bitrix/rop/launch` (GET или POST) или на `/bitrix/rop/install` (в этом случае install тоже выполняет launch flow и редиректит). BeeAgent проверит current user через Bitrix REST и создаст bounded BeeUI viewer session, после чего вернёт `303` на `/rop` внутри iframe.
+5. Пользователь открывает приложение из Bitrix24. Bitrix пришлёт `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` (поля `DOMAIN` Bitrix не шлёт — привязка по `member_id`, домен из config). Запрос приходит на `POST /bitrix/rop/launch` или на `POST /bitrix/rop/install` (в этом случае install тоже выполняет launch flow и редиректит); GET на `/bitrix/rop/launch` отклоняется (`405`) и никогда не обрабатывает OAuth значения. BeeAgent проверит current user через Bitrix REST и создаст bounded BeeUI viewer session, после чего вернёт `303` на `/rop` внутри iframe.
 
 Ограничения:
 

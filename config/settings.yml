@@ -168,10 +168,10 @@ bitrix:
     default_period: "7d"
     max_items: 50
   embedded_app:
-    enabled: true # true/false - включить/выключить Bitrix24 Local Application embedded console
-    portal_origin: "https://my.welding.kz" # exact HTTPS origin (например https://company.bitrix24.ru), обязателен при enabled=true
-    default_role: "viewer" # least-privileged BeeUI role для verified Bitrix users (в текущем scope только viewer)
-    request_timeout: 10 # bounded таймаут (сек) для Bitrix current-user REST verification
+    enabled: true
+    portal_origin: "https://my.welding.kz"
+    default_role: "viewer"
+    request_timeout: 10
 
 ai:
   prompts:

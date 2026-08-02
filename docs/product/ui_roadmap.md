@@ -2826,7 +2826,6 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - existing ROP tabs, Event Detail и artifact-link regression tests;
 - existing widget API compatibility tests;
 - `uv run pytest -q`;
-- `./start.sh doctor`;
 - `./start.sh routes`;
 - HTTPS route smoke;
 - Chrome/Edge manual smoke inside the real Bitrix Local Application.

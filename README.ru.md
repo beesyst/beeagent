@@ -153,7 +153,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - BeeUI-backed read-only Operator Web Console через `./start.sh web`;
 - BeeUI embedded app как canonical web layer поверх FastAPI/Jinja2/Tabler;
 - HTML routes `/`, `/health`, `/runs`, `/runs/<run_id>`, `/rop`, `/modules`;
-- Bitrix embedded app routes `POST /bitrix/rop/install` и `GET`/`POST /bitrix/rop/launch` (UI-8.5);
+- Bitrix embedded app routes `POST /bitrix/rop/install` и `POST /bitrix/rop/launch` (UI-8.5);
 - JSON API routes `/api/dashboard`, `/api/runs`, `/api/runs/<run_id>`, `/api/rop/dashboard`, `/api/modules`;
 - browser artifact routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>` и API routes `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
 - allowlisted artifact access по `artifact_id` с bounded/redacted preview для HTML/JSON;

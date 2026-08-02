@@ -89,8 +89,10 @@ class _FakeResponse:
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
         return False
 
-    def read(self) -> bytes:
-        return self._payload
+    def read(self, amt: int | None = None) -> bytes:
+        if amt is None or amt < 0:
+            return self._payload
+        return self._payload[:amt]
 
 
 def _mock_user_response(monkeypatch: pytest.MonkeyPatch, payload: Any) -> list[str]:
@@ -150,6 +152,22 @@ def _launch_form(**overrides: Any) -> dict[str, str]:
     }
     values.update(overrides)
     return values
+
+
+def _bind_state(
+    storage_dir: Path,
+    member_id: str = MEMBER_ID,
+    portal_origin: str = PORTAL_ORIGIN,
+    portal_domain: str = PORTAL_DOMAIN,
+) -> None:
+    state = bitrix_embed.InstallState(
+        portal_origin=portal_origin,
+        portal_domain=portal_domain,
+        member_id=member_id,
+        installed_at="2026-01-01T00:00:00+00:00",
+        contract_version=bitrix_embed.CONTRACT_VERSION,
+    )
+    bitrix_embed.create_install_state(storage_dir, state)
 
 
 def _active_user_payload(user_id: str = "42", active: Any = True) -> dict[str, Any]:
@@ -252,7 +270,7 @@ class TestSettingsValidation:
 
 
 class TestInstall:
-    def test_first_install_bind_returns_json_without_secrets(
+    def test_install_without_oauth_creates_no_artifact(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -265,25 +283,11 @@ class TestInstall:
             data=_install_form(),
         )
 
-        assert response.status_code == 200
-        assert response.json() == {
-            "ok": True,
-            "data": {"status": "installed", "member_bound": True},
-        }
-        assert response.headers["cache-control"] == "no-store"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
 
         artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
-        assert artifact_path.exists()
-        state = json.loads(artifact_path.read_text(encoding="utf-8"))
-        assert state["contract_version"] == bitrix_embed.CONTRACT_VERSION
-        assert state["portal_origin"] == PORTAL_ORIGIN
-        assert state["portal_domain"] == PORTAL_DOMAIN
-        assert state["member_id"] == MEMBER_ID
-        assert "installed_at" in state
-        assert "AUTH_ID" not in json.dumps(state)
-        assert "REFRESH_ID" not in json.dumps(state)
-        assert "PLACEMENT" not in json.dumps(state)
+        assert not artifact_path.exists()
 
     def test_install_full_context_redirects_and_binds(
         self,
@@ -314,23 +318,51 @@ class TestInstall:
         assert state["member_id"] == MEMBER_ID
         assert "AUTH_ID" not in json.dumps(state)
 
-    def test_identical_reinstall_is_safe(
+    def test_identical_reinstall_requires_oauth_and_redirects(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
 
-        first = client.post("/bitrix/rop/install", data=_install_form())
-        second = client.post("/bitrix/rop/install", data=_install_form())
+        first = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
+        second = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
 
-        assert first.status_code == 200
-        assert second.status_code == 200
-        assert second.json()["data"]["status"] == "already_installed"
+        assert first.status_code == 303
+        assert second.status_code == 303
+        assert second.headers["location"] == "/rop"
         artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
         state = json.loads(artifact_path.read_text(encoding="utf-8"))
         assert state["member_id"] == MEMBER_ID
+
+    def test_reinstall_without_oauth_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
+        client = _https_client(storage_dir, monkeypatch)
+        client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
+
+        response = client.post("/bitrix/rop/install", data=_install_form())
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
 
     def test_conflicting_member_rejected(
         self,
@@ -338,12 +370,17 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
 
-        client.post("/bitrix/rop/install", data=_install_form())
+        client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
         response = client.post(
             "/bitrix/rop/install",
-            data=_install_form(member_id="member-other"),
+            data=_install_full_form(member_id="member-other"),
         )
 
         assert response.status_code == 409
@@ -355,12 +392,17 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
 
-        client.post("/bitrix/rop/install", data=_install_form())
+        client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
         response = client.post(
             "/bitrix/rop/install",
-            data=_install_form(DOMAIN="other.bitrix24.ru"),
+            data=_install_full_form(DOMAIN="other.bitrix24.ru"),
         )
 
         assert response.status_code == 403
@@ -372,15 +414,22 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(
+            monkeypatch,
+            _active_user_payload(user_id="42"),
+        )
         client = _https_client(storage_dir, monkeypatch)
 
         response = client.post(
             "/bitrix/rop/install",
-            data=_install_form(DOMAIN="other.bitrix24.ru"),
+            data=_install_full_form(DOMAIN="other.bitrix24.ru"),
         )
 
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "portal_mismatch"
+        assert requested == []
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
 
     def test_missing_fields_rejected(
         self,
@@ -404,14 +453,16 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
 
         response = client.post(
             "/bitrix/rop/install",
-            data={**_install_form(), "EVIL": "x", "APP_SID": "sid"},
+            data={**_install_full_form(), "EVIL": "x", "APP_SID": "sid"},
+            follow_redirects=False,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 303
         artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
         artifact_text = artifact_path.read_text(encoding="utf-8")
         assert "EVIL" not in artifact_text
@@ -424,14 +475,16 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
 
         response = client.post(
             "/bitrix/rop/install",
-            data=_install_form(PROTOCOL="1"),
+            data=_install_full_form(PROTOCOL="1"),
+            follow_redirects=False,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 303
 
     def test_install_error_reports_received_fields_without_values(
         self,
@@ -470,21 +523,27 @@ class TestInstall:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "https_required"
 
-    def test_forwarded_proto_https_accepted(
+    def test_forwarded_proto_spoof_rejected(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(
+            monkeypatch,
+            _active_user_payload(user_id="42"),
+        )
         client = _http_client(storage_dir, monkeypatch)
 
         response = client.post(
             "/bitrix/rop/install",
-            data=_install_form(),
+            data=_install_full_form(),
             headers={"X-Forwarded-Proto": "https"},
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "https_required"
+        assert requested == []
 
     def test_disabled_embedded_app_rejected(
         self,
@@ -531,6 +590,385 @@ class TestInstall:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "invalid_install"
 
+    def test_install_expired_token_creates_no_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(AUTH_EXPIRES=str(int(time.time()) - 10)),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "invalid_launch"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            _active_user_payload(user_id="42", active=False),
+            {"error": "expired_token"},
+        ],
+    )
+    def test_invalid_install_creates_no_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        payload: Any,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, payload)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "bitrix_verification_failed"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    def test_install_missing_auth_expires_creates_no_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(AUTH_EXPIRES=""),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    def test_install_stored_origin_mismatch_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(
+            monkeypatch,
+            _active_user_payload(user_id="42"),
+        )
+        _bind_state(
+            storage_dir,
+            portal_origin="https://other.bitrix24.ru",
+            portal_domain="other.bitrix24.ru",
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "installation_portal_mismatch"
+        assert requested == []
+
+    def test_install_duplicate_sensitive_fields_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            content=f"member_id={MEMBER_ID}&AUTH_ID=first&AUTH_ID=second",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    def test_install_invalid_content_type_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            content='{"member_id": "m"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
+
+    def test_install_oversized_body_without_content_length_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        body = "member_id={0}&AUTH_ID=a&PLACEMENT={1}".format(
+            MEMBER_ID,
+            "x" * bitrix_embed.MAX_FORM_BODY_BYTES,
+        )
+        response = client.post(
+            "/bitrix/rop/install",
+            content=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
+
+    def test_install_oversized_body_with_false_content_length_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        client = _https_client(storage_dir, monkeypatch)
+
+        body = "member_id={0}&AUTH_ID=a&PLACEMENT={1}".format(
+            MEMBER_ID,
+            "x" * bitrix_embed.MAX_FORM_BODY_BYTES,
+        )
+        response = client.post(
+            "/bitrix/rop/install",
+            content=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Length": "10",
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_install"
+
+    def test_atomic_conflicting_install_race(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
+        from beeagent_module.interfaces.ui import bitrix_embed as embed_mod
+
+        conflicting = embed_mod.InstallState(
+            portal_origin=PORTAL_ORIGIN,
+            portal_domain=PORTAL_DOMAIN,
+            member_id="member-other",
+            installed_at="2026-01-01T00:00:00+00:00",
+            contract_version=embed_mod.CONTRACT_VERSION,
+        )
+        calls = {"load": 0}
+
+        def _race_load(storage):
+            calls["load"] += 1
+            if calls["load"] == 1:
+                return None
+            return conflicting
+
+        def _race_create(storage, state):
+            return False
+
+        monkeypatch.setattr(embed_mod, "load_install_state", _race_load)
+        monkeypatch.setattr(embed_mod, "create_install_state", _race_create)
+
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "conflicting_installation"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    def test_race_state_portal_mismatch_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
+        from beeagent_module.interfaces.ui import bitrix_embed as embed_mod
+
+        raced = embed_mod.InstallState(
+            portal_origin="https://other.bitrix24.ru",
+            portal_domain="other.bitrix24.ru",
+            member_id=MEMBER_ID,
+            installed_at="2026-01-01T00:00:00+00:00",
+            contract_version=embed_mod.CONTRACT_VERSION,
+        )
+        calls = {"load": 0}
+
+        def _race_load(storage):
+            calls["load"] += 1
+            if calls["load"] == 1:
+                return None
+            return raced
+
+        def _race_create(storage, state):
+            return False
+
+        monkeypatch.setattr(embed_mod, "load_install_state", _race_load)
+        monkeypatch.setattr(embed_mod, "create_install_state", _race_create)
+
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "installation_portal_mismatch"
+        assert "set-cookie" not in response.headers
+
+    @pytest.mark.parametrize(
+        "race_content",
+        [
+            "{corrupted",
+            "x" * (bitrix_embed.MAX_INSTALL_STATE_BYTES + 1),
+        ],
+    )
+    def test_race_state_corrupted_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        race_content: str,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
+        from beeagent_module.interfaces.ui import bitrix_embed as embed_mod
+
+        def _race_create(storage, state):
+            (storage / "interfaces" / "bitrix_rop_app.json").write_text(
+                race_content,
+                encoding="utf-8",
+            )
+            return False
+
+        monkeypatch.setattr(embed_mod, "create_install_state", _race_create)
+
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "install_state_corrupted"
+        assert "set-cookie" not in response.headers
+
+    def test_race_state_identical_binding_accepted(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
+        from beeagent_module.interfaces.ui import bitrix_embed as embed_mod
+
+        raced = embed_mod.InstallState(
+            portal_origin=PORTAL_ORIGIN,
+            portal_domain=PORTAL_DOMAIN,
+            member_id=MEMBER_ID,
+            installed_at="2026-01-01T00:00:00+00:00",
+            contract_version=embed_mod.CONTRACT_VERSION,
+        )
+        calls = {"load": 0}
+
+        def _race_load(storage):
+            calls["load"] += 1
+            if calls["load"] == 1:
+                return None
+            return raced
+
+        def _race_create(storage, state):
+            return False
+
+        monkeypatch.setattr(embed_mod, "load_install_state", _race_load)
+        monkeypatch.setattr(embed_mod, "create_install_state", _race_create)
+
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/rop"
+
+    def test_install_oversized_response_creates_no_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        oversized = {
+            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
+        }
+        _mock_user_response(monkeypatch, oversized)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 403
+        error = response.json()["error"]
+        assert error["code"] == "bitrix_verification_failed"
+        assert error["reason"] == "response_too_large"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
+    def test_install_invalid_principal_creates_no_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _mock_user_response(
+            monkeypatch,
+            {"result": {"ID": True, "ACTIVE": True}},
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/install",
+            data=_install_full_form(),
+        )
+
+        assert response.status_code == 403
+        error = response.json()["error"]
+        assert error["code"] == "bitrix_verification_failed"
+        assert error["reason"] == "malformed_response"
+        artifact_path = storage_dir / "interfaces" / "bitrix_rop_app.json"
+        assert not artifact_path.exists()
+
 
 class TestLaunch:
     def test_valid_launch_redirects_with_secure_iframe_cookie(
@@ -545,7 +983,7 @@ class TestLaunch:
             _active_user_payload(user_id="42"),
         )
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -572,7 +1010,7 @@ class TestLaunch:
         _write_minimal_run(storage_dir)
         _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         launch = client.post(
             "/bitrix/rop/launch",
@@ -605,7 +1043,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _mock_user_response(monkeypatch, _active_user_payload())
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -623,7 +1061,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _mock_user_response(monkeypatch, _active_user_payload())
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -641,7 +1079,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _mock_user_response(monkeypatch, _active_user_payload())
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -656,7 +1094,7 @@ class TestLaunch:
         assert error["received_fields"] == ["AUTH_ID", "PLACEMENT"]
         assert "super-secret-value" not in response.text
 
-    def test_launch_via_get_query_params(
+    def test_launch_get_returns_405(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -664,8 +1102,8 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _write_minimal_run(storage_dir)
         requested = _mock_user_response(monkeypatch, _active_user_payload(user_id="7"))
+        _bind_state(storage_dir)
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
 
         response = client.get(
             "/bitrix/rop/launch",
@@ -673,24 +1111,22 @@ class TestLaunch:
             follow_redirects=False,
         )
 
-        assert response.status_code == 303
-        assert response.headers["location"] == "/rop"
-        assert requested == [f"{PORTAL_ORIGIN}/rest/user.current"]
+        assert response.status_code == 405
+        assert requested == []
 
-    def test_launch_get_without_params_rejected(
+    def test_launch_get_without_params_returns_405(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
         requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(storage_dir)
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
 
         response = client.get("/bitrix/rop/launch", follow_redirects=False)
 
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "invalid_launch"
+        assert response.status_code == 405
         assert requested == []
 
     def test_launch_accepts_ttl_expiry(
@@ -701,7 +1137,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         requested = _mock_user_response(monkeypatch, _active_user_payload(user_id="9"))
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -720,7 +1156,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         requested = _mock_user_response(monkeypatch, _active_user_payload())
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -754,7 +1190,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         requested = _mock_user_response(monkeypatch, _active_user_payload())
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -772,7 +1208,7 @@ class TestLaunch:
     ) -> None:
         storage_dir = _make_storage(tmp_path)
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post(
             "/bitrix/rop/launch",
@@ -790,7 +1226,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _mock_user_response(monkeypatch, {"error": "expired_token"})
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -811,7 +1247,7 @@ class TestLaunch:
             _active_user_payload(user_id="42", active=False),
         )
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -830,7 +1266,7 @@ class TestLaunch:
 
         _mock_user_error(monkeypatch, URLError("timed out"))
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -863,7 +1299,7 @@ class TestLaunch:
             ),
         )
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -882,7 +1318,7 @@ class TestLaunch:
         storage_dir = _make_storage(tmp_path)
         _mock_user_response(monkeypatch, b"not-json{{")
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -898,12 +1334,8 @@ class TestLaunch:
     ) -> None:
         storage_dir = _make_storage(tmp_path)
         requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(storage_dir)
         client = _http_client(storage_dir, monkeypatch)
-        client.post(
-            "/bitrix/rop/install",
-            data=_install_form(),
-            headers={"X-Forwarded-Proto": "https"},
-        )
 
         response = client.post("/bitrix/rop/launch", data=_launch_form())
 
@@ -921,7 +1353,7 @@ class TestLaunch:
         _write_minimal_run(storage_dir)
         _mock_user_response(monkeypatch, _active_user_payload(user_id="42"))
         client = _https_client(storage_dir, monkeypatch)
-        client.post("/bitrix/rop/install", data=_install_form())
+        _bind_state(storage_dir)
 
         with caplog.at_level(logging.INFO):
             response = client.post(
@@ -935,6 +1367,7 @@ class TestLaunch:
         assert "secret-refresh-456" not in response.text
         assert "secret-auth-id-123" not in caplog.text
         assert "secret-refresh-456" not in caplog.text
+        assert "Bitrix embedded app launch: user_id=" not in caplog.text
 
     def test_corrupted_install_state_rejected(
         self,
@@ -953,6 +1386,177 @@ class TestLaunch:
 
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "install_state_corrupted"
+
+    def test_launch_oversized_response_rejects_without_session(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _bind_state(storage_dir)
+        oversized = {
+            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
+        }
+        _mock_user_response(monkeypatch, oversized)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/launch",
+            data=_launch_form(),
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 403
+        error = response.json()["error"]
+        assert error["code"] == "bitrix_verification_failed"
+        assert error["reason"] == "response_too_large"
+        assert "set-cookie" not in response.headers
+
+    def test_launch_invalid_principal_rejects_without_session(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _bind_state(storage_dir)
+        _mock_user_response(
+            monkeypatch,
+            {"result": {"ID": "not-numeric", "ACTIVE": True}},
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/launch",
+            data=_launch_form(),
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 403
+        error = response.json()["error"]
+        assert error["code"] == "bitrix_verification_failed"
+        assert error["reason"] == "malformed_response"
+        assert "set-cookie" not in response.headers
+        artifact_text = (
+            storage_dir / "interfaces" / "bitrix_rop_app.json"
+        ).read_text(encoding="utf-8")
+        assert "not-numeric" not in artifact_text
+
+    def test_launch_domain_mismatch_no_outbound(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(storage_dir)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/launch",
+            data=_launch_form(DOMAIN="other.bitrix24.ru"),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "portal_mismatch"
+        assert requested == []
+
+    def test_launch_stored_origin_mismatch_no_outbound(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(
+            storage_dir,
+            portal_origin="https://other.bitrix24.ru",
+            portal_domain="other.bitrix24.ru",
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post("/bitrix/rop/launch", data=_launch_form())
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "installation_portal_mismatch"
+        assert requested == []
+
+    def test_launch_oversized_install_state_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        (storage_dir / "interfaces" / "bitrix_rop_app.json").write_text(
+            "x" * (bitrix_embed.MAX_INSTALL_STATE_BYTES + 1),
+            encoding="utf-8",
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post("/bitrix/rop/launch", data=_launch_form())
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "install_state_corrupted"
+        assert requested == []
+
+    def test_launch_overlong_state_field_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(
+            storage_dir,
+            member_id="m" * (bitrix_embed.MAX_INSTALL_STATE_FIELD_LENGTH + 1),
+        )
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post("/bitrix/rop/launch", data=_launch_form())
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "install_state_corrupted"
+        assert requested == []
+
+    def test_launch_duplicate_sensitive_fields_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(storage_dir)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/launch",
+            content=f"member_id={MEMBER_ID}&AUTH_ID=first&AUTH_ID=second",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_launch"
+        assert requested == []
+
+    def test_launch_invalid_content_type_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        requested = _mock_user_response(monkeypatch, _active_user_payload())
+        _bind_state(storage_dir)
+        client = _https_client(storage_dir, monkeypatch)
+
+        response = client.post(
+            "/bitrix/rop/launch",
+            content='{"member_id": "m"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_launch"
+        assert requested == []
 
 
 class TestEmbeddedSettingsComposition:
@@ -1110,3 +1714,213 @@ class TestEmbeddedModule:
             bitrix_embed.validate_launch_auth_expires(
                 str(int(time.time()) + 400 * 86400)
             )
+
+    def test_create_install_state_is_exclusive(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        state = bitrix_embed.InstallState(
+            portal_origin=PORTAL_ORIGIN,
+            portal_domain=PORTAL_DOMAIN,
+            member_id=MEMBER_ID,
+            installed_at="2026-01-01T00:00:00+00:00",
+            contract_version=bitrix_embed.CONTRACT_VERSION,
+        )
+        assert bitrix_embed.create_install_state(storage_dir, state) is True
+        assert bitrix_embed.create_install_state(storage_dir, state) is False
+        loaded = bitrix_embed.load_install_state(storage_dir)
+        assert loaded is not None
+        assert loaded.member_id == MEMBER_ID
+
+    def test_load_install_state_raises_on_oversized(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        (storage_dir / "interfaces" / "bitrix_rop_app.json").write_text(
+            "x" * (bitrix_embed.MAX_INSTALL_STATE_BYTES + 1),
+            encoding="utf-8",
+        )
+        with pytest.raises(bitrix_embed.BitrixEmbedError):
+            bitrix_embed.load_install_state(storage_dir)
+
+    def test_install_state_from_dict_rejects_inconsistent_domain(self) -> None:
+        with pytest.raises(bitrix_embed.BitrixEmbedError):
+            bitrix_embed.InstallState.from_dict(
+                {
+                    "contract_version": 1,
+                    "portal_origin": "https://company.bitrix24.ru",
+                    "portal_domain": "other.bitrix24.ru",
+                    "member_id": "m",
+                    "installed_at": "2026-01-01T00:00:00+00:00",
+                }
+            )
+
+    def test_install_state_from_dict_rejects_overlong_field(self) -> None:
+        with pytest.raises(bitrix_embed.BitrixEmbedError):
+            bitrix_embed.InstallState.from_dict(
+                {
+                    "contract_version": 1,
+                    "portal_origin": "https://company.bitrix24.ru",
+                    "portal_domain": "company.bitrix24.ru",
+                    "member_id": "m"
+                    * (bitrix_embed.MAX_INSTALL_STATE_FIELD_LENGTH + 1),
+                    "installed_at": "2026-01-01T00:00:00+00:00",
+                }
+            )
+
+
+class TestVerifyBitrixUserBounds:
+    def _verify(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        payload: Any,
+    ) -> dict[str, Any]:
+        from beeagent_module.interfaces.ui import bitrix_embed
+
+        body = (
+            payload
+            if isinstance(payload, bytes)
+            else json.dumps(payload).encode("utf-8")
+        )
+
+        def _fake_urlopen(req: Any, timeout: int = 0) -> _FakeResponse:
+            return _FakeResponse(body)
+
+        monkeypatch.setattr(bitrix_embed, "urlopen", _fake_urlopen)
+        return bitrix_embed.verify_bitrix_current_user(
+            PORTAL_ORIGIN,
+            "auth-id",
+            5,
+        )
+
+    def test_response_exactly_at_byte_limit_accepted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        prefix = b'{"result":'
+        suffix = b'{"ID":"42","ACTIVE":true}}'
+        pad = bitrix_embed.MAX_BITRIX_RESPONSE_BYTES - len(prefix) - len(suffix)
+        payload = prefix + b" " * pad + suffix
+        assert len(payload) == bitrix_embed.MAX_BITRIX_RESPONSE_BYTES
+
+        user = self._verify(monkeypatch, payload)
+
+        assert user["ID"] == "42"
+
+    def test_response_above_byte_limit_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        prefix = b'{"result":'
+        suffix = b'{"ID":"42","ACTIVE":true}}'
+        pad = (
+            bitrix_embed.MAX_BITRIX_RESPONSE_BYTES
+            + 1
+            - len(prefix)
+            - len(suffix)
+        )
+        payload = prefix + b" " * pad + suffix
+
+        with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
+            self._verify(monkeypatch, payload)
+
+        assert exc.value.reason == "response_too_large"
+
+    def test_oversized_valid_json_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {
+            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
+        }
+
+        with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
+            self._verify(monkeypatch, payload)
+
+        assert exc.value.reason == "response_too_large"
+
+    def test_overlong_user_id_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {
+            "result": {
+                "ID": "9" * (bitrix_embed.MAX_BITRIX_USER_ID_LENGTH + 1),
+                "ACTIVE": True,
+            }
+        }
+
+        with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
+            self._verify(monkeypatch, payload)
+
+        assert exc.value.reason == "malformed_response"
+
+    def test_non_numeric_user_id_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {"result": {"ID": "user-42", "ACTIVE": True}}
+
+        with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
+            self._verify(monkeypatch, payload)
+
+        assert exc.value.reason == "malformed_response"
+
+    def test_boolean_user_id_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {"result": {"ID": True, "ACTIVE": True}}
+
+        with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
+            self._verify(monkeypatch, payload)
+
+        assert exc.value.reason == "malformed_response"
+
+    def test_valid_integer_user_id_accepted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {"result": {"ID": 42, "ACTIVE": True}}
+
+        user = self._verify(monkeypatch, payload)
+
+        assert user["ID"] == "42"
+
+    def test_valid_numeric_string_user_id_accepted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        payload = {"result": {"ID": "42", "ACTIVE": True}}
+
+        user = self._verify(monkeypatch, payload)
+
+        assert user["ID"] == "42"
+
+    def test_principal_user_id_accepts_only_normalized_string(self) -> None:
+        with pytest.raises(bitrix_embed.BitrixLaunchError):
+            bitrix_embed.principal_user_id({"ID": 42})
+        with pytest.raises(bitrix_embed.BitrixLaunchError):
+            bitrix_embed.principal_user_id({"ID": ""})
+        with pytest.raises(bitrix_embed.BitrixLaunchError):
+            bitrix_embed.principal_user_id(
+                {"ID": "9" * (bitrix_embed.MAX_BITRIX_USER_ID_LENGTH + 1)}
+            )
+        assert bitrix_embed.principal_user_id({"ID": "42"}) == "42"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"not-json{{",
+            "just a string",
+            [1, 2, 3],
+            42,
+            {"result": "not-a-dict"},
+            {"result": {"ACTIVE": True}},
+            {"result": {"ID": "42"}},
+            {"error": 123},
+        ],
+    )
+    def test_malformed_response_fuzz_rejected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        payload: Any,
+    ) -> None:
+        with pytest.raises(bitrix_embed.BitrixLaunchError):
+            self._verify(monkeypatch, payload)

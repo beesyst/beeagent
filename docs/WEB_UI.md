@@ -403,27 +403,28 @@ bitrix:
 
 One-time handler для привязки одного deployment к одному Bitrix portal.
 
-- принимает bounded form input; обязательное поле — `member_id`; `PROTOCOL` (опционально, `https` или `1`), `DOMAIN` (опционально);
-- если `DOMAIN` передан — defense-in-depth: origin из `DOMAIN` должен совпадать с configured `portal_origin`, иначе `403 portal_mismatch`;
-- дополнительные поля Bitrix (`PLACEMENT`, `PLACEMENT_OPTIONS`, `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `status`, `APP_SID`, `LANG` и любые другие) игнорируются — не хранятся, не логируются;
-- body bounded (лимит размера, лимит числа полей, лимит длины значений используемых полей);
-- требует HTTPS request (по `X-Forwarded-Proto` или scheme);
-- привязка: первый `member_id` сохраняется в фиксированный artifact `storage/interfaces/bitrix_rop_app.json` (только normalized `portal_domain`/`portal_origin` из config, `member_id`, `installed_at`, `contract_version`); повторный тот же `member_id` → `already_installed`; другой `member_id` → `409 conflicting_installation`;
-- если в запросе есть `AUTH_ID` + `AUTH_EXPIRES` (реальный Bitrix шлёт их) — install дополнительно выполняет полный launch flow: проверка expiry, `user.current`, создание viewer session, `303` на `/rop`. Это нужно, потому что Bitrix реально доставляет open-контекст на install URL;
-- если `AUTH_ID`/`AUTH_EXPIRES` нет — возвращает bounded JSON `{"status": "installed"|"already_installed", "member_bound": true}`;
+- принимает bounded `application/x-www-form-urlencoded` form; обязательные поля — `member_id`, `AUTH_ID`, `AUTH_EXPIRES`; `PROTOCOL` (опционально, `https` или `1`), `DOMAIN` (опционально);
+- `AUTH_ID` и `AUTH_EXPIRES` обязательны для первого install и reinstall: до любой записи state проверяются expiry (`AUTH_EXPIRES`) и active Bitrix current user через `user.current`; invalid/inactive/expired/rejected install не создаёт artifact;
+- если `DOMAIN` передан — defense-in-depth: origin из `DOMAIN` должен совпадать с configured `portal_origin`, иначе `403 portal_mismatch`; проверка выполняется до любого outbound запроса;
+- хранящийся state обязан соответствовать configured `portal_origin`/`portal_domain`, иначе `409 installation_portal_mismatch`;
+- дополнительные поля Bitrix (`PLACEMENT`, `PLACEMENT_OPTIONS`, `REFRESH_ID`, `status`, `APP_SID`, `LANG` и любые другие) игнорируются — не хранятся, не логируются;
+- body bounded (жёсткий лимит размера при стриминге, лимит числа полей, запрет дублирующихся ключей, лимит длины значений используемых полей);
+- требует HTTPS request (HTTPS определяется по scheme ASGI запроса; trusted reverse proxy настраивает scheme, заголовок `X-Forwarded-Proto` от клиента не доверяется);
+- привязка: после успешной verification первый `member_id` сохраняется атомарно (exclusive create) в фиксированный artifact `storage/interfaces/bitrix_rop_app.json` (только normalized `portal_domain`/`portal_origin` из config, `member_id`, `installed_at`, `contract_version`); при гонке state перечитывается и сверяется binding; другой `member_id` → `409 conflicting_installation`;
+- install выполняет полный launch flow: создание viewer session и `303` на `/rop` (Bitrix реально доставляет open-контекст на install URL);
 - не хранит и не логирует OAuth credentials;
 - ответы `no-store` с `Referrer-Policy: no-referrer`.
 
-#### `GET` / `POST /bitrix/rop/launch`
+#### `POST /bitrix/rop/launch`
 
-Launch handler для application open context. Bitrix при открытии приложения может прислать контекст как GET (redirect с query-параметрами) или POST (form), оба варианта поддерживаются.
+Launch handler для application open context. Только POST; GET на `/bitrix/rop/launch` возвращает `405` и никогда не обрабатывает OAuth значения (query-параметры не используются).
 
-- используются только bounded `AUTH_ID`, `AUTH_EXPIRES` (обязательные), `member_id` (обязательный) и optional `REFRESH_ID`; `DOMAIN` не требуется (Bitrix его не шлёт);
+- принимает bounded `application/x-www-form-urlencoded` form; используются только bounded `AUTH_ID`, `AUTH_EXPIRES` (обязательные), `member_id` (обязательный) и optional `REFRESH_ID`; `DOMAIN` не требуется (Bitrix его не шлёт), но при наличии проверяется против configured `portal_origin`;
 - `AUTH_EXPIRES` принимается как unix timestamp или как число секунд жизни (TTL), например `3600`;
 - дополнительные поля Bitrix (`PLACEMENT`, `PLACEMENT_OPTIONS`, `APP_SID`, `status`, `LANG` и любые другие) игнорируются — не хранятся и не логируются;
-- body/query bounded (лимит числа полей и длины значений используемых полей);
-- требует HTTPS request;
-- до любого outbound request сверяет `member_id` с installation state; outbound REST call всегда идёт на configured `portal_origin` (`https://<portal_origin>/rest/user.current`) и никогда не строится из данных запроса;
+- body bounded (жёсткий лимит размера при стриминге, лимит числа полей, запрет дублирующихся ключей, лимит длины значений используемых полей);
+- требует HTTPS request (scheme ASGI запроса);
+- до любого outbound request: хранящийся `portal_origin`/`portal_domain` обязан совпадать с configured origin, optional `DOMAIN` при наличии обязан совпадать с configured origin, затем сверяется `member_id` с installation state; outbound REST call всегда идёт на configured `portal_origin` (`https://<portal_origin>/rest/user.current`) и никогда не строится из данных запроса;
 - отклоняет malformed и expired launch;
 - проверяет текущего пользователя официальным Bitrix REST `user.current` только против configured portal; для этого у приложения в Bitrix должно быть право **`user`** (Пользователи) — иначе Bitrix отклоняет вызов с `insufficient_scope`;
 - отклоняет invalid/rejected token, inactive user, timeout и malformed REST response; при отказе возвращается `reason` (например `token_rejected`) и bounded `bitrix_error` (например `insufficient_scope`, `invalid_token`) без значений токена;
