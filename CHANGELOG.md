@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.2...beeagent-v0.49.0) (2026-08-02)
+
+
+### Features
+
+* **ui-8.5:** embed ROP console in Bitrix24 as local application with sso ([#169](https://github.com/beesyst/beeagent/issues/169)) ([26462a6](https://github.com/beesyst/beeagent/commit/26462a60aead7584f3741ff8850acad08626847e))
+
 ## [0.48.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.1...beeagent-v0.48.2) (2026-07-30)
 
 
