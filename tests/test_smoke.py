@@ -166,6 +166,11 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  embedded_app:
+    enabled: false
+    portal_origin: ""
+    default_role: "viewer"
+    request_timeout: 10
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -367,6 +372,11 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  embedded_app:
+    enabled: false
+    portal_origin: ""
+    default_role: "viewer"
+    request_timeout: 10
 
 """.strip()
         + "\n",
@@ -556,6 +566,11 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  embedded_app:
+    enabled: false
+    portal_origin: ""
+    default_role: "viewer"
+    request_timeout: 10
 
 """.strip()
         + "\n",
@@ -756,6 +771,11 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  embedded_app:
+    enabled: false
+    portal_origin: ""
+    default_role: "viewer"
+    request_timeout: 10
     """.strip()
         + "\n"
     )

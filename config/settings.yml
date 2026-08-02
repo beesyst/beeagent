@@ -167,6 +167,11 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  embedded_app:
+    enabled: true
+    portal_origin: "https://my.welding.kz"
+    default_role: "viewer"
+    request_timeout: 10
 
 ai:
   prompts:

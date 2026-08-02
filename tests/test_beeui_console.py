@@ -5570,6 +5570,12 @@ def _build_full_settings() -> dict:
                 "default_period": "7d",
                 "max_items": 50,
             },
+            "embedded_app": {
+                "enabled": False,
+                "portal_origin": "",
+                "default_role": "viewer",
+                "request_timeout": 10,
+            },
         },
         "ai": {
             "prompts": {"path": "p.yml", "store": False},

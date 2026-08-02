@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote
 
 from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
@@ -34,6 +34,9 @@ from beeagent_module.interfaces.ui.locale import (
     resolve_locale,
     set_current_locale,
     t,
+)
+from beeagent_module.interfaces.ui.bitrix_embed import (
+    EMBEDDED_SESSION_AGE_MAX_SECONDS,
 )
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_read_model,
@@ -124,6 +127,18 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
     web_auth = web_cfg.get("auth", {})
     auth_enabled = bool(web_auth.get("enabled", False))
 
+    bitrix_cfg = agent_settings.get("bitrix", {})
+    embedded_cfg = (
+        bitrix_cfg.get("embedded_app", {})
+        if isinstance(bitrix_cfg, dict)
+        else {}
+    )
+    embedded_enabled = bool(
+        embedded_cfg.get("enabled", False)
+        if isinstance(embedded_cfg, dict)
+        else False
+    )
+
     beeui_auth: dict[str, Any] = {"enabled": auth_enabled}
 
     if auth_enabled:
@@ -131,6 +146,11 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
         app_env = str(agent_settings.get("app", {}).get("env", "dev")).strip().lower()
         beeui_auth["session_secret"] = os.environ.get(session_env, "")
         beeui_auth["cookie_secure"] = app_env not in {"dev", "test", "local"}
+
+        if embedded_enabled:
+            beeui_auth["cookie_secure"] = True
+            beeui_auth["cookie_samesite"] = "none"
+            beeui_auth["session_age_max"] = EMBEDDED_SESSION_AGE_MAX_SECONDS
 
         principals = web_auth.get("principals", [])
         resolved_principals = []
@@ -183,6 +203,11 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
         "security": {
             "html_autoescape": True,
             "assets_ext": False,
+            **(
+                {"frame_ancestors": [str(embedded_cfg.get("portal_origin", ""))]}
+                if embedded_enabled
+                else {}
+            ),
         },
         "auth": beeui_auth,
         "features": {
@@ -324,6 +349,8 @@ def _setup_beeagent_auth(
         "admin_token": auth_cfg.get("admin_token") or primary_token,
         "operator_token": auth_cfg.get("operator_token") or primary_token,
         "cookie_secure": bool(auth_cfg.get("cookie_secure", False)),
+        "cookie_samesite": str(auth_cfg.get("cookie_samesite", "lax")).strip().lower(),
+        "session_age_max": auth_cfg.get("session_age_max"),
     }
     app.state.beeui_auth_service = _BeeAgentAuthService(auth_settings)
     logger.info("Auth enabled with %d principal(s)", len(token_roles))
@@ -345,6 +372,8 @@ _PUBLIC_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/static/"),
     re.compile(r"^/auth/"),
     re.compile(r"^/api/bitrix/rop/widget(?:/|$)"),
+    re.compile(r"^/bitrix/rop/install$"),
+    re.compile(r"^/bitrix/rop/launch$"),
 ]
 
 
@@ -695,13 +724,15 @@ def _register_custom_routes(
             reset_current_locale(token)
 
     _register_bitrix_widget_routes(app, adapter, logger)
+    _register_bitrix_embed_routes(app, logger)
 
     logger.info(
         "BeeAgent custom routes registered: "
         "/health, /api/modules, /api/rop/dashboard, "
         "/api/rop/events/{event_id}, /rop/events/{event_id}, "
         "/api/bitrix/rop/widget, /api/bitrix/rop/widget/events, "
-        "/api/bitrix/rop/widget/events/{event_id}"
+        "/api/bitrix/rop/widget/events/{event_id}, "
+        "/bitrix/rop/install, /bitrix/rop/launch"
     )
 
 
@@ -1171,3 +1202,399 @@ def _register_bitrix_widget_routes(
         )
 
     logger.info("Bitrix widget API routes registered")
+
+
+def _register_bitrix_embed_routes(
+    app: FastAPI,
+    logger: logging.Logger,
+) -> None:
+    from beeagent_module.interfaces.ui.bitrix_embed import (
+        CONTRACT_VERSION,
+        MAX_FORM_BODY_BYTES,
+        MAX_FORM_FIELDS,
+        BitrixEmbedError,
+        BitrixLaunchError,
+        InstallState,
+        build_portal_origin,
+        create_install_state,
+        load_install_state,
+        parse_install_form,
+        parse_launch_form,
+        principal_user_id,
+        validate_launch_auth_expires,
+        verify_bitrix_current_user,
+    )
+
+    def _embed_config(settings: dict[str, Any]) -> dict[str, Any]:
+        bitrix_cfg = settings.get("bitrix", {})
+        if not isinstance(bitrix_cfg, dict):
+            return {}
+        emb_cfg = bitrix_cfg.get("embedded_app", {})
+        if not isinstance(emb_cfg, dict):
+            return {}
+        return emb_cfg
+
+    def _bounded_json(data: dict[str, Any], status_code: int = 200) -> JSONResponse:
+        response = JSONResponse(data, status_code=status_code)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    def _error_response(
+        code: str,
+        message: str,
+        status_code: int = 400,
+        extra: dict[str, Any] | None = None,
+    ) -> JSONResponse:
+        error_payload: dict[str, Any] = {"code": code, "message": message}
+        if extra:
+            error_payload.update(extra)
+        return _bounded_json(
+            {"ok": False, "error": error_payload},
+            status_code=status_code,
+        )
+
+    def _received_fields(source: Any) -> list[str]:
+        return sorted(str(key) for key in source.keys())
+
+    def _is_https_request(request: Request) -> bool:
+        return request.url.scheme.lower() == "https"
+
+    async def _read_bounded_form(
+        request: Request,
+    ) -> dict[str, str] | None:
+        media_type = (
+            request.headers.get("content-type", "")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
+        if media_type != "application/x-www-form-urlencoded":
+            return None
+
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_FORM_BODY_BYTES:
+                return None
+
+        try:
+            pairs = parse_qsl(
+                body.decode("utf-8"),
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=MAX_FORM_FIELDS,
+            )
+        except (UnicodeDecodeError, ValueError):
+            return None
+
+        values: dict[str, str] = {}
+        for key, value in pairs:
+            if key in values:
+                return None
+            values[key] = value
+        return values
+
+    def _verify_bitrix_user(
+        values: dict[str, str],
+        emb_cfg: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+        try:
+            validate_launch_auth_expires(values["AUTH_EXPIRES"])
+        except BitrixLaunchError as exc:
+            return None, _error_response("invalid_launch", str(exc), 403)
+
+        configured_origin = str(emb_cfg.get("portal_origin", "")).strip()
+        timeout = int(emb_cfg.get("request_timeout", 10))
+        try:
+            user = verify_bitrix_current_user(
+                configured_origin,
+                values["AUTH_ID"],
+                timeout,
+            )
+        except BitrixLaunchError as exc:
+            logger.info(
+                "Bitrix user verification failed: reason=%s",
+                exc.reason,
+            )
+            extra: dict[str, Any] = {"reason": exc.reason}
+            if exc.bitrix_error:
+                extra["bitrix_error"] = exc.bitrix_error
+            return None, _error_response(
+                "bitrix_verification_failed",
+                "Bitrix user verification failed",
+                403,
+                extra=extra,
+            )
+        return user, None
+
+    def _create_verified_redirect(
+        request: Request,
+        user: dict[str, Any],
+        emb_cfg: dict[str, Any],
+    ) -> Response:
+        service = getattr(request.app.state, "beeui_auth_service", None)
+        if service is None or not getattr(service, "enabled", False):
+            return _error_response(
+                "auth_unavailable",
+                "Authentication service unavailable",
+                503,
+            )
+
+        from beeui_module.auth.models import UserRole
+
+        role_name = str(emb_cfg.get("default_role", "viewer"))
+        role = getattr(UserRole, role_name, None)
+        if role is None:
+            return _error_response(
+                "server_error",
+                "Invalid embedded app role",
+                500,
+            )
+
+        user_id = principal_user_id(user)
+        _, cookie = service.create_principal_session(user_id, role)
+        if cookie is None:
+            return _error_response(
+                "session_unavailable",
+                "Failed to create session",
+                503,
+            )
+
+        from starlette.responses import RedirectResponse
+
+        redirect = RedirectResponse(url="/rop", status_code=303)
+        service.attach_session_cookie(redirect, cookie)
+        redirect.headers["Cache-Control"] = "no-store"
+        redirect.headers["Pragma"] = "no-cache"
+        redirect.headers["Referrer-Policy"] = "no-referrer"
+        logger.info(
+            "Bitrix embedded app launch: role=%s",
+            role_name,
+        )
+        return redirect
+
+    def _validate_portal_context(
+        values: dict[str, str],
+        emb_cfg: dict[str, Any],
+        state: InstallState | None,
+    ) -> JSONResponse | None:
+        configured_origin = str(emb_cfg.get("portal_origin", "")).strip()
+        configured_domain = configured_origin.removeprefix("https://")
+
+        if state is not None and (
+            state.portal_origin != configured_origin
+            or state.portal_domain != configured_domain
+        ):
+            return _error_response(
+                "installation_portal_mismatch",
+                "Installed portal does not match the configured portal",
+                409,
+            )
+
+        incoming_domain = values.get("DOMAIN", "")
+        if incoming_domain:
+            try:
+                incoming_origin = build_portal_origin(incoming_domain)
+            except BitrixEmbedError:
+                return _error_response(
+                    "invalid_domain",
+                    "Invalid portal domain",
+                    400,
+                )
+            if incoming_origin != configured_origin:
+                return _error_response(
+                    "portal_mismatch",
+                    "Portal does not match the configured embedded app portal",
+                    403,
+                )
+
+        return None
+
+    @app.post("/bitrix/rop/install", include_in_schema=False)
+    async def bitrix_rop_install(request: Request) -> Response:
+        settings = getattr(request.app.state, "beeagent_settings", {})
+        emb_cfg = _embed_config(settings)
+        if not emb_cfg.get("enabled"):
+            return _error_response(
+                "embedded_app_disabled",
+                "Embedded Bitrix app is disabled in config",
+                403,
+            )
+        if not _is_https_request(request):
+            return _error_response(
+                "https_required",
+                "HTTPS is required for the Bitrix embedded app endpoint",
+                403,
+            )
+
+        form = await _read_bounded_form(request)
+        if form is None:
+            return _error_response(
+                "invalid_install",
+                "Malformed or oversized install request",
+                400,
+            )
+
+        try:
+            values = parse_install_form(form)
+        except BitrixEmbedError as exc:
+            return _error_response(
+                "invalid_install",
+                str(exc),
+                400,
+                extra={"received_fields": _received_fields(form)},
+            )
+
+        if not values.get("AUTH_ID") or not values.get("AUTH_EXPIRES"):
+            return _error_response(
+                "invalid_install",
+                "AUTH_ID and AUTH_EXPIRES are required for installation",
+                400,
+            )
+
+        storage_dir = getattr(request.app.state, "beeagent_storage_dir", None)
+        if storage_dir is None:
+            return _error_response("server_error", "Storage unavailable", 503)
+
+        try:
+            existing = load_install_state(storage_dir)
+        except BitrixEmbedError as exc:
+            return _error_response("install_state_corrupted", str(exc), 409)
+
+        portal_error = _validate_portal_context(
+            values,
+            emb_cfg,
+            existing,
+        )
+        if portal_error is not None:
+            return portal_error
+
+        member_id = values["member_id"]
+        if existing is not None and existing.member_id != member_id:
+            return _error_response(
+                "conflicting_installation",
+                "This deployment is already bound to another Bitrix portal",
+                409,
+            )
+
+        user, verify_error = _verify_bitrix_user(values, emb_cfg)
+        if verify_error is not None:
+            return verify_error
+        assert user is not None
+
+        if existing is None:
+            from datetime import UTC, datetime
+
+            configured_origin = str(emb_cfg.get("portal_origin", "")).strip()
+            state = InstallState(
+                portal_origin=configured_origin,
+                portal_domain=configured_origin.removeprefix("https://"),
+                member_id=member_id,
+                installed_at=datetime.now(UTC).isoformat(),
+                contract_version=CONTRACT_VERSION,
+            )
+            if not create_install_state(storage_dir, state):
+                try:
+                    existing = load_install_state(storage_dir)
+                except BitrixEmbedError as exc:
+                    return _error_response(
+                        "install_state_corrupted",
+                        str(exc),
+                        409,
+                    )
+
+                portal_error = _validate_portal_context(
+                    values,
+                    emb_cfg,
+                    existing,
+                )
+                if portal_error is not None:
+                    return portal_error
+
+                if existing is None or existing.member_id != member_id:
+                    return _error_response(
+                        "conflicting_installation",
+                        "This deployment is already bound to another Bitrix portal",
+                        409,
+                    )
+
+        return _create_verified_redirect(request, user, emb_cfg)
+
+    @app.post("/bitrix/rop/launch", include_in_schema=False)
+    async def bitrix_rop_launch(request: Request) -> Response:
+        settings = getattr(request.app.state, "beeagent_settings", {})
+        emb_cfg = _embed_config(settings)
+        if not emb_cfg.get("enabled"):
+            return _error_response(
+                "embedded_app_disabled",
+                "Embedded Bitrix app is disabled in config",
+                403,
+            )
+        if not _is_https_request(request):
+            return _error_response(
+                "https_required",
+                "HTTPS is required for the Bitrix embedded app endpoint",
+                403,
+            )
+
+        form = await _read_bounded_form(request)
+        if form is None:
+            return _error_response(
+                "invalid_launch",
+                "Malformed or oversized launch request",
+                400,
+            )
+
+        try:
+            values = parse_launch_form(form)
+        except BitrixEmbedError as exc:
+            return _error_response(
+                "invalid_launch",
+                str(exc),
+                400,
+                extra={"received_fields": _received_fields(form)},
+            )
+
+        storage_dir = getattr(request.app.state, "beeagent_storage_dir", None)
+        if storage_dir is None:
+            return _error_response("server_error", "Storage unavailable", 503)
+
+        try:
+            state = load_install_state(storage_dir)
+        except BitrixEmbedError as exc:
+            return _error_response("install_state_corrupted", str(exc), 409)
+        if state is None:
+            return _error_response(
+                "not_installed",
+                "Bitrix embedded app is not installed",
+                403,
+            )
+
+        portal_error = _validate_portal_context(
+            values,
+            emb_cfg,
+            state,
+        )
+        if portal_error is not None:
+            return portal_error
+
+        if state.member_id != values["member_id"]:
+            return _error_response(
+                "member_mismatch",
+                "Launch member does not match the installed portal",
+                403,
+            )
+
+        user, verify_error = _verify_bitrix_user(values, emb_cfg)
+        if verify_error is not None:
+            return verify_error
+        assert user is not None
+
+        return _create_verified_redirect(request, user, emb_cfg)
+
+    logger.info(
+        "Bitrix embedded app routes registered: "
+        "/bitrix/rop/install, /bitrix/rop/launch"
+    )

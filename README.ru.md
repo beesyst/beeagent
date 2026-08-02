@@ -41,6 +41,7 @@
 - автоматически bootstrap'ить internal env secrets при старте;
 - ротировать principal tokens, session secret и Bitrix widget token через CLI;
 - защищать HTML/API routes при `web.auth.enabled=true`;
+- открывать read-only `/rop` console внутри Bitrix24 как Local Application через `bitrix.embedded_app` без отдельного BeeAgent login;
 - использовать BeeUI поверх FastAPI/Jinja2/Tabler как canonical web layer;
 - читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
 - использовать локальные BeeUI/static assets без CDN и npm runtime;
@@ -152,6 +153,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - BeeUI-backed read-only Operator Web Console через `./start.sh web`;
 - BeeUI embedded app как canonical web layer поверх FastAPI/Jinja2/Tabler;
 - HTML routes `/`, `/health`, `/runs`, `/runs/<run_id>`, `/rop`, `/modules`;
+- Bitrix embedded app routes `POST /bitrix/rop/install` и `POST /bitrix/rop/launch` (UI-8.5);
 - JSON API routes `/api/dashboard`, `/api/runs`, `/api/runs/<run_id>`, `/api/rop/dashboard`, `/api/modules`;
 - browser artifact routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>` и API routes `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
 - allowlisted artifact access по `artifact_id` с bounded/redacted preview для HTML/JSON;
@@ -409,6 +411,32 @@ Web console только читает existing artifacts из `storage/runs/<run
 Доступ к артефактам идёт только по allowlisted `artifact_id`, а не по произвольным именам файлов.
 Browser artifact routes возвращают BeeUI HTML, API artifact routes возвращают bounded/redacted JSON.
 Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
+
+### Bitrix24 Local Application embedded console (UI-8.5)
+
+Read-only `/rop` console можно открыть внутри Bitrix24 как **Server-Side Local Application with User Interface** без отдельного BeeAgent login и без credential в URL. Конфиг:
+
+```yaml
+bitrix:
+  embedded_app:
+    enabled: true
+    portal_origin: "https://<your-portal>.bitrix24.ru"
+    default_role: "viewer"
+    request_timeout: 10
+```
+
+Ручная регистрация Local Application в Bitrix24:
+
+| Поле | Значение |
+| --- | --- |
+| Name | BeeAgent — ROP |
+| Handler | `https://<beeagent-host>/bitrix/rop/launch` |
+| Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
+| Uses API only | false |
+
+Обязательное право приложения: **`user`** (Пользователи) — без него вызов `user.current` при входе отклоняется (`insufficient_scope`). Право добавляется в настройках приложения, после чего приложение нужно переустановить.
+
+Требуется HTTPS deployment. Установка сохраняет one-time portal binding в `storage/interfaces/bitrix_rop_app.json` без OAuth credentials; launch проверяет current Bitrix user через REST и создаёт bounded BeeUI viewer session (`303` на `/rop`). Доступ управляется Bitrix24; BeeAgent не хранит список Bitrix user ID и не сохраняет `AUTH_ID`/`REFRESH_ID`.
 
 В текущем scope не входят:
 
