@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.1...beeagent-v0.49.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* preserve existing env permissions ([#173](https://github.com/beesyst/beeagent/issues/173)) ([b4b64ce](https://github.com/beesyst/beeagent/commit/b4b64ce9419eec225eb2bfde32b340d81abf3f7e))
+
 ## [0.49.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.0...beeagent-v0.49.1) (2026-08-08)
 
 
