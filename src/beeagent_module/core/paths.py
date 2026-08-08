@@ -37,7 +37,7 @@ def get_logs_dir(project_root: Path | None = None) -> Path:
 
 def get_storage_dir(project_root: Path | None = None) -> Path:
     root = project_root or ROOT_DIR
-    return root / "storage"
+    return (root / "storage").resolve()
 
 
 def get_app_log_path(project_root: Path | None = None) -> Path:

@@ -196,6 +196,23 @@ bitrix:
     assert log_path.exists()
 
 
+def test_storage_dir_is_canonical_for_a_regular_local_directory(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    storage_dir = get_storage_dir(project_root)
+
+    assert storage_dir == (project_root / "storage").resolve()
+    assert not storage_dir.exists()
+
+    ensure_dirs(project_root)
+
+    assert storage_dir.is_dir()
+    assert (storage_dir / ".gitkeep").is_file()
+
+
 def test_load_settings_accepts_mailbox_readonly_source(tmp_path: Path) -> None:
     settings_file = tmp_path / "settings.yml"
     settings_file.write_text(
