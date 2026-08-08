@@ -14,6 +14,10 @@ from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
 )
+from beeagent_module.cases.rop_dashboard import (
+    build_rop_dashboard,
+    write_rop_dashboard,
+)
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -21,6 +25,7 @@ from beeagent_module.core.cli import (
     handle_rop_reconcile_bitrix,
     handle_rop_run,
 )
+from beeagent_module.core.paths import get_storage_dir
 
 
 def _null_logger() -> logging.Logger:
@@ -171,6 +176,46 @@ def _add_bitrix_reconciliation(
 
     (run_dir / BITRIX_RECONCILIATION_FILENAME).write_text(
         json.dumps(artifact, indent=2), encoding="utf-8"
+    )
+
+
+def test_symlinked_storage_uses_one_canonical_root_for_rop_artifacts(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    persistent_storage = tmp_path / "persistent-storage"
+    persistent_storage.mkdir()
+    (project_root / "storage").symlink_to(persistent_storage, target_is_directory=True)
+
+    storage_dir = get_storage_dir(project_root)
+    assert storage_dir == persistent_storage.resolve()
+
+    run_id = "symlinked-storage-run"
+    run_dir = storage_dir / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps([{"event_id": "evt-001", "subject": "Inquiry"}]),
+        encoding="utf-8",
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps([{"event_id": "evt-001", "case_type": "new_lead"}]),
+        encoding="utf-8",
+    )
+
+    state = build_rop_current_state(storage_dir, run_id, _null_logger())
+    write_current_state(storage_dir, run_id, state, _null_logger())
+
+    assert (run_dir / CURRENT_STATE_FILENAME).is_file()
+    assert "runs/symlinked-storage-run/normalized_events.json" in state["artifact_refs"]
+
+    dashboard = build_rop_dashboard(storage_dir, "7d", _null_logger(), run_id=run_id)
+    dashboard_path = write_rop_dashboard(storage_dir, dashboard, _null_logger())
+
+    assert dashboard_path == storage_dir / "interfaces" / "rop_dashboard.json"
+    assert (
+        dashboard_path.relative_to(storage_dir).as_posix()
+        == "interfaces/rop_dashboard.json"
     )
 
 
