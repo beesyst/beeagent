@@ -210,13 +210,43 @@ class TestEnvFileHandling:
         content = env_path.read_text(encoding="utf-8")
         assert "BEEAGENT_WEB_ADMIN1_TOKEN=new-token" in content
 
-    def test_update_env_file_sets_posix_permissions(self, tmp_project: Path) -> None:
+    def test_update_env_file_preserves_existing_posix_permissions(
+        self, tmp_project: Path
+    ) -> None:
         env_path = tmp_project / ".env"
+        if os.name == "posix":
+            env_path.chmod(0o660)
         lines = _read_env_lines(env_path)
         _update_env_file(env_path, lines, {"BEEAGENT_WEB_ADMIN1_TOKEN": "new-val"})
         if os.name == "posix":
             mode = stat.S_IMODE(env_path.stat().st_mode)
-            assert mode == (stat.S_IRUSR | stat.S_IWUSR)
+            assert mode == 0o660
+        assert not env_path.with_suffix(env_path.suffix + ".tmp").exists()
+
+    def test_update_env_file_preserves_existing_posix_group(
+        self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if os.name != "posix":
+            pytest.skip("POSIX-only permission behavior")
+
+        env_path = tmp_project / ".env"
+        existing_gid = env_path.stat().st_gid
+        original_fchown = os.fchown
+        received_gids: list[int] = []
+
+        def record_fchown(fd: int, uid: int, gid: int) -> None:
+            received_gids.append(gid)
+            original_fchown(fd, uid, gid)
+
+        monkeypatch.setattr(os, "fchown", record_fchown)
+        _update_env_file(
+            env_path,
+            _read_env_lines(env_path),
+            {"BEEAGENT_WEB_ADMIN1_TOKEN": "new-val"},
+        )
+
+        assert received_gids == [existing_gid]
+        assert env_path.stat().st_gid == existing_gid
 
     def test_update_env_file_updates_empty_key_in_place(self, tmp_path: Path) -> None:
         env_path = tmp_path / ".env"
@@ -236,6 +266,18 @@ class TestEnvFileHandling:
 
 
 class TestRotateSingle:
+    def test_rotate_preserves_existing_posix_permissions(
+        self, tmp_project: Path, auth_cfg: dict
+    ) -> None:
+        env_path = tmp_project / ".env"
+        if os.name == "posix":
+            env_path.chmod(0o660)
+
+        _do_rotate(auth_cfg, tmp_project, "admin_1", logout_all=False)
+
+        if os.name == "posix":
+            assert stat.S_IMODE(env_path.stat().st_mode) == 0o660
+
     def test_rotate_by_id_changes_only_that_token(
         self, tmp_project: Path, auth_cfg: dict
     ) -> None:

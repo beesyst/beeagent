@@ -513,7 +513,7 @@ web:
 - отсутствующие или пустые internal env values (`BEEAGENT_WEB_SESSION_SECRET`, `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN`, `BITRIX_ROP_WIDGET_TOKEN`) генерируются автоматически;
 - реальные значения пишутся только в `.env` / runtime env, не в `settings.yml`;
 - внешние credentials остаются пустыми placeholders, пока оператор не заполнит их вручную;
-- на POSIX для `.env` выставляется `chmod 0600`;
+- новый `.env` на POSIX получает `0600`; существующий сохраняет заданные администратором режим и группу при sync, bootstrap и rotation;
 - в stdout печатается только masked вывод вида `KEY=<generated>`, реальные значения не печатаются.
 
 ##### Token/session rotation
@@ -1489,7 +1489,7 @@ BeeAgent не принимает business-решений на основе trans
 - auth secrets должны жить только в env / `.env`, а не в `config/settings.yml`;
 - `.env` синхронизируется из `.env.example` без перезаписи существующих значений;
 - internal secrets генерируются только в `.env` / runtime env;
-- на POSIX `.env` получает `chmod 0600`;
+- новый `.env` на POSIX получает `0600`; существующий сохраняет заданные администратором режим и группу при sync, bootstrap и rotation;
 - session secret никогда не печатается;
 - новые обязательные ключи должны валидироваться fail-fast;
 - transport / module / capability boundaries нельзя размывать ad hoc;

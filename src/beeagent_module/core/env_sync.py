@@ -21,7 +21,6 @@ def sync_env_with_example(project_root: Path) -> None:
 
     if not env_path.exists():
         _safe_write(env_path, example_text)
-        _chmod_env(env_path)
         return
 
     existing_content = env_path.read_text(encoding="utf-8")
@@ -29,7 +28,6 @@ def sync_env_with_example(project_root: Path) -> None:
     missing_keys = [key for key in example_keys if key not in existing_keys]
 
     if not missing_keys:
-        _chmod_env(env_path)
         return
 
     content = existing_content.rstrip("\n") + "\n"
@@ -37,7 +35,6 @@ def sync_env_with_example(project_root: Path) -> None:
         content += f"{key}=\n"
 
     _safe_write(env_path, content)
-    _chmod_env(env_path)
 
 
 def ensure_bootstrap_env(
@@ -90,8 +87,6 @@ def ensure_bootstrap_env(
 
     if generated:
         _update_env_file(env_path, env_lines, generated)
-    else:
-        _chmod_env(env_path)
 
     for env_name, value in final_values.items():
         os.environ[env_name] = value
@@ -253,11 +248,18 @@ def _update_env_file(env_path: Path, lines: list[str], updates: dict[str, str]) 
             new_lines.append(f"{key}={value}\n")
 
     _safe_write(env_path, "".join(new_lines))
-    _chmod_env(env_path)
 
 
 def _safe_write(path: Path, content: str) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
+    existing_mode = None
+    existing_gid = None
+
+    if os.name == "posix" and path.exists():
+        existing_stat = path.stat()
+        existing_mode = stat.S_IMODE(existing_stat.st_mode)
+        existing_gid = existing_stat.st_gid
+
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         fd = os.open(
@@ -267,11 +269,11 @@ def _safe_write(path: Path, content: str) -> None:
         )
         with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
             tmp_file.write(content)
+            if existing_gid is not None:
+                os.fchown(tmp_file.fileno(), -1, existing_gid)
+            if existing_mode is not None:
+                os.fchmod(tmp_file.fileno(), existing_mode)
     else:
         tmp_path.write_text(content, encoding="utf-8")
+
     tmp_path.replace(path)
-
-
-def _chmod_env(env_path: Path) -> None:
-    if os.name == "posix" and env_path.exists():
-        env_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
