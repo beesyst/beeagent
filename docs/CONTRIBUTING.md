@@ -74,12 +74,12 @@
 | --: | -------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 |   0 | Проверить, что рабочая папка чистая и ты на нужной ветке | `git status`                                   | `On branch main` (или другая) + `working tree clean` = всё ок. Если есть “Changes not staged…” — есть незакоммиченные изменения. |
 |   1 | Посмотреть локальные ветки и текущую ветку               | `git branch`                                   | Текущая ветка помечена `*` (например `* main`).                                                                                  |
-|   2 | Создать новую ветку под задачу и переключиться на неё    | `git switch -c docs/contributing`            | Git переключит тебя на новую ветку. Проверка: `git status` покажет `On branch docs/contributing`.                                |
+|   2 | Создать новую ветку под задачу и переключиться на неё    | `git switch -c docs/contributing`              | Git переключит тебя на новую ветку. Проверка: `git status` покажет `On branch docs/contributing`.                                |
 |   3 | Добавить нужный файл(ы) в индекс (staging)               | `git add docs/CONTRIBUTING.md`                 | После этого в `git status` файл будет в `Changes to be committed`.                                                               |
 |   4 | Создать коммит с правильным сообщением                   | `git commit -m "docs: add contributing guide"` | Git создаст коммит и покажет, сколько файлов изменено.                                                                           |
 |   5 | Запушить ветку на GitHub и “привязать” upstream          | `git push -u origin docs/contributing`         | Ветка появится на GitHub. `-u` позволит дальше пушить просто `git push`.                                                         |
 |   6 | Открыть PR на GitHub и влить в `main`                    | _(в браузере)_ PR → **Squash and merge**       | После мержа изменения окажутся в `main`. Обычно ветку можно удалить кнопкой “Delete branch”.                                     |
-|   7 | Обновить локальный `main` после мержа PR                 | `git switch main` + `git pull`               | Локальный `main` подтянет изменения, которые ты влил через PR.                                                                   |
+|   7 | Обновить локальный `main` после мержа PR                 | `git switch main` + `git pull`                 | Локальный `main` подтянет изменения, которые ты влил через PR.                                                                   |
 |   8 | Посмотреть удалённые ветки (origin)                      | `git branch -r`                                | Список веток на сервере, например `origin/main`, `origin/docs/contributing`.                                                     |
 |   9 | Посмотреть все ветки (локальные + удалённые)             | `git branch -a`                                | Полный список: локальные + `remotes/origin/...`.                                                                                 |
 |  10 | (Опционально) Удалить локальную ветку после мержа        | `git branch -d docs/contributing`              | Удалит ветку локально, если она уже смержена. Если не даёт — значит не смержена.                                                 |
@@ -153,6 +153,127 @@ uv pip show beeui
 git add uv.lock
 git commit -m 'chore(deps): update beeui'
 git push
+```
+
+### Production Deploy
+
+Каждый deploy создаёт новый независимый release:
+
+```
+/opt/beeagent/
+├── current -> /opt/beeagent/releases/<active-release>
+└── releases/
+    ├── <old-release>/
+    │   ├── beeagent/
+    │   └── beeagent-rop/
+    └── <new-release>/
+        ├── beeagent/
+        │   ├── .env -> /var/lib/beeagent/shared/.env
+        │   ├── storage -> /var/lib/beeagent/storage
+        │   └── config/settings.yml
+        └── beeagent-rop/
+```
+
+Постоянные production-данные хранятся отдельно от release:
+
+```
+/var/lib/beeagent/
+├── shared/.env
+└── storage/
+```
+
+`systemd` и VS Code используют стабильные пути:
+
+```
+/opt/beeagent/current/beeagent
+/opt/beeagent/current/beeagent-rop
+```
+
+Поэтому при переключении release конфигурацию VS Code и systemd менять не нужно.
+
+**Создание нового release**
+
+На VPS:
+
+```
+cd /opt/beeagent/releases
+REL=20260808-002
+sudo install -d -o bee -g beeagent -m 0750 "$REL"
+```
+
+**Получить обновленный BeeAgent из GitHub**
+
+```
+git clone git@github-beeagent-prod:beesyst/beeagent.git "$REL/beeagent"
+grep '^version = ' "$REL/beeagent/pyproject.toml"
+```
+
+**Подготовить beeagent-rop**
+
+Если `beeagent-rop` изменялся и должен войти в release:
+
+```
+git clone git@github-beeagent-rop-prod:beesyst/beeagent-rop.git "$REL/beeagent-rop"
+```
+
+Если `beeagent-rop` не изменялся:
+
+```
+cp -a /opt/beeagent/current/beeagent-rop "$REL/beeagent-rop"
+```
+
+**Установить зависимости и проверить release**
+
+```
+cd "/opt/beeagent/releases/$REL/beeagent"
+uv sync --frozen
+uv run --frozen pytest -q
+```
+
+**Копировать `.env` и подключить storage**
+
+```
+rm -f .env
+sudo install -o beeagent -g beeagent -m 0660 /var/lib/beeagent/shared/.env .env
+rm -rf storage
+ln -s /var/lib/beeagent/storage storage
+```
+
+**Подготовить logs**
+
+```
+sudo chown -R beeagent:beeagent logs
+sudo chmod 0750 logs
+```
+
+**Активировать новый release**
+
+```
+sudo ln -sfn "/opt/beeagent/releases/$REL" /opt/beeagent/current
+```
+
+**Перезапустить BeeAgent**
+
+```
+sudo systemctl restart beeagent-web
+sudo systemctl status beeagent-web --no-pager
+```
+
+Проверить:
+
+```
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS https://rop.welding.kz/health
+```
+
+**Rollback**
+
+Если новый release не работает, вернуть предыдущий:
+
+```
+sudo ln -sfn /opt/beeagent/releases/20260806-001 /opt/beeagent/current
+sudo systemctl restart beeagent-web
+curl -fsS https://rop.welding.kz/health
 ```
 
 ### Проверка PR соразработчика
