@@ -171,6 +171,37 @@ def test_existing_values_are_preserved_by_default(
     }
 
 
+def test_existing_env_mode_is_preserved_without_bootstrap_rewrite(
+    enabled_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_auth_env(monkeypatch)
+    env_path = _env_path(enabled_project)
+    env_path.write_text(
+        "\n".join(
+            [
+                f"{SESSION_ENV}=existing-session",
+                f"{ADMIN1_ENV}=existing-admin1",
+                f"{ADMIN2_ENV}=existing-admin2",
+                f"{WIDGET_ENV}=existing-widget",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if os.name == "posix":
+        env_path.chmod(0o660)
+
+    ensure_bootstrap_env(
+        project_root=enabled_project,
+        settings_path=_settings_path(enabled_project),
+        env_path=env_path,
+        quiet=True,
+    )
+
+    if os.name == "posix":
+        assert stat.S_IMODE(env_path.stat().st_mode) == 0o660
+
+
 def test_empty_env_values_are_replaced(
     enabled_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,6 +226,28 @@ def test_empty_env_values_are_replaced(
     assert env_map[ADMIN1_ENV] == generated[ADMIN1_ENV]
     assert env_map[ADMIN2_ENV] == generated[ADMIN2_ENV]
     assert env_map[WIDGET_ENV] == generated[WIDGET_ENV]
+
+
+def test_bootstrap_rewrite_preserves_existing_env_mode(
+    enabled_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_auth_env(monkeypatch)
+    env_path = _env_path(enabled_project)
+    env_path.write_text(f"{SESSION_ENV}=existing-session\n", encoding="utf-8")
+    if os.name == "posix":
+        env_path.chmod(0o660)
+
+    generated = ensure_bootstrap_env(
+        project_root=enabled_project,
+        settings_path=_settings_path(enabled_project),
+        env_path=env_path,
+        quiet=True,
+    )
+
+    assert generated
+    assert _env_map(env_path)[SESSION_ENV] == "existing-session"
+    if os.name == "posix":
+        assert stat.S_IMODE(env_path.stat().st_mode) == 0o660
 
 
 def test_external_credentials_are_not_generated(

@@ -87,6 +87,34 @@ def test_appends_missing_keys_without_overwriting_existing_values(
     assert env_map["CHAT_ID"] == "123"
 
 
+def test_existing_env_mode_is_preserved_without_missing_keys(
+    project_root: Path,
+) -> None:
+    env_path = project_root / ".env"
+    env_path.write_text(EXAMPLE_CONTENT, encoding="utf-8")
+    if os.name == "posix":
+        env_path.chmod(0o660)
+
+    sync_env_with_example(project_root)
+
+    if os.name == "posix":
+        assert stat.S_IMODE(env_path.stat().st_mode) == 0o660
+
+
+def test_appending_missing_keys_preserves_existing_env_mode(project_root: Path) -> None:
+    env_path = project_root / ".env"
+    env_path.write_text("TELEGRAM_BOT_TOKEN=existing-secret\n", encoding="utf-8")
+    if os.name == "posix":
+        env_path.chmod(0o660)
+
+    sync_env_with_example(project_root)
+
+    assert _env_map(env_path)["TELEGRAM_BOT_TOKEN"] == "existing-secret"
+    assert "CHAT_ID=\n" in env_path.read_text(encoding="utf-8")
+    if os.name == "posix":
+        assert stat.S_IMODE(env_path.stat().st_mode) == 0o660
+
+
 def test_does_not_print_secret_values(
     project_root: Path,
     capsys: pytest.CaptureFixture[str],
