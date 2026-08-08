@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.0...beeagent-v0.49.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* resolve storage root for symlinked deployments ([#171](https://github.com/beesyst/beeagent/issues/171)) ([0c778e0](https://github.com/beesyst/beeagent/commit/0c778e0342473abffb5e341326f164e16f802801))
+
 ## [0.49.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.48.2...beeagent-v0.49.0) (2026-08-02)
 
 
