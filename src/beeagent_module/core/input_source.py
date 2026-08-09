@@ -5,12 +5,13 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from beeagent_module.adapters.mailbox import (
     ImapReadonlyMailboxClient,
@@ -349,7 +350,7 @@ def load_mailbox_readonly(
         "folder": folder,
     }
 
-    loaded_at = datetime.now(timezone.utc).isoformat()
+    loaded_at = datetime.now(UTC).isoformat()
     diagnostics = _make_source_diagnostics(
         source=source,
         status="ok",
@@ -637,13 +638,13 @@ def _parse_original_date(
             logger.debug("failed to parse forwarded date: %s", date_str[:200])
         return ""
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
 
 
 def _extract_raw_body_text(message: Any, chars_max: int) -> str:
     text_parts: list[str] = []
-    remaining = chars_max if chars_max > 0 else 0
+    remaining = max(0, chars_max)
 
     def collect_text(part: Any) -> None:
         nonlocal remaining
@@ -696,9 +697,9 @@ def _normalize_mailbox_message(
         message,
         email_preview_body_chars_max=email_preview_body_chars_max,
     )
-    sender_list = _extract_addresses(message.get_all("From", []))
-    to_list = _extract_addresses(message.get_all("To", []))
-    cc_list = _extract_addresses(message.get_all("Cc", []))
+    sender_list = _extract_addresses(message, "From")
+    to_list = _extract_addresses(message, "To")
+    cc_list = _extract_addresses(message, "Cc")
     attachments = _extract_attachment_metadata(message)
     subject = _clean_header_value(message.get("Subject"))
 
@@ -873,8 +874,18 @@ def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
     return attachments
 
 
-def _extract_addresses(headers: list[str]) -> list[str]:
-    return [addr for _name, addr in getaddresses(headers) if addr]
+def _extract_addresses(message: Any, header_name: str) -> list[str]:
+    addresses: list[str] = []
+    for name, value in message.raw_items():
+        if name.lower() != header_name.lower():
+            continue
+        try:
+            header = message.policy.header_fetch_parse(name, value)
+            pairs = getaddresses([header])
+        except TypeError, ValueError, IndexError:
+            continue
+        addresses.extend(addr for _name, addr in pairs if addr)
+    return addresses
 
 
 def _normalize_message_date(value: Any) -> str:
@@ -887,9 +898,9 @@ def _normalize_message_date(value: Any) -> str:
         return ""
 
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
 
-    return parsed.astimezone(timezone.utc).isoformat()
+    return parsed.astimezone(UTC).isoformat()
 
 
 def _derive_mailbox_period(events: list[dict[str, Any]], loaded_at: str) -> str:
@@ -901,14 +912,14 @@ def _derive_mailbox_period(events: list[dict[str, Any]], loaded_at: str) -> str:
             parsed = datetime.fromisoformat(raw_date)
         except ValueError:
             continue
-        return parsed.astimezone(timezone.utc).strftime("%Y-%m")
+        return parsed.astimezone(UTC).strftime("%Y-%m")
 
     try:
         loaded_dt = datetime.fromisoformat(loaded_at)
     except ValueError:
-        loaded_dt = datetime.now(timezone.utc)
+        loaded_dt = datetime.now(UTC)
 
-    return loaded_dt.astimezone(timezone.utc).strftime("%Y-%m")
+    return loaded_dt.astimezone(UTC).strftime("%Y-%m")
 
 
 def _build_fallback_event_id(source_id: str, position: int, raw_message: bytes) -> str:
@@ -979,7 +990,7 @@ def _make_source_diagnostics(
         "processed_count": processed_count,
         "skipped_count": skipped_count,
         "malformed_count": malformed_count,
-        "loaded_at": loaded_at or datetime.now(timezone.utc).isoformat(),
+        "loaded_at": loaded_at or datetime.now(UTC).isoformat(),
     }
 
 
@@ -1084,7 +1095,7 @@ def load_json_batch(
         "malformed_count": 0,
         "mailbox_folder": None,
         "items_max": items_max,
-        "loaded_at": datetime.now(timezone.utc).isoformat(),
+        "loaded_at": datetime.now(UTC).isoformat(),
     }
 
     logger.info(
