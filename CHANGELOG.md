@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.2...beeagent-v0.49.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* tolerate malformed mailbox address headers ([#175](https://github.com/beesyst/beeagent/issues/175)) ([daf8b30](https://github.com/beesyst/beeagent/commit/daf8b301ed7c460a1d50a383fd24ea6eabd85403))
+
 ## [0.49.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.1...beeagent-v0.49.2) (2026-08-08)
 
 
