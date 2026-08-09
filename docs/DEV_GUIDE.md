@@ -28,6 +28,14 @@
 - Python 3.14+
 - `uv`
 
+## One-shot mailbox polling
+
+Production mailbox polling is a one-shot command: `./start.sh rop poll`.
+Its mutable UID checkpoint is `storage/interfaces/rop_mailbox_checkpoint.json`; it is
+runtime storage, not configuration or Git state. Use `./start.sh rop poll --rebaseline`
+only for explicit operator recovery. Scheduling belongs to an external systemd timer,
+not to a BeeAgent loop.
+
 ## Установка (dev)
 
 В корне модуля:

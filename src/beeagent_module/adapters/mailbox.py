@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import imaplib
+from contextlib import suppress
 from typing import Protocol, runtime_checkable
 
 
@@ -10,6 +11,19 @@ class MailboxAuthError(RuntimeError):
 
 class MailboxUnavailableError(RuntimeError):
     pass
+
+
+def _read_uidvalidity(client: imaplib.IMAP4) -> int:
+    response_name, data = client.response("UIDVALIDITY")
+    if str(response_name).upper() != "UIDVALIDITY" or not data or not data[0]:
+        raise MailboxUnavailableError("mailbox UIDVALIDITY unavailable")
+    try:
+        uidvalidity = int(data[0])
+    except (TypeError, ValueError) as exc:
+        raise MailboxUnavailableError("mailbox UIDVALIDITY invalid") from exc
+    if uidvalidity <= 0:
+        raise MailboxUnavailableError("mailbox UIDVALIDITY invalid")
+    return uidvalidity
 
 
 @runtime_checkable
@@ -69,12 +83,75 @@ class ImapReadonlyMailboxClient:
 
             return messages
         finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
+            self._logout(client)
 
-    def _connect(self):
+    def uid_state(self, folder: str) -> tuple[int, list[int]]:
+        client = self._login_and_select(folder)
+        try:
+            uidvalidity = _read_uidvalidity(client)
+            status, data = client.uid("SEARCH", "ALL")
+            if status != "OK":
+                raise MailboxUnavailableError("mailbox UID search failed")
+            raw_uids = data[0] if data else b""
+            if not isinstance(raw_uids, bytes):
+                raise MailboxUnavailableError("mailbox UID search returned invalid UID")
+            try:
+                uids = sorted(int(item) for item in raw_uids.split() if item)
+            except ValueError as exc:
+                raise MailboxUnavailableError(
+                    "mailbox UID search returned invalid UID"
+                ) from exc
+            if any(uid <= 0 for uid in uids):
+                raise MailboxUnavailableError("mailbox UID search returned invalid UID")
+            return uidvalidity, uids
+        finally:
+            self._logout(client)
+
+    def fetch_uids(
+        self,
+        folder: str,
+        uids: list[int],
+        *,
+        expected_uidvalidity: int,
+    ) -> list[bytes]:
+        client = self._login_and_select(folder)
+        try:
+            if _read_uidvalidity(client) != expected_uidvalidity:
+                raise MailboxUnavailableError("mailbox UIDVALIDITY changed during poll")
+            messages: list[bytes] = []
+            for uid in uids:
+                status, fetch_data = client.uid("FETCH", str(uid), "(BODY.PEEK[])")
+                if status != "OK":
+                    raise MailboxUnavailableError("mailbox UID fetch failed")
+                raw_message = _extract_rfc822(fetch_data)
+                if raw_message is None:
+                    raise MailboxUnavailableError(
+                        "mailbox UID fetch returned no payload"
+                    )
+                messages.append(raw_message)
+            return messages
+        finally:
+            self._logout(client)
+
+    def _login_and_select(self, folder: str) -> imaplib.IMAP4:
+        client = self._connect()
+        try:
+            client.login(self._username, self._password)
+        except imaplib.IMAP4.error as exc:
+            self._logout(client)
+            raise MailboxAuthError("mailbox authentication failed") from exc
+        status, _data = client.select(folder, readonly=True)
+        if status != "OK":
+            self._logout(client)
+            raise MailboxUnavailableError(f"mailbox folder select failed: {folder}")
+        return client
+
+    @staticmethod
+    def _logout(client: imaplib.IMAP4) -> None:
+        with suppress(imaplib.IMAP4.error, OSError):
+            client.logout()
+
+    def _connect(self) -> imaplib.IMAP4:
         client_cls = imaplib.IMAP4_SSL if self._use_ssl else imaplib.IMAP4
 
         try:

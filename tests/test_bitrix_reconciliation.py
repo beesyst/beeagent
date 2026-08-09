@@ -30,9 +30,9 @@ from beeagent_module.cases.rop_bitrix_reconciliation import (
     run_reconciliation,
 )
 from beeagent_module.core.cli import (
-    _build_review_tsv_rows,
     handle_rop_reconcile_bitrix,
 )
+from beeagent_module.core.rop_review_export import _build_review_tsv_rows
 from beeagent_module.core.settings import load_settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +76,7 @@ class _FakeHttpResponse:
     def __init__(self, body: bytes) -> None:
         self._body = body
 
-    def __enter__(self) -> "_FakeHttpResponse":
+    def __enter__(self) -> _FakeHttpResponse:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -358,12 +358,14 @@ class TestBitrixClient:
                 "error_description": "Forbidden",
             }
         ).encode("utf-8")
-        with patch(
-            "beeagent_module.adapters.bitrix_client.urlopen",
-            return_value=_FakeHttpResponse(body),
+        with (
+            patch(
+                "beeagent_module.adapters.bitrix_client.urlopen",
+                return_value=_FakeHttpResponse(body),
+            ),
+            pytest.raises(BitrixApiError),
         ):
-            with pytest.raises(BitrixApiError):
-                client.call("crm.item.fields", {"entityTypeId": 1})
+            client.call("crm.item.fields", {"entityTypeId": 1})
 
     def test_handles_http_403(self) -> None:
         client = BitrixReadonlyClient(
@@ -377,12 +379,14 @@ class TestBitrixClient:
             hdrs=Message(),
             fp=None,
         )
-        with patch(
-            "beeagent_module.adapters.bitrix_client.urlopen",
-            side_effect=error,
+        with (
+            patch(
+                "beeagent_module.adapters.bitrix_client.urlopen",
+                side_effect=error,
+            ),
+            pytest.raises(BitrixAuthError),
         ):
-            with pytest.raises(BitrixAuthError):
-                client.call("crm.item.list", {})
+            client.call("crm.item.list", {})
 
     def test_allowed_methods_contains_only_read_only(self) -> None:
         """Проверяем, что в allowlist нет write методов."""
@@ -416,24 +420,28 @@ class TestBitrixClient:
             webhook_url="https://test.bitrix24.kz/rest/1/token/",
             timeout=5,
         )
-        with patch(
-            "beeagent_module.adapters.bitrix_client.urlopen",
-            side_effect=URLError("timed out"),
+        with (
+            patch(
+                "beeagent_module.adapters.bitrix_client.urlopen",
+                side_effect=URLError("timed out"),
+            ),
+            pytest.raises(BitrixTimeoutError),
         ):
-            with pytest.raises(BitrixTimeoutError):
-                client.call("crm.item.list", {})
+            client.call("crm.item.list", {})
 
     def test_handles_malformed_response(self, fake_bitrix_env: None) -> None:
         client = BitrixReadonlyClient(
             webhook_url="https://test.bitrix24.kz/rest/1/token/",
             timeout=5,
         )
-        with patch(
-            "beeagent_module.adapters.bitrix_client.urlopen",
-            return_value=_FakeHttpResponse(b"{broken"),
+        with (
+            patch(
+                "beeagent_module.adapters.bitrix_client.urlopen",
+                return_value=_FakeHttpResponse(b"{broken"),
+            ),
+            pytest.raises(BitrixMalformedResponse),
         ):
-            with pytest.raises(BitrixMalformedResponse):
-                client.call("crm.item.list", {})
+            client.call("crm.item.list", {})
 
     def test_pagination_uses_next_and_pages_max(self) -> None:
         client = BitrixReadonlyClient(
