@@ -163,12 +163,14 @@ git push
 /opt/beeagent/
 ├── current -> /opt/beeagent/releases/<active-release>
 └── releases/
-    ├── <old-release>/
+    ├── <previous-release>/
     │   ├── beeagent/
+    │   │   ├── .env
+    │   │   └── storage -> /var/lib/beeagent/storage
     │   └── beeagent-rop/
     └── <new-release>/
         ├── beeagent/
-        │   ├── .env -> /var/lib/beeagent/shared/.env
+        │   ├── .env
         │   ├── storage -> /var/lib/beeagent/storage
         │   └── config/settings.yml
         └── beeagent-rop/
@@ -178,7 +180,6 @@ git push
 
 ```
 /var/lib/beeagent/
-├── shared/.env
 └── storage/
 ```
 
@@ -210,13 +211,13 @@ grep '^version = ' "$REL/beeagent/pyproject.toml"
 
 **Подготовить beeagent-rop**
 
-Если `beeagent-rop` изменялся и должен войти в release:
+Если `beeagent-rop` изменялся:
 
 ```
 git clone git@github-beeagent-rop-prod:beesyst/beeagent-rop.git "$REL/beeagent-rop"
 ```
 
-Если `beeagent-rop` не изменялся:
+Если не изменялся:
 
 ```
 cp -a /opt/beeagent/current/beeagent-rop "$REL/beeagent-rop"
@@ -230,11 +231,16 @@ uv sync --frozen
 uv run --frozen pytest -q
 ```
 
-**Копировать `.env` и подключить storage**
+**Скопировать production `.env` из текущего release**
 
 ```
-rm -f .env
-sudo install -o beeagent -g beeagent -m 0660 /var/lib/beeagent/shared/.env .env
+sudo install -o bee -g beeagent -m 0660 /opt/beeagent/current/beeagent/.env .env
+./start.sh auth-init
+```
+
+**Подключить persistent storage**
+
+```
 rm -rf storage
 ln -s /var/lib/beeagent/storage storage
 ```
@@ -243,13 +249,15 @@ ln -s /var/lib/beeagent/storage storage
 
 ```
 sudo chown -R beeagent:beeagent logs
-sudo chmod 0750 logs
+sudo chmod 2770 logs
+sudo chmod 0660 logs/app.log
 ```
 
 **Активировать новый release**
 
 ```
 sudo ln -sfn "/opt/beeagent/releases/$REL" /opt/beeagent/current
+readlink -f /opt/beeagent/current
 ```
 
 **Перезапустить BeeAgent**
@@ -259,7 +267,7 @@ sudo systemctl restart beeagent-web
 sudo systemctl status beeagent-web --no-pager
 ```
 
-Проверить:
+**Проверить**
 
 ```
 curl -fsS http://127.0.0.1:8000/health
@@ -274,6 +282,22 @@ curl -fsS https://rop.welding.kz/health
 sudo ln -sfn /opt/beeagent/releases/20260806-001 /opt/beeagent/current
 sudo systemctl restart beeagent-web
 curl -fsS https://rop.welding.kz/health
+```
+
+**Очистка старых releases**
+
+Посмотреть:
+
+```
+readlink -f /opt/beeagent/current
+ls -lah /opt/beeagent/releases
+```
+
+Удалить:
+
+```
+sudo rm -rf /opt/beeagent/releases/20260806-001
+ls -lah /opt/beeagent/releases
 ```
 
 ### Проверка PR соразработчика
