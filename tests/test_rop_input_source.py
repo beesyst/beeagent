@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from beeagent_module.core.input_source import (
+    InputSourceError,
     _extract_clean_subject,
     _extract_forwarded_wrapper_fields,
     _extract_transport_labels,
@@ -490,7 +491,7 @@ def test_load_mailbox_readonly_missing_credentials_degraded(
     monkeypatch.delenv("ROP_MAILBOX_USERNAME", raising=False)
     monkeypatch.delenv("ROP_MAIL_BOX_PASSWORD", raising=False)
 
-    with pytest.raises(RuntimeError, match="credentials missing") as exc_info:
+    with pytest.raises(InputSourceError, match="credentials missing") as exc_info:
         load_mailbox_readonly(
             source=_mailbox_source(),
             logger=_null_logger(),
@@ -499,7 +500,7 @@ def test_load_mailbox_readonly_missing_credentials_degraded(
         )
 
     exc = exc_info.value
-    assert getattr(exc, "diagnostics")["reason"] == "missing_credentials"
+    assert exc.diagnostics["reason"] == "missing_credentials"
 
 
 def test_load_mailbox_readonly_skips_malformed_message(
@@ -524,6 +525,83 @@ def test_load_mailbox_readonly_skips_malformed_message(
     assert diagnostics["skipped_count"] == 1
 
 
+def test_load_mailbox_readonly_keeps_message_with_crlf_from_address_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    malformed_from = (
+        b"From: =?utf-8?q?Synthetic=0D=0AName?= <broken@example.test>\r\n"
+        b"To: hotline@example.test\r\n"
+        b"Subject: Synthetic mailbox request\r\n"
+        b"Message-ID: <synthetic-malformed-from@example.test>\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Synthetic safe body."
+    )
+    events, _metadata, diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(items_max=5),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([malformed_from]),
+    )
+
+    assert len(events) == 1
+    assert events[0]["message_id"] == "<synthetic-malformed-from@example.test>"
+    assert events[0]["subject"] == "Synthetic mailbox request"
+    assert events[0]["body_preview"] == "Synthetic safe body."
+    assert events[0]["sender"] == ""
+    assert events[0]["to"] == ["hotline@example.test"]
+    assert diagnostics["fetched_count"] == 1
+    assert diagnostics["loaded_count"] == 1
+    assert diagnostics["malformed_count"] == 0
+
+
+def test_load_mailbox_readonly_keeps_valid_addresses_when_to_or_cc_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    malformed_recipients = (
+        b"From: sender@example.test\r\n"
+        b"To: =?utf-8?q?Synthetic=0D=0AName?= <broken@example.test>\r\n"
+        b"Cc: cc@example.test\r\n"
+        b"Subject: Synthetic mailbox request\r\n"
+        b"Message-ID: <synthetic-malformed-recipient@example.test>\r\n"
+        b"\r\n"
+        b"Synthetic safe body."
+    )
+    malformed_cc = (
+        b"From: sender@example.test\r\n"
+        b"To: recipient@example.test\r\n"
+        b"Cc: =?utf-8?q?Synthetic=0D=0AName?= <broken@example.test>\r\n"
+        b"Subject: Synthetic mailbox request\r\n"
+        b"Message-ID: <synthetic-malformed-cc@example.test>\r\n"
+        b"\r\n"
+        b"Synthetic safe body."
+    )
+
+    events, _metadata, diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            [malformed_recipients, malformed_cc]
+        ),
+    )
+
+    assert len(events) == 2
+    assert events[0]["sender"] == "sender@example.test"
+    assert events[0]["to"] == []
+    assert events[0]["cc"] == ["cc@example.test"]
+    assert events[1]["sender"] == "sender@example.test"
+    assert events[1]["to"] == ["recipient@example.test"]
+    assert events[1]["cc"] == []
+    assert diagnostics["loaded_count"] == 2
+    assert diagnostics["malformed_count"] == 0
+
+
 def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -541,7 +619,7 @@ def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
         "Content-Type: text/html; charset=utf-8\n"
         "\n"
         f"{long_html}"
-    ).encode("utf-8")
+    ).encode()
 
     events, _metadata, _diagnostics = load_mailbox_readonly(
         source=_mailbox_source(),
@@ -975,15 +1053,15 @@ class TestNormalizedEventFields:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
         monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
-            "From: test@example.com\n"
-            "To: hotline@example.com\n"
-            "Subject: RE: Simple reply\n"
-            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
-            "Message-ID: <reply@example.com>\n"
-            "Content-Type: text/plain\n"
-            "\n"
-            "Just a reply\n"
-        ).encode("utf-8")
+            b"From: test@example.com\n"
+            b"To: hotline@example.com\n"
+            b"Subject: RE: Simple reply\n"
+            b"Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            b"Message-ID: <reply@example.com>\n"
+            b"Content-Type: text/plain\n"
+            b"\n"
+            b"Just a reply\n"
+        )
 
         events, _metadata, _diagnostics = load_mailbox_readonly(
             source=_mailbox_source(),
@@ -1042,14 +1120,14 @@ class TestNormalizedEventFields:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
         monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
-            "From: test@example.com\n"
-            "To: hotline@example.com\n"
-            "Subject: No date header\n"
-            "Message-ID: <no-date@example.com>\n"
-            "Content-Type: text/plain\n"
-            "\n"
-            "Simple body\n"
-        ).encode("utf-8")
+            b"From: test@example.com\n"
+            b"To: hotline@example.com\n"
+            b"Subject: No date header\n"
+            b"Message-ID: <no-date@example.com>\n"
+            b"Content-Type: text/plain\n"
+            b"\n"
+            b"Simple body\n"
+        )
 
         events, _metadata, _diagnostics = load_mailbox_readonly(
             source=_mailbox_source(),
@@ -1071,15 +1149,15 @@ class TestNormalizedEventFields:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
         monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
-            "From: test@example.com\n"
-            "To: hotline@example.com\n"
-            "Subject: RE: Simple reply\n"
-            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
-            "Message-ID: <reply@example.com>\n"
-            "Content-Type: text/plain\n"
-            "\n"
-            "Just a reply\n"
-        ).encode("utf-8")
+            b"From: test@example.com\n"
+            b"To: hotline@example.com\n"
+            b"Subject: RE: Simple reply\n"
+            b"Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            b"Message-ID: <reply@example.com>\n"
+            b"Content-Type: text/plain\n"
+            b"\n"
+            b"Just a reply\n"
+        )
 
         events, _metadata, _diagnostics = load_mailbox_readonly(
             source=_mailbox_source(),
@@ -1104,24 +1182,24 @@ class TestNoRawEmlNoAttachmentNoSecrets:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
         monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
-            "From: test@example.com\n"
-            "To: hotline@example.com\n"
-            "Subject: Test\n"
-            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
-            "Message-ID: <test@example.com>\n"
-            "Content-Type: multipart/mixed; boundary=sep\n"
-            "\n"
-            "--sep\n"
-            "Content-Type: text/plain\n"
-            "\n"
-            "body\n"
-            "--sep\n"
-            "Content-Type: message/rfc822\n"
-            "Content-Disposition: attachment; filename=nested.eml\n"
-            "\n"
-            "nested data\n"
-            "--sep--\n"
-        ).encode("utf-8")
+            b"From: test@example.com\n"
+            b"To: hotline@example.com\n"
+            b"Subject: Test\n"
+            b"Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            b"Message-ID: <test@example.com>\n"
+            b"Content-Type: multipart/mixed; boundary=sep\n"
+            b"\n"
+            b"--sep\n"
+            b"Content-Type: text/plain\n"
+            b"\n"
+            b"body\n"
+            b"--sep\n"
+            b"Content-Type: message/rfc822\n"
+            b"Content-Disposition: attachment; filename=nested.eml\n"
+            b"\n"
+            b"nested data\n"
+            b"--sep--\n"
+        )
 
         events, _metadata, _diagnostics = load_mailbox_readonly(
             source=_mailbox_source(),
@@ -1155,15 +1233,15 @@ class TestNoRawEmlNoAttachmentNoSecrets:
         monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
         monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
         raw_message = (
-            "From: test@example.com\n"
-            "To: hotline@example.com\n"
-            "Subject: Test\n"
-            "Date: Thu, 08 May 2026 10:30:00 +0000\n"
-            "Message-ID: <test@example.com>\n"
-            "Content-Type: text/plain\n"
-            "\n"
-            "normal body\n"
-        ).encode("utf-8")
+            b"From: test@example.com\n"
+            b"To: hotline@example.com\n"
+            b"Subject: Test\n"
+            b"Date: Thu, 08 May 2026 10:30:00 +0000\n"
+            b"Message-ID: <test@example.com>\n"
+            b"Content-Type: text/plain\n"
+            b"\n"
+            b"normal body\n"
+        )
 
         events, _metadata, _diagnostics = load_mailbox_readonly(
             source=_mailbox_source(),
