@@ -250,7 +250,7 @@ ln -s /var/lib/beeagent/storage storage
 ```
 sudo chown -R beeagent:beeagent logs
 sudo chmod 2770 logs
-sudo chmod 0660 logs/app.log
+sudo install -o beeagent -g beeagent -m 0660 /dev/null logs/app.log
 ```
 
 **Активировать новый release**
@@ -274,6 +274,14 @@ curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://rop.welding.kz/health
 ```
 
+Перейти в:
+
+```
+cd /opt/beeagent/current/beeagent
+```
+
+В VS Code лучше сделать 'Developer: Reload Window'
+
 **Rollback**
 
 Если новый release не работает, вернуть предыдущий:
@@ -296,7 +304,7 @@ ls -lah /opt/beeagent/releases
 Удалить:
 
 ```
-sudo rm -rf /opt/beeagent/releases/20260806-001
+sudo rm -rf /opt/beeagent/releases/20260808-001
 ls -lah /opt/beeagent/releases
 ```
 
