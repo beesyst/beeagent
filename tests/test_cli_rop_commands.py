@@ -11,7 +11,6 @@ import pytest
 from beeagent_module.core.cli import (
     RopCliError,
     _apply_source_overrides,
-    _tsv_columns,
     _validate_mailbox_env_for_sources,
     create_rop_parser,
     handle_rop_dashboard,
@@ -21,6 +20,7 @@ from beeagent_module.core.cli import (
     handle_rop_run,
     handle_rop_summary,
 )
+from beeagent_module.core.rop_review_export import review_tsv_columns
 from beeagent_module.core.settings import load_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
@@ -88,6 +88,18 @@ class TestRopCliArgumentParser:
         assert args.rop_command == "run"
         assert args.source_id is None
         assert args.all_sources is True
+
+    def test_rop_poll_parser_defaults_rebaseline_false(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["poll"])
+        assert args.rop_command == "poll"
+        assert args.rebaseline is False
+
+    def test_rop_poll_parser_accepts_rebaseline_flag(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["poll", "--rebaseline"])
+        assert args.rop_command == "poll"
+        assert args.rebaseline is True
 
     def test_rop_summary_parser_requires_run_id(self) -> None:
         parser = create_rop_parser()
@@ -339,7 +351,7 @@ class TestRopCliRun:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
-        assert reader.fieldnames == _tsv_columns()
+        assert reader.fieldnames == review_tsv_columns()
         assert len(rows) == 1
 
         classified_events = json.loads(classified_path.read_text(encoding="utf-8"))
@@ -646,9 +658,9 @@ class TestRopCliExportReview:
         header = tsv_path.read_text(encoding="utf-8").splitlines()[0]
         assert "\t" in header
         assert "," not in header
-        assert header.split("\t") == _tsv_columns()
+        assert header.split("\t") == review_tsv_columns()
 
-        expected_cols = _tsv_columns()
+        expected_cols = review_tsv_columns()
         assert set(row.keys()) == set(expected_cols)
 
     def test_apply_source_overrides_disabled_source_raises_error(self) -> None:
@@ -769,7 +781,7 @@ class TestRopCliExportReview:
 
 class TestRopTsvEnriched:
     def test_tsv_columns_order_has_67_fields(self) -> None:
-        columns = _tsv_columns()
+        columns = review_tsv_columns()
         assert len(columns) == 67
         expected_order = [
             "event_id",

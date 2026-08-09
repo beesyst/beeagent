@@ -310,6 +310,7 @@ run:
 
 # ROP CLI для batch pipeline
 ./start.sh rop run [--source-id SOURCE | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id ID]
+./start.sh rop poll [--rebaseline]
 ./start.sh rop summary --run-id ID
 ./start.sh rop export-review --run-id ID [--format tsv]
 ./start.sh rop evaluate-review --run-id ID
@@ -549,6 +550,19 @@ web:
 Для запуска ROP flow без Telegram можно использовать CLI:
 
 ```
+# Ручной controlled latest-N/backfill путь. Он не использует checkpoint.
+./start.sh rop run --source-id hotline_mailbox --items-max 20
+
+# Production one-shot polling: только UID новее persistent checkpoint.
+./start.sh rop poll
+
+# Явное recovery при UIDVALIDITY change или повреждённом checkpoint.
+./start.sh rop poll --rebaseline
+
+# Checkpoint: storage/interfaces/rop_mailbox_checkpoint.json.
+# Первый poll создаёт baseline на текущем highest UID и не обрабатывает историю.
+# Периодичность задаётся внешним systemd timer, не BeeAgent loop.
+
 # Запустить ROP batch через default enabled source из config/settings.yml.
 # Сейчас это может быть hotline_mailbox, если он включён в rop.sources.
 ./start.sh rop run --items-max 20 --period 2026-05
@@ -1245,9 +1259,10 @@ Safe deterministic ignore может быть сохранён как `low_confi
 Risky/conflict cases могут перейти в `manual_review_degrade`.
 Write-back в этом path не выполняется.
 
-`mailbox_readonly` используется только для read-only smoke:
+`mailbox_readonly` используется для controlled read-only ingestion:
 
-- fetch latest N messages;
+- manual latest-N через `rop run`;
+- one-shot only-new UID processing через `rop poll`;
 - no delete;
 - no archive;
 - no reply;

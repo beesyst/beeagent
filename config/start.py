@@ -16,6 +16,7 @@ from beeagent_module.core.cli import (
     handle_rop_mvp_pack,
     handle_rop_recommendations,
     handle_rop_reconcile_bitrix,
+    handle_rop_poll,
     handle_rop_run,
     handle_rop_summary,
 )
@@ -151,6 +152,8 @@ def _handle_rop_cli(
 
         if args.rop_command == "run":
             handle_rop_run(args, settings=settings, logger=logger)
+        elif args.rop_command == "poll":
+            handle_rop_poll(args, settings=settings, logger=logger)
         elif args.rop_command == "summary":
             handle_rop_summary(args, logger=logger)
         elif args.rop_command == "export-review":

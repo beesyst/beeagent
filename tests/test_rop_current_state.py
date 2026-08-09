@@ -631,7 +631,7 @@ class TestCliCurrentStatePostHooks:
         )
         monkeypatch.setattr(
             cli_module,
-            "_export_review_tsv_for_run",
+            "export_review_tsv_for_run",
             fake_export_review_tsv_for_run,
         )
         monkeypatch.setattr(

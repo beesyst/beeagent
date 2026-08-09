@@ -72,6 +72,9 @@ modules:
   registry: []
 
 rop:
+  mailbox_poll:
+    enabled: false
+    source_id: "hotline"
   email_preview:
     body_chars_max: 4000
   attachments:
@@ -278,6 +281,9 @@ modules:
   registry: []
 
 rop:
+  mailbox_poll:
+    enabled: false
+    source_id: "hotline"
   email_preview:
     body_chars_max: 4000
   attachments:
@@ -472,6 +478,9 @@ modules:
   registry: []
 
 rop:
+  mailbox_poll:
+    enabled: false
+    source_id: "hotline"
   email_preview:
     body_chars_max: 4000
   attachments:
@@ -678,6 +687,9 @@ modules:
   registry: []
 
 rop:
+  mailbox_poll:
+    enabled: false
+    source_id: "hotline"
   email_preview:
     body_chars_max: 4000
   attachments:

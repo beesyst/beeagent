@@ -74,6 +74,9 @@ modules:
       enabled: true # true/false - включить/выключить загрузку модуля
 
 rop:
+  mailbox_poll:
+    enabled: true
+    source_id: "hotline_mailbox"
   email_preview:
     body_chars_max: 4000
   ai_assist:
@@ -159,7 +162,7 @@ bitrix:
     - 3
     - 4
   reconciliation:
-    enabled: false # true/false - включить/выключить reconciliation по умолчанию
+    enabled: true # true/false - включить/выключить reconciliation по умолчанию
     candidate_limit: 20 # максимальное число кандидатов на одно событие
     window_date: 180 # окно поиска по дате события (дней назад)
   widget:
