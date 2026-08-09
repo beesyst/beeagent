@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.3...beeagent-v0.50.0) (2026-08-09)
+
+
+### Features
+
+* add ROP mailbox UID checkpoint polling ([#177](https://github.com/beesyst/beeagent/issues/177)) ([79ccc59](https://github.com/beesyst/beeagent/commit/79ccc598668df33f863f7ba983d8e70b4860d5d4))
+
 ## [0.49.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.2...beeagent-v0.49.3) (2026-08-09)
 
 
