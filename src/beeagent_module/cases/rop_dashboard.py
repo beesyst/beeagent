@@ -740,11 +740,29 @@ def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
 
 
 def _list_run_ids(runs_dir: Path) -> list[str]:
-    return sorted(
-        (d.name for d in runs_dir.iterdir() if d.is_dir()),
-        key=lambda n: (runs_dir / n).stat().st_mtime,
-        reverse=True,
-    )
+    def run_order_key(run_dir: Path) -> tuple[float, str]:
+        current_state = _read_json_dict(run_dir / "rop_current_state.json")
+        generated_at = (
+            current_state.get("generated_at_utc")
+            if isinstance(current_state, dict)
+            else None
+        )
+        timestamp = _parse_iso(generated_at if isinstance(generated_at, str) else None)
+        if timestamp is not None:
+            return timestamp.timestamp(), run_dir.name
+        try:
+            return run_dir.stat().st_mtime, run_dir.name
+        except OSError:
+            return float("-inf"), run_dir.name
+
+    return [
+        run_dir.name
+        for run_dir in sorted(
+            (d for d in runs_dir.iterdir() if d.is_dir()),
+            key=run_order_key,
+            reverse=True,
+        )
+    ]
 
 
 def _list_rop_run_ids(runs_dir: Path) -> list[str]:
@@ -885,8 +903,13 @@ def _aggregate_period_events(
         )
         return result
 
+    ordered_run_ids = _list_run_ids(runs_dir)
+    if anchor_run_id in ordered_run_ids:
+        ordered_run_ids.remove(anchor_run_id)
+    ordered_run_ids.insert(0, anchor_run_id)
+
     winners: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for candidate_run_id in _list_run_ids(runs_dir):
+    for candidate_run_id in ordered_run_ids:
         candidate_dir = runs_dir / candidate_run_id
         source_diag = _read_json_dict(candidate_dir / "source_diagnostics.json")
         intake = _read_json_dict(candidate_dir / "intake_metadata.json")

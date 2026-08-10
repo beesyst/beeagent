@@ -910,6 +910,113 @@ class TestCrossRunPeriodAggregation:
         assert dashboard["run_id"] == "test-dashboard-run"
         assert dashboard["business_kpi"]["processed_events"] == 3
 
+    def test_explicit_anchor_wins_duplicate_with_tied_directory_mtimes(
+        self, run_dir: Path
+    ) -> None:
+        anchor = _copy_run(run_dir, "anchor-run")
+        old_normalized = json.loads((run_dir / "normalized_events.json").read_text())
+        old_normalized[0]["message_id"] = "<tied@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_normalized))
+        old_classified = json.loads((run_dir / "classified_events.json").read_text())
+        old_classified[0]["priority"] = "low"
+        (run_dir / "classified_events.json").write_text(json.dumps(old_classified))
+
+        anchor_normalized = json.loads(
+            (anchor / "normalized_events.json").read_text()
+        )
+        anchor_classified = json.loads(
+            (anchor / "classified_events.json").read_text()
+        )
+        anchor_normalized[:] = [
+            {
+                **anchor_normalized[0],
+                "event_id": "evt-tied",
+                "message_id": "<tied@example.test>",
+            }
+        ]
+        anchor_classified[:] = [
+            {
+                **anchor_classified[0],
+                "event_id": "evt-tied",
+                "priority": "high",
+                "case_type": "new_lead",
+            }
+        ]
+        (anchor / "normalized_events.json").write_text(json.dumps(anchor_normalized))
+        (anchor / "classified_events.json").write_text(json.dumps(anchor_classified))
+        anchor_reconciliation = json.loads(
+            (anchor / "bitrix_reconciliation.json").read_text()
+        )
+        anchor_reconciliation["items"] = [
+            {"event_id": "evt-tied", "bitrix_match_status": "matched_lead"}
+        ]
+        (anchor / "bitrix_reconciliation.json").write_text(
+            json.dumps(anchor_reconciliation)
+        )
+
+        tied_mtime = 1_700_000_000
+        os.utime(run_dir, (tied_mtime, tied_mtime))
+        os.utime(anchor, (tied_mtime, tied_mtime))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "anchor-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 1
+        tied_events = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-tied"
+        ]
+        assert len(tied_events) == 1
+        assert tied_events[0]["run_id"] == "anchor-run"
+        assert tied_events[0]["priority"] == "high"
+        assert tied_events[0]["case_type"] == "new_lead"
+
+    def test_default_rop_anchor_uses_logical_timestamp_with_tied_directory_mtimes(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        for path, generated_at in (
+            (run_dir, "2026-01-01T00:00:00Z"),
+            (newest, "2026-01-02T00:00:00Z"),
+        ):
+            current_state = json.loads((path / "rop_current_state.json").read_text())
+            current_state["generated_at_utc"] = generated_at
+            (path / "rop_current_state.json").write_text(json.dumps(current_state))
+            os.utime(path, (1_700_000_000, 1_700_000_000))
+
+        non_rop = run_dir.parents[1] / "runs" / "non-rop-latest"
+        non_rop.mkdir()
+        os.utime(non_rop, (1_800_000_000, 1_800_000_000))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1], "all", _null_logger(), aggregate_runs=True
+        )
+
+        assert dashboard["run_id"] == "newest-run"
+
+    def test_default_rop_anchor_uses_run_id_tiebreak_when_timestamps_match(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        for path in (run_dir, newest):
+            current_state = json.loads((path / "rop_current_state.json").read_text())
+            current_state["generated_at_utc"] = "2026-01-01T00:00:00Z"
+            (path / "rop_current_state.json").write_text(json.dumps(current_state))
+            os.utime(path, (1_700_000_000, 1_700_000_000))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1], "all", _null_logger(), aggregate_runs=True
+        )
+
+        assert dashboard["run_id"] == "test-dashboard-run"
+
 
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
