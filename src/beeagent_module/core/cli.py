@@ -167,6 +167,7 @@ def handle_rop_run(
                 period=_dashboard_default_period(settings),
                 logger=logger,
                 run_id=effective_run_id,
+                aggregate_runs=True,
             )
             write_rop_dashboard(
                 storage_dir=storage_dir,
@@ -333,6 +334,7 @@ def handle_rop_reconcile_bitrix(
                 period=_dashboard_default_period(settings),
                 logger=logger,
                 run_id=run_id,
+                aggregate_runs=True,
             )
             write_rop_dashboard(
                 storage_dir=storage_dir,
@@ -812,6 +814,7 @@ def handle_rop_recommendations(
                 period=_dashboard_default_period(settings),
                 logger=logger,
                 run_id=run_id,
+                aggregate_runs=True,
             )
             write_rop_dashboard(
                 storage_dir=storage_dir,
@@ -884,6 +887,7 @@ def handle_rop_current(
                 period=_dashboard_default_period(settings),
                 logger=logger,
                 run_id=run_id,
+                aggregate_runs=True,
             )
             write_rop_dashboard(
                 storage_dir=storage_dir,
@@ -937,6 +941,7 @@ def handle_rop_dashboard(
             period=period,
             logger=logger,
             run_id=run_id,
+            aggregate_runs=run_id is None,
         )
 
         path = write_rop_dashboard(

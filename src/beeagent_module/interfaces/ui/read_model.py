@@ -11,6 +11,7 @@ from beeagent_module.cases.rop_dashboard import (
     ALLOWED_BITRIX_STATUSES,
     ALLOWED_QUEUE_IDS,
     DEFAULT_PAGE_SIZE,
+    _list_rop_run_ids,
     apply_queue_filters,
     build_rop_dashboard,
     paginate_items,
@@ -942,7 +943,7 @@ def _canonical_queue_rows(
         (queue_filter,) if queue_filter in ALLOWED_QUEUE_IDS else ALLOWED_QUEUE_IDS
     )
     rows: list[dict[str, Any]] = []
-    seen_event_ids: set[str] = set()
+    seen_identities: set[tuple[str, str, str]] = set()
     for queue_id in queue_ids:
         source_rows = queues.get(queue_id, [])
         if not isinstance(source_rows, list):
@@ -951,10 +952,15 @@ def _canonical_queue_rows(
             if not isinstance(item, dict):
                 continue
             event_id = str(item.get("event_id", ""))
-            if event_id and event_id in seen_event_ids:
+            identity = (
+                str(item.get("run_id") or ""),
+                str(item.get("source_id") or ""),
+                event_id,
+            )
+            if event_id and identity in seen_identities:
                 continue
             if event_id:
-                seen_event_ids.add(event_id)
+                seen_identities.add(identity)
             rows.append(item)
 
     if rows or queue_filter in ALLOWED_QUEUE_IDS:
@@ -1935,9 +1941,10 @@ def build_rop_dashboard_read_model(
 
     run_ids = _list_run_ids(runs_dir)
     if run_id is None:
-        if not run_ids:
+        rop_run_ids = _list_rop_run_ids(runs_dir)
+        if not rop_run_ids:
             return {"error": "no_runs", "message": "No runs found"}
-        run_id = run_ids[0]
+        run_id = rop_run_ids[0]
 
     run_dir, error = _resolve_run_dir(storage_dir, run_id)
     if run_dir is None:
@@ -2186,6 +2193,7 @@ def build_rop_dashboard_read_model(
                 period=effective_period,
                 logger=logging.getLogger("beeagent.ui.rop_dashboard"),
                 run_id=run_id,
+                aggregate_runs=True,
             )
         except ValueError:
             warnings.append(
@@ -2869,7 +2877,7 @@ def _collect_priority_queue_preview(
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str, str]] = set()
     for bucket in ALLOWED_QUEUE_IDS:
         items = queues.get(bucket, [])
         if not isinstance(items, list):
@@ -2878,10 +2886,15 @@ def _collect_priority_queue_preview(
             if not isinstance(item, dict):
                 continue
             event_id = str(item.get("event_id", ""))
-            if event_id and event_id in seen:
+            identity = (
+                str(item.get("run_id") or run_id or ""),
+                str(item.get("source_id") or ""),
+                event_id,
+            )
+            if event_id and identity in seen:
                 continue
             if event_id:
-                seen.add(event_id)
+                seen.add(identity)
             subject = item.get("subject") or (
                 f"{t('Lead event', locale)} {event_id}"
                 if event_id
@@ -2895,9 +2908,10 @@ def _collect_priority_queue_preview(
             )
             priority = item.get("bot_priority") or item.get("priority") or bucket
             next_step = item.get("recommended_next_step") or t("Open Queue", locale)
+            item_run_id = str(item.get("run_id") or run_id)
             detail_href = (
-                _rop_event_detail_href(event_id, run_id, locale, current_period)
-                if event_id and run_id
+                _rop_event_detail_href(event_id, item_run_id, locale, current_period)
+                if event_id and item_run_id
                 else _rop_href(
                     tab="queue", period=current_period, locale=locale, run_id=run_id
                 )
@@ -3082,7 +3096,8 @@ def _build_rop_overview_layout(
     if current_period == "today":
         todays_emails = period_emails
 
-    action_event_ids: set[str] = set()
+    action_event_ids: set[tuple[str, str, str]] = set()
+    anchor_run_id = str(data.get("run_id", ""))
 
     for queue_id in ALLOWED_QUEUE_IDS:
         queue_items = queues.get(queue_id, [])
@@ -3095,7 +3110,13 @@ def _build_rop_overview_layout(
 
             event_id = str(item.get("event_id", "")).strip()
             if event_id:
-                action_event_ids.add(event_id)
+                action_event_ids.add(
+                    (
+                        str(item.get("run_id") or anchor_run_id or ""),
+                        str(item.get("source_id") or ""),
+                        event_id,
+                    )
+                )
 
     action_required_count = len(action_event_ids)
     action_required_ratio = int(
@@ -3806,10 +3827,11 @@ def _queue_table(
             _format_date_display(raw_date, locale) if raw_date else t("n/a", locale)
         )
         detail_href = item.get("detail_href")
-        if event_id and run_id:
+        item_run_id = str(item.get("run_id") or run_id)
+        if event_id and item_run_id:
             detail_href = _rop_event_detail_href(
                 event_id,
-                run_id,
+                item_run_id,
                 locale,
                 current_period,
                 filter_params,
@@ -4276,26 +4298,23 @@ def _build_rop_bitrix_layout(
         if isinstance(link, dict)
     )
 
+    anchor_bitrix_notice: dict[str, Any] | None = None
     if not bitrix_available:
-        return [
-            {
-                "type": "state_grid",
-                "size": "XL",
-                "title": t("Bitrix Evidence Board", locale),
-                "items": [
-                    {
-                        "label": t("Not reconciled", locale),
-                        "value": (
-                            t(
-                                "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.",
-                                locale,
-                            )
-                        ),
-                        "status": "read-only",
-                    }
-                ],
-            }
-        ]
+        anchor_bitrix_notice = {
+            "type": "state_grid",
+            "size": "XL",
+            "title": t("Bitrix Evidence Board", locale),
+            "items": [
+                {
+                    "label": t("Not reconciled", locale),
+                    "value": t(
+                        "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.",
+                        locale,
+                    ),
+                    "status": "read-only",
+                }
+            ],
+        }
 
     ambiguous_count = _int(current_state_kpi.get("ambiguous_in_bitrix", 0))
     if "bitrix_errors" in business_kpi:
@@ -4344,6 +4363,9 @@ def _build_rop_bitrix_layout(
             ],
         }
     ]
+
+    if anchor_bitrix_notice is not None:
+        layout.append(anchor_bitrix_notice)
 
     queue_specs = [
         ("lost_in_bitrix", t("Lost in Bitrix", locale)),

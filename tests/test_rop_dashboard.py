@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -39,12 +40,883 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _copy_run(source: Path, name: str) -> Path:
+    target = source.parent / name
+    shutil.copytree(source, target)
+    return target
+
+
+class TestCrossRunPeriodAggregation:
+    def test_aggregates_same_client_runs_and_preserves_origin(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-new",
+                "source_id": "new-source",
+                "priority": "high",
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-new",
+                "source_id": "new-source",
+                "message_id": "<new@example.test>",
+            }
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1], "7d", _null_logger(), "newest-run", aggregate_runs=True
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 4
+        assert {item["run_id"] for item in dashboard["queues"]["high_priority"]} == {
+            "test-dashboard-run",
+            "newest-run",
+        }
+        assert all(
+            item["evidence_href"]
+            == f"/runs/{item['run_id']}/artifacts/classified_events_json"
+            for item in dashboard["queues"]["high_priority"]
+        )
+
+    def test_deduplicates_newest_message_and_isolates_client(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        other = _copy_run(run_dir, "other-client-run")
+        old_normalized = json.loads((run_dir / "normalized_events.json").read_text())
+        old_normalized[0]["message_id"] = "<same@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_normalized))
+        new_normalized = json.loads((newest / "normalized_events.json").read_text())
+        new_classified = json.loads((newest / "classified_events.json").read_text())
+        new_normalized[:] = [
+            {
+                **new_normalized[0],
+                "event_id": "evt-new",
+                "message_id": "<same@example.test>",
+            }
+        ]
+        new_classified[:] = [
+            {**new_classified[0], "event_id": "evt-new", "priority": "low"}
+        ]
+        (newest / "normalized_events.json").write_text(json.dumps(new_normalized))
+        (newest / "classified_events.json").write_text(json.dumps(new_classified))
+        other_source = json.loads((other / "source_diagnostics.json").read_text())
+        for source in other_source["sources"]:
+            source["client_id"] = "other-client"
+        (other / "source_diagnostics.json").write_text(json.dumps(other_source))
+        other_state = json.loads((other / "rop_current_state.json").read_text())
+        other_state["client_id"] = "other-client"
+        (other / "rop_current_state.json").write_text(json.dumps(other_state))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1], "all", _null_logger(), "newest-run", aggregate_runs=True
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        assert {item["run_id"] for item in dashboard["queues"]["high_priority"]} == {
+            "test-dashboard-run"
+        }
+
+    def test_aggregate_only_attachment_counters_do_not_fan_out(
+        self, run_dir: Path
+    ) -> None:
+        for run in (
+            run_dir,
+            _copy_run(run_dir, "newest-run"),
+            _copy_run(run_dir, "oldest-run"),
+        ):
+            attachment_path = run / "attachment_extraction.json"
+            attachment = json.loads(attachment_path.read_text(encoding="utf-8"))
+            attachment["items"] = []
+            attachment["aggregate"]["refused_count"] = 1
+            attachment["aggregate"]["blocked_count"] = 0
+            attachment_path.write_text(json.dumps(attachment), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["attachment_refused"] == 0
+        unscoped = [
+            w
+            for w in dashboard["warnings"]
+            if w.get("code") == "attachment_aggregate_unscoped"
+        ]
+        assert unscoped
+        assert all(w.get("run_id") for w in unscoped)
+        assert all(w.get("artifact") == "attachment_extraction.json" for w in unscoped)
+
+    def test_malformed_optional_artifacts_warn_and_are_ignored(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        (newest / "bitrix_reconciliation.json").write_text(
+            "{bad json", encoding="utf-8"
+        )
+        (newest / "attachment_extraction.json").write_text("not-json", encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "7d",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["status"] == "ok"
+        malformed = [
+            w
+            for w in dashboard["warnings"]
+            if w.get("code") == "malformed_optional_artifact"
+        ]
+        assert {w.get("artifact") for w in malformed} == {
+            "bitrix_reconciliation.json",
+            "attachment_extraction.json",
+        }
+        assert all(w.get("run_id") == "newest-run" for w in malformed)
+
+    def test_same_event_id_different_source_does_not_collapse(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[2],
+                "event_id": "evt-003",
+                "source_id": "second_mailbox",
+                "priority": "high",
+                "is_fallback": True,
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[2],
+                "event_id": "evt-003",
+                "source_id": "second_mailbox",
+            }
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 4
+        hp_ids = {
+            (item["event_id"], item["source_id"])
+            for item in dashboard["queues"]["high_priority"]
+        }
+        assert ("evt-003", "hotline_mailbox") in hp_ids
+        assert ("evt-003", "second_mailbox") in hp_ids
+        nr_ids = [
+            (item["event_id"], item["source_id"])
+            for item in dashboard["queues"]["needs_review"]
+        ]
+        assert ("evt-003", "hotline_mailbox") in nr_ids
+        assert ("evt-003", "second_mailbox") in nr_ids
+
+    def test_old_run_excluded_from_7d_included_in_all(self, run_dir: Path) -> None:
+        old = _copy_run(run_dir, "old-run")
+        old_ts = (
+            (datetime.now(UTC) - timedelta(days=30)).replace(microsecond=0).isoformat()
+        )
+        for artifact_name in ("normalized_events.json", "classified_events.json"):
+            path = old / artifact_name
+            events = json.loads(path.read_text(encoding="utf-8"))
+            for idx, event in enumerate(events):
+                event["event_id"] = f"old-{idx}"
+                event["event_date"] = old_ts
+            path.write_text(json.dumps(events), encoding="utf-8")
+
+        seven_day = build_rop_dashboard(
+            run_dir.parents[1],
+            "7d",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+        all_period = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+
+        assert seven_day["business_kpi"]["processed_events"] == 3
+        assert all_period["business_kpi"]["processed_events"] == 6
+
+    def test_unknown_anchor_client_scope_retains_anchor_data_and_warns(
+        self, run_dir: Path
+    ) -> None:
+        state_path = run_dir / "rop_current_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["client_id"] = "unknown"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        source_path = run_dir / "source_diagnostics.json"
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        for s in source["sources"]:
+            s["client_id"] = "unknown"
+        source_path.write_text(json.dumps(source), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "7d",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        assert any(
+            w.get("code") == "unknown_client_scope" for w in dashboard["warnings"]
+        )
+
+    def test_newest_duplicate_wins_with_newest_values(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_normalized = json.loads((run_dir / "normalized_events.json").read_text())
+        old_normalized[0]["message_id"] = "<dup@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_normalized))
+        old_classified = json.loads((run_dir / "classified_events.json").read_text())
+        old_classified[0]["priority"] = "low"
+        old_classified[0]["case_type"] = "existing_deal"
+        (run_dir / "classified_events.json").write_text(json.dumps(old_classified))
+
+        new_normalized = json.loads((newest / "normalized_events.json").read_text())
+        new_classified = json.loads((newest / "classified_events.json").read_text())
+        new_normalized[:] = [
+            {
+                **new_normalized[0],
+                "event_id": "evt-dup",
+                "message_id": "<dup@example.test>",
+            }
+        ]
+        new_classified[:] = [
+            {
+                **new_classified[0],
+                "event_id": "evt-dup",
+                "priority": "high",
+                "case_type": "new_lead",
+            }
+        ]
+        (newest / "normalized_events.json").write_text(json.dumps(new_normalized))
+        (newest / "classified_events.json").write_text(json.dumps(new_classified))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        high_ids = {
+            (item["event_id"], item["run_id"])
+            for item in dashboard["queues"]["high_priority"]
+        }
+        assert ("evt-dup", "newest-run") in high_ids
+        assert not any(
+            item["event_id"] == "evt-001"
+            for item in dashboard["queues"]["high_priority"]
+        )
+
+    def test_bitrix_cross_run_matched_and_not_found(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-001",
+                "source_id": "rop_batch_sample",
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-001",
+                "source_id": "rop_batch_sample",
+            }
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        recon_path = newest / "bitrix_reconciliation.json"
+        recon = json.loads(recon_path.read_text(encoding="utf-8"))
+        recon["items"] = [
+            {"event_id": "evt-001", "bitrix_match_status": "matched_lead"}
+        ]
+        recon_path.write_text(json.dumps(recon), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 1
+        assert dashboard["business_kpi"]["lost_in_bitrix"] == 1
+        assert [item["event_id"] for item in dashboard["queues"]["matched"]] == [
+            "evt-001"
+        ]
+        assert [item["event_id"] for item in dashboard["queues"]["lost_in_bitrix"]] == [
+            "evt-002"
+        ]
+
+    def test_duplicate_bitrix_winner_newest_matched_wins(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_normalized = json.loads((run_dir / "normalized_events.json").read_text())
+        old_normalized[0]["message_id"] = "<bx-dup@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_normalized))
+        old_recon_path = run_dir / "bitrix_reconciliation.json"
+        old_recon = json.loads(old_recon_path.read_text(encoding="utf-8"))
+        old_recon["items"][0]["bitrix_match_status"] = "ambiguous"
+        old_recon_path.write_text(json.dumps(old_recon), encoding="utf-8")
+
+        new_normalized = json.loads((newest / "normalized_events.json").read_text())
+        new_classified = json.loads((newest / "classified_events.json").read_text())
+        new_normalized[:] = [
+            {
+                **new_normalized[0],
+                "event_id": "evt-bxdup",
+                "message_id": "<bx-dup@example.test>",
+            }
+        ]
+        new_classified[:] = [{**new_classified[0], "event_id": "evt-bxdup"}]
+        (newest / "normalized_events.json").write_text(json.dumps(new_normalized))
+        (newest / "classified_events.json").write_text(json.dumps(new_classified))
+        new_recon_path = newest / "bitrix_reconciliation.json"
+        new_recon = json.loads(new_recon_path.read_text(encoding="utf-8"))
+        new_recon["items"] = [
+            {"event_id": "evt-bxdup", "bitrix_match_status": "matched_lead"}
+        ]
+        new_recon_path.write_text(json.dumps(new_recon), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 1
+        assert dashboard["business_kpi"]["ambiguous_or_duplicate"] == 0
+        assert [item["event_id"] for item in dashboard["queues"]["matched"]] == [
+            "evt-bxdup"
+        ]
+        assert dashboard["queues"]["ambiguous"] == []
+
+    def test_attachment_items_attach_only_to_canonical_winner(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_normalized = json.loads((run_dir / "normalized_events.json").read_text())
+        old_normalized[0]["message_id"] = "<att-dup@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_normalized))
+        old_att_path = run_dir / "attachment_extraction.json"
+        old_att = json.loads(old_att_path.read_text(encoding="utf-8"))
+        old_att["items"] = [
+            {
+                "event_id": "evt-001",
+                "source_id": "rop_batch_sample",
+                "filename": "old.pdf",
+                "extraction_status": "refused",
+                "is_refused": True,
+            }
+        ]
+        old_att_path.write_text(json.dumps(old_att), encoding="utf-8")
+
+        new_normalized = json.loads((newest / "normalized_events.json").read_text())
+        new_classified = json.loads((newest / "classified_events.json").read_text())
+        new_normalized[:] = [
+            {
+                **new_normalized[0],
+                "event_id": "evt-att",
+                "message_id": "<att-dup@example.test>",
+            }
+        ]
+        new_classified[:] = [{**new_classified[0], "event_id": "evt-att"}]
+        (newest / "normalized_events.json").write_text(json.dumps(new_normalized))
+        (newest / "classified_events.json").write_text(json.dumps(new_classified))
+        att_path = newest / "attachment_extraction.json"
+        att = json.loads(att_path.read_text(encoding="utf-8"))
+        att["items"] = [
+            {
+                "event_id": "evt-att",
+                "source_id": "rop_batch_sample",
+                "filename": "new.pdf",
+                "extraction_status": "refused",
+                "is_refused": True,
+            }
+        ]
+        att_path.write_text(json.dumps(att), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        assert dashboard["business_kpi"]["attachment_refused"] == 1
+
+    def test_degraded_run_excluded_from_aggregate(self, run_dir: Path) -> None:
+        degraded = _copy_run(run_dir, "degraded-run")
+        classified = json.loads((degraded / "classified_events.json").read_text())
+        normalized = json.loads((degraded / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-degraded",
+                "source_id": "rop_batch_sample",
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-degraded",
+                "source_id": "rop_batch_sample",
+            }
+        ]
+        (degraded / "classified_events.json").write_text(json.dumps(classified))
+        (degraded / "normalized_events.json").write_text(json.dumps(normalized))
+        summary_path = degraded / "operator_summary.json"
+        summary_path.write_text(
+            json.dumps({"status": "error", "module_status": "ok"}),
+            encoding="utf-8",
+        )
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        assert any(
+            w.get("code") == "incomplete_run_skipped"
+            and w.get("run_id") == "degraded-run"
+            for w in dashboard["warnings"]
+        )
+
+    def test_fallback_identity_uses_event_id_without_message_ids(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [{**classified[0], "event_id": "evt-001", "priority": "high"}]
+        normalized[:] = [{**normalized[0], "event_id": "evt-001", "message_id": None}]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        evt001 = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-001"
+        ]
+        assert len(evt001) == 1
+        assert evt001[0]["run_id"] == "newest-run"
+
+    def test_multi_source_run_filters_events_by_own_client(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-a",
+                "source_id": "src-a",
+                "client_id": "welding",
+                "priority": "high",
+            },
+            {
+                **classified[1],
+                "event_id": "evt-b",
+                "source_id": "src-b",
+                "client_id": "other-client",
+                "priority": "high",
+            },
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-a",
+                "source_id": "src-a",
+                "client_id": "welding",
+            },
+            {
+                **normalized[1],
+                "event_id": "evt-b",
+                "source_id": "src-b",
+                "client_id": "other-client",
+            },
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        source_diag = {
+            "sources": [
+                {"source_id": "src-a", "client_id": "welding", "status": "ok"},
+                {"source_id": "src-b", "client_id": "other-client", "status": "ok"},
+            ]
+        }
+        (newest / "source_diagnostics.json").write_text(
+            json.dumps(source_diag), encoding="utf-8"
+        )
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 4
+        hp_ids = {item["event_id"] for item in dashboard["queues"]["high_priority"]}
+        assert "evt-a" in hp_ids
+        assert "evt-b" not in hp_ids
+
+    def test_bitrix_source_aware_same_event_id_different_status(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-src",
+                "source_id": "src-a",
+                "priority": "low",
+            },
+            {
+                **classified[1],
+                "event_id": "evt-src",
+                "source_id": "src-b",
+                "priority": "low",
+            },
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-src",
+                "source_id": "src-a",
+            },
+            {
+                **normalized[1],
+                "event_id": "evt-src",
+                "source_id": "src-b",
+            },
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        recon_path = newest / "bitrix_reconciliation.json"
+        recon = json.loads(recon_path.read_text(encoding="utf-8"))
+        recon["items"] = [
+            {
+                "event_id": "evt-src",
+                "source_id": "src-a",
+                "bitrix_match_status": "matched_lead",
+            },
+            {
+                "event_id": "evt-src",
+                "source_id": "src-b",
+                "bitrix_match_status": "not_found",
+            },
+        ]
+        recon_path.write_text(json.dumps(recon), encoding="utf-8")
+        (run_dir / "bitrix_reconciliation.json").unlink(missing_ok=True)
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 1
+        assert dashboard["business_kpi"]["lost_in_bitrix"] == 1
+        assert {item["source_id"] for item in dashboard["queues"]["matched"]} == {
+            "src-a"
+        }
+        assert {
+            item["source_id"] for item in dashboard["queues"]["lost_in_bitrix"]
+        } == {"src-b"}
+
+    def test_bitrix_legacy_source_less_reconciliation_single_source(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-legacy",
+                "source_id": "src-a",
+                "priority": "low",
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-legacy",
+                "source_id": "src-a",
+            }
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        recon_path = newest / "bitrix_reconciliation.json"
+        recon = json.loads(recon_path.read_text(encoding="utf-8"))
+        recon["items"] = [
+            {"event_id": "evt-legacy", "bitrix_match_status": "matched_lead"}
+        ]
+        recon_path.write_text(json.dumps(recon), encoding="utf-8")
+        (run_dir / "bitrix_reconciliation.json").unlink(missing_ok=True)
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 1
+        assert [item["event_id"] for item in dashboard["queues"]["matched"]] == [
+            "evt-legacy"
+        ]
+
+    def test_bitrix_legacy_source_less_ambiguous_not_assigned(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-legacy",
+                "source_id": "src-a",
+                "priority": "low",
+            },
+            {
+                **classified[1],
+                "event_id": "evt-legacy",
+                "source_id": "src-b",
+                "priority": "low",
+            },
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-legacy",
+                "source_id": "src-a",
+            },
+            {
+                **normalized[1],
+                "event_id": "evt-legacy",
+                "source_id": "src-b",
+            },
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        recon_path = newest / "bitrix_reconciliation.json"
+        recon = json.loads(recon_path.read_text(encoding="utf-8"))
+        recon["items"] = [
+            {"event_id": "evt-legacy", "bitrix_match_status": "matched_lead"}
+        ]
+        recon_path.write_text(json.dumps(recon), encoding="utf-8")
+        (run_dir / "bitrix_reconciliation.json").unlink(missing_ok=True)
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 0
+        assert dashboard["queues"]["matched"] == []
+        assert dashboard["business_kpi"]["unreconciled"] == 5
+
+    def test_legacy_attachment_source_less_binds_single_source(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-att",
+                "source_id": "src-a",
+                "priority": "low",
+            }
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-att",
+                "source_id": "src-a",
+            }
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        att_path = newest / "attachment_extraction.json"
+        att = json.loads(att_path.read_text(encoding="utf-8"))
+        att["items"] = [
+            {
+                "event_id": "evt-att",
+                "filename": "legacy.pdf",
+                "extraction_status": "refused",
+                "is_refused": True,
+            }
+        ]
+        att_path.write_text(json.dumps(att), encoding="utf-8")
+        anchor_att_path = run_dir / "attachment_extraction.json"
+        anchor_att = json.loads(anchor_att_path.read_text(encoding="utf-8"))
+        anchor_att["items"] = []
+        anchor_att["aggregate"]["refused_count"] = 0
+        anchor_att_path.write_text(json.dumps(anchor_att), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["attachment_refused"] == 1
+
+    def test_legacy_attachment_source_less_ambiguous_no_double_count(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        classified = json.loads((newest / "classified_events.json").read_text())
+        normalized = json.loads((newest / "normalized_events.json").read_text())
+        classified[:] = [
+            {
+                **classified[0],
+                "event_id": "evt-att",
+                "source_id": "src-a",
+                "priority": "low",
+            },
+            {
+                **classified[1],
+                "event_id": "evt-att",
+                "source_id": "src-b",
+                "priority": "low",
+            },
+        ]
+        normalized[:] = [
+            {
+                **normalized[0],
+                "event_id": "evt-att",
+                "source_id": "src-a",
+            },
+            {
+                **normalized[1],
+                "event_id": "evt-att",
+                "source_id": "src-b",
+            },
+        ]
+        (newest / "classified_events.json").write_text(json.dumps(classified))
+        (newest / "normalized_events.json").write_text(json.dumps(normalized))
+        att_path = newest / "attachment_extraction.json"
+        att = json.loads(att_path.read_text(encoding="utf-8"))
+        att["items"] = [
+            {
+                "event_id": "evt-att",
+                "filename": "legacy.pdf",
+                "extraction_status": "refused",
+                "is_refused": True,
+            }
+        ]
+        att_path.write_text(json.dumps(att), encoding="utf-8")
+        anchor_att_path = run_dir / "attachment_extraction.json"
+        anchor_att = json.loads(anchor_att_path.read_text(encoding="utf-8"))
+        anchor_att["items"] = []
+        anchor_att["aggregate"]["refused_count"] = 0
+        anchor_att_path.write_text(json.dumps(anchor_att), encoding="utf-8")
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["attachment_refused"] == 0
+
+    def test_newer_non_rop_run_does_not_displace_latest_rop_anchor(
+        self, run_dir: Path
+    ) -> None:
+        non_rop = run_dir.parents[1] / "runs" / "non-rop-latest"
+        non_rop.mkdir(parents=True, exist_ok=True)
+        (non_rop / "operator_summary.json").write_text(
+            json.dumps({"status": "ok", "summary": "non-rop case"}),
+            encoding="utf-8",
+        )
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            aggregate_runs=True,
+        )
+
+        assert dashboard["run_id"] == "test-dashboard-run"
+        assert dashboard["business_kpi"]["processed_events"] == 3
+
+
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
     """Create a minimal run directory with artifacts for dashboard testing."""
     rdir = tmp_path / "runs" / "test-dashboard-run"
     rdir.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     event_dates = [
         (now - timedelta(days=2)).replace(microsecond=0).isoformat(),
         (now - timedelta(days=1)).replace(microsecond=0).isoformat(),
@@ -448,7 +1320,7 @@ class TestBuildRopDashboard:
         current_state_path = run_dir / "rop_current_state.json"
         current_state = json.loads(current_state_path.read_text(encoding="utf-8"))
         current_state["generated_at_utc"] = (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            datetime.now(UTC).replace(microsecond=0).isoformat()
         )
         current_state_path.write_text(json.dumps(current_state), encoding="utf-8")
 
@@ -465,9 +1337,7 @@ class TestBuildRopDashboard:
         self, run_dir: Path, tmp_path: Path
     ) -> None:
         old_ts = (
-            (datetime.now(timezone.utc) - timedelta(days=30))
-            .replace(microsecond=0)
-            .isoformat()
+            (datetime.now(UTC) - timedelta(days=30)).replace(microsecond=0).isoformat()
         )
         for artifact_name in ("normalized_events.json", "classified_events.json"):
             artifact_path = run_dir / artifact_name
@@ -515,9 +1385,7 @@ class TestBuildRopDashboard:
         self, run_dir: Path, tmp_path: Path
     ) -> None:
         old_ts = (
-            (datetime.now(timezone.utc) - timedelta(days=30))
-            .replace(microsecond=0)
-            .isoformat()
+            (datetime.now(UTC) - timedelta(days=30)).replace(microsecond=0).isoformat()
         )
         for artifact_name in ("normalized_events.json", "classified_events.json"):
             artifact_path = run_dir / artifact_name
@@ -559,11 +1427,9 @@ class TestBuildRopDashboard:
     def test_bitrix_period_queues_are_period_scoped_for_all_statuses(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
-        now_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        now_ts = datetime.now(UTC).replace(microsecond=0).isoformat()
         old_ts = (
-            (datetime.now(timezone.utc) - timedelta(days=30))
-            .replace(microsecond=0)
-            .isoformat()
+            (datetime.now(UTC) - timedelta(days=30)).replace(microsecond=0).isoformat()
         )
         extra_events = [
             ("evt-ambiguous", "ambiguous@example.com", "Ambiguous match", now_ts),
@@ -675,9 +1541,7 @@ class TestBuildRopDashboard:
     def test_dashboard_handles_naive_event_timestamp_as_utc(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
-        naive_ts = (
-            datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat()
-        )
+        naive_ts = datetime.now(UTC).replace(tzinfo=None, microsecond=0).isoformat()
         for artifact_name in ("normalized_events.json", "classified_events.json"):
             artifact_path = run_dir / artifact_name
             events = json.loads(artifact_path.read_text(encoding="utf-8"))
@@ -778,9 +1642,7 @@ class TestQueueFilters:
         assert any("Invalid classification" in e for e in errors)
 
     def test_validate_filter_params_rejects_bad_priority(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"priority": "urgent"}
-        )
+        errors = rop_dashboard_module.validate_filter_params({"priority": "urgent"})
         assert any("Invalid priority" in e for e in errors)
 
     def test_validate_filter_params_rejects_bad_bitrix_status(self) -> None:
@@ -790,19 +1652,13 @@ class TestQueueFilters:
         assert any("Invalid bitrix_status" in e for e in errors)
 
     def test_validate_filter_params_rejects_bad_is_fallback(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"is_fallback": "maybe"}
-        )
+        errors = rop_dashboard_module.validate_filter_params({"is_fallback": "maybe"})
         assert any("Invalid is_fallback" in e for e in errors)
 
     def test_validate_filter_params_accepts_is_fallback(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"is_fallback": "true"}
-        )
+        errors = rop_dashboard_module.validate_filter_params({"is_fallback": "true"})
         assert errors == []
-        errors = rop_dashboard_module.validate_filter_params(
-            {"is_fallback": "false"}
-        )
+        errors = rop_dashboard_module.validate_filter_params({"is_fallback": "false"})
         assert errors == []
 
     def test_apply_queue_filters_classification(self) -> None:
@@ -1016,7 +1872,9 @@ class TestQueueFilters:
         assert len(result) == 1
         assert result[0]["event_id"] == "1"
 
-    def test_descending_text_sort_handles_unicode_prefixes_and_missing_values(self) -> None:
+    def test_descending_text_sort_handles_unicode_prefixes_and_missing_values(
+        self,
+    ) -> None:
         items = [
             {"event_id": "prefix", "sender": "Анна"},
             {"event_id": "longer", "sender": "Анна Б"},
@@ -1043,9 +1901,15 @@ class TestQueueFilters:
             {"event_id": "missing", "received_at": ""},
         ]
 
-        assert [item["event_id"] for item in rop_dashboard_module.sort_queue_items(
-            items, sort="received_at", order="asc"
-        )] == ["early", "late", "malformed", "missing"]
-        assert [item["event_id"] for item in rop_dashboard_module.sort_queue_items(
-            items, sort="received_at", order="desc"
-        )] == ["late", "early", "malformed", "missing"]
+        assert [
+            item["event_id"]
+            for item in rop_dashboard_module.sort_queue_items(
+                items, sort="received_at", order="asc"
+            )
+        ] == ["early", "late", "malformed", "missing"]
+        assert [
+            item["event_id"]
+            for item in rop_dashboard_module.sort_queue_items(
+                items, sort="received_at", order="desc"
+            )
+        ] == ["late", "early", "malformed", "missing"]

@@ -422,6 +422,7 @@ def test_poll_rebaseline_preserves_other_sources_and_replaces_stale_source(
         "build_action_drafts",
         "build_recommendations",
         "write_current_state",
+        "build_rop_dashboard",
         "write_rop_dashboard",
     ],
 )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 from pathlib import Path
@@ -86,22 +86,24 @@ def validate_filter_params(
 ) -> list[str]:
     errors: list[str] = []
 
-    allowed_keys = frozenset({
-        "date_from",
-        "date_to",
-        "q",
-        "sender",
-        "subject",
-        "case_type",
-        "classification",
-        "priority",
-        "bitrix_status",
-        "is_fallback",
-        "queue",
-        "columns",
-        "columns_open",
-        "open_dropdowns",
-    })
+    allowed_keys = frozenset(
+        {
+            "date_from",
+            "date_to",
+            "q",
+            "sender",
+            "subject",
+            "case_type",
+            "classification",
+            "priority",
+            "bitrix_status",
+            "is_fallback",
+            "queue",
+            "columns",
+            "columns_open",
+            "open_dropdowns",
+        }
+    )
     for key in params:
         if key not in allowed_keys:
             errors.append(f"Unknown filter key: '{key}'")
@@ -136,7 +138,9 @@ def validate_filter_params(
 
     is_fallback = params.get("is_fallback", "")
     if is_fallback and is_fallback not in ("true", "false"):
-        errors.append(f"Invalid is_fallback '{is_fallback}', expected 'true' or 'false'")
+        errors.append(
+            f"Invalid is_fallback '{is_fallback}', expected 'true' or 'false'"
+        )
 
     bitrix_status = params.get("bitrix_status", "")
     if bitrix_status:
@@ -232,9 +236,7 @@ def validate_pagination_params(
                     f"expected one of: {ALLOWED_PAGE_SIZES}"
                 )
         except ValueError:
-            errors.append(
-                f"Invalid page_size '{page_size_raw}', expected an integer"
-            )
+            errors.append(f"Invalid page_size '{page_size_raw}', expected an integer")
 
     if sort is not None and sort.strip():
         if sort not in ALLOWED_SORT_FIELDS:
@@ -261,11 +263,23 @@ def apply_queue_filters(
         return items
 
     case_type_raw = params.get("case_type") or params.get("classification", "")
-    case_types = {v.strip() for v in case_type_raw.split(",") if v.strip()} if case_type_raw else set()
+    case_types = (
+        {v.strip() for v in case_type_raw.split(",") if v.strip()}
+        if case_type_raw
+        else set()
+    )
     priority_raw = params.get("priority", "")
-    priorities = {v.strip() for v in priority_raw.split(",") if v.strip()} if priority_raw else set()
+    priorities = (
+        {v.strip() for v in priority_raw.split(",") if v.strip()}
+        if priority_raw
+        else set()
+    )
     bitrix_status_raw = params.get("bitrix_status", "")
-    bitrix_statuses = {v.strip() for v in bitrix_status_raw.split(",") if v.strip()} if bitrix_status_raw else set()
+    bitrix_statuses = (
+        {v.strip() for v in bitrix_status_raw.split(",") if v.strip()}
+        if bitrix_status_raw
+        else set()
+    )
     q = params.get("q", "").lower().strip()
     is_fallback_raw = params.get("is_fallback", "").lower().strip()
     date_from = params.get("date_from", "")
@@ -276,7 +290,7 @@ def apply_queue_filters(
     if date_from:
         try:
             parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
+                tzinfo=UTC
             )
         except ValueError:
             logging.getLogger(__name__).warning(
@@ -285,7 +299,7 @@ def apply_queue_filters(
     if date_to:
         try:
             parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=UTC
             )
         except ValueError:
             logging.getLogger(__name__).warning(
@@ -407,13 +421,11 @@ def paginate_items(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if page_size not in ALLOWED_PAGE_SIZES:
         page_size = DEFAULT_PAGE_SIZE
-    if page < 1:
-        page = 1
+    page = max(page, 1)
 
     total = len(items)
     total_pages = max(1, (total + page_size - 1) // page_size)
-    if page > total_pages:
-        page = total_pages
+    page = min(page, total_pages)
 
     start = (page - 1) * page_size
     end = start + page_size
@@ -432,7 +444,7 @@ def paginate_items(
 
 def parse_period(period: str) -> dict[str, Any]:
     period = period.strip().lower()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1) - timedelta(microseconds=1)
 
@@ -502,6 +514,7 @@ def build_rop_dashboard(
     period: str,
     logger: logging.Logger,
     run_id: str | None = None,
+    aggregate_runs: bool = False,
 ) -> dict[str, Any]:
     validate_period(period)
     period_info = parse_period(period)
@@ -511,7 +524,7 @@ def build_rop_dashboard(
         return _empty_dashboard(period, "no_runs_directory")
 
     if run_id is None:
-        run_ids = _list_run_ids(runs_dir)
+        run_ids = _list_rop_run_ids(runs_dir)
         if not run_ids:
             return _empty_dashboard(period, "no_runs_found")
         run_id = run_ids[0]
@@ -534,7 +547,9 @@ def build_rop_dashboard(
     attachment_extraction = _read_json_dict(run_dir / "attachment_extraction.json")
     operator_summary = _read_json_dict(run_dir / "operator_summary.json")
     ai_assist_results = _read_json_dict(run_dir / "rop_ai_assist_results.json")
-    ai_adjudicator_results = _read_json_dict(run_dir / "rop_ai_adjudicator_results.json")
+    ai_adjudicator_results = _read_json_dict(
+        run_dir / "rop_ai_adjudicator_results.json"
+    )
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)
@@ -547,6 +562,20 @@ def build_rop_dashboard(
     normalized_list = (
         list(normalized_events) if isinstance(normalized_events, list) else []
     )
+
+    if aggregate_runs:
+        aggregate = _aggregate_period_events(
+            runs_dir=runs_dir,
+            anchor_run_id=run_id,
+            anchor_client_id=client_id,
+            logger=logger,
+        )
+        warnings.extend(aggregate["warnings"])
+        if aggregate["safe"]:
+            classified_list = aggregate["classified"]
+            normalized_list = aggregate["normalized"]
+            bitrix_reconciliation = aggregate["bitrix_reconciliation"]
+            attachment_extraction = aggregate["attachment_extraction"]
 
     if period_info["period"] != "all" and period_info.get("period_start_utc"):
         period_start = _parse_iso(period_info["period_start_utc"])
@@ -653,7 +682,7 @@ def build_rop_dashboard(
         "run_id": run_id,
         "status": "ok",
         "read_only": True,
-        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "client_id": client_id,
         "period": period,
         "period_start_utc": period_info.get("period_start_utc"),
@@ -666,6 +695,7 @@ def build_rop_dashboard(
         "evidence_links": evidence_links,
         "warnings": warnings,
         "ai_assist_summary": ai_assist_summary,
+        "aggregate_runs": aggregate_runs,
     }
 
     return dashboard
@@ -699,7 +729,7 @@ def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
         "read_only": True,
         "period": period,
         "reason": reason,
-        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "business_kpi": {},
         "series": {},
         "queues": {},
@@ -715,6 +745,15 @@ def _list_run_ids(runs_dir: Path) -> list[str]:
         key=lambda n: (runs_dir / n).stat().st_mtime,
         reverse=True,
     )
+
+
+def _list_rop_run_ids(runs_dir: Path) -> list[str]:
+    rop_run_ids: list[str] = []
+    for run_id in _list_run_ids(runs_dir):
+        classified = _read_json_list(runs_dir / run_id / "classified_events.json")
+        if isinstance(classified, list):
+            rop_run_ids.append(run_id)
+    return rop_run_ids
 
 
 def _read_json_list(path: Path) -> list[dict[str, Any]] | None:
@@ -761,6 +800,26 @@ def _resolve_client_id(
     return "unknown"
 
 
+def _resolve_client_ids(
+    source_diag: dict | None,
+    intake: dict | None,
+    current_state: dict | None,
+) -> set[str]:
+    client_ids: set[str] = set()
+    if current_state and isinstance(current_state, dict):
+        cid = current_state.get("client_id")
+        if isinstance(cid, str) and cid:
+            client_ids.add(cid)
+    for data in (source_diag, intake):
+        if isinstance(data, dict):
+            sources = data.get("sources")
+            if isinstance(sources, list):
+                for s in sources:
+                    if isinstance(s, dict) and s.get("client_id"):
+                        client_ids.add(str(s["client_id"]))
+    return client_ids
+
+
 def _resolve_generated_at(
     current_state: dict | None,
     run_dir: Path,
@@ -772,11 +831,256 @@ def _resolve_generated_at(
             return ga
     try:
         mtime = run_dir.stat().st_mtime
-        dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        dt = datetime.fromtimestamp(mtime, tz=UTC)
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except OSError:
         logger.debug("Cannot read run_dir mtime: %s", run_dir)
         return None
+
+
+def _read_optional_artifact(
+    path: Path,
+    run_id: str,
+    warnings: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    data = _read_json_dict(path)
+    if data is None:
+        warnings.append(
+            {
+                "code": "malformed_optional_artifact",
+                "run_id": run_id,
+                "artifact": path.name,
+                "message": (
+                    "Optional artifact exists but could not be parsed as a JSON "
+                    "object; it was ignored."
+                ),
+            }
+        )
+        return None
+    return data
+
+
+def _aggregate_period_events(
+    runs_dir: Path,
+    anchor_run_id: str,
+    anchor_client_id: str,
+    logger: logging.Logger,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "safe": False,
+        "classified": [],
+        "normalized": [],
+        "bitrix_reconciliation": {"items": []},
+        "attachment_extraction": {"items": []},
+        "warnings": [],
+    }
+    if not anchor_client_id or anchor_client_id == "unknown":
+        result["warnings"].append(
+            {
+                "code": "unknown_client_scope",
+                "message": "Client scope is unknown; retaining anchor-run dashboard data.",
+            }
+        )
+        return result
+
+    winners: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for candidate_run_id in _list_run_ids(runs_dir):
+        candidate_dir = runs_dir / candidate_run_id
+        source_diag = _read_json_dict(candidate_dir / "source_diagnostics.json")
+        intake = _read_json_dict(candidate_dir / "intake_metadata.json")
+        current_state = _read_json_dict(candidate_dir / "rop_current_state.json")
+        run_client_ids = _resolve_client_ids(source_diag, intake, current_state)
+        if anchor_client_id not in run_client_ids:
+            continue
+        single_client_run = len(run_client_ids) == 1
+        summary = _read_json_dict(candidate_dir / "operator_summary.json")
+        if _is_incomplete_run(summary):
+            result["warnings"].append(
+                {
+                    "code": "incomplete_run_skipped",
+                    "run_id": candidate_run_id,
+                    "message": "Incomplete run was excluded from period business data.",
+                }
+            )
+            continue
+        classified = _read_json_list(candidate_dir / "classified_events.json")
+        if not classified:
+            continue
+        normalized = _read_json_list(candidate_dir / "normalized_events.json") or []
+        normalized_by_source_event: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in normalized:
+            if isinstance(item, dict) and isinstance(item.get("event_id"), str):
+                normalized_by_source_event[
+                    (str(item.get("source_id") or ""), str(item.get("event_id")))
+                ] = item
+        generated_at = _resolve_generated_at(current_state, candidate_dir, logger)
+        reconciliation = _read_optional_artifact(
+            candidate_dir / "bitrix_reconciliation.json",
+            candidate_run_id,
+            result["warnings"],
+        )
+        reconciliation_by_source_event: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in (reconciliation or {}).get("items", []):
+            if isinstance(item, dict) and isinstance(item.get("event_id"), str):
+                reconciliation_by_source_event[
+                    (str(item.get("source_id") or ""), str(item.get("event_id")))
+                ] = item
+        attachments = _read_optional_artifact(
+            candidate_dir / "attachment_extraction.json",
+            candidate_run_id,
+            result["warnings"],
+        )
+        attachment_by_source_event: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for item in (attachments or {}).get("items", []):
+            if isinstance(item, dict) and isinstance(item.get("event_id"), str):
+                attachment_by_source_event.setdefault(
+                    (str(item.get("source_id") or ""), str(item.get("event_id"))),
+                    [],
+                ).append(item)
+        event_source_ids: dict[str, set[str]] = {}
+        for ce in classified:
+            if isinstance(ce, dict) and isinstance(ce.get("event_id"), str):
+                event_source_ids.setdefault(ce["event_id"], set()).add(
+                    str(ce.get("source_id") or "")
+                )
+        if isinstance(attachments, dict) and not attachment_by_source_event:
+            aggregate = attachments.get("aggregate", {})
+            if isinstance(aggregate, dict) and (
+                _int(aggregate.get("refused_count", 0)) > 0
+                or _int(aggregate.get("blocked_count", 0)) > 0
+            ):
+                result["warnings"].append(
+                    {
+                        "code": "attachment_aggregate_unscoped",
+                        "run_id": candidate_run_id,
+                        "artifact": "attachment_extraction.json",
+                        "message": (
+                            "Attachment artifact has only aggregate refusal/block "
+                            "counters without event-level items; counters were not "
+                            "attributed to events."
+                        ),
+                    }
+                )
+
+        for classified_event in classified:
+            if not isinstance(classified_event, dict):
+                continue
+            event_id = classified_event.get("event_id")
+            if not isinstance(event_id, str) or not event_id:
+                continue
+            classified_source_id = str(classified_event.get("source_id") or "")
+            normalized_event = normalized_by_source_event.get(
+                (classified_source_id, event_id)
+            )
+            if normalized_event is None:
+                normalized_event = normalized_by_source_event.get(("", event_id), {})
+            source_id = str(
+                normalized_event.get("source_id") or classified_source_id or ""
+            )
+            event_client_id = str(classified_event.get("client_id") or "")
+            if not event_client_id:
+                event_client_id = str(normalized_event.get("client_id") or "")
+            if not event_client_id:
+                if not single_client_run:
+                    continue
+                event_client_id = anchor_client_id
+            if event_client_id != anchor_client_id:
+                continue
+            identity = _dashboard_event_identity(
+                event_client_id, source_id, normalized_event, event_id
+            )
+            if identity in winners:
+                continue
+            merged = dict(classified_event)
+            for key in (
+                "source_id",
+                "message_id",
+                "x_email_id",
+                "event_date",
+                "received_at",
+                "timestamp",
+                "created_at",
+                "date",
+            ):
+                if not merged.get(key) and normalized_event.get(key):
+                    merged[key] = normalized_event[key]
+            merged["_dashboard_origin_run_id"] = candidate_run_id
+            if _event_timestamp(merged) is None and generated_at:
+                merged["_dashboard_fallback_ts"] = generated_at
+            reconciliation_item = reconciliation_by_source_event.get(
+                (source_id, event_id)
+            )
+            if reconciliation_item is None:
+                reconciliation_item = reconciliation_by_source_event.get(("", event_id))
+            attachment_items = attachment_by_source_event.get((source_id, event_id))
+            if attachment_items is None:
+                legacy_attachments = attachment_by_source_event.get(("", event_id))
+                if legacy_attachments:
+                    sources = event_source_ids.get(event_id, set())
+                    if len(sources) == 1 and source_id in sources:
+                        attachment_items = [dict(item) for item in legacy_attachments]
+                        for item in attachment_items:
+                            item["source_id"] = source_id
+                    else:
+                        attachment_items = []
+                else:
+                    attachment_items = []
+            winners[identity] = {
+                "classified": merged,
+                "normalized": dict(normalized_event)
+                if normalized_event
+                else dict(merged),
+                "reconciliation": reconciliation_item,
+                "attachments": attachment_items,
+            }
+
+    for winner in winners.values():
+        classified_event = winner["classified"]
+        origin_run_id = classified_event["_dashboard_origin_run_id"]
+        result["classified"].append(classified_event)
+        normalized_event = dict(winner["normalized"])
+        normalized_event["_dashboard_origin_run_id"] = origin_run_id
+        if _event_timestamp(normalized_event) is None:
+            normalized_event["_dashboard_fallback_ts"] = classified_event.get(
+                "_dashboard_fallback_ts", ""
+            )
+        result["normalized"].append(normalized_event)
+        if isinstance(winner["reconciliation"], dict):
+            item = dict(winner["reconciliation"])
+            item["_dashboard_origin_run_id"] = origin_run_id
+            result["bitrix_reconciliation"]["items"].append(item)
+        for attachment in winner["attachments"]:
+            item = dict(attachment)
+            item["_dashboard_origin_run_id"] = origin_run_id
+            result["attachment_extraction"]["items"].append(item)
+    result["safe"] = True
+    return result
+
+
+def _is_incomplete_run(summary: dict[str, Any] | None) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    return any(
+        str(summary.get(field, "")).lower() in {"degraded", "error"}
+        for field in ("status", "module_status")
+    )
+
+
+def _dashboard_event_identity(
+    client_id: str,
+    source_id: str,
+    normalized_event: dict[str, Any],
+    event_id: str,
+) -> tuple[str, str, str]:
+    message_id = normalized_event.get("message_id")
+    if isinstance(message_id, str) and message_id.strip():
+        return client_id, source_id, f"message_id:{message_id.strip()}"
+    x_email_id = normalized_event.get("x_email_id")
+    if isinstance(x_email_id, str) and x_email_id.strip():
+        return client_id, source_id, f"x_email_id:{x_email_id.strip()}"
+    return client_id, source_id, f"event_id:{event_id}"
 
 
 def _parse_iso(iso_str: str | None) -> datetime | None:
@@ -785,7 +1089,7 @@ def _parse_iso(iso_str: str | None) -> datetime | None:
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
         return None
@@ -803,11 +1107,16 @@ def _filter_by_period(
         ts = _event_timestamp(evt)
         basis = "event_timestamp"
         if ts is None:
-            if fallback_ts is None:
+            event_fallback = _parse_iso(str(evt.get("_dashboard_fallback_ts", "")))
+            if event_fallback is not None:
+                ts = event_fallback
+                basis = "fallback"
+            elif fallback_ts is None:
                 stats["unknown"] += 1
                 continue
-            ts = fallback_ts
-            basis = "fallback"
+            else:
+                ts = fallback_ts
+                basis = "fallback"
         if period_start <= ts <= period_end:
             filtered.append(evt)
             stats[basis] += 1
@@ -909,13 +1218,19 @@ def _count_period_attachment_refused(
     if not isinstance(attachment_extraction, dict):
         return 0
 
-    event_ids: set[str] = set()
+    event_identities: set[tuple[str, str, str]] = set()
     for evt in [*classified_list, *normalized_list]:
         if not isinstance(evt, dict):
             continue
         event_id = evt.get("event_id")
         if isinstance(event_id, str) and event_id:
-            event_ids.add(event_id)
+            event_identities.add(
+                (
+                    str(evt.get("_dashboard_origin_run_id") or ""),
+                    str(evt.get("source_id") or ""),
+                    event_id,
+                )
+            )
 
     items = attachment_extraction.get("items")
     if isinstance(items, list):
@@ -924,7 +1239,16 @@ def _count_period_attachment_refused(
             if not isinstance(item, dict):
                 continue
             event_id = item.get("event_id")
-            if not isinstance(event_id, str) or event_id not in event_ids:
+            if not isinstance(event_id, str) or not event_id:
+                continue
+            run_key = str(item.get("_dashboard_origin_run_id") or "")
+            source_key = str(item.get("source_id") or "")
+            if not run_key and not source_key:
+                if event_id not in {
+                    eid for (rk, _sk, eid) in event_identities if not rk
+                }:
+                    continue
+            elif (run_key, source_key, event_id) not in event_identities:
                 continue
             status = str(item.get("extraction_status") or "").lower()
             if (
@@ -951,7 +1275,11 @@ def _build_series(
     day_counts: dict[str, int] = {}
     hp_day_counts: dict[str, int] = {}
     for evt in classified_list:
-        ts = _event_timestamp(evt) or fallback_ts
+        ts = (
+            _event_timestamp(evt)
+            or _parse_iso(str(evt.get("_dashboard_fallback_ts", "")))
+            or fallback_ts
+        )
         if ts is not None:
             day_key = ts.strftime("%Y-%m-%d")
             day_counts[day_key] = day_counts.get(day_key, 0) + 1
@@ -1025,7 +1353,7 @@ def _build_queues(
     if not isinstance(bitrix_queues, dict):
         bitrix_queues = {}
 
-    bitrix_status_by_event: dict[str, str] = {}
+    bitrix_status_by_event: dict[tuple[str, str, str], str] = {}
     for queue_items in bitrix_queues.values():
         if not isinstance(queue_items, list):
             continue
@@ -1040,9 +1368,13 @@ def _build_queues(
                 and isinstance(bitrix_status, str)
                 and bitrix_status
             ):
-                bitrix_status_by_event[event_id] = bitrix_status
+                item_run_id = str(item.get("run_id") or run_id)
+                item_source_id = str(item.get("source_id") or "")
+                bitrix_status_by_event[(item_run_id, item_source_id, event_id)] = (
+                    bitrix_status
+                )
 
-    seen_review: set[str] = set()
+    seen_review: set[tuple[str, str, str]] = set()
 
     for evt in classified_list:
         if not isinstance(evt, dict):
@@ -1050,11 +1382,15 @@ def _build_queues(
 
         raw_event_id = evt.get("event_id")
         event_id = raw_event_id if isinstance(raw_event_id, str) else ""
-        bitrix_status = bitrix_status_by_event.get(event_id, "")
+        origin_run_id = str(evt.get("_dashboard_origin_run_id") or run_id)
+        source_id = str(evt.get("source_id") or "")
+        bitrix_status = bitrix_status_by_event.get(
+            (origin_run_id, source_id, event_id), ""
+        )
         entry = _operator_queue_entry(
             evt,
             bitrix_status,
-            run_id,
+            origin_run_id,
             "manual_review",
         )
 
@@ -1062,9 +1398,10 @@ def _build_queues(
             high_priority.append(entry)
 
         if evt.get("is_fallback") or evt.get("priority") == "high":
-            if event_id not in seen_review:
+            review_key = (origin_run_id, source_id, event_id)
+            if review_key not in seen_review:
                 needs_review.append(entry)
-                seen_review.add(event_id)
+                seen_review.add(review_key)
 
     return {
         "high_priority": high_priority,
@@ -1101,7 +1438,8 @@ def _build_bitrix_period_state(
         "unreconciled": [],
     }
 
-    reconciliation_lookup: dict[str, dict[str, Any]] = {}
+    reconciliation_by_source: dict[tuple[str, str, str], dict[str, Any]] = {}
+    reconciliation_legacy: dict[tuple[str, str], dict[str, Any]] = {}
     if isinstance(bitrix_reconciliation, dict):
         items = bitrix_reconciliation.get("items", [])
         if isinstance(items, list):
@@ -1110,13 +1448,39 @@ def _build_bitrix_period_state(
                     continue
                 event_id = item.get("event_id")
                 if isinstance(event_id, str) and event_id:
-                    reconciliation_lookup[event_id] = item
+                    origin_run_id = str(item.get("_dashboard_origin_run_id") or run_id)
+                    source_id = str(item.get("source_id") or "")
+                    if source_id:
+                        reconciliation_by_source[
+                            (origin_run_id, source_id, event_id)
+                        ] = item
+                    else:
+                        reconciliation_legacy[(origin_run_id, event_id)] = item
+
+    event_sources: dict[tuple[str, str], set[str]] = {}
+    for evt in classified_list:
+        if not isinstance(evt, dict):
+            continue
+        event_id = str(evt.get("event_id", ""))
+        if event_id:
+            origin_run_id = str(evt.get("_dashboard_origin_run_id") or run_id)
+            event_sources.setdefault((origin_run_id, event_id), set()).add(
+                str(evt.get("source_id") or "")
+            )
 
     for evt in classified_list:
         if not isinstance(evt, dict):
             continue
         event_id = str(evt.get("event_id", ""))
-        recon_item = reconciliation_lookup.get(event_id)
+        origin_run_id = str(evt.get("_dashboard_origin_run_id") or run_id)
+        source_id = str(evt.get("source_id") or "")
+        recon_item = reconciliation_by_source.get((origin_run_id, source_id, event_id))
+        if recon_item is None:
+            legacy_item = reconciliation_legacy.get((origin_run_id, event_id))
+            if legacy_item is not None:
+                sources = event_sources.get((origin_run_id, event_id), set())
+                if len(sources) == 1 and source_id in sources:
+                    recon_item = legacy_item
         status = ""
         if isinstance(recon_item, dict):
             status = str(
@@ -1129,36 +1493,36 @@ def _build_bitrix_period_state(
         if status.startswith("matched_"):
             kpi["matched_in_bitrix"] += 1
             queues["matched"].append(
-                _bitrix_queue_entry(evt, status, run_id, "matched")
+                _bitrix_queue_entry(evt, status, origin_run_id, "matched")
             )
         elif status == "not_found":
             kpi["lost_in_bitrix"] += 1
             queues["lost_in_bitrix"].append(
-                _bitrix_queue_entry(evt, status, run_id, "lost_in_bitrix")
+                _bitrix_queue_entry(evt, status, origin_run_id, "lost_in_bitrix")
             )
         elif status == "weak_match":
             kpi["weak_match"] += 1
             kpi["ambiguous_or_duplicate"] += 1
             queues["weak_match"].append(
-                _bitrix_queue_entry(evt, status, run_id, "ambiguous")
+                _bitrix_queue_entry(evt, status, origin_run_id, "ambiguous")
             )
         elif status in ("ambiguous", "duplicate_candidate"):
             kpi["ambiguous_or_duplicate"] += 1
             queues["ambiguous"].append(
-                _bitrix_queue_entry(evt, status, run_id, "ambiguous")
+                _bitrix_queue_entry(evt, status, origin_run_id, "ambiguous")
             )
         elif status in ("connector_degraded", "error"):
             kpi["bitrix_errors"] += 1
             kpi["connector_degraded"] += 1
             queues["degraded"].append(
-                _bitrix_queue_entry(evt, status, run_id, "degraded")
+                _bitrix_queue_entry(evt, status, origin_run_id, "degraded")
             )
         elif status == "skipped":
             continue
         else:
             kpi["unreconciled"] += 1
             queues["unreconciled"].append(
-                _bitrix_queue_entry(evt, status, run_id, "unreconciled")
+                _bitrix_queue_entry(evt, status, origin_run_id, "unreconciled")
             )
 
     return {"kpi": kpi, "queues": queues}
