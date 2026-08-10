@@ -810,6 +810,19 @@ It32 artifacts `rop_context_enrichment.json`, `rop_recommendations.json` и `rop
 
 ROP dashboard поддерживает period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
 
+### Cross-run period aggregation (ROP dashboard)
+
+ROP dashboard агрегирует события по периоду для выбранного клиента:
+
+- `run_id` — anchor run и client scope для выбранного-run operational evidence;
+- `business_kpi`, `series` и period queues агрегируют уникальные same-client события по релевантным успешным run'ам (degraded/error run'ы исключаются с bounded warning `incomplete_run_skipped`);
+- canonical winner для дубликатов — newest occurrence, приоритет identity: `message_id`, затем `x_email_id`, затем `event_id` (в пределах same client + source);
+- identity очередей — `(run_id, source_id, event_id)` с legacy-safe fallback; разные source события с одинаковым `event_id` не схлопываются;
+- `latest_selection`, threads, AI evidence, evidence links и source health остаются anchor-run specific;
+- queue/detail links используют origin `run_id` события;
+- period filtering применяется к агрегированному business view;
+- опциональные malformed артефакты (`bitrix_reconciliation.json`, `attachment_extraction.json`) игнорируются с bounded warning `malformed_optional_artifact`; aggregate-only attachment counters не приписываются событиям (warning `attachment_aggregate_unscoped`).
+
 ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. Она читает только artifact-level current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json`, показывает read-only KPI и очереди matched/lost/ambiguous/degraded/unreconciled без POST actions или write-back.
 
 Отклоняются:

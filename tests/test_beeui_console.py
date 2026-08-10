@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from hashlib import sha256
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -617,9 +617,7 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         (legacy_dir / "classified_events.json").read_text(encoding="utf-8")
     )
     legacy_adjudicator = json.loads(
-        (legacy_dir / "rop_ai_adjudicator_results.json").read_text(
-            encoding="utf-8"
-        )
+        (legacy_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
     )
     legacy_final = build_final_decisions(legacy_classified, legacy_adjudicator)
     legacy_final["events"][0].pop("attention_reason_code")
@@ -719,9 +717,7 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     invalid_html = client.get("/rop/events/evt-1?run_id=run-reason-contract&lang=bad")
     ru_api = client.get("/api/rop/events/evt-1?run_id=run-reason-contract&lang=ru")
     legacy_api = client.get("/api/rop/events/evt-1?run_id=run-reason-legacy&lang=ru")
-    legacy_api_en = client.get(
-        "/api/rop/events/evt-1?run_id=run-reason-legacy&lang=en"
-    )
+    legacy_api_en = client.get("/api/rop/events/evt-1?run_id=run-reason-legacy&lang=en")
     unknown_api = client.get("/api/rop/events/evt-1?run_id=run-reason-unknown&lang=ru")
     unknown_api_en = client.get(
         "/api/rop/events/evt-1?run_id=run-reason-unknown&lang=en"
@@ -753,18 +749,28 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "AI арбитр" in ru_html.text
     assert "AI adjudicator reason" in en_html.text
     assert "AI adjudicator reason" in invalid_html.text
-    assert _item_by_label(
-        _find_section_items(page_ru, "Классификация"), "Причина"
-    )["value"] == "Новый лид: обнаружен сигнал запроса или RFQ"
-    assert _item_by_label(
-        _find_section_items(page_ru, "AI арбитр"), "Причина"
-    )["value"] == "Обнаружены противоречивые бизнес-сигналы"
-    assert _item_by_label(
-        _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
-    )["value"] == "Результат ИИ противоречит сигналам; требуется ручная проверка"
-    assert _item_by_label(
-        _find_section_items(page_en, "Classification"), "Reason"
-    )["value"] == "New lead: request or RFQ signal detected"
+    assert (
+        _item_by_label(_find_section_items(page_ru, "Классификация"), "Причина")[
+            "value"
+        ]
+        == "Новый лид: обнаружен сигнал запроса или RFQ"
+    )
+    assert (
+        _item_by_label(_find_section_items(page_ru, "AI арбитр"), "Причина")["value"]
+        == "Обнаружены противоречивые бизнес-сигналы"
+    )
+    assert (
+        _item_by_label(
+            _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
+        )["value"]
+        == "Результат ИИ противоречит сигналам; требуется ручная проверка"
+    )
+    assert (
+        _item_by_label(_find_section_items(page_en, "Classification"), "Reason")[
+            "value"
+        ]
+        == "New lead: request or RFQ signal detected"
+    )
     assert raw_reason not in ru_html.text
     assert "&lt;script&gt;provider_reason()&lt;/script&gt;" in ru_html.text
     data = ru_api.json()["data"]
@@ -773,7 +779,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert data["final_decision"]["attention_reason_code"] == (
         "ai_output_conflict_manual_review"
     )
-    assert [item["code"] for item in data["ai_adjudicator"]["ai_adjudicator_evidence_codes"]] == [
+    assert [
+        item["code"] for item in data["ai_adjudicator"]["ai_adjudicator_evidence_codes"]
+    ] == [
         "low_signal",
         "supplier_outreach",
         "marketing_conflict",
@@ -787,7 +795,10 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "ai_evidence_codes exceeded maximum; truncated" in data["warnings"]
     assert "unknown ai evidence code ignored" in data["warnings"]
     assert "not_allowed" not in data["warnings"]
-    assert any("legacy ai_reason_code missing" in warning for warning in legacy_api.json()["data"]["warnings"])
+    assert any(
+        "legacy ai_reason_code missing" in warning
+        for warning in legacy_api.json()["data"]["warnings"]
+    )
     assert (
         "Старый формат итогового решения: код причины внимания отсутствует. "
         "Показано совместимое объяснение; данные не изменялись."
@@ -797,21 +808,31 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert legacy_data["final_decision"]["attention_reason_display"] == (
         "Результат ИИ противоречит сигналам; требуется ручная проверка"
     )
-    assert legacy_api_en.json()["data"]["final_decision"][
-        "attention_reason_display"
-    ] == "AI output conflicted with signals; manual review required"
+    assert (
+        legacy_api_en.json()["data"]["final_decision"]["attention_reason_display"]
+        == "AI output conflicted with signals; manual review required"
+    )
     assert (
         "Legacy final-decision format: the attention reason code is missing. "
         "A compatible explanation is shown; no data was modified."
     ) in legacy_api_en.json()["data"]["warnings"]
-    assert _item_by_label(
-        _find_section_items(legacy_page_ru, "Итоговое решение"),
-        "Причина внимания",
-    )["value"] == "Результат ИИ противоречит сигналам; требуется ручная проверка"
-    assert _item_by_label(
-        _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
-    )["value"] == "AI output conflicted with signals; manual review required"
-    assert any("unknown ai_reason_code" in warning for warning in unknown_api.json()["data"]["warnings"])
+    assert (
+        _item_by_label(
+            _find_section_items(legacy_page_ru, "Итоговое решение"),
+            "Причина внимания",
+        )["value"]
+        == "Результат ИИ противоречит сигналам; требуется ручная проверка"
+    )
+    assert (
+        _item_by_label(
+            _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
+        )["value"]
+        == "AI output conflicted with signals; manual review required"
+    )
+    assert any(
+        "unknown ai_reason_code" in warning
+        for warning in unknown_api.json()["data"]["warnings"]
+    )
     assert unknown_html_ru.status_code == 200
     assert unknown_html_en.status_code == 200
     unknown_data = unknown_api.json()["data"]
@@ -821,24 +842,30 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "Неизвестный код причины" in unknown_html_ru.text
     assert "Unknown reason code" in unknown_html_en.text
     assert (
-        "Код причины внимания неизвестен. "
-        "Показано безопасное совместимое объяснение."
+        "Код причины внимания неизвестен. Показано безопасное совместимое объяснение."
     ) in unknown_data["warnings"]
     assert (
-        "The attention reason code is unknown. "
-        "A safe compatible explanation is shown."
+        "The attention reason code is unknown. A safe compatible explanation is shown."
     ) in unknown_api_en.json()["data"]["warnings"]
     assert "unknown attention_reason_code" not in unknown_html_ru.text
     assert "unknown attention_reason_code" not in unknown_html_en.text
     assert legacy_status_ru.status_code == 200
     assert legacy_status_en.status_code == 200
-    assert legacy_status_ru.json()["data"]["ai_adjudicator"][
-        "ai_adjudicator_reason_display"
-    ] == "ИИ-арбитр направил событие на ручную проверку"
-    assert legacy_status_en.json()["data"]["ai_adjudicator"][
-        "ai_adjudicator_reason_display"
-    ] == "AI adjudicator routed the event to manual review"
-    assert "legacy ai_reason_code missing" in legacy_status_ru.json()["data"]["warnings"]
+    assert (
+        legacy_status_ru.json()["data"]["ai_adjudicator"][
+            "ai_adjudicator_reason_display"
+        ]
+        == "ИИ-арбитр направил событие на ручную проверку"
+    )
+    assert (
+        legacy_status_en.json()["data"]["ai_adjudicator"][
+            "ai_adjudicator_reason_display"
+        ]
+        == "AI adjudicator routed the event to manual review"
+    )
+    assert (
+        "legacy ai_reason_code missing" in legacy_status_ru.json()["data"]["warnings"]
+    )
     client.close()
     after = {
         path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
@@ -2082,8 +2109,19 @@ def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
     }
 
     layout = build_rop_page_layout(data, tab="bitrix")
-    item = layout[0]["items"][0]
 
+    assert layout[0]["type"] == "kpi_grid"
+    assert layout[0]["title"] == "Bitrix Evidence Board"
+    notices = [
+        block
+        for block in layout
+        if block.get("type") == "state_grid"
+        and any(
+            item.get("label") == "Not reconciled" for item in block.get("items", [])
+        )
+    ]
+    assert notices
+    item = notices[0]["items"][0]
     assert item["label"] == "Not reconciled"
     assert "Run read-only reconcile-bitrix" in item["value"]
 
@@ -3338,7 +3376,10 @@ def test_oversized_final_attention_reason_uses_bounded_projection(
     }
     artifact_path = run_dir / "rop_final_decisions.json"
     artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
-    before = (sha256(artifact_path.read_bytes()).hexdigest(), artifact_path.stat().st_mtime_ns)
+    before = (
+        sha256(artifact_path.read_bytes()).hexdigest(),
+        artifact_path.stat().st_mtime_ns,
+    )
     settings = _build_settings()
     settings["bitrix"] = {
         "widget": {
@@ -3359,7 +3400,10 @@ def test_oversized_final_attention_reason_uses_bounded_projection(
         headers={"Authorization": "Bearer widget-token"},
     )
     final_decisions, source = load_or_build_final_decisions(run_dir)
-    after = (sha256(artifact_path.read_bytes()).hexdigest(), artifact_path.stat().st_mtime_ns)
+    after = (
+        sha256(artifact_path.read_bytes()).hexdigest(),
+        artifact_path.stat().st_mtime_ns,
+    )
 
     assert api_response.status_code == 200
     assert html_response.status_code == 200
@@ -3370,8 +3414,7 @@ def test_oversized_final_attention_reason_uses_bounded_projection(
     assert after == before
     assert final_decisions["events"][0]["attention_reason"] is None
     assert all(
-        event["attention_reason"] is None
-        or len(event["attention_reason"]) <= 600
+        event["attention_reason"] is None or len(event["attention_reason"]) <= 600
         for event in widget_response.json()["data"]["final_decisions"]["events"]
     )
 
@@ -3870,7 +3913,7 @@ def test_rop_dashboard_handles_malformed_artifacts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_malformed_json_artifact_run(storage_dir, "run-malformed-json")
     client = _client(storage_dir)
-    response = client.get("/api/rop/dashboard")
+    response = client.get("/api/rop/dashboard", params={"run_id": "run-malformed-json"})
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["kpis"]["classified_count"] == 0
@@ -6160,6 +6203,444 @@ def test_fallback_queue_rows_share_html_and_api_pagination(
         "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&is_fallback=false"
     ).json()["data"]
     assert excluded["pagination"]["total_items"] == 0
+
+
+class TestRopDashboardAggregateReadModel:
+    def _write_aggregate_run(
+        self,
+        storage_dir: Path,
+        run_id: str,
+        *,
+        event_id: str,
+        source_id: str,
+        priority: str,
+        sender: str,
+    ) -> Path:
+        run_dir = _write_run_artifacts(storage_dir, run_id)
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        normalized = [
+            {
+                "event_id": event_id,
+                "source_id": source_id,
+                "sender": sender,
+                "subject": f"Subject {event_id}",
+                "event_date": event_date,
+                "attachments": [],
+            }
+        ]
+        classified = [
+            {
+                "event_id": event_id,
+                "source_id": source_id,
+                "sender": sender,
+                "subject": f"Subject {event_id}",
+                "case_type": "new_lead",
+                "priority": priority,
+                "confidence": 0.9,
+                "is_fallback": False,
+                "reason_code": "new_contact",
+                "event_date": event_date,
+            }
+        ]
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        source_diag = {
+            "aggregate": {
+                "source_count": 1,
+                "loaded_source_count": 1,
+                "degraded_source_count": 0,
+            },
+            "sources": [
+                {"source_id": source_id, "client_id": "welding", "status": "ok"},
+            ],
+        }
+        (run_dir / "source_diagnostics.json").write_text(
+            json.dumps(source_diag), encoding="utf-8"
+        )
+        return run_dir
+
+    def test_business_kpi_and_queue_aggregate_across_runs(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-a",
+            source_id="src_a",
+            priority="high",
+            sender="a@example.com",
+        )
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-b",
+            source_id="src_b",
+            priority="high",
+            sender="b@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+
+        assert data["business_kpi"]["processed_events"] == 2
+        row_by_event = {row["event_id"]: row for row in data["queue_rows"]}
+        assert set(row_by_event) == {"evt-a", "evt-b"}
+        assert row_by_event["evt-a"]["run_id"] == "agg-run-a"
+        assert row_by_event["evt-b"]["run_id"] == "agg-run-b"
+
+    def test_filters_apply_over_aggregate_queue_rows(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-a",
+            source_id="src_a",
+            priority="high",
+            sender="alpha@example.com",
+        )
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-b",
+            source_id="src_b",
+            priority="low",
+            sender="beta@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(
+            storage_dir,
+            "agg-run-b",
+            period="all",
+            filter_params={"priority": "high"},
+        )
+
+        assert [row["event_id"] for row in data["queue_rows"]] == ["evt-a"]
+
+    def test_sort_and_pagination_over_aggregate_rows(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        for index in range(26):
+            self._write_aggregate_run(
+                storage_dir,
+                f"agg-run-{index:02d}",
+                event_id=f"evt-{index:02d}",
+                source_id=f"src_{index:02d}",
+                priority="high",
+                sender=f"sender-{index:02d}@example.com",
+            )
+
+        data = build_rop_dashboard_read_model(
+            storage_dir,
+            "agg-run-00",
+            period="all",
+            page=1,
+            page_size=25,
+            sort="sender",
+            order="asc",
+        )
+
+        assert len(data["queue_rows"]) == 25
+        assert data["queue_rows"][0]["sender"] == "sender-00@example.com"
+        assert data["pagination"]["total_items"] == 26
+        assert data["pagination"]["total_pages"] == 2
+
+        page_two = build_rop_dashboard_read_model(
+            storage_dir,
+            "agg-run-00",
+            period="all",
+            page=2,
+            page_size=25,
+            sort="sender",
+            order="asc",
+        )
+        assert len(page_two["queue_rows"]) == 1
+        assert page_two["queue_rows"][0]["sender"] == "sender-25@example.com"
+
+    def test_latest_selection_remains_anchor_run_specific(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-a",
+            source_id="src_a",
+            priority="high",
+            sender="a@example.com",
+        )
+        anchor = self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-b",
+            source_id="src_b",
+            priority="high",
+            sender="b@example.com",
+        )
+        (anchor / "mailbox_selection.json").write_text(
+            json.dumps(
+                {
+                    "selected_count": 5,
+                    "strategy": "single_explicit",
+                    "source_count": 1,
+                    "sources": [
+                        {
+                            "source_id": "src_b",
+                            "selected_count": 5,
+                            "messages": [{"internal_date": "2026-07-01T10:00:00Z"}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+
+        assert data["latest_selection"]["selected_count"] == 5
+        assert data["latest_selection"]["strategy"] == "single_explicit"
+
+    def test_threads_and_ai_remain_anchor_run_specific(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-a",
+            source_id="src_a",
+            priority="high",
+            sender="a@example.com",
+        )
+        anchor = self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-b",
+            source_id="src_b",
+            priority="high",
+            sender="b@example.com",
+        )
+        (anchor / "mail_thread_index.json").write_text(
+            json.dumps({"threads": [{"thread_id": "thr-1"}]}),
+            encoding="utf-8",
+        )
+        (anchor / "mail_thread_context.json").write_text(
+            json.dumps({"contexts": []}),
+            encoding="utf-8",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+
+        assert data["thread_summary"]["thread_count"] == 1
+        assert data["evidence_links"]
+
+    def test_queue_rows_use_origin_run_id_in_detail_links(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-a",
+            source_id="src_a",
+            priority="high",
+            sender="a@example.com",
+        )
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-b",
+            source_id="src_b",
+            priority="high",
+            sender="b@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+        from beeagent_module.interfaces.ui.read_model import _queue_table
+
+        table = _queue_table(
+            "Queue",
+            data["queue_rows"],
+            run_id="agg-run-b",
+            locale="en",
+            current_period="all",
+        )
+        hrefs = [
+            row.get("detail_href") for row in table["rows"] if row.get("detail_href")
+        ]
+        assert any("run_id=agg-run-a" in href for href in hrefs)
+        assert any("run_id=agg-run-b" in href for href in hrefs)
+
+    def test_priority_preview_uses_origin_run_id(self) -> None:
+        from beeagent_module.interfaces.ui.read_model import (
+            _collect_priority_queue_preview,
+        )
+
+        queues = {
+            "high_priority": [
+                {
+                    "event_id": "evt-a",
+                    "run_id": "agg-run-a",
+                    "source_id": "src_a",
+                    "sender": "a@example.com",
+                    "subject": "A",
+                    "priority": "high",
+                },
+                {
+                    "event_id": "evt-b",
+                    "run_id": "agg-run-b",
+                    "source_id": "src_b",
+                    "sender": "b@example.com",
+                    "subject": "B",
+                    "priority": "high",
+                },
+            ]
+        }
+        rows = _collect_priority_queue_preview(
+            queues, "7d", run_id="agg-run-b", locale="en", limit=5
+        )
+        hrefs = [row["evidence"]["href"] for row in rows]
+        assert any("run_id=agg-run-a" in href for href in hrefs)
+        assert any("run_id=agg-run-b" in href for href in hrefs)
+
+    def test_same_event_id_different_source_not_collapsed(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-same",
+            source_id="src_a",
+            priority="high",
+            sender="a@example.com",
+        )
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-same",
+            source_id="src_b",
+            priority="high",
+            sender="b@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+
+        assert data["business_kpi"]["processed_events"] == 2
+        same_rows = [row for row in data["queue_rows"] if row["event_id"] == "evt-same"]
+        assert len(same_rows) == 2
+        assert {row["run_id"] for row in same_rows} == {"agg-run-a", "agg-run-b"}
+        assert {row["source_id"] for row in same_rows} == {"src_a", "src_b"}
+        from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
+
+        layout = build_rop_page_layout(data, tab="overview")
+        action = next(
+            block for block in layout if block.get("title") == "Action Required"
+        )
+        assert "2 items need review" in action["subtitle"]
+
+    def test_bitrix_aggregate_visible_when_anchor_lacks_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_a = self._write_aggregate_run(
+            storage_dir,
+            "agg-run-a",
+            event_id="evt-bx-a",
+            source_id="src_a",
+            priority="low",
+            sender="a@example.com",
+        )
+        (run_a / "bitrix_reconciliation.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "agg-run-a",
+                    "status": "ok",
+                    "items": [
+                        {
+                            "event_id": "evt-bx-a",
+                            "bitrix_match_status": "matched_lead",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-b",
+            event_id="evt-bx-b",
+            source_id="src_b",
+            priority="low",
+            sender="b@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
+        from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
+
+        assert data["business_kpi"]["matched_in_bitrix"] == 1
+
+        layout = build_rop_page_layout(data, tab="bitrix")
+
+        kpi = next(block for block in layout if block.get("type") == "kpi_grid")
+        kpi_values = {item["label"]: item["value"] for item in kpi["items"]}
+        assert kpi_values.get("Matched") == 1
+        matched_table = next(
+            block
+            for block in layout
+            if block.get("type") == "status_table" and block.get("title") == "Matched"
+        )
+        assert any(row[0] == "evt-bx-a" for row in matched_table["rows"])
+        notices = [
+            block
+            for block in layout
+            if block.get("type") == "state_grid"
+            and any(
+                item.get("label") == "Not reconciled" for item in block.get("items", [])
+            )
+        ]
+        assert notices
+        assert any(
+            "not available for this run" in str(item.get("value", ""))
+            for block in notices
+            for item in block["items"]
+        )
+        assert data["evidence_links"]
+        assert all(
+            "/runs/agg-run-b/" in link["url"]
+            for link in data["evidence_links"]
+            if isinstance(link, dict)
+        )
+        bitrix_link = next(
+            link
+            for link in data["evidence_links"]
+            if isinstance(link, dict)
+            and link.get("artifact_id") == "bitrix_reconciliation_json"
+        )
+        assert bitrix_link.get("available") is False
+
+    def test_latest_rop_anchor_not_displaced_by_newer_non_rop_run(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "rop-old",
+            event_id="evt-rop",
+            source_id="src_rop",
+            priority="high",
+            sender="rop@example.com",
+        )
+        generic = storage_dir / "runs" / "generic-new"
+        generic.mkdir(parents=True, exist_ok=True)
+        (generic / "operator_summary.json").write_text(
+            json.dumps({"status": "ok", "summary": "generic case"}),
+            encoding="utf-8",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, None, period="all")
+
+        assert data["selected_run_id"] == "rop-old"
+        assert data["business_kpi"]["processed_events"] == 1
+
+        client = _client(storage_dir)
+        api = client.get("/api/rop/dashboard", params={"period": "all"})
+        assert api.status_code == 200
+        payload = api.json()["data"]
+        assert payload["selected_run_id"] == "rop-old"
+        assert payload["business_kpi"]["processed_events"] == 1
 
 
 def test_event_detail_routes_return_client_error_statuses(tmp_path: Path) -> None:

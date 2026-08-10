@@ -241,7 +241,11 @@ def handle_mailbox_poll(
     state = build_rop_current_state(storage_dir, run_id, logger)
     write_current_state(storage_dir, run_id, state, logger)
     dashboard = build_rop_dashboard(
-        storage_dir, settings["rop"]["dashboard"]["default_period"], logger, run_id
+        storage_dir,
+        settings["rop"]["dashboard"]["default_period"],
+        logger,
+        run_id,
+        aggregate_runs=True,
     )
     write_rop_dashboard(storage_dir, dashboard, logger)
     data["sources"][source_id] = _entry(folder, uidvalidity, selected[-1])

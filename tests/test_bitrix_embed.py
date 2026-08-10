@@ -39,6 +39,7 @@ def _write_minimal_run(storage_dir: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (run_dir / "classified_events.json").write_text(json.dumps([]), encoding="utf-8")
 
 
 def _set_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,18 +73,22 @@ def _build_app(storage_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _https_client(storage_dir: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    return TestClient(_build_app(storage_dir, monkeypatch), base_url="https://testserver")
+    return TestClient(
+        _build_app(storage_dir, monkeypatch), base_url="https://testserver"
+    )
 
 
 def _http_client(storage_dir: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    return TestClient(_build_app(storage_dir, monkeypatch), base_url="http://testserver")
+    return TestClient(
+        _build_app(storage_dir, monkeypatch), base_url="http://testserver"
+    )
 
 
 class _FakeResponse:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -102,7 +107,11 @@ def _mock_user_response(monkeypatch: pytest.MonkeyPatch, payload: Any) -> list[s
 
     def _fake_urlopen(req: Any, timeout: int = 0) -> _FakeResponse:
         requested_urls.append(req.full_url)
-        body = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
+        body = (
+            payload
+            if isinstance(payload, bytes)
+            else json.dumps(payload).encode("utf-8")
+        )
         return _FakeResponse(body)
 
     monkeypatch.setattr(bitrix_embed, "urlopen", _fake_urlopen)
@@ -189,10 +198,8 @@ class TestSettingsValidation:
     ) -> None:
         self._validate(
             monkeypatch,
-            lambda s: (
-                s["bitrix"]["embedded_app"].update(
-                    {"enabled": False, "portal_origin": ""}
-                )
+            lambda s: s["bitrix"]["embedded_app"].update(
+                {"enabled": False, "portal_origin": ""}
             ),
         )
 
@@ -927,9 +934,7 @@ class TestInstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage_dir = _make_storage(tmp_path)
-        oversized = {
-            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
-        }
+        oversized = {"result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}}
         _mock_user_response(monkeypatch, oversized)
         client = _https_client(storage_dir, monkeypatch)
 
@@ -1394,9 +1399,7 @@ class TestLaunch:
     ) -> None:
         storage_dir = _make_storage(tmp_path)
         _bind_state(storage_dir)
-        oversized = {
-            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
-        }
+        oversized = {"result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}}
         _mock_user_response(monkeypatch, oversized)
         client = _https_client(storage_dir, monkeypatch)
 
@@ -1436,9 +1439,9 @@ class TestLaunch:
         assert error["code"] == "bitrix_verification_failed"
         assert error["reason"] == "malformed_response"
         assert "set-cookie" not in response.headers
-        artifact_text = (
-            storage_dir / "interfaces" / "bitrix_rop_app.json"
-        ).read_text(encoding="utf-8")
+        artifact_text = (storage_dir / "interfaces" / "bitrix_rop_app.json").read_text(
+            encoding="utf-8"
+        )
         assert "not-numeric" not in artifact_text
 
     def test_launch_domain_mismatch_no_outbound(
@@ -1574,7 +1577,10 @@ class TestEmbeddedSettingsComposition:
         assert beeui["security"]["frame_ancestors"] == [PORTAL_ORIGIN]
         assert beeui["auth"]["cookie_secure"] is True
         assert beeui["auth"]["cookie_samesite"] == "none"
-        assert beeui["auth"]["session_age_max"] == bitrix_embed.EMBEDDED_SESSION_AGE_MAX_SECONDS
+        assert (
+            beeui["auth"]["session_age_max"]
+            == bitrix_embed.EMBEDDED_SESSION_AGE_MAX_SECONDS
+        )
 
     def test_build_beeui_settings_without_embedded_unaffected(
         self,
@@ -1628,14 +1634,15 @@ class TestEmbeddedModule:
 
     def test_parse_install_form_requires_member_id(self) -> None:
         with pytest.raises(bitrix_embed.BitrixEmbedError):
-            bitrix_embed.parse_install_form(
-                {"AUTH_ID": "a", "PLACEMENT": "DEFAULT"}
-            )
+            bitrix_embed.parse_install_form({"AUTH_ID": "a", "PLACEMENT": "DEFAULT"})
 
     def test_parse_install_form_rejects_oversized_known_field(self) -> None:
         with pytest.raises(bitrix_embed.BitrixEmbedError):
             bitrix_embed.parse_install_form(
-                {"DOMAIN": "x", "member_id": "m" * (bitrix_embed.MAX_FORM_VALUE_LENGTH + 1)}
+                {
+                    "DOMAIN": "x",
+                    "member_id": "m" * (bitrix_embed.MAX_FORM_VALUE_LENGTH + 1),
+                }
             )
 
     def test_parse_launch_form_requires_fields(self) -> None:
@@ -1809,12 +1816,7 @@ class TestVerifyBitrixUserBounds:
     ) -> None:
         prefix = b'{"result":'
         suffix = b'{"ID":"42","ACTIVE":true}}'
-        pad = (
-            bitrix_embed.MAX_BITRIX_RESPONSE_BYTES
-            + 1
-            - len(prefix)
-            - len(suffix)
-        )
+        pad = bitrix_embed.MAX_BITRIX_RESPONSE_BYTES + 1 - len(prefix) - len(suffix)
         payload = prefix + b" " * pad + suffix
 
         with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
@@ -1826,9 +1828,7 @@ class TestVerifyBitrixUserBounds:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        payload = {
-            "result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}
-        }
+        payload = {"result": {"ID": "42", "ACTIVE": True, "extra": "x" * 70000}}
 
         with pytest.raises(bitrix_embed.BitrixLaunchError) as exc:
             self._verify(monkeypatch, payload)
