@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.0...beeagent-v0.50.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* preserve ROP dashboard history across incremental mailbox runs ([#179](https://github.com/beesyst/beeagent/issues/179)) ([d3d17f4](https://github.com/beesyst/beeagent/commit/d3d17f4aa0173fe141ade7d4803560f4bdfc2dc9))
+
 ## [0.50.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.49.3...beeagent-v0.50.0) (2026-08-09)
 
 
