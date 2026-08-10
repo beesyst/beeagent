@@ -198,6 +198,7 @@ git push
 
 ```
 cd /opt/beeagent/releases
+readlink -f /opt/beeagent/current
 REL=20260808-002
 sudo install -d -o bee -g beeagent -m 0750 "$REL"
 ```
