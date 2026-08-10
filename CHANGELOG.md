@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.1...beeagent-v0.50.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **rop:** make dashboard run ordering deterministic ([#181](https://github.com/beesyst/beeagent/issues/181)) ([411523d](https://github.com/beesyst/beeagent/commit/411523d54c5852f232e62e3b2005aeb825f4c2e1))
+
 ## [0.50.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.0...beeagent-v0.50.1) (2026-08-10)
 
 
