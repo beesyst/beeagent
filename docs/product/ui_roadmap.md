@@ -2843,6 +2843,120 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - `beeagent-rop` unchanged;
 - `pyproject.toml.version` unchanged.
 
+### Итерация UI-8.6 — Principal-bound Web auth and scoped console access
+
+**Статус:** PLANNED
+
+#### Goal
+
+Исправить BeeAgent Web authentication identity contract и добавить server-side scoped authorization для multi-module Web Console: local principal должен входить только по своей паре `username + token`, а доступ к Dashboard, ROP, Runs, Modules и будущим module surfaces должен определяться отдельно через explicit principal scopes.
+
+#### Scope
+
+**Включено:**
+
+- сохранить BeeUI-backed session/cookie implementation;
+- привязать local login к exact configured `username + token`;
+- использовать canonical configured principal identity в signed session;
+- расширить `web.auth.principals[]` explicit `scopes`;
+- сохранить `role` только как authority level: `viewer`, `operator`, `admin`;
+- использовать scopes как resource access dimension;
+- поддержать wildcard `*` для explicitly configured full-access principals;
+- валидировать scopes fail-fast;
+- отклонять duplicate resolved principal token values без раскрытия secrets;
+- добавить server-side authorization для protected HTML/API/resource routes;
+- default-deny неизвестные protected surfaces для non-wildcard principals;
+- обеспечить ROP-only access к `/rop`, Event Detail, ROP API и bounded ROP evidence;
+- запретить ROP-only principal общий Dashboard, Runs, Modules и unrelated module artifacts;
+- использовать generic BeeUI request-scoped navigation visibility contract;
+- скрывать недоступные navigation items;
+- направлять ROP-only principal после login на разрешённую ROP surface;
+- сохранить Bitrix verified external-principal flow как ROP-only viewer access;
+- сохранить auth-disabled loopback development mode;
+- обновить tests и documentation.
+
+#### Excluded
+
+- password database;
+- user registration;
+- password reset;
+- OAuth/OIDC для local login;
+- tenant model;
+- product roles `rop` / `beescan`;
+- ROP-specific behavior inside BeeUI;
+- operator POST actions;
+- admin/config actions;
+- CRM/Bitrix write-back;
+- changes to `beeagent-rop`.
+
+#### Deliverable
+
+BeeAgent использует модель:
+
+```text
+principal identity = exact username + token
+authority = role
+resource access = scopes
+```
+
+`admin + scopes=["*"]` сохраняет полный Web Console access, а `viewer + scopes=["rop"]` видит и может читать только ROP surface и разрешённое ROP evidence.
+
+#### Acceptance criteria
+
+- valid token с неправильным username не аутентифицируется;
+- valid username с неправильным token не аутентифицируется;
+- successful local session содержит canonical configured principal identity;
+- duplicate token values fail fast;
+- scopes обязательны и валидируются;
+- ROP-only navigation не содержит Dashboard, Runs и Modules;
+- direct unauthorized HTML/API requests получают server-side denial;
+- ROP-only principal не может перечислять или читать unrelated module runs/artifacts;
+- admin wildcard principal сохраняет существующий доступ;
+- unknown future protected surface не становится автоматически доступной scoped principal;
+- Bitrix embedded verified user продолжает открывать `/rop` без local user list;
+- unauthenticated и forbidden остаются разными состояниями;
+- secrets не появляются в HTML, API, logs или artifacts;
+- auth-disabled loopback mode остаётся совместимым.
+
+#### Checks
+
+- full `uv run pytest -q`;
+- targeted settings/auth/session tests;
+- correct username + token login;
+- wrong username + valid token;
+- valid username + wrong token;
+- another principal username + valid token;
+- duplicate resolved token values;
+- missing/invalid/duplicate scopes;
+- admin wildcard HTML/API access;
+- ROP-only allowed route matrix;
+- ROP-only forbidden route matrix;
+- direct URL bypass attempts;
+- ROP artifact access versus unrelated run/artifact denial;
+- unknown protected route default-deny;
+- Bitrix embedded ROP session regression;
+- login/logout/session rotation regression;
+- RU/EN navigation regression;
+- route-prefix/navigation regression where applicable;
+- no-secret logging review;
+- SAST;
+- DAST-style auth/authorization misuse checks;
+- SCA when BeeUI dependency/lockfile is updated.
+
+#### DoD
+
+- local principal identity is cryptographically bound to its configured credential;
+- role and resource scope are separate concepts;
+- server-side authorization is authoritative;
+- navigation visibility mirrors, but never replaces, authorization;
+- multi-module default is least privilege;
+- existing admin and Bitrix ROP flows remain supported;
+- BeeUI contains no BeeAgent/ROP/BeeScan semantics;
+- required BeeUI release is consumed through the registry dependency;
+- tests and docs are synchronized;
+- rollout documentation requires session invalidation;
+- `pyproject.toml.version` is unchanged.
+
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
 **Статус:** PLANNED
