@@ -151,6 +151,19 @@ def _write_run_artifacts(storage_dir: Path, run_id: str) -> Path:
     return run_dir
 
 
+def _write_non_rop_run(storage_dir: Path, run_id: str) -> Path:
+    run_dir = storage_dir / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "operator_summary.json").write_text(
+        json.dumps({"run_id": run_id, "status": "ok", "summary": "non-rop run"}),
+        encoding="utf-8",
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps({"not": "a list"}), encoding="utf-8"
+    )
+    return run_dir
+
+
 def _write_rop_event_detail_artifacts(storage_dir: Path, run_id: str) -> Path:
     run_dir = _write_run_artifacts(storage_dir, run_id)
     normalized_events = [
@@ -5113,16 +5126,25 @@ def _build_auth_settings(enabled: bool = False) -> dict:
         "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
         "principals": [
             {
-                "id": "admin_1",
-                "username": "admin1",
+                "id": "admin",
+                "username": "admin",
                 "role": "admin",
-                "token_env": "BEEAGENT_WEB_ADMIN1_TOKEN",
+                "scopes": ["*"],
+                "token_env": "BEEAGENT_WEB_ADMIN_TOKEN",
             },
             {
-                "id": "admin_2",
-                "username": "admin2",
-                "role": "admin",
-                "token_env": "BEEAGENT_WEB_ADMIN2_TOKEN",
+                "id": "rop",
+                "username": "rop",
+                "role": "viewer",
+                "scopes": ["rop"],
+                "token_env": "BEEAGENT_WEB_ROP_TOKEN",
+            },
+            {
+                "id": "operator",
+                "username": "operator",
+                "role": "operator",
+                "scopes": ["dashboard", "rop", "runs", "modules"],
+                "token_env": "BEEAGENT_WEB_OPERATOR_TOKEN",
             },
         ],
     }
@@ -5146,8 +5168,9 @@ def test_auth_cookie_secure_tracks_app_env(
     from beeagent_module.interfaces.ui.app import build_beeui_settings
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
     settings = _build_auth_settings(enabled=True)
     settings["app"]["env"] = env_name
@@ -5157,15 +5180,16 @@ def test_auth_cookie_secure_tracks_app_env(
     assert beeui_settings["auth"]["cookie_secure"] is expected_secure
 
 
-def test_multi_admin_auth_service_preserves_secure_cookie_in_prod(
+def test_auth_service_preserves_secure_cookie_in_prod(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from beeagent_module.interfaces.ui.app import build_beeui_app
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
     settings = _build_auth_settings(enabled=True)
     settings["app"]["env"] = "prod"
@@ -5179,7 +5203,7 @@ def test_multi_admin_auth_service_preserves_secure_cookie_in_prod(
 
     response = client.post(
         "/auth/login",
-        data={"user_id": "admin1", "token": "admin1-token"},
+        data={"user_id": "admin", "token": "admin-token"},
         follow_redirects=False,
     )
 
@@ -5190,8 +5214,9 @@ def test_multi_admin_auth_service_preserves_secure_cookie_in_prod(
 def _set_auth_env() -> tuple[dict[str, str], dict[str, str | None]]:
     env = {
         "BEEAGENT_WEB_SESSION_SECRET": "test-session-secret-not-for-prod",
-        "BEEAGENT_WEB_ADMIN1_TOKEN": "admin1-test-token",
-        "BEEAGENT_WEB_ADMIN2_TOKEN": "admin2-test-token",
+        "BEEAGENT_WEB_ADMIN_TOKEN": "admin-test-token",
+        "BEEAGENT_WEB_ROP_TOKEN": "rop-test-token",
+        "BEEAGENT_WEB_OPERATOR_TOKEN": "operator-test-token",
     }
     previous = {key: os.environ.get(key) for key in env}
     for k, v in env.items():
@@ -5257,8 +5282,9 @@ def test_auth_enabled_fails_fast_without_beeui_auth_service(
     from beeagent_module.interfaces.ui import app as ui_app
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
     settings = _build_auth_settings(enabled=True)
 
@@ -5329,20 +5355,20 @@ class TestAuthEnabled:
         response = client.get("/static/")
         assert response.status_code in (200, 404)
 
-    def test_admin1_can_access_rop(self, tmp_path: Path) -> None:
+    def test_admin_can_access_rop(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-auth")
         client = _auth_client(storage_dir)
-        login_resp = self._login(client, "admin1", "admin1-test-token")
+        login_resp = self._login(client, "admin", "admin-test-token")
         assert login_resp.status_code in (302, 200)
         response = client.get("/rop", follow_redirects=False)
         assert response.status_code == 200
 
-    def test_admin1_can_access_api(self, tmp_path: Path) -> None:
+    def test_admin_can_access_api(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-auth")
         client = _auth_client(storage_dir)
-        self._login(client, "admin1", "admin1-test-token")
+        self._login(client, "admin", "admin-test-token")
         response = client.get("/api/rop/dashboard")
         assert response.status_code == 200
 
@@ -5356,11 +5382,11 @@ class TestAuthEnabled:
         from beeagent_module.interfaces.ui.app import build_beeui_app
 
         monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-        monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-test-token")
-        monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "operator-test-token")
+        monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-test-token")
+        monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-test-token")
+        monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-test-token")
 
         settings = _build_auth_settings(enabled=True)
-        settings["web"]["auth"]["principals"][1]["role"] = "operator"
 
         storage_dir = _make_storage(tmp_path)
         _write_run_artifacts(storage_dir, "run-operator-role")
@@ -5372,13 +5398,13 @@ class TestAuthEnabled:
         )
         service = app.state.beeui_auth_service
 
-        assert service._resolve_role("admin1-test-token") == UserRole.admin
+        assert service._resolve_role("admin-test-token") == UserRole.admin
         assert service._resolve_role("operator-test-token") == UserRole.operator
 
         client = TestClient(app)
         login_resp = client.post(
             "/auth/login",
-            data={"user_id": "admin2", "token": "operator-test-token"},
+            data={"user_id": "operator", "token": "operator-test-token"},
         )
         assert login_resp.status_code in (302, 200)
 
@@ -5388,7 +5414,7 @@ class TestAuthEnabled:
     def test_invalid_token_rejected(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         client = _auth_client(storage_dir)
-        login_resp = self._login(client, "admin1", "wrong-token")
+        login_resp = self._login(client, "admin", "wrong-token")
         assert login_resp.status_code == 401
 
     def test_protected_route_fails_closed_if_auth_service_removed(
@@ -5423,6 +5449,499 @@ class TestAuthEnabled:
         assert response.json()["error"]["code"] == "unauthenticated"
 
 
+def _set_scoped_auth_env() -> tuple[dict[str, str], dict[str, str | None]]:
+    env = {
+        "BEEAGENT_WEB_SESSION_SECRET": "scoped-session-secret",
+        "BEEAGENT_WEB_ADMIN1_TOKEN": "admin1-test-token",
+        "BEEAGENT_WEB_ADMIN2_TOKEN": "admin2-test-token",
+        "BEEAGENT_WEB_ROPVIEWER_TOKEN": "ropviewer-test-token",
+        "BEEAGENT_WEB_ROPADMIN_TOKEN": "ropadmin-test-token",
+    }
+    previous = {key: os.environ.get(key) for key in env}
+    for k, v in env.items():
+        os.environ[k] = v
+    return env, previous
+
+
+def _clear_scoped_auth_env(
+    env: dict[str, str],
+    previous: dict[str, str | None],
+) -> None:
+    for key in env:
+        old_value = previous.get(key)
+        if old_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_value
+
+
+def _build_scoped_auth_settings() -> dict:
+    settings = _build_settings()
+    settings["web"]["auth"] = {
+        "enabled": True,
+        "mode": "beeui_session",
+        "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
+        "principals": [
+            {
+                "id": "admin_1",
+                "username": "admin1",
+                "role": "admin",
+                "scopes": ["*"],
+                "token_env": "BEEAGENT_WEB_ADMIN1_TOKEN",
+            },
+            {
+                "id": "admin_2",
+                "username": "admin2",
+                "role": "admin",
+                "scopes": ["*"],
+                "token_env": "BEEAGENT_WEB_ADMIN2_TOKEN",
+            },
+            {
+                "id": "rop_viewer_1",
+                "username": "ropviewer",
+                "role": "viewer",
+                "scopes": ["rop"],
+                "token_env": "BEEAGENT_WEB_ROPVIEWER_TOKEN",
+            },
+            {
+                "id": "rop_admin_1",
+                "username": "ropadmin",
+                "role": "admin",
+                "scopes": ["rop"],
+                "token_env": "BEEAGENT_WEB_ROPADMIN_TOKEN",
+            },
+        ],
+    }
+    return settings
+
+
+def _scoped_auth_client(storage_dir: Path) -> TestClient:
+    from beeagent_module.interfaces.ui.app import build_beeui_app
+
+    settings = _build_scoped_auth_settings()
+    app = build_beeui_app(
+        settings=settings,
+        logger=_logger(),
+        storage_dir=storage_dir,
+    )
+    return TestClient(app)
+
+
+class TestPrincipalScopedAuthorization:
+    _env: dict[str, str] = {}
+    _previous_env: dict[str, str | None] = {}
+
+    @classmethod
+    def setup_class(cls) -> None:
+        cls._env, cls._previous_env = _set_scoped_auth_env()
+
+    @classmethod
+    def teardown_class(cls) -> None:
+        _clear_scoped_auth_env(cls._env, cls._previous_env)
+
+    def _client(self, tmp_path: Path) -> TestClient:
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        return _scoped_auth_client(storage_dir)
+
+    def _login(
+        self,
+        client: TestClient,
+        user_id: str,
+        token: str,
+        follow_redirects: bool = True,
+    ) -> Any:
+        return client.post(
+            "/auth/login",
+            data={"user_id": user_id, "token": token},
+            follow_redirects=follow_redirects,
+        )
+
+    def test_exact_username_token_success(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(client, "admin1", "admin1-test-token")
+        assert resp.status_code in (302, 200)
+        assert client.get("/", follow_redirects=False).status_code == 200
+
+    def test_rop_viewer_exact_username_token_success(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(
+            client,
+            "ropviewer",
+            "ropviewer-test-token",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert client.get("/rop", follow_redirects=False).status_code == 200
+
+    def test_wrong_username_valid_token_rejected(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(client, "nobody", "admin1-test-token")
+        assert resp.status_code == 401
+
+    def test_another_principal_username_valid_token_rejected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(client, "admin2", "admin1-test-token")
+        assert resp.status_code == 401
+
+    def test_correct_username_wrong_token_rejected(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(client, "admin1", "wrong-token")
+        assert resp.status_code == 401
+
+    def test_failure_response_does_not_expose_credentials(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client = self._client(tmp_path)
+        resp = self._login(client, "admin1", "wrong-token")
+        assert "wrong-token" not in resp.text
+        assert "admin1-test-token" not in resp.text
+
+    def test_canonical_configured_session_identity(self, tmp_path: Path) -> None:
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        app = build_beeui_app(
+            settings=_build_scoped_auth_settings(),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+        self._login(client, "admin1", "admin1-test-token")
+
+        service = app.state.beeui_auth_service
+        cookie = client.cookies.get(service.cookie_name())
+        session = service.verify_session(cookie)
+        assert session is not None
+        assert session.user_id == "admin_1"
+
+    def test_admin_wildcard_full_html_access(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "admin1", "admin1-test-token")
+        for path in ["/", "/rop", "/runs", "/runs/run-auth", "/modules"]:
+            response = client.get(path, follow_redirects=False)
+            assert response.status_code in (200, 404), f"GET {path} should be allowed"
+
+    def test_admin_wildcard_full_api_access(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "admin1", "admin1-test-token")
+        for path in [
+            "/api/dashboard",
+            "/api/runs",
+            "/api/modules",
+            "/api/rop/dashboard",
+        ]:
+            response = client.get(path)
+            assert response.status_code == 200, f"GET {path} should be allowed"
+
+    def test_rop_viewer_allowed_html_matrix(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        assert client.get("/rop", follow_redirects=False).status_code == 200
+        evt = client.get("/rop/events/evt-1?run_id=run-auth")
+        assert evt.status_code != 403
+        evidence = client.get(
+            "/runs/run-auth/artifacts/operator_summary_json",
+            follow_redirects=False,
+        )
+        assert evidence.status_code != 403
+
+    def test_rop_viewer_allowed_api_matrix(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        assert client.get("/api/rop/dashboard").status_code == 200
+        evt = client.get("/api/rop/events/evt-1?run_id=run-auth")
+        assert evt.status_code != 403
+        evidence = client.get("/api/runs/run-auth/artifacts/operator_summary_json")
+        assert evidence.status_code != 403
+
+    def test_rop_viewer_forbidden_html_matrix(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        for path in [
+            "/runs",
+            "/runs/run-auth",
+            "/runs/run-auth/artifacts",
+            "/modules",
+            "/components",
+        ]:
+            response = client.get(path, follow_redirects=False)
+            assert response.status_code == 403, f"GET {path} should be denied"
+
+    def test_rop_viewer_forbidden_api_matrix(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        for path in [
+            "/api/dashboard",
+            "/api/runs",
+            "/api/runs/run-auth",
+            "/api/runs/run-auth/artifacts",
+            "/api/modules",
+        ]:
+            response = client.get(path)
+            assert response.status_code == 403, f"GET {path} should be denied"
+
+    def test_rop_viewer_denied_unrelated_artifact(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        assert (
+            client.get(
+                "/runs/run-auth/artifacts/run_json",
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+        assert client.get("/api/runs/run-auth/artifacts/run_json").status_code == 403
+
+    def test_unknown_protected_surface_default_deny(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        assert client.get("/components", follow_redirects=False).status_code == 403
+        assert client.get("/api/unknown-surface").status_code == 403
+
+    def test_unauthenticated_differs_from_forbidden(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        unauthed = client.get("/api/runs")
+        assert unauthed.status_code == 401
+        assert unauthed.json()["error"]["code"] == "unauthenticated"
+
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        forbidden = client.get("/api/runs")
+        assert forbidden.status_code == 403
+        assert forbidden.json()["error"]["code"] == "forbidden"
+
+    def test_rop_viewer_landing_redirects_to_rop(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        login_resp = self._login(
+            client,
+            "ropviewer",
+            "ropviewer-test-token",
+            follow_redirects=False,
+        )
+        assert login_resp.status_code == 302
+        assert login_resp.headers["location"] == "/"
+
+        landing = client.get(
+            "/", headers={"accept": "text/html"}, follow_redirects=False
+        )
+        assert landing.status_code == 303
+        assert landing.headers["location"] == "/rop"
+
+    def test_rop_viewer_direct_dashboard_url_denied(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        api = client.get("/api/dashboard")
+        assert api.status_code == 403
+        assert api.json()["error"]["code"] == "forbidden"
+
+    def test_role_does_not_grant_resource_scope(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropadmin", "ropadmin-test-token")
+        assert client.get("/rop", follow_redirects=False).status_code == 200
+        assert client.get("/api/dashboard").status_code == 403
+        assert client.get("/api/runs").status_code == 403
+
+    def test_unmapped_future_scope_gets_403(self, tmp_path: Path) -> None:
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        settings = _build_scoped_auth_settings()
+        settings["web"]["auth"]["principals"][2]["scopes"] = ["beescan"]
+        app = build_beeui_app(
+            settings=settings,
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+
+        assert client.get("/rop", follow_redirects=False).status_code == 403
+        assert client.get("/api/rop/dashboard").status_code == 403
+        assert client.get("/api/runs").status_code == 403
+
+    def test_rop_viewer_navigation_hides_unrelated_items(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        html = client.get("/rop", headers={"accept": "text/html"}).text
+        assert 'href="/rop"' in html
+        assert 'data-beeui-icon="dashboard"' not in html
+        assert 'data-beeui-icon="runs"' not in html
+        assert 'href="/runs"' not in html
+        assert 'href="/modules"' not in html
+        assert 'nav-link-title">Dashboard</span>' not in html
+
+    def test_admin_navigation_shows_all_items(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "admin1", "admin1-test-token")
+        html = client.get("/", headers={"accept": "text/html"}).text
+        assert 'data-beeui-icon="dashboard"' in html
+        assert 'data-beeui-icon="runs"' in html
+        assert 'href="/runs"' in html
+        assert 'href="/modules"' in html
+        assert 'href="/rop"' in html
+
+    def test_rop_viewer_navigation_hides_ru_locale(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        html = client.get("/rop?lang=ru", headers={"accept": "text/html"}).text
+        assert 'href="/rop' in html
+        assert 'data-beeui-icon="dashboard"' not in html
+        assert 'data-beeui-icon="runs"' not in html
+        assert 'href="/runs' not in html
+        assert 'href="/modules' not in html
+
+    def test_bitrix_external_session_bounded_rop(self, tmp_path: Path) -> None:
+        from beeui_module.auth.models import UserRole
+
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        app = build_beeui_app(
+            settings=_build_scoped_auth_settings(),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+
+        service = app.state.beeui_auth_service
+        _, cookie = service.create_principal_session("bitrix:42", UserRole.viewer)
+        client.cookies.set(service.cookie_name(), cookie)
+
+        assert client.get("/rop", follow_redirects=False).status_code == 200
+        assert client.get("/api/rop/dashboard").status_code == 200
+        assert (
+            client.get(
+                "/", headers={"accept": "text/html"}, follow_redirects=False
+            ).status_code
+            == 303
+        )
+        assert client.get("/api/runs").status_code == 403
+        assert client.get("/api/modules").status_code == 403
+        assert (
+            client.get(
+                "/runs/run-auth/artifacts/run_json",
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+
+    def test_unknown_signed_principal_denied(self, tmp_path: Path) -> None:
+        from beeui_module.auth.models import UserRole
+
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        app = build_beeui_app(
+            settings=_build_scoped_auth_settings(),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+
+        service = app.state.beeui_auth_service
+        _, cookie = service.create_principal_session("unknown-user", UserRole.viewer)
+        client.cookies.set(service.cookie_name(), cookie)
+
+        assert client.get("/rop", follow_redirects=False).status_code == 403
+        assert client.get("/api/rop/dashboard").status_code == 403
+        assert client.get("/api/runs").status_code == 403
+
+    def test_legacy_numeric_signed_principal_denied(self, tmp_path: Path) -> None:
+        from beeui_module.auth.models import UserRole
+
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        app = build_beeui_app(
+            settings=_build_scoped_auth_settings(),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+
+        service = app.state.beeui_auth_service
+        _, cookie = service.create_principal_session("42", UserRole.viewer)
+        client.cookies.set(service.cookie_name(), cookie)
+
+        assert client.get("/rop", follow_redirects=False).status_code == 403
+        assert client.get("/api/rop/dashboard").status_code == 403
+
+    def test_rop_viewer_non_rop_run_denied(self, tmp_path: Path) -> None:
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-auth")
+        _write_non_rop_run(storage_dir, "run-non-rop")
+        app = build_beeui_app(
+            settings=_build_scoped_auth_settings(),
+            logger=_logger(),
+            storage_dir=storage_dir,
+        )
+        client = TestClient(app)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+
+        for path in [
+            "/rop?run_id=run-non-rop",
+            "/rop/events/evt-1?run_id=run-non-rop",
+        ]:
+            response = client.get(
+                path, headers={"accept": "text/html"}, follow_redirects=False
+            )
+            assert response.status_code == 403, f"GET {path} should be denied"
+
+        for path in [
+            "/api/rop/dashboard?run_id=run-non-rop",
+            "/api/rop/events/evt-1?run_id=run-non-rop",
+        ]:
+            response = client.get(path)
+            assert response.status_code == 403, f"GET {path} should be denied"
+
+        assert (
+            client.get(
+                "/runs/run-non-rop/artifacts/operator_summary_json",
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/runs/run-non-rop/artifacts/classified_events_json",
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/api/runs/run-non-rop/artifacts/operator_summary_json"
+            ).status_code
+            == 403
+        )
+
+        assert client.get("/rop?run_id=run-auth").status_code == 200
+        assert (
+            client.get(
+                "/runs/run-auth/artifacts/operator_summary_json",
+                follow_redirects=False,
+            ).status_code
+            != 403
+        )
+
+    def test_logout_invalidates_session(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        self._login(client, "ropviewer", "ropviewer-test-token")
+        client.post("/auth/logout")
+        assert client.get("/rop", follow_redirects=False).status_code in (302, 401)
+
+
 def _build_valid_enabled_auth_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict:
@@ -5433,22 +5952,32 @@ def _build_valid_enabled_auth_settings(
         "session_secret_env": "BEEAGENT_WEB_SESSION_SECRET",
         "principals": [
             {
-                "id": "admin_1",
-                "username": "admin1",
+                "id": "admin",
+                "username": "admin",
                 "role": "admin",
-                "token_env": "BEEAGENT_WEB_ADMIN1_TOKEN",
+                "scopes": ["*"],
+                "token_env": "BEEAGENT_WEB_ADMIN_TOKEN",
             },
             {
-                "id": "admin_2",
-                "username": "admin2",
-                "role": "admin",
-                "token_env": "BEEAGENT_WEB_ADMIN2_TOKEN",
+                "id": "rop",
+                "username": "rop",
+                "role": "viewer",
+                "scopes": ["rop"],
+                "token_env": "BEEAGENT_WEB_ROP_TOKEN",
+            },
+            {
+                "id": "operator",
+                "username": "operator",
+                "role": "operator",
+                "scopes": ["dashboard", "rop", "runs", "modules"],
+                "token_env": "BEEAGENT_WEB_OPERATOR_TOKEN",
             },
         ],
     }
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     return settings
 
 
@@ -5470,9 +5999,9 @@ def test_auth_settings_fail_fast_missing_admin_token(
     from beeagent_module.core.settings import validate_settings
 
     settings = _build_valid_enabled_auth_settings(monkeypatch)
-    monkeypatch.delenv("BEEAGENT_WEB_ADMIN2_TOKEN", raising=False)
+    monkeypatch.delenv("BEEAGENT_WEB_ADMIN_TOKEN", raising=False)
 
-    with pytest.raises(RuntimeError, match="BEEAGENT_WEB_ADMIN2_TOKEN"):
+    with pytest.raises(RuntimeError, match="BEEAGENT_WEB_ADMIN_TOKEN"):
         validate_settings(settings)
 
 
@@ -5482,7 +6011,7 @@ def test_auth_settings_fail_fast_duplicate_principal_id(
     from beeagent_module.core.settings import validate_settings
 
     settings = _build_valid_enabled_auth_settings(monkeypatch)
-    settings["web"]["auth"]["principals"][1]["id"] = "admin_1"
+    settings["web"]["auth"]["principals"][1]["id"] = "admin"
 
     with pytest.raises(RuntimeError, match="Duplicate web.auth.principals id"):
         validate_settings(settings)
@@ -5494,7 +6023,7 @@ def test_auth_settings_fail_fast_duplicate_username(
     from beeagent_module.core.settings import validate_settings
 
     settings = _build_valid_enabled_auth_settings(monkeypatch)
-    settings["web"]["auth"]["principals"][1]["username"] = "admin1"
+    settings["web"]["auth"]["principals"][1]["username"] = "admin"
 
     with pytest.raises(RuntimeError, match="Duplicate web.auth.principals username"):
         validate_settings(settings)
@@ -5506,7 +6035,7 @@ def test_auth_settings_fail_fast_duplicate_token_env(
     from beeagent_module.core.settings import validate_settings
 
     settings = _build_valid_enabled_auth_settings(monkeypatch)
-    settings["web"]["auth"]["principals"][1]["token_env"] = "BEEAGENT_WEB_ADMIN1_TOKEN"
+    settings["web"]["auth"]["principals"][1]["token_env"] = "BEEAGENT_WEB_ADMIN_TOKEN"
 
     with pytest.raises(RuntimeError, match="Duplicate web.auth.principals token_env"):
         validate_settings(settings)
@@ -5522,6 +6051,160 @@ def test_auth_settings_fail_fast_invalid_role(
 
     with pytest.raises(RuntimeError, match="Invalid web.auth.principals\\[1\\].role"):
         validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_missing_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1].pop("scopes")
+
+    with pytest.raises(RuntimeError, match="scopes"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_empty_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["scopes"] = []
+
+    with pytest.raises(RuntimeError, match="scopes"):
+        validate_settings(settings)
+
+
+def test_auth_settings_accepts_future_safe_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.paths import get_project_root
+    from beeagent_module.core.settings import load_settings, validate_settings
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings["web"]["auth"]["principals"][1]["scopes"] = ["beescan"]
+    validate_settings(settings)
+
+
+@pytest.mark.parametrize(
+    "bad_scope",
+    [
+        "Beescan",
+        "ROP",
+        "rop/",
+        "/rop",
+        "ro p",
+        "rop ",
+        " rop",
+        "röp",
+        "..",
+        "-rop",
+        "9rop",
+        "ro-p/",
+    ],
+)
+def test_auth_settings_fail_fast_malformed_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_scope: str,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["scopes"] = [bad_scope]
+
+    with pytest.raises(RuntimeError, match="safe lowercase scope identifier"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_duplicate_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["scopes"] = ["rop", "rop"]
+
+    with pytest.raises(RuntimeError, match="Duplicate web.auth.principals"):
+        validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_wildcard_with_other_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    settings["web"]["auth"]["principals"][1]["scopes"] = ["*", "rop"]
+
+    with pytest.raises(RuntimeError, match="wildcard"):
+        validate_settings(settings)
+
+
+def test_auth_settings_accepts_wildcard_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.paths import get_project_root
+    from beeagent_module.core.settings import load_settings, validate_settings
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    validate_settings(settings)
+
+
+def test_auth_settings_accepts_multiple_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.paths import get_project_root
+    from beeagent_module.core.settings import load_settings, validate_settings
+
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings["web"]["auth"]["principals"][1]["scopes"] = ["rop", "runs"]
+    validate_settings(settings)
+
+
+def test_auth_settings_fail_fast_duplicate_resolved_token_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "admin-token")
+
+    with pytest.raises(RuntimeError, match="Duplicate resolved token value"):
+        validate_settings(settings)
+
+
+def test_auth_settings_duplicate_resolved_token_error_does_not_expose_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _build_valid_enabled_auth_settings(monkeypatch)
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "admin-token")
+
+    with pytest.raises(RuntimeError, match="Duplicate resolved token value") as exc:
+        validate_settings(settings)
+
+    assert "admin-token" not in str(exc.value)
 
 
 def _build_full_settings() -> dict:
@@ -5818,8 +6501,9 @@ def test_widget_api_allows_bearer_without_beeui_session(
         }
     }
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
 
     client = _client(storage_dir, settings=settings)
@@ -5854,8 +6538,9 @@ def test_widget_api_rejects_missing_or_invalid_token(
         }
     }
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("BITRIX_ROP_WIDGET_TOKEN", "widget-token")
 
     client = _client(storage_dir, settings=settings)

@@ -24,8 +24,9 @@ from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.settings import load_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
-os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
+os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("BEEAGENT_WEB_ROP_TOKEN", "test-rop-token")
+os.environ.setdefault("BEEAGENT_WEB_OPERATOR_TOKEN", "test-operator-token")
 
 
 @pytest.fixture(autouse=True)
@@ -2421,20 +2422,24 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
 
     def _provider_response(**kwargs) -> str:
         provider_calls.append(None)
-        return "```json\n" + json.dumps(
-            {
-                "case_type": "new_lead",
-                "case_subtype": "tender",
-                "recommended_queue": "tender",
-                "should_rop_see": True,
-                "correct_action": "review_tender",
-                "confidence": 0.91,
-                "reason": "Clear RFQ content",
-                "risk_flags": ["marketing_conflict"],
-                "reason_code": "customer_request_detected",
-                "evidence_codes": ["low_signal"],
-            }
-        ) + "\n```"
+        return (
+            "```json\n"
+            + json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "tender",
+                    "recommended_queue": "tender",
+                    "should_rop_see": True,
+                    "correct_action": "review_tender",
+                    "confidence": 0.91,
+                    "reason": "Clear RFQ content",
+                    "risk_flags": ["marketing_conflict"],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+            + "\n```"
+        )
 
     monkeypatch.setattr(
         "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
@@ -2586,9 +2591,9 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         assert "```json" not in (
             run_dir / "rop_ai_adjudicator_decisions.json"
         ).read_text(encoding="utf-8")
-        assert "```json" not in (
-            run_dir / "rop_ai_adjudicator_results.json"
-        ).read_text(encoding="utf-8")
+        assert "```json" not in (run_dir / "rop_ai_adjudicator_results.json").read_text(
+            encoding="utf-8"
+        )
 
         artifacts_before = {
             path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
@@ -2599,6 +2604,7 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
             build_rop_event_detail_page_model,
             build_rop_event_detail_read_model,
         )
+
         ru_api = build_rop_event_detail_read_model(
             tmp_path,
             "run-adjudicator-ok",
@@ -2629,9 +2635,7 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
             if path.is_file()
         }
 
-        assert ru_api["classification"]["reason_code"] == (
-            "fallback_low_signal"
-        )
+        assert ru_api["classification"]["reason_code"] == ("fallback_low_signal")
         assert ru_api["classification"]["reason_display"] == (
             "Резерв: слабый сигнал, применена резервная классификация"
         )
@@ -2640,9 +2644,10 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         )
         assert "Unknown reason code" not in str(en_html)
         assert "Неизвестный код причины" not in str(ru_html)
-        assert ru_api["ai_adjudicator"][
-            "ai_adjudicator_reason_code"
-        ] == "customer_request_detected"
+        assert (
+            ru_api["ai_adjudicator"]["ai_adjudicator_reason_code"]
+            == "customer_request_detected"
+        )
         assert artifacts_after == artifacts_before
 
         final_decisions = json.loads(
@@ -3272,16 +3277,26 @@ def test_no_direct_beeagent_rop_imports() -> None:
     for path in source_root.rglob("*.py"):
         relative_path = str(path.relative_to(_project_root()))
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("beeagent_rop"):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("beeagent_rop")
+            ):
                 for alias in node.names:
-                    if (node.module, alias.name) not in allowed.get(relative_path, set()):
-                        violations.append(f"{relative_path}: from {node.module} import {alias.name}")
+                    if (node.module, alias.name) not in allowed.get(
+                        relative_path, set()
+                    ):
+                        violations.append(
+                            f"{relative_path}: from {node.module} import {alias.name}"
+                        )
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.startswith("beeagent_rop"):
                         violations.append(f"{relative_path}: import {alias.name}")
 
-    assert not violations, f"Found direct beeagent_rop imports:\n{'\n'.join(violations)}"
+    assert not violations, (
+        f"Found direct beeagent_rop imports:\n{'\n'.join(violations)}"
+    )
 
 
 def test_classification_reason_catalog_covers_public_contract() -> None:
@@ -3309,20 +3324,17 @@ def test_reason_catalog_distinguishes_legacy_and_unknown_codes() -> None:
         "unavailable_code",
         "ru",
     )
-    legacy_attention_display, legacy_attention_warning = (
-        get_attention_reason_display(
-            None,
-            "ru",
-            merge_reason="ai_output_conflict_manual_review",
-        )
+    legacy_attention_display, legacy_attention_warning = get_attention_reason_display(
+        None,
+        "ru",
+        merge_reason="ai_output_conflict_manual_review",
     )
 
     assert "ручн" in legacy_display.lower()
     assert legacy_warning == "legacy ai_reason_code missing"
     assert "Неизвестный" in unknown_display
     assert unknown_warning == (
-        "Код причины внимания неизвестен. "
-        "Показано безопасное совместимое объяснение."
+        "Код причины внимания неизвестен. Показано безопасное совместимое объяснение."
     )
     assert "ручн" in legacy_attention_display.lower()
     assert legacy_attention_warning == (
@@ -3346,8 +3358,6 @@ def test_reason_catalog_bounds_unknown_codes_and_uses_legacy_status() -> None:
     )
 
     assert display == "Unknown reason code; localized explanation unavailable"
-    assert warning == (
-        "unknown classification reason_code: " + oversized_code[:80]
-    )
+    assert warning == ("unknown classification reason_code: " + oversized_code[:80])
     assert legacy_display == "AI adjudicator routed the event to manual review"
     assert legacy_warning == "legacy ai_reason_code missing"

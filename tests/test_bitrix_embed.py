@@ -44,8 +44,9 @@ def _write_minimal_run(storage_dir: Path) -> None:
 
 def _set_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
 
 
@@ -1610,7 +1611,7 @@ class TestEmbeddedSettingsComposition:
 
         login = client.post(
             "/auth/login",
-            data={"user_id": "admin1", "token": "admin1-token"},
+            data={"user_id": "admin", "token": "admin-token"},
             follow_redirects=False,
         )
 
@@ -1902,7 +1903,27 @@ class TestVerifyBitrixUserBounds:
             bitrix_embed.principal_user_id(
                 {"ID": "9" * (bitrix_embed.MAX_BITRIX_USER_ID_LENGTH + 1)}
             )
-        assert bitrix_embed.principal_user_id({"ID": "42"}) == "42"
+        with pytest.raises(bitrix_embed.BitrixLaunchError):
+            bitrix_embed.principal_user_id({"ID": "abc"})
+        assert (
+            bitrix_embed.principal_user_id({"ID": "42"})
+            == f"{bitrix_embed.BITRIX_PRINCIPAL_PREFIX}42"
+        )
+
+    def test_is_bitrix_principal_user_id(self) -> None:
+        assert bitrix_embed.is_bitrix_principal_user_id("bitrix:42")
+        assert bitrix_embed.is_bitrix_principal_user_id(
+            f"bitrix:{'9' * bitrix_embed.MAX_BITRIX_USER_ID_LENGTH}"
+        )
+        assert not bitrix_embed.is_bitrix_principal_user_id("42")
+        assert not bitrix_embed.is_bitrix_principal_user_id("bitrix:user-42")
+        assert not bitrix_embed.is_bitrix_principal_user_id("bitrix:")
+        assert not bitrix_embed.is_bitrix_principal_user_id("bitrix:42x")
+        assert not bitrix_embed.is_bitrix_principal_user_id(
+            f"bitrix:{'9' * (bitrix_embed.MAX_BITRIX_USER_ID_LENGTH + 1)}"
+        )
+        assert not bitrix_embed.is_bitrix_principal_user_id("")
+        assert not bitrix_embed.is_bitrix_principal_user_id(None)
 
     @pytest.mark.parametrize(
         "payload",
