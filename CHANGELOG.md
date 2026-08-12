@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.2...beeagent-v0.51.0) (2026-08-12)
+
+
+### Features
+
+* **web:** enforce principal-scoped console access ([#184](https://github.com/beesyst/beeagent/issues/184)) ([39479f0](https://github.com/beesyst/beeagent/commit/39479f0cd3eef3619b3a15d3ec7233f440f1c245))
+
 ## [0.50.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.1...beeagent-v0.50.2) (2026-08-10)
 
 
