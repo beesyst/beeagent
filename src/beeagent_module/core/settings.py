@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from beeagent_module.core.authorization import SCOPE_WILDCARD
+
 REQUIRED_KEYS = (
     ("app", "name"),
     ("app", "env"),
@@ -262,7 +264,9 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for rop.mailbox_poll.enabled, expected bool")
     poll_source_id = mailbox_poll.get("source_id")
     if not isinstance(poll_source_id, str) or not poll_source_id.strip():
-        raise RuntimeError("Invalid rop.mailbox_poll.source_id, expected non-empty string")
+        raise RuntimeError(
+            "Invalid rop.mailbox_poll.source_id, expected non-empty string"
+        )
 
     input_sources = _get_nested_value(settings, ("rop", "sources"))
     if not isinstance(input_sources, list):
@@ -437,8 +441,6 @@ def get_rop_ai_adjudicator_runtime_state(settings: dict) -> dict[str, bool]:
 
 
 def _validate_web_auth_settings(settings: dict) -> None:
-    import re
-
     web_auth = _get_nested_value(settings, ("web", "auth"))
     if web_auth is None:
         return
@@ -485,6 +487,7 @@ def _validate_web_auth_settings(settings: dict) -> None:
 
     _ALLOWED_ROLES = frozenset({"viewer", "operator", "admin"})
     _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+    _SAFE_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
     if enabled:
         session_secret = os.getenv(session_secret_env, "")
@@ -502,6 +505,7 @@ def _validate_web_auth_settings(settings: dict) -> None:
         seen_ids: list[str] = []
         seen_usernames: list[str] = []
         seen_token_envs: list[str] = []
+        seen_token_values: list[str] = []
 
         for idx, principal in enumerate(principals):
             if not isinstance(principal, dict):
@@ -545,6 +549,33 @@ def _validate_web_auth_settings(settings: dict) -> None:
                     f"when web.auth.enabled=true"
                 )
 
+            scopes = principal.get("scopes")
+            if not isinstance(scopes, list) or not scopes:
+                raise RuntimeError(
+                    f"Invalid or missing web.auth.principals[{idx}].scopes, "
+                    f"expected non-empty list"
+                )
+            seen_scopes: list[str] = []
+            for scope_idx, scope in enumerate(scopes):
+                if not isinstance(scope, str) or (
+                    scope != SCOPE_WILDCARD and not _SAFE_SCOPE_RE.fullmatch(scope)
+                ):
+                    raise RuntimeError(
+                        f"Invalid web.auth.principals[{idx}].scopes[{scope_idx}] "
+                        f"'{scope}', expected safe lowercase scope identifier or '*'"
+                    )
+                if scope in seen_scopes:
+                    raise RuntimeError(
+                        f"Duplicate web.auth.principals[{idx}].scopes '{scope}'"
+                    )
+                seen_scopes.append(scope)
+            scope_set = frozenset(scopes)
+            if SCOPE_WILDCARD in scope_set and scope_set != {SCOPE_WILDCARD}:
+                raise RuntimeError(
+                    f"Invalid web.auth.principals[{idx}].scopes, "
+                    f"wildcard '{SCOPE_WILDCARD}' must be the only scope"
+                )
+
             if principal_id in seen_ids:
                 raise RuntimeError(f"Duplicate web.auth.principals id '{principal_id}'")
             seen_ids.append(principal_id)
@@ -560,6 +591,12 @@ def _validate_web_auth_settings(settings: dict) -> None:
                     f"Duplicate web.auth.principals token_env '{token_env}'"
                 )
             seen_token_envs.append(token_env)
+
+            if token_value in seen_token_values:
+                raise RuntimeError(
+                    f"Duplicate resolved token value for web.auth.principals[{idx}]"
+                )
+            seen_token_values.append(token_value)
 
 
 def _validate_rop_email_preview_settings(settings: dict) -> None:

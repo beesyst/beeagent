@@ -428,12 +428,12 @@ bitrix:
 
 Ручная регистрация Local Application в Bitrix24:
 
-| Поле | Значение |
-| --- | --- |
-| Name | BeeAgent — ROP |
-| Handler | `https://<beeagent-host>/bitrix/rop/launch` |
+| Поле                         | Значение                                     |
+| ---------------------------- | -------------------------------------------- |
+| Name                         | BeeAgent — ROP                               |
+| Handler                      | `https://<beeagent-host>/bitrix/rop/launch`  |
 | Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
-| Uses API only | false |
+| Uses API only                | false                                        |
 
 Обязательное право приложения: **`user`** (Пользователи) — без него вызов `user.current` при входе отклоняется (`insufficient_scope`). Право добавляется в настройках приложения, после чего приложение нужно переустановить.
 
@@ -470,10 +470,12 @@ web:
       - id: admin_1
         username: admin1
         role: admin
+        scopes: ["*"]
         token_env: BEEAGENT_WEB_ADMIN1_TOKEN
       - id: admin_2
         username: admin2
         role: admin
+        scopes: ["*"]
         token_env: BEEAGENT_WEB_ADMIN2_TOKEN
 ```
 
@@ -498,8 +500,13 @@ web:
 
 `web.auth.enabled: false` (default) сохраняет current dev behavior. При `web.auth.enabled: true`:
 
-- все HTML/API routes (кроме `/health`, `/static/...`, `/auth/...`) требуют аутентификации;
-- вход через BeeUI login page `/auth/login`: введите `user_id` и `token`;
+- все HTML/API routes (кроме `/health`, `/static/...`, `/auth/...` и Bitrix boundary) требуют аутентификации;
+- вход через BeeUI login page `/auth/login`: введите `username` и `token` (обязательно пара);
+- identity привязывается к exact configured `username + token`;
+- successful session получает canonical configured principal `id`;
+- resource access определяется `scopes` (`*`, `dashboard`, `rop`, `runs`, `modules`), а не role;
+- authenticated unauthorized → `403`, unauthenticated API → `401`, unauthenticated HTML → redirect на `/auth/login`;
+- ROP-only principal после login попадает на `/rop` и не видит Dashboard/Runs/Modules;
 - `/health` остаётся публичным (sanitized);
 - session управляется BeeUI через подписанную cookie.
 
@@ -541,9 +548,17 @@ web:
 
 ##### Roles
 
-- роли `viewer` / `operator` / `admin` валидируются и сохраняются;
-- в UI-7 все роли сейчас имеют одинаковый read-only доступ;
-- per-role RBAC и operator actions остаются future scope.
+- роли `viewer` / `operator` / `admin` валидируются и сохраняются как authority level;
+- resource access определяется только `scopes` каждого principal, role не даёт resource scope;
+- `scopes` обязательны, валидируются fail-fast (включая wildcard-правило `["*"]`);
+- `["*"]` сохраняет полный доступ; `["rop"]` даёт только ROP surface и bounded ROP evidence;
+- per-role operator actions остаются future scope.
+
+##### Rollout
+
+При rollout новой auth-модели обязательна invalidation/rotation старых sessions и credentials:
+`./start.sh auth rotate all --logout-all` (session secret) аннулирует старые signed cookies;
+principal token rotation требует повторного входа; каждый principal в `web.auth.principals[]` должен получить явный `scopes`.
 
 ### ROP CLI
 

@@ -450,7 +450,7 @@ Launch handler для application open context. Только POST; GET на `/bi
 
 BeeAgent Web Console поддерживает config-driven auth boundary через BeeUI session/role layer.
 BeeUI владеет login/logout/session/CSRF.
-BeeAgent владеет config/env policy, bootstrap, CLI rotation и route protection.
+BeeAgent владеет config/env policy, bootstrap, CLI rotation, route protection и server-side resource authorization.
 
 Auth настройки живут в `config/settings.yml` → `web.auth`:
 
@@ -464,6 +464,7 @@ web:
       - id: admin_1
         username: admin1
         role: admin
+        scopes: ["*"]
         token_env: BEEAGENT_WEB_ADMIN1_TOKEN
 ```
 
@@ -473,6 +474,23 @@ web:
 - `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` — token для аутентификации
 
 Secrets никогда не хранятся в `settings.yml`.
+
+### Principal model (UI-8.6)
+
+```text
+principal identity = exact username + token
+authority = role
+resource access = scopes
+```
+
+- local login привязывается к exact configured `username + token` паре;
+- successful session получает canonical configured principal `id` (не произвольный browser `user_id`);
+- `role` остаётся только authority level: `viewer` / `operator` / `admin`;
+- `scopes` определяют resource access: `*` (full access), `dashboard`, `rop`, `runs`, `modules`;
+- `scopes` обязательны для каждого principal и валидируются fail-fast;
+- `["*"]` — единственный допустимый wildcard: wildcard не комбинируется с другими scopes;
+- разные principals с одинаковым resolved token value отклоняются на startup без раскрытия secret;
+- generic auth failure не раскрывает, какой credential неверен.
 
 ### Bootstrap
 
@@ -499,20 +517,20 @@ Session secret не печатается.
 ### Поведение
 
 - `web.auth.enabled: false` (default): текущее local/dev поведение без auth.
-- `web.auth.enabled: true`: включена session-based auth через BeeUI.
+- `web.auth.enabled: true`: включена session-based auth через BeeUI c server-side authorization.
 - external exposure с `web.auth.enabled=false` должна считаться rejected/fail-fast по settings policy.
 
 ### Protected routes (when enabled)
 
 HTML routes:
 
-- `/`, `/rop`, `/rop?*`, `/rop/events/{event_id}`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
+- `/`, `/rop`, `/rop/events/{event_id}`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
 
 API routes:
 
 - `/api/*`
 
-Даже неизвестный `/api/...` путь при включённом auth требует аутентификации до возврата route-level результата.
+Любой не-public путь (включая неизвестные/future protected surfaces) является protected: default-deny для non-wildcard principals. Даже неизвестный `/api/...` путь при включённом auth требует аутентификации до возврата route-level результата.
 
 ### Public routes
 
@@ -522,11 +540,25 @@ API routes:
 - `/api/bitrix/rop/widget*` — integration boundary, не требует BeeUI session cookie, но при enabled widget требует route-level Bearer token
 - `/bitrix/rop/install`, `/bitrix/rop/launch` — Bitrix embedded app entry points (требуют HTTPS и `bitrix.embedded_app.enabled=true`; при disabled возвращают bounded error)
 
-### Unauthenticated response
+### Resource authorization (UI-8.6)
 
-HTML routes: redirect to `/auth/login`.
+Server-side authorization выполняется центральным BeeAgent policy по canonical session identity + текущему config:
 
-API routes: `401` JSON envelope:
+- `admin + scopes=["*"]` сохраняет полный доступ ко всем HTML/API/resource routes;
+- `viewer + scopes=["rop"]` (и любой другой non-wildcard principal с `rop`) получает:
+  - `/rop`, Event Detail, `/api/rop/*`;
+  - bounded ROP-owned evidence artifacts из allowlist (`/runs/{run_id}/artifacts/{allowlisted_id}`);
+  - запрещены Dashboard, Runs, Modules, unrelated runs/artifacts/API;
+- unknown protected surface → default-deny;
+- navigation visibility отражает authorization, но не заменяет server-side enforcement;
+- ROP-only principal после login попадает на `/rop` (landing redirect);
+- verified Bitrix external principal (user_id не в `web.auth.principals`) остаётся bounded ROP-only viewer.
+
+### Unauthenticated / forbidden response
+
+- unauthenticated HTML: redirect to `/auth/login`;
+- unauthenticated API: `401` JSON envelope (`code: "unauthenticated"`);
+- authenticated unauthorized: `403` JSON envelope (`code: "forbidden"`).
 
 ```json
 {
@@ -540,7 +572,7 @@ API routes: `401` JSON envelope:
 
 ### Session
 
-Session управляется BeeUI через подписанную cookie `beeui_session`. Session secret читается из env по `web.auth.session_secret_env`.
+Session управляется BeeUI через подписанную cookie `beeui_session`. Session secret читается из env по `web.auth.session_secret_env`. Session хранит canonical principal `user_id` (идентифицирует principal в `web.auth.principals`) и `role`.
 
 ### Роли
 
@@ -549,8 +581,16 @@ Session управляется BeeUI через подписанную cookie `b
 - `admin` — admin-level доступ (future config/actions)
 
 Поддерживаются `viewer` / `operator` / `admin`.
-UI-7 пока не применяет дифференцированные permissions.
+Role не определяет resource scope: resource access определяется только `scopes`.
 Все текущие business/operator routes Web Console остаются read-only.
+
+### Rollout
+
+При rollout UI-8.6 обязательна invalidation/rotation старых sessions и credentials:
+
+- session secret rotation (`./start.sh auth rotate all --logout-all` или `session`) аннулирует все существующие signed cookies;
+- principal token rotation (`./start.sh auth rotate <principal-id-or-username>`) требует повторного входа;
+- в `web.auth.principals[]` для каждого principal обязателен явный `scopes`.
 
 ## Artifact routes
 
@@ -1213,36 +1253,36 @@ Queue tab renders as one `data_table` with a functional `toolbar`. No standalone
 
 #### Filter params
 
-| Param              | Type      | Description                                                    | Validation                                                                 |
-| ------------------ | --------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `q`                | string    | Full-text search across sender and subject                     | Любое строковое значение                                                   |
-| `sender`           | string    | Filter by sender (legacy, use `q` for combined search)         | Любое строковое значение                                                   |
-| `subject`          | string    | Filter by subject (legacy, use `q` for combined search)        | Любое строковое значение                                                   |
-| `case_type`        | string    | Comma-separated classification values                          | Должен быть одним из: `new_lead`, `existing_client`, `existing_deal`, …    |
-| `classification`   | string    | Legacy alias for `case_type` (mapped to `case_type`)           | То же, что `case_type`                                                     |
-| `priority`         | string    | Comma-separated priority values                                | `low`, `medium`, `high`, `critical`                                        |
-| `bitrix_status`    | string    | Comma-separated Bitrix reconciliation status values            | `not_found`, `weak_match`, `ambiguous`, `duplicate_candidate`, …           |
-| `is_fallback`      | boolean   | Filter by fallback classification (`true`/`false`)             | `true` или `false`                                                         |
-| `queue`            | string    | Filter by operator queue bucket name                           | `high_priority`, `needs_review`, `lost_in_bitrix`, `ambiguous`, `degraded`, `unreconciled` |
-| `date_from`        | date      | Start of date range (inclusive, YYYY-MM-DD)                   | Должен быть корректной датой; не позже `date_to`                           |
-| `date_to`          | date      | End of date range (inclusive, YYYY-MM-DD)                     | Должен быть корректной датой; не раньше `date_from`                        |
+| Param            | Type    | Description                                             | Validation                                                                                 |
+| ---------------- | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `q`              | string  | Full-text search across sender and subject              | Любое строковое значение                                                                   |
+| `sender`         | string  | Filter by sender (legacy, use `q` for combined search)  | Любое строковое значение                                                                   |
+| `subject`        | string  | Filter by subject (legacy, use `q` for combined search) | Любое строковое значение                                                                   |
+| `case_type`      | string  | Comma-separated classification values                   | Должен быть одним из: `new_lead`, `existing_client`, `existing_deal`, …                    |
+| `classification` | string  | Legacy alias for `case_type` (mapped to `case_type`)    | То же, что `case_type`                                                                     |
+| `priority`       | string  | Comma-separated priority values                         | `low`, `medium`, `high`, `critical`                                                        |
+| `bitrix_status`  | string  | Comma-separated Bitrix reconciliation status values     | `not_found`, `weak_match`, `ambiguous`, `duplicate_candidate`, …                           |
+| `is_fallback`    | boolean | Filter by fallback classification (`true`/`false`)      | `true` или `false`                                                                         |
+| `queue`          | string  | Filter by operator queue bucket name                    | `high_priority`, `needs_review`, `lost_in_bitrix`, `ambiguous`, `degraded`, `unreconciled` |
+| `date_from`      | date    | Start of date range (inclusive, YYYY-MM-DD)             | Должен быть корректной датой; не позже `date_to`                                           |
+| `date_to`        | date    | End of date range (inclusive, YYYY-MM-DD)               | Должен быть корректной датой; не раньше `date_from`                                        |
 
 #### Column params
 
-| Param           | Type             | Description                                                                 |
-| --------------- | ---------------- | --------------------------------------------------------------------------- |
-| `columns`        | comma-separated  | Visible column keys: `priority`, `client`, `subject`, `date`, `classification`, `bitrix_status` |
+| Param     | Type            | Description                                                                                     |
+| --------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `columns` | comma-separated | Visible column keys: `priority`, `client`, `subject`, `date`, `classification`, `bitrix_status` |
 
 Column visibility is managed through the toolbar ellipsis action (column chooser). `columns_open` and `open_dropdowns` are no longer part of the Queue presentation-state contract.
 
 #### Pagination params
 
-| Param       | Type    | Default         | Description                    | Validation                    |
-| ----------- | ------- | --------------- | ------------------------------ | ----------------------------- |
-| `page`      | integer | `1`              | Page number (1-based)          | `>= 1`                        |
-| `page_size` | integer | `25`             | Items per page                 | `25`, `50`, или `100`         |
-| `sort`      | string  | `received_at`    | Sort field                     | `received_at`, `date`, `event_date`, `sender`, `subject`, `case_type`, `priority`, `bitrix_status` |
-| `order`     | string  | `desc`           | Sort direction                 | `asc` или `desc`              |
+| Param       | Type    | Default       | Description           | Validation                                                                                         |
+| ----------- | ------- | ------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
+| `page`      | integer | `1`           | Page number (1-based) | `>= 1`                                                                                             |
+| `page_size` | integer | `25`          | Items per page        | `25`, `50`, или `100`                                                                              |
+| `sort`      | string  | `received_at` | Sort field            | `received_at`, `date`, `event_date`, `sender`, `subject`, `case_type`, `priority`, `bitrix_status` |
+| `order`     | string  | `desc`        | Sort direction        | `asc` или `desc`                                                                                   |
 
 `sort` и `order` образуют атомарную пару: URL содержит оба параметра или не
 содержит ни одного для default `received_at` / `desc`.

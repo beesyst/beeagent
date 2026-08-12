@@ -18,16 +18,25 @@ from beeui_module.web.app import create_beeui_app
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
-from starlette.routing import Route
 
+from beeagent_module.cases.rop_dashboard import _list_rop_run_ids
+from beeagent_module.core.authorization import (
+    EXTERNAL_PRINCIPAL_SCOPES,
+    SCOPE_WILDCARD,
+    home_path,
+    is_resource_allowed,
+)
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
 )
-from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter, extract_rop_query_params
-from beeagent_module.interfaces.ui.read_model import (
-    normalize_rop_recommendation_hrefs,
-    resolve_recommendation_execution_policy,
+from beeagent_module.interfaces.ui.adapter import (
+    BeeAgentUiAdapter,
+    extract_rop_query_params,
+)
+from beeagent_module.interfaces.ui.bitrix_embed import (
+    EMBEDDED_SESSION_AGE_MAX_SECONDS,
+    is_bitrix_principal_user_id,
 )
 from beeagent_module.interfaces.ui.locale import (
     reset_current_locale,
@@ -35,8 +44,10 @@ from beeagent_module.interfaces.ui.locale import (
     set_current_locale,
     t,
 )
-from beeagent_module.interfaces.ui.bitrix_embed import (
-    EMBEDDED_SESSION_AGE_MAX_SECONDS,
+from beeagent_module.interfaces.ui.read_model import (
+    ALLOWED_EVIDENCE_IDS,
+    normalize_rop_recommendation_hrefs,
+    resolve_recommendation_execution_policy,
 )
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_read_model,
@@ -114,7 +125,12 @@ def _error_json(
 
 
 def _event_detail_error_status(code: str) -> int:
-    if code in {"invalid_params", "invalid_run_id", "invalid_event_id", "invalid_query"}:
+    if code in {
+        "invalid_params",
+        "invalid_run_id",
+        "invalid_event_id",
+        "invalid_query",
+    }:
         return 400
     if code in {"not_found", "run_not_found", "event_not_found"}:
         return 404
@@ -129,14 +145,10 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
 
     bitrix_cfg = agent_settings.get("bitrix", {})
     embedded_cfg = (
-        bitrix_cfg.get("embedded_app", {})
-        if isinstance(bitrix_cfg, dict)
-        else {}
+        bitrix_cfg.get("embedded_app", {}) if isinstance(bitrix_cfg, dict) else {}
     )
     embedded_enabled = bool(
-        embedded_cfg.get("enabled", False)
-        if isinstance(embedded_cfg, dict)
-        else False
+        embedded_cfg.get("enabled", False) if isinstance(embedded_cfg, dict) else False
     )
 
     beeui_auth: dict[str, Any] = {"enabled": auth_enabled}
@@ -261,6 +273,7 @@ def build_beeui_app(
         product_id="beeagent",
         product_title="BeeAgent",
         adapter=adapter,
+        navigation_visibility_resolver=_beeagent_navigation_visibility,
     )
     _register_rop_html_polish(app)
 
@@ -317,13 +330,18 @@ def _setup_beeagent_auth(
             "Non-empty principals are required when web.auth.enabled=true"
         )
 
-    token_roles: list[tuple[str, UserRole]] = []
+    principal_records: list[dict[str, Any]] = []
     for principal in principal_configs:
         token = str(principal.get("token", ""))
+        username = str(principal.get("username", ""))
         role_name = str(principal.get("role", "")).strip()
         if not token:
             raise RuntimeError(
                 "Non-empty principal tokens are required when web.auth.enabled=true"
+            )
+        if not username:
+            raise RuntimeError(
+                "Non-empty principal usernames are required when web.auth.enabled=true"
             )
 
         try:
@@ -331,18 +349,64 @@ def _setup_beeagent_auth(
         except AttributeError as exc:
             raise RuntimeError(f"Unsupported BeeUI auth role '{role_name}'") from exc
 
-        token_roles.append((token, role))
+        principal_records.append(
+            {
+                "id": str(principal.get("id", "")),
+                "username": username,
+                "role": role,
+                "token": token,
+            }
+        )
 
     class _BeeAgentAuthService(AuthService):
-        def _resolve_role(self, token: str) -> UserRole | None:
+        def _find_principal(
+            self,
+            username: str,
+            token: str,
+        ) -> dict[str, Any] | None:
             import hmac
 
-            for candidate_token, candidate_role in token_roles:
-                if hmac.compare_digest(token, candidate_token):
-                    return candidate_role
+            for record in principal_records:
+                if record["username"] != username:
+                    continue
+                if hmac.compare_digest(token, record["token"]):
+                    return record
             return None
 
-    primary_token = token_roles[0][0]
+        def authenticate(
+            self,
+            user_id: str,
+            token: str,
+        ) -> tuple[Any, str | None]:
+            from beeui_module.auth.models import SessionData
+            from beeui_module.auth.sessions import (
+                create_session_cookie,
+                generate_csrf_token,
+            )
+
+            if not self.enabled:
+                return None, None
+
+            record = self._find_principal(user_id, token)
+            if record is None:
+                logger.warning("Authentication failed for user_id=%s", user_id)
+                return None, None
+
+            csrf_token = generate_csrf_token()
+            session = SessionData(
+                user_id=record["id"],
+                role=record["role"],
+                csrf_token=csrf_token,
+            )
+            cookie = create_session_cookie(session, self._session_secret or "")
+            logger.info(
+                "Session created for user_id=%s role=%s",
+                record["id"],
+                record["role"].value,
+            )
+            return session, cookie
+
+    primary_token = principal_records[0]["token"]
     auth_settings = {
         "enabled": True,
         "session_secret": session_secret,
@@ -353,20 +417,11 @@ def _setup_beeagent_auth(
         "session_age_max": auth_cfg.get("session_age_max"),
     }
     app.state.beeui_auth_service = _BeeAgentAuthService(auth_settings)
-    logger.info("Auth enabled with %d principal(s)", len(token_roles))
+    logger.info("Auth enabled with %d principal(s)", len(principal_records))
 
     _register_auth_middleware(app, logger)
 
 
-_PROTECTED_HTML_PATHS: list[re.Pattern[str]] = [
-    re.compile(r"^/$"),
-    re.compile(r"^/rop$"),
-    re.compile(r"^/rop\?.*"),
-    re.compile(r"^/rop/events/"),
-    re.compile(r"^/runs$"),
-    re.compile(r"^/runs/"),
-    re.compile(r"^/modules$"),
-]
 _PUBLIC_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/health"),
     re.compile(r"^/static/"),
@@ -381,12 +436,113 @@ def _is_path_protected(path: str) -> bool:
     for pattern in _PUBLIC_PATHS:
         if pattern.match(path):
             return False
-    if path == "/api" or path.startswith("/api/"):
+    return True
+
+
+ROP_EVIDENCE_IDS = frozenset(ALLOWED_EVIDENCE_IDS)
+
+
+def _principal_scopes(
+    settings: dict[str, Any],
+    principal_id: str,
+) -> frozenset[str]:
+    web_auth = settings.get("web", {}).get("auth", {})
+    if not isinstance(web_auth, dict):
+        return frozenset()
+    principals = web_auth.get("principals", [])
+    if not isinstance(principals, list):
+        return frozenset()
+    for principal in principals:
+        if not isinstance(principal, dict):
+            continue
+        if principal.get("id") != principal_id:
+            continue
+        scopes = principal.get("scopes", [])
+        if isinstance(scopes, list):
+            return frozenset(str(scope) for scope in scopes)
+        return frozenset()
+    if is_bitrix_principal_user_id(principal_id):
+        return EXTERNAL_PRINCIPAL_SCOPES
+    return frozenset()
+
+
+def _request_scopes(request: Request) -> frozenset[str] | None:
+    settings = getattr(request.app.state, "beeagent_settings", None)
+    if not isinstance(settings, dict):
+        return frozenset()
+    web_auth = settings.get("web", {}).get("auth", {})
+    if not isinstance(web_auth, dict) or not web_auth.get("enabled"):
+        return None
+    service = getattr(request.app.state, "beeui_auth_service", None)
+    if service is None or not getattr(service, "enabled", False):
+        return frozenset()
+    session = service.verify_session(request.cookies.get(service.cookie_name()))
+    if session is None:
+        return frozenset()
+    return _principal_scopes(settings, session.user_id)
+
+
+def _rop_run_ids(storage_dir: Path | None) -> frozenset[str]:
+    if storage_dir is None:
+        return frozenset()
+    try:
+        return frozenset(_list_rop_run_ids(storage_dir / "runs"))
+    except OSError:
+        return frozenset()
+
+
+def _beeagent_navigation_visibility(
+    request: Request,
+    canonical_path: str,
+) -> bool:
+    scopes = _request_scopes(request)
+    if scopes is None:
         return True
-    for pattern in _PROTECTED_HTML_PATHS:
-        if pattern.match(path):
-            return True
-    return False
+    if not scopes:
+        return False
+    return is_resource_allowed(
+        scopes,
+        canonical_path,
+        rop_evidence_artifact_ids=ROP_EVIDENCE_IDS,
+    )
+
+
+def _unauthenticated_response(request: Request) -> Response:
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        from starlette.responses import RedirectResponse
+
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    return JSONResponse(
+        {
+            "ok": False,
+            "read_only": True,
+            "error": {
+                "code": "unauthenticated",
+                "message": "Authentication required",
+            },
+            "warnings": [],
+            "meta": {},
+        },
+        status_code=401,
+    )
+
+
+def _forbidden_response() -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": False,
+            "read_only": True,
+            "error": {
+                "code": "forbidden",
+                "message": "Access denied",
+            },
+            "warnings": [],
+            "meta": {},
+        },
+        status_code=403,
+    )
 
 
 def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
@@ -422,28 +578,39 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
         cookie = request.cookies.get(cookie_name)
         session = service.verify_session(cookie)
 
-        if session is not None:
+        if session is None:
+            return _unauthenticated_response(request)
+
+        settings = getattr(request.app.state, "beeagent_settings", {}) or {}
+        scopes = _principal_scopes(settings, session.user_id)
+        path = str(request.url.path)
+        if SCOPE_WILDCARD in scopes:
+            allowed = is_resource_allowed(
+                scopes,
+                path,
+                rop_evidence_artifact_ids=ROP_EVIDENCE_IDS,
+            )
+        else:
+            storage_dir = getattr(request.app.state, "beeagent_storage_dir", None)
+            allowed = is_resource_allowed(
+                scopes,
+                path,
+                rop_evidence_artifact_ids=ROP_EVIDENCE_IDS,
+                rop_run_ids=_rop_run_ids(storage_dir),
+                requested_run_id=request.query_params.get("run_id"),
+            )
+        if allowed:
             return await call_next(request)
 
         accept = request.headers.get("accept", "")
-        if "text/html" in accept:
-            from starlette.responses import RedirectResponse
+        wants_html = "text/html" in accept
+        if wants_html and path == "/":
+            landing = home_path(scopes)
+            if landing and landing != "/":
+                from starlette.responses import RedirectResponse
 
-            return RedirectResponse(url="/auth/login", status_code=302)
-
-        return JSONResponse(
-            {
-                "ok": False,
-                "read_only": True,
-                "error": {
-                    "code": "unauthenticated",
-                    "message": "Authentication required",
-                },
-                "warnings": [],
-                "meta": {},
-            },
-            status_code=401,
-        )
+                return RedirectResponse(url=landing, status_code=303)
+        return _forbidden_response()
 
 
 def _register_rop_html_polish(app: FastAPI) -> None:
@@ -581,9 +748,13 @@ def _register_custom_routes(
         period = request.query_params.get("period")
         if request.query_params.get("tab") == "queue":
             period = "all"
-        filter_params, pagination_params, param_errors = extract_rop_query_params(request.query_params)
+        filter_params, pagination_params, param_errors = extract_rop_query_params(
+            request.query_params
+        )
         if param_errors:
-            return _error_json("invalid_params", "; ".join(param_errors), status_code=400)
+            return _error_json(
+                "invalid_params", "; ".join(param_errors), status_code=400
+            )
 
         result = adapter.get_rop_dashboard(
             run_id=run_id,
@@ -611,11 +782,11 @@ def _register_custom_routes(
 
     @app.get("/api/rop/events/{event_id}", include_in_schema=False)
     async def api_rop_event_detail(request: Request, event_id: str) -> JSONResponse:
-        _, _, param_errors = extract_rop_query_params(
-            request.query_params
-        )
+        _, _, param_errors = extract_rop_query_params(request.query_params)
         if param_errors:
-            return _error_json("invalid_params", "; ".join(param_errors), status_code=400)
+            return _error_json(
+                "invalid_params", "; ".join(param_errors), status_code=400
+            )
         run_id = request.query_params.get("run_id")
         if not run_id:
             return _error_json(
@@ -761,7 +932,9 @@ def _register_bitrix_widget_routes(
                 attention_reason if isinstance(attention_reason, str) else None
             ),
             "attention_reason_code": (
-                attention_reason_code if isinstance(attention_reason_code, str) else None
+                attention_reason_code
+                if isinstance(attention_reason_code, str)
+                else None
             ),
             "attention_evidence_codes": (
                 [str(c) for c in attention_evidence_codes if isinstance(c, str)]
@@ -1265,10 +1438,7 @@ def _register_bitrix_embed_routes(
         request: Request,
     ) -> dict[str, str] | None:
         media_type = (
-            request.headers.get("content-type", "")
-            .split(";", 1)[0]
-            .strip()
-            .lower()
+            request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         )
         if media_type != "application/x-www-form-urlencoded":
             return None
@@ -1286,7 +1456,7 @@ def _register_bitrix_embed_routes(
                 strict_parsing=True,
                 max_num_fields=MAX_FORM_FIELDS,
             )
-        except (UnicodeDecodeError, ValueError):
+        except UnicodeDecodeError, ValueError:
             return None
 
         values: dict[str, str] = {}
@@ -1595,6 +1765,5 @@ def _register_bitrix_embed_routes(
         return _create_verified_redirect(request, user, emb_cfg)
 
     logger.info(
-        "Bitrix embedded app routes registered: "
-        "/bitrix/rop/install, /bitrix/rop/launch"
+        "Bitrix embedded app routes registered: /bitrix/rop/install, /bitrix/rop/launch"
     )

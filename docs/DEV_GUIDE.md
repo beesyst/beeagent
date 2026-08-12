@@ -632,6 +632,7 @@ web:
       - id: admin_1
         username: admin1
         role: admin
+        scopes: ["*"]
         token_env: BEEAGENT_WEB_ADMIN1_TOKEN
 bitrix:
   embedded_app:
@@ -645,12 +646,12 @@ bitrix:
 
 3. Зарегистрировать Local Application в Bitrix24 вручную:
 
-| Поле | Значение |
-| --- | --- |
-| Name | BeeAgent — ROP |
-| Handler | `https://<beeagent-host>/bitrix/rop/launch` |
+| Поле                         | Значение                                     |
+| ---------------------------- | -------------------------------------------- |
+| Name                         | BeeAgent — ROP                               |
+| Handler                      | `https://<beeagent-host>/bitrix/rop/launch`  |
 | Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
-| Uses API only | false |
+| Uses API only                | false                                        |
 
 3a. В правах приложения обязательно указать **`user`** (Пользователи) — без него `user.current` при входе отклоняется (`insufficient_scope`). После изменения прав приложение нужно переустановить.
 

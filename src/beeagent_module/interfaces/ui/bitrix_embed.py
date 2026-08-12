@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -24,6 +25,7 @@ EMBEDDED_SESSION_AGE_MAX_SECONDS = 86400
 _UNIX_EPOCH_THRESHOLD = 1_000_000_000
 MAX_BITRIX_RESPONSE_BYTES = 65536
 MAX_BITRIX_USER_ID_LENGTH = 20
+BITRIX_PRINCIPAL_PREFIX = "bitrix:"
 
 INSTALL_FORM_KEYS: frozenset[str] = frozenset(
     {
@@ -93,16 +95,21 @@ class InstallState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "InstallState":
+    def from_dict(cls, data: dict[str, Any]) -> InstallState:
         contract_version = data.get("contract_version")
         portal_origin = data.get("portal_origin")
         portal_domain = data.get("portal_domain")
         member_id = data.get("member_id")
         installed_at = data.get("installed_at")
 
-        if not isinstance(contract_version, int) or contract_version != CONTRACT_VERSION:
+        if (
+            not isinstance(contract_version, int)
+            or contract_version != CONTRACT_VERSION
+        ):
             raise BitrixEmbedError("Unsupported installation state contract version")
-        if not isinstance(portal_origin, str) or not is_valid_https_origin(portal_origin):
+        if not isinstance(portal_origin, str) or not is_valid_https_origin(
+            portal_origin
+        ):
             raise BitrixEmbedError("Invalid installation state portal origin")
         if len(portal_origin) > MAX_INSTALL_STATE_FIELD_LENGTH:
             raise BitrixEmbedError("Invalid installation state portal origin")
@@ -181,14 +188,10 @@ def parse_install_form(form: Mapping[str, Any]) -> dict[str, str]:
 def parse_launch_form(form: Mapping[str, Any]) -> dict[str, str]:
     values = _parse_bounded_form(form, LAUNCH_FORM_KEYS)
     missing = [
-        key
-        for key in ("AUTH_ID", "AUTH_EXPIRES", "member_id")
-        if not values.get(key)
+        key for key in ("AUTH_ID", "AUTH_EXPIRES", "member_id") if not values.get(key)
     ]
     if missing:
-        raise BitrixEmbedError(
-            "Missing required launch fields: " + ", ".join(missing)
-        )
+        raise BitrixEmbedError("Missing required launch fields: " + ", ".join(missing))
     return values
 
 
@@ -225,7 +228,7 @@ def _http_error_code(exc: HTTPError) -> str | None:
         return None
     try:
         data = json.loads(raw.decode("utf-8", errors="replace"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         return None
     if not isinstance(data, dict):
         return None
@@ -288,7 +291,7 @@ def verify_bitrix_current_user(
 
     try:
         data: Any = json.loads(raw.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         raise BitrixLaunchError(
             "Bitrix returned malformed user response",
             reason="malformed_response",
@@ -353,9 +356,21 @@ def principal_user_id(user: dict[str, Any]) -> str:
         not isinstance(user_id, str)
         or not user_id
         or len(user_id) > MAX_BITRIX_USER_ID_LENGTH
+        or not user_id.isdigit()
     ):
         raise BitrixLaunchError("Invalid principal user id")
-    return user_id
+    return f"{BITRIX_PRINCIPAL_PREFIX}{user_id}"
+
+
+def is_bitrix_principal_user_id(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith(BITRIX_PRINCIPAL_PREFIX):
+        return False
+    user_id = value.removeprefix(BITRIX_PRINCIPAL_PREFIX)
+    return (
+        bool(user_id)
+        and len(user_id) <= MAX_BITRIX_USER_ID_LENGTH
+        and user_id.isdigit()
+    )
 
 
 def install_state_path(storage_dir: Path) -> Path:

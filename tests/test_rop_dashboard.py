@@ -20,8 +20,9 @@ from beeagent_module.cases.rop_dashboard import (
 from beeagent_module.core.settings import load_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
-os.environ.setdefault("BEEAGENT_WEB_ADMIN1_TOKEN", "test-admin1-token")
-os.environ.setdefault("BEEAGENT_WEB_ADMIN2_TOKEN", "test-admin2-token")
+os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("BEEAGENT_WEB_ROP_TOKEN", "test-rop-token")
+os.environ.setdefault("BEEAGENT_WEB_OPERATOR_TOKEN", "test-operator-token")
 
 
 @pytest.fixture(autouse=True)
@@ -921,12 +922,8 @@ class TestCrossRunPeriodAggregation:
         old_classified[0]["priority"] = "low"
         (run_dir / "classified_events.json").write_text(json.dumps(old_classified))
 
-        anchor_normalized = json.loads(
-            (anchor / "normalized_events.json").read_text()
-        )
-        anchor_classified = json.loads(
-            (anchor / "classified_events.json").read_text()
-        )
+        anchor_normalized = json.loads((anchor / "normalized_events.json").read_text())
+        anchor_classified = json.loads((anchor / "classified_events.json").read_text())
         anchor_normalized[:] = [
             {
                 **anchor_normalized[0],

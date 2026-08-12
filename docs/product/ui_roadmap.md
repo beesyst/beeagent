@@ -2845,7 +2845,20 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 
 ### Итерация UI-8.6 — Principal-bound Web auth and scoped console access
 
-**Статус:** PLANNED
+**Статус:** DONE
+
+#### Status notes
+
+- реализован central authorization policy в `src/beeagent_module/core/authorization.py` (модель: identity = exact username + token, authority = role, resource access = scopes);
+- `web.auth.principals[]` получили обязательные explicit `scopes` (`*`, `dashboard`, `rop`, `runs`, `modules`) с fail-fast валидацией (missing/empty/invalid/duplicate, wildcard-only rule);
+- local login привязан к exact configured `username + token`; successful session получает canonical configured principal id;
+- на startup отклоняются разные principals с одинаковым resolved token value без раскрытия secret;
+- server-side authorization применяется для HTML/API/resource routes: unauthenticated HTML → login redirect, unauthenticated API → 401, authenticated unauthorized → 403, unknown protected surface → default-deny;
+- ROP-only principal видит только `/rop`, Event Detail, `/api/rop/*` и bounded ROP-owned evidence; navigation visibility отражает authorization через BeeUI `navigation_visibility_resolver`;
+- ROP-only principal после login попадает на `/rop`; verified Bitrix external principal остаётся bounded ROP-only viewer;
+- **dependency blocker**: BeeUI Iteration 13.14 контракт `navigation_visibility_resolver` содержится в `beeui 0.26.0`, но release пока не опубликован в PyPI (доступно только `<=0.25.1`), а `beeagent-rop` не опубликован в registry; registry lock update невозможен до публикации обоих пакетов. Реализация и verification выполнены на локальном beeui 0.26.0 (venv, не в pyproject). Для production rollout обязательна публикация `beeui 0.26.0` и `beeagent-rop` в registry, после чего `beeui>=0.26.0,<0.30` + registry `beeagent-rop` lock;
+- rollout требует invalidation/rotation старых sessions/credentials (`./start.sh auth rotate all --logout-all` / principal token rotation);
+- `pyproject.toml.version` unchanged.
 
 #### Goal
 

@@ -1,5 +1,5 @@
-from pathlib import Path
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -15,8 +15,9 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -31,7 +32,10 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
     [
         (lambda data: data["rop"]["mailbox_poll"].update(enabled="true"), "enabled"),
         (lambda data: data["rop"]["mailbox_poll"].update(source_id=""), "source_id"),
-        (lambda data: data["rop"]["mailbox_poll"].update(source_id="missing"), "not found"),
+        (
+            lambda data: data["rop"]["mailbox_poll"].update(source_id="missing"),
+            "not found",
+        ),
         (
             lambda data: data["rop"]["sources"][1].update(
                 source_type="json_batch",
@@ -39,7 +43,10 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
             ),
             "mailbox_readonly",
         ),
-        (lambda data: data["rop"]["sources"][1].update(authority="draft_only"), "read_only"),
+        (
+            lambda data: data["rop"]["sources"][1].update(authority="draft_only"),
+            "read_only",
+        ),
     ],
 )
 def test_mailbox_poll_settings_fail_fast(monkeypatch, mutate, match):
