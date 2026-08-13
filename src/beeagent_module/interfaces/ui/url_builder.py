@@ -9,9 +9,7 @@ def _filter_qs_val(value: str | None) -> str | None:
     return None
 
 
-def _add_sort_pair(
-    params: dict[str, str], sort: str | None, order: str | None
-) -> None:
+def _add_sort_pair(params: dict[str, str], sort: str | None, order: str | None) -> None:
     """Add a complete non-default sort pair, never a partial pair."""
     if sort is None and order is None:
         return
@@ -80,6 +78,7 @@ def build_rop_event_url(
     event_id: str,
     run_id: str,
     *,
+    event_instance_id: str | None = None,
     period: str | None = None,
     lang: str | None = None,
     page: int | None = None,
@@ -89,6 +88,9 @@ def build_rop_event_url(
     filter_params: dict[str, str] | None = None,
 ) -> str:
     params: dict[str, str] = {"run_id": run_id}
+    instance_id = _filter_qs_val(event_instance_id)
+    if instance_id is not None:
+        params["event_instance_id"] = instance_id
     if period is not None:
         pv = _filter_qs_val(period)
         if pv is not None:

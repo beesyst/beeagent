@@ -153,6 +153,7 @@ def _extract_attachment_item(
 ) -> dict[str, Any]:
     base = {
         "event_id": _as_text(event.get("event_id")),
+        "event_instance_id": _as_text(event.get("event_instance_id")),
         "source_id": _as_text(event.get("source_id")),
         "source_type": _as_text(event.get("source_type")),
         "source_role": _as_text(event.get("source_role")),

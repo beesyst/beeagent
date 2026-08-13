@@ -271,6 +271,24 @@ BeeAgent уже прошёл этап **module platform v0**:
 - политика финального решения v1 (AI ok / low_confidence_preserve / manual_review_degrade / deterministic / fallback_policy);
 - `bitrix_write_allowed=false` для MVP.
 
+Итерация 35 реализует:
+
+- current-batch duplicate detection через duplicate-aware `beeagent-rop` `lead_classification` contract;
+- deterministic bounded duplicate candidate context из уже загруженных событий текущего ROP batch (по source timestamp ASC + `event_id` tie-break, earliest event = canonical original);
+- additive run-local `event_instance_id` сохраняет processing occurrence при повторяющемся transport `event_id`; Queue/Event Detail используют selector только для artifact/UI lookup, не для module duplicate matching;
+- client-scoped candidates (изоляция между client scopes);
+- self-match исключён; найденный duplicate не становится canonical source для duplicate chain;
+- `payload.duplicate_candidates` в public module call; matching thresholds/reason semantics остаются в `beeagent-rop`;
+- `base_classification` и `duplicate` evidence (candidate/confidence/reason) в `classified_events.json` и `rop_final_decisions.json`;
+- deterministic confident duplicate сохраняется в final decision (`deterministic` source) и не инвалидируется AI adjudicator/legacy AI assist (explicit skip);
+- `duplicate_count` в `operator_summary.json.classification`;
+- duplicate rows показываются в ROP Queue (`needs_review`), учитываются в current-state `needs_manual_review`;
+- Classification filter автоматически содержит `Duplicate` при наличии duplicate rows;
+- Event Detail показывает bounded duplicate evidence (candidate, confidence, reason) и `base_case_type`;
+- reviewed It20 reason code `duplicate_candidate_confirmed` покрыт reason catalog.
+
+BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
+
 Текущий фокус:
 
 1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;

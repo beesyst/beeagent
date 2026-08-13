@@ -33,6 +33,10 @@ _CLASSIFICATION_REASON_DISPLAY = {
         "en": "Duplicate: metadata-based match detected",
         "ru": "Дубликат: обнаружено совпадение метаданных",
     },
+    "duplicate_candidate_confirmed": {
+        "en": "Duplicate: confirmed match with a batch candidate",
+        "ru": "Дубликат: подтверждено совпадение с кандидатом текущего батча",
+    },
     "irrelevant_auto_reply": {
         "en": "Irrelevant: automatic reply detected",
         "ru": "Не релевантно: обнаружен автоответ",

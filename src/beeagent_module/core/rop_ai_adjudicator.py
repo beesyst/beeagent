@@ -951,17 +951,13 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
         for code in evidence_codes:
             if len(cleaned_evidence) >= AI_EVIDENCE_CODES_MAX:
                 break
-            cleaned_code = _sanitize_output_text(
-                code, _MAX_AI_EVIDENCE_CODE_LENGTH
-            )
+            cleaned_code = _sanitize_output_text(code, _MAX_AI_EVIDENCE_CODE_LENGTH)
             if cleaned_code in AI_EVIDENCE_CODES:
                 cleaned_evidence.append(cleaned_code)
             elif isinstance(code, str):
                 if cleaned_code:
                     dropped_evidence.append(cleaned_code)
-                    warnings.append(
-                        f"dropped unknown evidence_code: {cleaned_code}"
-                    )
+                    warnings.append(f"dropped unknown evidence_code: {cleaned_code}")
         validated["evidence_codes"] = cleaned_evidence[:AI_EVIDENCE_CODES_MAX]
     else:
         warnings.append("evidence_codes was not a list; replaced with []")
@@ -976,6 +972,9 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
 
 def _is_event_eligible_for_adjudicator(event: dict[str, Any]) -> bool:
     case_type = event.get("case_type", "")
+    if case_type == "duplicate":
+        return False
+
     is_fallback = event.get("is_fallback", False)
     confidence = event.get("confidence", 1.0)
     if isinstance(confidence, (int, float)):
@@ -1126,6 +1125,7 @@ def _build_result(
 ) -> dict[str, Any]:
     return {
         "event_id": event.get("event_id", ""),
+        "event_instance_id": event.get("event_instance_id", ""),
         "ai_used": ai_used,
         "ai_provider": ai_provider,
         "ai_model": ai_model,

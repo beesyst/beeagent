@@ -1014,6 +1014,843 @@ class TestCrossRunPeriodAggregation:
 
         assert dashboard["run_id"] == "test-dashboard-run"
 
+    def test_same_message_id_across_runs_with_shifted_instance_ids(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_norm = json.loads((run_dir / "normalized_events.json").read_text())
+        old_cls = json.loads((run_dir / "classified_events.json").read_text())
+        old_norm[0].update(
+            {
+                "message_id": "<same@example.test>",
+                "event_instance_id": "event-000001",
+            }
+        )
+        old_cls[0]["event_instance_id"] = "event-000001"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_norm))
+        (run_dir / "classified_events.json").write_text(json.dumps(old_cls))
+
+        new_norm = json.loads((newest / "normalized_events.json").read_text())
+        new_cls = json.loads((newest / "classified_events.json").read_text())
+        new_norm[:] = [
+            {
+                **new_norm[0],
+                "event_id": "evt-new",
+                "message_id": "<same@example.test>",
+                "event_instance_id": "event-000010",
+            }
+        ]
+        new_cls[:] = [
+            {
+                **new_cls[0],
+                "event_id": "evt-new",
+                "event_instance_id": "event-000010",
+            }
+        ]
+        (newest / "normalized_events.json").write_text(json.dumps(new_norm))
+        (newest / "classified_events.json").write_text(json.dumps(new_cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        evt_new = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-new"
+        ]
+        assert len(evt_new) == 1
+        assert evt_new[0]["run_id"] == "newest-run"
+        assert not any(
+            item["event_id"] == "evt-001"
+            for item in dashboard["queues"]["high_priority"]
+        )
+
+    def test_keeps_three_occurrences_of_same_message_id_within_run(
+        self, run_dir: Path
+    ) -> None:
+        norm = json.loads((run_dir / "normalized_events.json").read_text())
+        cls = json.loads((run_dir / "classified_events.json").read_text())
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        base_norm = {
+            "event_id": "triple",
+            "source_id": "rop_batch_sample",
+            "sender": "buyer@example.com",
+            "subject": "RFQ welding wire",
+            "message_id": "<triple@example.test>",
+            "event_date": event_date,
+        }
+        base_cls = {
+            "event_id": "triple",
+            "source_id": "rop_batch_sample",
+            "sender": "buyer@example.com",
+            "subject": "RFQ welding wire",
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.9,
+            "is_fallback": False,
+            "reason_code": "duplicate_candidate_confirmed",
+            "event_date": event_date,
+        }
+        norm[:] = [
+            {**base_norm, "event_instance_id": f"event-00000{i}"} for i in (1, 2, 3)
+        ]
+        cls[:] = [
+            {**base_cls, "event_instance_id": f"event-00000{i}"} for i in (1, 2, 3)
+        ]
+        (run_dir / "normalized_events.json").write_text(json.dumps(norm))
+        (run_dir / "classified_events.json").write_text(json.dumps(cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        nr_ids = [item["event_id"] for item in dashboard["queues"]["needs_review"]]
+        assert nr_ids.count("triple") == 3
+
+    def test_three_occurrences_across_two_runs_merge_to_three(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        base_norm = {
+            "event_id": "triple",
+            "source_id": "rop_batch_sample",
+            "sender": "buyer@example.com",
+            "subject": "RFQ welding wire",
+            "message_id": "<triple@example.test>",
+            "event_date": event_date,
+        }
+        base_cls = {
+            "event_id": "triple",
+            "source_id": "rop_batch_sample",
+            "sender": "buyer@example.com",
+            "subject": "RFQ welding wire",
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.9,
+            "is_fallback": False,
+            "reason_code": "duplicate_candidate_confirmed",
+            "event_date": event_date,
+        }
+        for path, start in ((run_dir, 1), (newest, 10)):
+            norm = json.loads((path / "normalized_events.json").read_text())
+            cls = json.loads((path / "classified_events.json").read_text())
+            norm[:] = [
+                {**base_norm, "event_instance_id": f"event-{start + i:06d}"}
+                for i in (1, 2, 3)
+            ]
+            cls[:] = [
+                {**base_cls, "event_instance_id": f"event-{start + i:06d}"}
+                for i in (1, 2, 3)
+            ]
+            (path / "normalized_events.json").write_text(json.dumps(norm))
+            (path / "classified_events.json").write_text(json.dumps(cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        nr_ids = [item["event_id"] for item in dashboard["queues"]["needs_review"]]
+        assert nr_ids.count("triple") == 3
+        assert {item["run_id"] for item in dashboard["queues"]["needs_review"]} == {
+            "newest-run"
+        }
+
+    def test_x_email_id_fallback_identity_across_runs(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_norm = json.loads((run_dir / "normalized_events.json").read_text())
+        old_cls = json.loads((run_dir / "classified_events.json").read_text())
+        old_norm[0].update(
+            {
+                "message_id": None,
+                "x_email_id": "x-123",
+                "event_instance_id": "event-000001",
+            }
+        )
+        old_cls[0]["event_instance_id"] = "event-000001"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_norm))
+        (run_dir / "classified_events.json").write_text(json.dumps(old_cls))
+
+        new_norm = json.loads((newest / "normalized_events.json").read_text())
+        new_cls = json.loads((newest / "classified_events.json").read_text())
+        new_norm[:] = [
+            {
+                **new_norm[0],
+                "event_id": "evt-new",
+                "message_id": None,
+                "x_email_id": "x-123",
+                "event_instance_id": "event-000020",
+            }
+        ]
+        new_cls[:] = [
+            {**new_cls[0], "event_id": "evt-new", "event_instance_id": "event-000020"}
+        ]
+        (newest / "normalized_events.json").write_text(json.dumps(new_norm))
+        (newest / "classified_events.json").write_text(json.dumps(new_cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        evt_new = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-new"
+        ]
+        assert len(evt_new) == 1
+        assert evt_new[0]["run_id"] == "newest-run"
+
+    def test_event_id_fallback_identity_with_instance_ids(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        for path, instance_id in (
+            (run_dir, "event-000001"),
+            (newest, "event-000030"),
+        ):
+            norm = json.loads((path / "normalized_events.json").read_text())
+            cls = json.loads((path / "classified_events.json").read_text())
+            norm[:] = [
+                {
+                    **norm[0],
+                    "event_id": "evt-001",
+                    "message_id": None,
+                    "event_instance_id": instance_id,
+                }
+            ]
+            cls[:] = [
+                {
+                    **cls[0],
+                    "event_id": "evt-001",
+                    "event_instance_id": instance_id,
+                    "priority": "high",
+                }
+            ]
+            (path / "normalized_events.json").write_text(json.dumps(norm))
+            (path / "classified_events.json").write_text(json.dumps(cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 1
+        evt001 = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-001"
+        ]
+        assert len(evt001) == 1
+        assert evt001[0]["run_id"] == "newest-run"
+
+    def test_legacy_artifacts_without_instance_ids_keep_dedup(
+        self, run_dir: Path
+    ) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        old_norm = json.loads((run_dir / "normalized_events.json").read_text())
+        old_cls = json.loads((run_dir / "classified_events.json").read_text())
+        old_norm[0]["message_id"] = "<legacy@example.test>"
+        (run_dir / "normalized_events.json").write_text(json.dumps(old_norm))
+        (run_dir / "classified_events.json").write_text(json.dumps(old_cls))
+
+        new_norm = json.loads((newest / "normalized_events.json").read_text())
+        new_cls = json.loads((newest / "classified_events.json").read_text())
+        new_norm[:] = [
+            {
+                **new_norm[0],
+                "event_id": "evt-new",
+                "message_id": "<legacy@example.test>",
+                "event_instance_id": "event-000040",
+            }
+        ]
+        new_cls[:] = [
+            {**new_cls[0], "event_id": "evt-new", "event_instance_id": "event-000040"}
+        ]
+        (newest / "normalized_events.json").write_text(json.dumps(new_norm))
+        (newest / "classified_events.json").write_text(json.dumps(new_cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        assert dashboard["business_kpi"]["processed_events"] == 3
+        evt_new = [
+            item
+            for item in dashboard["queues"]["high_priority"]
+            if item["event_id"] == "evt-new"
+        ]
+        assert len(evt_new) == 1
+        assert evt_new[0]["run_id"] == "newest-run"
+
+    def test_source_isolation_with_same_instance_ids(self, run_dir: Path) -> None:
+        newest = _copy_run(run_dir, "newest-run")
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        for path, source_id in (
+            (run_dir, "rop_batch_sample"),
+            (newest, "second_mailbox"),
+        ):
+            norm = json.loads((path / "normalized_events.json").read_text())
+            cls = json.loads((path / "classified_events.json").read_text())
+            norm[:] = [
+                {
+                    **norm[0],
+                    "event_id": "shared-id",
+                    "source_id": source_id,
+                    "message_id": "<shared@example.test>",
+                    "event_instance_id": "event-000001",
+                    "event_date": event_date,
+                }
+            ]
+            cls[:] = [
+                {
+                    **cls[0],
+                    "event_id": "shared-id",
+                    "source_id": source_id,
+                    "event_instance_id": "event-000001",
+                    "priority": "high",
+                    "event_date": event_date,
+                }
+            ]
+            (path / "normalized_events.json").write_text(json.dumps(norm))
+            (path / "classified_events.json").write_text(json.dumps(cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "newest-run",
+            aggregate_runs=True,
+        )
+
+        hp = dashboard["queues"]["high_priority"]
+        assert {(item["event_id"], item["source_id"]) for item in hp} == {
+            ("shared-id", "rop_batch_sample"),
+            ("shared-id", "second_mailbox"),
+        }
+
+    def test_queues_keep_duplicate_occurrences_with_same_event_id(
+        self, run_dir: Path
+    ) -> None:
+        norm = json.loads((run_dir / "normalized_events.json").read_text())
+        cls = json.loads((run_dir / "classified_events.json").read_text())
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        base_norm = {
+            "event_id": "same-id",
+            "source_id": "rop_batch_sample",
+            "sender": "buyer@example.com",
+            "subject": "RFQ welding wire",
+            "event_date": event_date,
+        }
+        base_cls = {
+            "event_id": "same-id",
+            "source_id": "rop_batch_sample",
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.9,
+            "is_fallback": False,
+            "reason_code": "duplicate_candidate_confirmed",
+            "event_date": event_date,
+        }
+        norm[:] = [
+            {**base_norm, "event_instance_id": "event-000010"},
+            {**base_norm, "event_instance_id": "event-000011"},
+        ]
+        cls[:] = [
+            {**base_cls, "event_instance_id": "event-000010"},
+            {**base_cls, "event_instance_id": "event-000011"},
+        ]
+        (run_dir / "normalized_events.json").write_text(json.dumps(norm))
+        (run_dir / "classified_events.json").write_text(json.dumps(cls))
+
+        dashboard = build_rop_dashboard(
+            run_dir.parents[1],
+            "all",
+            _null_logger(),
+            "test-dashboard-run",
+            aggregate_runs=True,
+        )
+
+        nr = [
+            item
+            for item in dashboard["queues"]["needs_review"]
+            if item["event_id"] == "same-id"
+        ]
+        assert len(nr) == 2
+        assert {item["event_instance_id"] for item in nr} == {
+            "event-000010",
+            "event-000011",
+        }
+
+    def _write_identity_run(self, storage: Path, name: str, events: list[dict]) -> Path:
+        rdir = storage / "runs" / name
+        rdir.mkdir(parents=True, exist_ok=True)
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        normalized: list[dict] = []
+        classified: list[dict] = []
+        for evt in events:
+            instance_id = str(evt.get("event_instance_id") or "")
+            normalized.append(
+                {
+                    "event_id": evt["event_id"],
+                    "source_id": evt["source_id"],
+                    "sender": "buyer@example.com",
+                    "subject": "RFQ welding wire",
+                    "message_id": evt.get("message_id"),
+                    "event_instance_id": instance_id,
+                    "event_date": event_date,
+                    "attachments": evt.get("attachments", []),
+                }
+            )
+            classified.append(
+                {
+                    "event_id": evt["event_id"],
+                    "source_id": evt["source_id"],
+                    "sender": "buyer@example.com",
+                    "subject": "RFQ welding wire",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "confidence": 0.9,
+                    "is_fallback": False,
+                    "reason_code": "new_lead_request_signal",
+                    "event_instance_id": instance_id,
+                    "event_date": event_date,
+                }
+            )
+        (rdir / "normalized_events.json").write_text(json.dumps(normalized))
+        (rdir / "classified_events.json").write_text(json.dumps(classified))
+        sources = sorted({str(evt["source_id"]) for evt in events})
+        source_items = [
+            {"source_id": source, "client_id": "welding", "status": "ok"}
+            for source in sources
+        ]
+        (rdir / "source_diagnostics.json").write_text(
+            json.dumps(
+                {"selection_mode": "multi", "sources": source_items},
+            )
+        )
+        (rdir / "intake_metadata.json").write_text(
+            json.dumps(
+                {
+                    "sources": source_items,
+                    "loaded_item_count": len(events),
+                }
+            )
+        )
+        (rdir / "rop_current_state.json").write_text(
+            json.dumps(
+                {
+                    "run_id": name,
+                    "status": "ok",
+                    "client_id": "welding",
+                    "generated_at_utc": event_date,
+                }
+            )
+        )
+        (rdir / "operator_summary.json").write_text(
+            json.dumps({"status": "ok", "module_status": "ok"})
+        )
+        return rdir
+
+    def _write_attachment_run(
+        self,
+        storage: Path,
+        name: str,
+        events: list[dict],
+        attachment_settings: dict,
+    ) -> Path:
+        from beeagent_module.core.attachment_extraction import (
+            build_attachment_extraction,
+        )
+
+        rdir = self._write_identity_run(storage, name, events)
+        normalized = json.loads((rdir / "normalized_events.json").read_text())
+        artifact, _enriched = build_attachment_extraction(
+            run_id=name,
+            events=normalized,
+            attachment_settings=attachment_settings,
+        )
+        (rdir / "attachment_extraction.json").write_text(json.dumps(artifact))
+        return rdir
+
+    def test_occurrence_slots_are_source_scoped_across_runs(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_identity_run(
+            tmp_path,
+            "run-old",
+            [
+                {
+                    "event_id": "e-a",
+                    "source_id": "source-a",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000001",
+                },
+                {
+                    "event_id": "e-b",
+                    "source_id": "source-b",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000002",
+                },
+            ],
+        )
+        self._write_identity_run(
+            tmp_path,
+            "run-new",
+            [
+                {
+                    "event_id": "e-b2",
+                    "source_id": "source-b",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000010",
+                }
+            ],
+        )
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-new", "welding", _null_logger()
+        )
+        source_b = [
+            event
+            for event in aggregate["classified"]
+            if event["source_id"] == "source-b"
+        ]
+        assert len(source_b) == 1
+        assert source_b[0]["_dashboard_origin_run_id"] == "run-new"
+
+    def test_occurrence_slots_source_scoped_with_reordered_sources(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_identity_run(
+            tmp_path,
+            "run-old",
+            [
+                {
+                    "event_id": "e-b",
+                    "source_id": "source-b",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000001",
+                },
+                {
+                    "event_id": "e-a",
+                    "source_id": "source-a",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000002",
+                },
+            ],
+        )
+        self._write_identity_run(
+            tmp_path,
+            "run-new",
+            [
+                {
+                    "event_id": "e-a2",
+                    "source_id": "source-a",
+                    "message_id": "<X@example.test>",
+                    "event_instance_id": "event-000020",
+                }
+            ],
+        )
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-new", "welding", _null_logger()
+        )
+        source_a = [
+            event
+            for event in aggregate["classified"]
+            if event["source_id"] == "source-a"
+        ]
+        assert len(source_a) == 1
+        assert source_a[0]["_dashboard_origin_run_id"] == "run-new"
+
+    def test_two_occurrences_source_b_dedup_with_new_run(self, tmp_path: Path) -> None:
+        def _triple(start: int) -> list[dict]:
+            return [
+                {
+                    "event_id": "triple",
+                    "source_id": "source-b",
+                    "message_id": "<triple@example.test>",
+                    "event_instance_id": f"event-{start:06d}",
+                },
+                {
+                    "event_id": "triple",
+                    "source_id": "source-b",
+                    "message_id": "<triple@example.test>",
+                    "event_instance_id": f"event-{start + 1:06d}",
+                },
+            ]
+
+        self._write_identity_run(tmp_path, "run-old", _triple(1))
+        self._write_identity_run(tmp_path, "run-new", _triple(10))
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-new", "welding", _null_logger()
+        )
+        assert len(aggregate["classified"]) == 2
+        assert all(
+            event["_dashboard_origin_run_id"] == "run-new"
+            for event in aggregate["classified"]
+        )
+
+    def test_period_aggregation_preserves_occurrence_attachment_items(
+        self, tmp_path: Path
+    ) -> None:
+        attachment_settings = {
+            "enabled": True,
+            "chars_max": 120,
+            "size_max": 4096,
+            "types": ["text/plain", "application/json"],
+        }
+        self._write_attachment_run(
+            tmp_path,
+            "run-att",
+            [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000001",
+                    "attachments": [
+                        {
+                            "attachment_id": "att-1",
+                            "filename": "a.txt",
+                            "content_type": "text/plain",
+                            "size_bytes": 20,
+                            "text_preview": "alpha",
+                        }
+                    ],
+                },
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000002",
+                    "attachments": [
+                        {
+                            "attachment_id": "att-2",
+                            "filename": "b.txt",
+                            "content_type": "text/plain",
+                            "size_bytes": 20,
+                            "text_preview": "beta",
+                        }
+                    ],
+                },
+            ],
+            attachment_settings,
+        )
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-att", "welding", _null_logger()
+        )
+        assert len(aggregate["classified"]) == 2
+        items = aggregate["attachment_extraction"]["items"]
+        assert {item["event_instance_id"] for item in items} == {
+            "event-000001",
+            "event-000002",
+        }
+        by_instance = {item["event_instance_id"]: item for item in items}
+        assert by_instance["event-000001"]["filename"] == "a.txt"
+        assert by_instance["event-000002"]["filename"] == "b.txt"
+
+    def test_legacy_ambiguous_attachment_not_bound_to_multiple_occurrences(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_identity_run(
+            tmp_path,
+            "run-legacy",
+            [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                },
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                },
+            ],
+        )
+        rdir = tmp_path / "runs" / "run-legacy"
+        artifact = {
+            "run_id": "run-legacy",
+            "status": "ok",
+            "aggregate": {
+                "event_count": 2,
+                "attachment_count": 1,
+                "refused_count": 0,
+                "preview_available_count": 0,
+                "metadata_only_count": 1,
+                "unsupported_count": 0,
+                "failed_count": 0,
+            },
+            "items": [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "event_instance_id": "",
+                    "filename": "legacy.txt",
+                    "content_type": "text/plain",
+                    "extraction_status": "metadata_only",
+                    "is_refused": False,
+                }
+            ],
+        }
+        (rdir / "attachment_extraction.json").write_text(json.dumps(artifact))
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-legacy", "welding", _null_logger()
+        )
+        assert len(aggregate["classified"]) == 2
+        assert aggregate["attachment_extraction"]["items"] == []
+
+    def test_refused_attachment_count_is_occurrence_aware(self, tmp_path: Path) -> None:
+        self._write_identity_run(
+            tmp_path,
+            "run-refused-inst",
+            [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000001",
+                },
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000002",
+                },
+            ],
+        )
+        rdir = tmp_path / "runs" / "run-refused-inst"
+        artifact = {
+            "run_id": "run-refused-inst",
+            "status": "ok",
+            "aggregate": {
+                "event_count": 2,
+                "attachment_count": 2,
+                "refused_count": 2,
+                "preview_available_count": 0,
+                "metadata_only_count": 0,
+                "unsupported_count": 0,
+                "failed_count": 0,
+            },
+            "items": [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "event_instance_id": "event-000001",
+                    "filename": "first.pdf",
+                    "content_type": "application/pdf",
+                    "extraction_status": "refused",
+                    "is_refused": True,
+                },
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "event_instance_id": "event-000002",
+                    "filename": "second.pdf",
+                    "content_type": "application/pdf",
+                    "extraction_status": "refused",
+                    "is_refused": True,
+                },
+            ],
+        }
+        (rdir / "attachment_extraction.json").write_text(json.dumps(artifact))
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-refused-inst", "welding", _null_logger()
+        )
+        business_kpi = rop_dashboard_module._build_business_kpi(
+            classified_list=aggregate["classified"],
+            normalized_list=aggregate["normalized"],
+            bitrix_state={},
+            source_diag={},
+            attachment_extraction=aggregate["attachment_extraction"],
+        )
+        assert business_kpi["attachment_refused"] == 2
+
+    def test_attachment_item_requires_instance_to_bind_repeated_event(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_identity_run(
+            tmp_path,
+            "run-inst-bound",
+            [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000001",
+                },
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "message_id": "<same@example.test>",
+                    "event_instance_id": "event-000002",
+                },
+            ],
+        )
+        rdir = tmp_path / "runs" / "run-inst-bound"
+        artifact = {
+            "run_id": "run-inst-bound",
+            "status": "ok",
+            "aggregate": {
+                "event_count": 2,
+                "attachment_count": 1,
+                "refused_count": 0,
+                "preview_available_count": 0,
+                "metadata_only_count": 1,
+                "unsupported_count": 0,
+                "failed_count": 0,
+            },
+            "items": [
+                {
+                    "event_id": "same-id",
+                    "source_id": "rop_batch_sample",
+                    "event_instance_id": "event-000001",
+                    "filename": "first.txt",
+                    "content_type": "text/plain",
+                    "extraction_status": "metadata_only",
+                    "is_refused": False,
+                }
+            ],
+        }
+        (rdir / "attachment_extraction.json").write_text(json.dumps(artifact))
+
+        aggregate = rop_dashboard_module._aggregate_period_events(
+            tmp_path / "runs", "run-inst-bound", "welding", _null_logger()
+        )
+        items = aggregate["attachment_extraction"]["items"]
+        assert len(items) == 1
+        assert items[0]["event_instance_id"] == "event-000001"
+
 
 @pytest.fixture
 def run_dir(tmp_path: Path) -> Path:
@@ -1660,6 +2497,107 @@ class TestBuildRopDashboard:
         assert dashboard["status"] == "ok"
         assert "evt-001" in high_priority_ids
 
+    def test_duplicate_rows_enter_needs_review_queue(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        classified.append(
+            {
+                "event_id": "evt-dup-in-queue",
+                "case_type": "duplicate",
+                "priority": "medium",
+                "confidence": 0.99,
+                "is_fallback": False,
+                "reason_code": "duplicate_candidate_confirmed",
+                "source_id": "rop_batch_sample",
+                "sender": "client@example.com",
+                "subject": "Welding machine inquiry",
+                "event_date": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            }
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+
+        review_ids = {item["event_id"] for item in dashboard["queues"]["needs_review"]}
+        assert "evt-dup-in-queue" in review_ids
+        assert dashboard["status"] == "ok"
+
+    def test_medium_non_fallback_duplicate_counts_in_needs_review_kpi(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        normalized = json.loads(
+            (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+        )
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event_date = datetime.now(UTC).replace(microsecond=0).isoformat()
+        normalized.append(
+            {
+                "event_id": "evt-dup-kpi",
+                "source_id": "rop_batch_sample",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "event_date": event_date,
+            }
+        )
+        classified.append(
+            {
+                "event_id": "evt-dup-kpi",
+                "source_id": "rop_batch_sample",
+                "case_type": "duplicate",
+                "priority": "medium",
+                "confidence": 0.9,
+                "is_fallback": False,
+                "reason_code": "duplicate_candidate_confirmed",
+                "event_date": event_date,
+            }
+        )
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+        bkpi = dashboard["business_kpi"]
+        assert bkpi["needs_review"] == len(dashboard["queues"]["needs_review"])
+        assert bkpi["needs_review"] == 3
+        assert any(
+            item["event_id"] == "evt-dup-kpi"
+            for item in dashboard["queues"]["needs_review"]
+        )
+
+    def test_high_fallback_duplicate_event_counts_once_in_needs_review(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        classified[0].update(
+            {
+                "case_type": "duplicate",
+                "priority": "high",
+                "is_fallback": True,
+            }
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+        bkpi = dashboard["business_kpi"]
+        assert bkpi["needs_review"] == len(dashboard["queues"]["needs_review"])
+        assert bkpi["needs_review"] == 2
+        review_ids = [item["event_id"] for item in dashboard["queues"]["needs_review"]]
+        assert review_ids.count("evt-001") == 1
+
 
 class TestWriteRopDashboard:
     def test_writes_artifact(self, run_dir: Path, tmp_path: Path) -> None:
@@ -1725,6 +2663,13 @@ class TestQueueFilters:
                 "bitrix_status": "not_found",
             }
         )
+        assert errors == []
+
+    def test_validate_filter_params_accepts_duplicate_aliases(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"classification": "duplicate", "case_type": "duplicate"}
+        )
+
         assert errors == []
 
     def test_validate_filter_params_rejects_bad_date(self) -> None:

@@ -3477,6 +3477,111 @@ def test_dashboard_rejects_final_decisions_artifact_with_unexpected_fields(
     )
 
 
+def test_dashboard_drops_unsafe_nested_duplicate_evidence(tmp_path: Path) -> None:
+    from beeagent_module.core.rop_final_decision import (
+        _is_final_decisions_payload,
+        build_final_decisions,
+        load_or_build_final_decisions,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-fd-nested-unsafe")
+    base_classification = {
+        "case_type": "new_lead",
+        "priority": "high",
+        "reason_code": "new_lead_request_signal",
+        "confidence": 0.95,
+        "reasoning": "base classification",
+        "is_fallback": False,
+        "case_subtype": "new_lead_rfq",
+        "recommended_queue": "high_priority",
+        "should_rop_see": True,
+        "correct_action": "review",
+    }
+    duplicate = {
+        "is_duplicate": True,
+        "confidence": 0.99,
+        "reason_code": "exact_email_body_match",
+        "reason_path": ["body_exact"],
+        "reasoning": "duplicate evidence",
+        "candidate": {
+            "existing_lead_id": "evt-original",
+            "event_id": "evt-original",
+            "similarity_score": 0.99,
+            "matched_fields": ["body"],
+            "reason_code": "exact_email_body_match",
+            "reason_path": ["body_exact"],
+            "reasoning": "exact match",
+        },
+        "candidates": [],
+        "is_fallback": False,
+    }
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["base_classification"] = {
+        **base_classification,
+        "raw_eml": "CLASSIFIED-RAW-EML-MARKER",
+    }
+    classified[0]["duplicate"] = {
+        **duplicate,
+        "candidate": {
+            **duplicate["candidate"],
+            "secret": "CLASSIFIED-SECRET-MARKER",
+        },
+    }
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+
+    safe_event = {
+        **classified[0],
+        "base_classification": base_classification,
+        "duplicate": duplicate,
+    }
+    safe_final = build_final_decisions([safe_event], None)
+    assert _is_final_decisions_payload(safe_final) is True
+
+    invalid_confidence = json.loads(json.dumps(safe_final))
+    invalid_confidence["events"][0]["duplicate"]["confidence"] = 1.01
+    assert _is_final_decisions_payload(invalid_confidence) is False
+
+    too_many_candidates = json.loads(json.dumps(safe_final))
+    too_many_candidates["events"][0]["duplicate"]["candidates"] = [
+        duplicate["candidate"],
+        duplicate["candidate"],
+    ]
+    assert _is_final_decisions_payload(too_many_candidates) is False
+
+    unsafe_final = json.loads(json.dumps(safe_final))
+    unsafe_final["events"][0]["base_classification"]["raw_eml"] = "FINAL-RAW-EML-MARKER"
+    unsafe_final["events"][0]["duplicate"]["candidate"]["secret"] = (
+        "FINAL-SECRET-MARKER"
+    )
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(unsafe_final), encoding="utf-8"
+    )
+
+    final_decisions, source = load_or_build_final_decisions(run_dir)
+    response = _client(storage_dir).get(
+        "/api/rop/dashboard?run_id=run-fd-nested-unsafe"
+    )
+
+    assert source == "computed"
+    assert final_decisions["events"][0]["base_classification"] is None
+    assert final_decisions["events"][0]["duplicate"] is None
+    assert response.status_code == 200
+    rendered = json.dumps(response.json()["data"])
+    assert "CLASSIFIED-RAW-EML-MARKER" not in rendered
+    assert "CLASSIFIED-SECRET-MARKER" not in rendered
+    assert "FINAL-RAW-EML-MARKER" not in rendered
+    assert "FINAL-SECRET-MARKER" not in rendered
+    assert any(
+        warning.get("code") == "missing_or_malformed_artifact"
+        for warning in response.json()["data"]["warnings"]
+    )
+
+
 def test_recommendations_layout_enforces_read_only_execution_policy() -> None:
     from beeagent_module.interfaces.ui.read_model import (
         _build_rop_recommendations_layout,
@@ -3693,6 +3798,113 @@ def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
     }
     assert availability["rop_ai_adjudicator_results_json"] is True
     assert availability["rop_final_decisions_json"] is True
+
+
+def test_rop_event_detail_exposes_duplicate_evidence(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-dup")
+    classified = [
+        {
+            "event_id": "evt-1",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "client@example.com",
+            "subject": "Need welding quote",
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.99,
+            "reason_code": "duplicate_candidate_confirmed",
+            "recommended_queue": "manual_review",
+            "correct_action": "review",
+            "should_rop_see": True,
+            "is_fallback": False,
+            "base_classification": {
+                "case_type": "new_lead",
+                "priority": "high",
+                "reason_code": "new_lead_request_signal",
+                "confidence": 0.9,
+                "reasoning": "base",
+                "is_fallback": False,
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+            },
+            "duplicate": {
+                "is_duplicate": True,
+                "confidence": 0.99,
+                "reason_code": "exact_email_body_match",
+                "reason_path": ["sender_email_exact", "body_exact"],
+                "reasoning": "exact duplicate matched",
+                "candidate": {
+                    "existing_lead_id": "evt-original",
+                    "event_id": "evt-original",
+                    "similarity_score": 0.99,
+                    "matched_fields": ["sender_email", "body"],
+                    "reason_code": "exact_email_body_match",
+                    "reason_path": ["sender_email_exact", "body_exact"],
+                    "reasoning": "exact duplicate matched",
+                },
+                "candidates": [],
+                "is_fallback": False,
+            },
+        }
+    ]
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-dup", "evt-1")
+
+    classification = data["classification"]
+    assert classification["case_type"] == "duplicate"
+    assert classification["base_case_type"] == "new_lead"
+    duplicate = classification["duplicate"]
+    assert duplicate["is_duplicate"] is True
+    assert duplicate["candidate_event_id"] == "evt-original"
+    assert duplicate["existing_lead_id"] == "evt-original"
+    assert duplicate["confidence"] == 0.99
+    assert duplicate["reason_code"] == "exact_email_body_match"
+    assert duplicate["reason_path"] == ["sender_email_exact", "body_exact"]
+    assert duplicate["matched_fields"] == ["sender_email", "body"]
+    assert duplicate["similarity_score"] == 0.99
+    assert classification["reason_display"] is not None
+
+    page = build_rop_event_detail_page_model(storage_dir, "run-detail-dup", "evt-1")
+    items = _find_section_items(page, "Classification")
+    assert _item_by_label(items, "Base case type")["value"] == "new_lead"
+    assert _item_by_label(items, "Duplicate candidate event")["value"] == "evt-original"
+    assert _item_by_label(items, "Duplicate confidence")["value"] == 0.99
+    assert _item_by_label(items, "Duplicate reason code")["value"] == (
+        "exact_email_body_match"
+    )
+
+    client = _client(storage_dir)
+    response = client.get("/rop/events/evt-1?run_id=run-detail-dup")
+
+    assert response.status_code == 200
+    assert "evt-original" in response.text
+    assert "exact_email_body_match" in response.text
+    assert "exact duplicate matched" in response.text
+
+
+def test_rop_filter_options_include_duplicate_when_rows_present() -> None:
+    from beeagent_module.interfaces.ui.read_model import _build_filter_options
+
+    options = _build_filter_options(
+        [
+            {"event_id": "a", "case_type": "new_lead", "priority": "high"},
+            {"event_id": "b", "case_type": "duplicate", "priority": "medium"},
+        ]
+    )
+
+    assert "duplicate" in options["case_types"]
+    assert "new_lead" in options["case_types"]
 
 
 def test_final_decision_get_routes_do_not_change_storage(tmp_path: Path) -> None:
@@ -8191,6 +8403,290 @@ def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
         assert "cdnjs.cloudflare.com" not in response.text
         assert "unpkg.com" not in response.text
         assert "googleapis.com" not in response.text
+
+
+def test_queue_html_and_api_accept_duplicate_case_type_filter(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-duplicate-filter")
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": "evt-duplicate",
+                    "sender": "buyer@example.com",
+                    "subject": "Duplicate RFQ",
+                    "case_type": "duplicate",
+                    "priority": "medium",
+                    "received_at": "2026-07-15T12:00:00Z",
+                },
+                {
+                    "event_id": "evt-new-lead",
+                    "sender": "other@example.com",
+                    "subject": "New RFQ",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "received_at": "2026-07-15T13:00:00Z",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+    query = "tab=queue&run_id=run-duplicate-filter&case_type=duplicate"
+
+    html = client.get("/rop?" + query)
+    api = client.get("/api/rop/dashboard?" + query)
+
+    assert html.status_code == 200
+    assert api.status_code == 200
+    assert "Duplicate RFQ" in html.text
+    assert "New RFQ" not in html.text
+    assert [row["event_id"] for row in api.json()["data"]["queue_rows"]] == [
+        "evt-duplicate"
+    ]
+
+
+def test_queue_and_event_detail_select_same_event_id_by_instance(
+    tmp_path: Path,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-event-instances")
+    event_id = "evt-shared"
+    normalized = [
+        {
+            "event_id": event_id,
+            "event_instance_id": instance_id,
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": f"Occurrence {index}",
+            "body_preview": "Need welding wire quote",
+            "received_at": f"2026-08-0{index}T10:00:00Z",
+        }
+        for index, instance_id in enumerate(
+            ["event-000001", "event-000002", "event-000003"], start=1
+        )
+    ]
+    classified = [
+        {
+            "event_id": event_id,
+            "event_instance_id": normalized[0]["event_instance_id"],
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": normalized[0]["subject"],
+            "case_type": "irrelevant",
+            "priority": "low",
+            "confidence": 0.9,
+            "reason_code": "not_business_relevant",
+            "is_fallback": False,
+        },
+        *[
+            {
+                "event_id": event_id,
+                "event_instance_id": item["event_instance_id"],
+                "source_id": "hotline_mailbox",
+                "client_id": "welding",
+                "sender": "buyer@example.com",
+                "subject": item["subject"],
+                "case_type": "duplicate",
+                "priority": "medium",
+                "confidence": 0.99,
+                "reason_code": "duplicate_candidate_confirmed",
+                "is_fallback": False,
+                "base_classification": {"case_type": "irrelevant"},
+                "duplicate": {
+                    "is_duplicate": True,
+                    "confidence": 0.99,
+                    "reason_code": "exact_message_id_match",
+                    "reasoning": "Same transport message as the canonical event.",
+                    "candidate": {"event_id": event_id},
+                },
+            }
+            for item in normalized[1:]
+        ],
+    ]
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+
+    queue = client.get("/api/rop/dashboard?tab=queue&run_id=run-event-instances")
+    assert queue.status_code == 200
+    rows = [
+        row for row in queue.json()["data"]["queue_rows"] if row["event_id"] == event_id
+    ]
+    assert {row["event_instance_id"] for row in rows} == {
+        "event-000001",
+        "event-000002",
+        "event-000003",
+    }
+    queue_html = client.get("/rop?tab=queue&run_id=run-event-instances")
+    assert queue_html.status_code == 200
+    for instance_id in ("event-000001", "event-000002", "event-000003"):
+        assert f"event_instance_id={instance_id}" in queue_html.text
+
+    selector = "event-000003"
+    api = client.get(
+        f"/api/rop/events/{event_id}?run_id=run-event-instances&event_instance_id={selector}"
+    )
+    html = client.get(
+        f"/rop/events/{event_id}?run_id=run-event-instances&event_instance_id={selector}"
+    )
+    assert api.status_code == 200
+    assert api.json()["data"]["event_instance_id"] == selector
+    assert api.json()["data"]["classification"]["case_type"] == "duplicate"
+    assert html.status_code == 200
+    assert "Duplicate candidate event" in html.text
+    assert "Same transport message as the canonical event." in html.text
+
+
+def test_event_detail_attachments_selected_by_event_instance_id(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-att-inst")
+    event_id = "evt-att-inst"
+    normalized = [
+        {
+            "event_id": event_id,
+            "event_instance_id": "event-000001",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": "Occurrence 1",
+            "body_preview": "Need welding wire quote",
+            "received_at": "2026-08-01T10:00:00Z",
+            "attachments": [
+                {
+                    "filename": "first.txt",
+                    "content_type": "text/plain",
+                    "size_bytes": 32,
+                }
+            ],
+        },
+        {
+            "event_id": event_id,
+            "event_instance_id": "event-000002",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": "Occurrence 2",
+            "body_preview": "Need welding wire quote",
+            "received_at": "2026-08-02T10:00:00Z",
+            "attachments": [
+                {
+                    "filename": "second.txt",
+                    "content_type": "text/plain",
+                    "size_bytes": 32,
+                }
+            ],
+        },
+    ]
+    classified = [
+        {
+            "event_id": event_id,
+            "event_instance_id": item["event_instance_id"],
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": item["subject"],
+            "case_type": "duplicate",
+            "priority": "medium",
+            "confidence": 0.99,
+            "reason_code": "duplicate_candidate_confirmed",
+            "is_fallback": False,
+            "base_classification": {"case_type": "new_lead"},
+            "duplicate": {
+                "is_duplicate": True,
+                "confidence": 0.99,
+                "reason_code": "exact_message_id_match",
+                "candidate": {"event_id": event_id},
+            },
+        }
+        for item in normalized
+    ]
+    attachment_extraction = {
+        "run_id": "run-detail-att-inst",
+        "status": "ok",
+        "aggregate": {
+            "event_count": 2,
+            "attachment_count": 2,
+            "preview_available_count": 2,
+            "metadata_only_count": 0,
+            "refused_count": 0,
+            "unsupported_count": 0,
+            "failed_count": 0,
+        },
+        "items": [
+            {
+                "event_id": event_id,
+                "event_instance_id": "event-000001",
+                "source_id": "hotline_mailbox",
+                "attachment_id": "evt-att-inst-att-0",
+                "filename": "first.txt",
+                "extraction_status": "preview",
+                "preview_available": True,
+                "text_preview": "first preview",
+            },
+            {
+                "event_id": event_id,
+                "event_instance_id": "event-000002",
+                "source_id": "hotline_mailbox",
+                "attachment_id": "evt-att-inst-att-1",
+                "filename": "second.txt",
+                "extraction_status": "preview",
+                "preview_available": True,
+                "text_preview": "second preview",
+            },
+        ],
+    }
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    (run_dir / "attachment_extraction.json").write_text(
+        json.dumps(attachment_extraction), encoding="utf-8"
+    )
+
+    data_first = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-att-inst",
+        event_id,
+        event_instance_id="event-000001",
+    )
+    data_second = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-att-inst",
+        event_id,
+        event_instance_id="event-000002",
+    )
+
+    assert [att["filename"] for att in data_first["attachments"]] == ["first.txt"]
+    assert [att["filename"] for att in data_second["attachments"]] == ["second.txt"]
+
+    client = _client(storage_dir)
+    response = client.get(
+        f"/api/rop/events/{event_id}?run_id=run-detail-att-inst&event_instance_id=event-000001"
+    )
+    assert response.status_code == 200
+    assert [att["filename"] for att in response.json()["data"]["attachments"]] == [
+        "first.txt"
+    ]
+    response = client.get(
+        f"/api/rop/events/{event_id}?run_id=run-detail-att-inst&event_instance_id=event-000002"
+    )
+    assert response.status_code == 200
+    assert [att["filename"] for att in response.json()["data"]["attachments"]] == [
+        "second.txt"
+    ]
 
 
 def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:

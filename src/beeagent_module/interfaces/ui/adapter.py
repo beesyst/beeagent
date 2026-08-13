@@ -16,6 +16,14 @@ from beeui_module.adapters.envelopes import (
 )
 from beeui_module.adapters.ids import validate_run_id
 
+from beeagent_module.cases.rop_dashboard import (
+    ALLOWED_PAGE_SIZES,
+    ALLOWED_PERIODS,
+    ALLOWED_SORT_FIELDS,
+    DEFAULT_PAGE_SIZE,
+    validate_filter_params,
+    validate_pagination_params,
+)
 from beeagent_module.interfaces.ui.artifacts import (
     is_artifact_id_allowed,
     list_available_artifact_ids,
@@ -28,22 +36,14 @@ from beeagent_module.interfaces.ui.read_model import (
     build_dashboard,
     build_modules_list,
     build_modules_page_layout,
-    normalize_rop_recommendation_hrefs,
     build_rop_dashboard_read_model,
     build_rop_page_layout,
     build_run_detail,
     build_runs_list,
+    normalize_rop_recommendation_hrefs,
 )
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
-)
-from beeagent_module.cases.rop_dashboard import (
-    ALLOWED_PERIODS,
-    ALLOWED_PAGE_SIZES,
-    ALLOWED_SORT_FIELDS,
-    DEFAULT_PAGE_SIZE,
-    validate_filter_params,
-    validate_pagination_params,
 )
 
 
@@ -64,12 +64,34 @@ def extract_rop_query_params(
     """
     errors: list[str] = []
 
-    allowed_query_keys = frozenset({
-        "tab", "run_id", "event_id", "period", "lang", "page", "page_size", "sort", "order",
-        "date_from", "date_to", "q", "sender", "subject", "case_type",
-        "classification", "priority", "bitrix_status", "is_fallback", "queue",
-        "columns", "columns_open", "open_dropdowns",
-    })
+    allowed_query_keys = frozenset(
+        {
+            "tab",
+            "run_id",
+            "event_id",
+            "event_instance_id",
+            "period",
+            "lang",
+            "page",
+            "page_size",
+            "sort",
+            "order",
+            "date_from",
+            "date_to",
+            "q",
+            "sender",
+            "subject",
+            "case_type",
+            "classification",
+            "priority",
+            "bitrix_status",
+            "is_fallback",
+            "queue",
+            "columns",
+            "columns_open",
+            "open_dropdowns",
+        }
+    )
     for key in query:
         if key not in allowed_query_keys:
             errors.append(f"Unknown query parameter: '{key}'")
@@ -79,22 +101,24 @@ def extract_rop_query_params(
         errors.append(f"Invalid period '{period}'")
 
     # ── Filter params ──
-    allowed_filter_keys = frozenset({
-        "date_from",
-        "date_to",
-        "q",
-        "sender",
-        "subject",
-        "case_type",
-        "classification",
-        "priority",
-        "bitrix_status",
-        "is_fallback",
-        "queue",
-        "columns",
-        "columns_open",
-        "open_dropdowns",
-    })
+    allowed_filter_keys = frozenset(
+        {
+            "date_from",
+            "date_to",
+            "q",
+            "sender",
+            "subject",
+            "case_type",
+            "classification",
+            "priority",
+            "bitrix_status",
+            "is_fallback",
+            "queue",
+            "columns",
+            "columns_open",
+            "open_dropdowns",
+        }
+    )
     filter_params: dict[str, str] = {}
     for key in allowed_filter_keys:
         raw = query.get(key)
@@ -114,14 +138,16 @@ def extract_rop_query_params(
     sort_raw = query.get("sort")
     order_raw = query.get("order")
 
-    pag_errors = validate_pagination_params(page_raw, page_size_raw, sort_raw, order_raw)
+    pag_errors = validate_pagination_params(
+        page_raw, page_size_raw, sort_raw, order_raw
+    )
     errors.extend(pag_errors)
 
     # Parse pagination with safe defaults (only if no validation errors)
     if not any("page" in e for e in pag_errors):
         try:
             page = max(1, int(page_raw or "1"))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             page = 1
     else:
         page = 1
@@ -131,7 +157,7 @@ def extract_rop_query_params(
             page_size = int(page_size_raw or str(DEFAULT_PAGE_SIZE))
             if page_size not in ALLOWED_PAGE_SIZES:
                 page_size = DEFAULT_PAGE_SIZE
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             page_size = DEFAULT_PAGE_SIZE
     else:
         page_size = DEFAULT_PAGE_SIZE
@@ -378,7 +404,9 @@ class BeeAgentUiAdapter:
                         return error_result("invalid_run_id", "Invalid run_id")
 
                 # Extract and validate filter + pagination + sort params atomically
-                filter_params, pagination_params, param_errors = extract_rop_query_params(query)
+                filter_params, pagination_params, param_errors = (
+                    extract_rop_query_params(query)
+                )
                 if param_errors:
                     return error_result(
                         "invalid_params",
@@ -418,7 +446,9 @@ class BeeAgentUiAdapter:
             if page_id == "modules":
                 locale = resolve_locale(query.get("lang"))
                 modules_data = build_modules_list(self._storage_dir)
-                modules_data["layout"] = build_modules_page_layout(modules_data, locale=locale)
+                modules_data["layout"] = build_modules_page_layout(
+                    modules_data, locale=locale
+                )
                 return ok_result(modules_data)
 
             if page_id == "rop_event_detail":
@@ -435,13 +465,16 @@ class BeeAgentUiAdapter:
                     return error_result("invalid_run_id", "Invalid run_id")
 
                 locale = resolve_locale(query.get("lang"))
-                filter_params, pagination_params, param_errors = extract_rop_query_params(query)
+                filter_params, pagination_params, param_errors = (
+                    extract_rop_query_params(query)
+                )
                 if param_errors:
                     return error_result("invalid_params", "; ".join(param_errors))
                 data = build_rop_event_detail_page_model(
                     self._storage_dir,
                     run_id,
                     event_id,
+                    event_instance_id=query.get("event_instance_id"),
                     lang=locale,
                     period=query.get("period"),
                     filter_params=filter_params,

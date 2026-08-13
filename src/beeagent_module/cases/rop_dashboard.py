@@ -18,7 +18,6 @@ ALLOWED_PERIODS: tuple[str, ...] = (
     "365d",
     "all",
 )
-
 ALLOWED_CASE_TYPES: tuple[str, ...] = (
     "new_lead",
     "existing_client",
@@ -32,6 +31,7 @@ ALLOWED_CASE_TYPES: tuple[str, ...] = (
     "needs_review",
     "unclear",
     "finance_document",
+    "duplicate",
     "other",
 )
 ALLOWED_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
@@ -908,7 +908,7 @@ def _aggregate_period_events(
         ordered_run_ids.remove(anchor_run_id)
     ordered_run_ids.insert(0, anchor_run_id)
 
-    winners: dict[tuple[str, str, str], dict[str, Any]] = {}
+    winners: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     for candidate_run_id in ordered_run_ids:
         candidate_dir = runs_dir / candidate_run_id
         source_diag = _read_json_dict(candidate_dir / "source_diagnostics.json")
@@ -932,11 +932,15 @@ def _aggregate_period_events(
         if not classified:
             continue
         normalized = _read_json_list(candidate_dir / "normalized_events.json") or []
-        normalized_by_source_event: dict[tuple[str, str], dict[str, Any]] = {}
+        normalized_by_source_event: dict[tuple[str, str, str], dict[str, Any]] = {}
         for item in normalized:
             if isinstance(item, dict) and isinstance(item.get("event_id"), str):
                 normalized_by_source_event[
-                    (str(item.get("source_id") or ""), str(item.get("event_id")))
+                    (
+                        str(item.get("source_id") or ""),
+                        str(item.get("event_id")),
+                        str(item.get("event_instance_id") or ""),
+                    )
                 ] = item
         generated_at = _resolve_generated_at(current_state, candidate_dir, logger)
         reconciliation = _read_optional_artifact(
@@ -955,11 +959,17 @@ def _aggregate_period_events(
             candidate_run_id,
             result["warnings"],
         )
-        attachment_by_source_event: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        attachment_by_source_event: dict[
+            tuple[str, str, str], list[dict[str, Any]]
+        ] = {}
         for item in (attachments or {}).get("items", []):
             if isinstance(item, dict) and isinstance(item.get("event_id"), str):
                 attachment_by_source_event.setdefault(
-                    (str(item.get("source_id") or ""), str(item.get("event_id"))),
+                    (
+                        str(item.get("source_id") or ""),
+                        str(item.get("event_id")),
+                        str(item.get("event_instance_id") or ""),
+                    ),
                     [],
                 ).append(item)
         event_source_ids: dict[str, set[str]] = {}
@@ -987,6 +997,7 @@ def _aggregate_period_events(
                     }
                 )
 
+        event_occurrence_count: dict[tuple[str, str], int] = {}
         for classified_event in classified:
             if not isinstance(classified_event, dict):
                 continue
@@ -994,11 +1005,40 @@ def _aggregate_period_events(
             if not isinstance(event_id, str) or not event_id:
                 continue
             classified_source_id = str(classified_event.get("source_id") or "")
+            event_instance_id = str(classified_event.get("event_instance_id") or "")
             normalized_event = normalized_by_source_event.get(
-                (classified_source_id, event_id)
+                (classified_source_id, event_id, event_instance_id)
             )
             if normalized_event is None:
-                normalized_event = normalized_by_source_event.get(("", event_id), {})
+                normalized_event = normalized_by_source_event.get(
+                    ("", event_id, event_instance_id),
+                    {},
+                )
+            source_id = str(
+                normalized_event.get("source_id") or classified_source_id or ""
+            )
+            occurrence_key = (source_id, event_id)
+            event_occurrence_count[occurrence_key] = (
+                event_occurrence_count.get(occurrence_key, 0) + 1
+            )
+
+        base_occurrence: dict[tuple[str, str, str], int] = {}
+        for classified_event in classified:
+            if not isinstance(classified_event, dict):
+                continue
+            event_id = classified_event.get("event_id")
+            if not isinstance(event_id, str) or not event_id:
+                continue
+            classified_source_id = str(classified_event.get("source_id") or "")
+            event_instance_id = str(classified_event.get("event_instance_id") or "")
+            normalized_event = normalized_by_source_event.get(
+                (classified_source_id, event_id, event_instance_id)
+            )
+            if normalized_event is None:
+                normalized_event = normalized_by_source_event.get(
+                    ("", event_id, event_instance_id),
+                    {},
+                )
             source_id = str(
                 normalized_event.get("source_id") or classified_source_id or ""
             )
@@ -1011,9 +1051,11 @@ def _aggregate_period_events(
                 event_client_id = anchor_client_id
             if event_client_id != anchor_client_id:
                 continue
-            identity = _dashboard_event_identity(
-                event_client_id, source_id, normalized_event, event_id
-            )
+            stable_base = _stable_event_base(normalized_event, event_id)
+            occurrence_key = (event_client_id, source_id, stable_base)
+            slot = base_occurrence.get(occurrence_key, 0) + 1
+            base_occurrence[occurrence_key] = slot
+            identity = (event_client_id, source_id, stable_base, slot)
             if identity in winners:
                 continue
             merged = dict(classified_event)
@@ -1037,19 +1079,31 @@ def _aggregate_period_events(
             )
             if reconciliation_item is None:
                 reconciliation_item = reconciliation_by_source_event.get(("", event_id))
-            attachment_items = attachment_by_source_event.get((source_id, event_id))
-            if attachment_items is None:
-                legacy_attachments = attachment_by_source_event.get(("", event_id))
-                if legacy_attachments:
-                    sources = event_source_ids.get(event_id, set())
-                    if len(sources) == 1 and source_id in sources:
-                        attachment_items = [dict(item) for item in legacy_attachments]
-                        for item in attachment_items:
-                            item["source_id"] = source_id
+            if (
+                not event_instance_id
+                and event_occurrence_count.get((source_id, event_id), 0) > 1
+            ):
+                attachment_items = []
+            else:
+                attachment_items = attachment_by_source_event.get(
+                    (source_id, event_id, event_instance_id)
+                )
+                if attachment_items is None:
+                    legacy_attachments = attachment_by_source_event.get(
+                        ("", event_id, event_instance_id)
+                    )
+                    if legacy_attachments:
+                        sources = event_source_ids.get(event_id, set())
+                        if len(sources) == 1 and source_id in sources:
+                            attachment_items = [
+                                dict(item) for item in legacy_attachments
+                            ]
+                            for item in attachment_items:
+                                item["source_id"] = source_id
+                        else:
+                            attachment_items = []
                     else:
                         attachment_items = []
-                else:
-                    attachment_items = []
             winners[identity] = {
                 "classified": merged,
                 "normalized": dict(normalized_event)
@@ -1091,19 +1145,17 @@ def _is_incomplete_run(summary: dict[str, Any] | None) -> bool:
     )
 
 
-def _dashboard_event_identity(
-    client_id: str,
-    source_id: str,
+def _stable_event_base(
     normalized_event: dict[str, Any],
     event_id: str,
-) -> tuple[str, str, str]:
+) -> str:
     message_id = normalized_event.get("message_id")
     if isinstance(message_id, str) and message_id.strip():
-        return client_id, source_id, f"message_id:{message_id.strip()}"
+        return f"message_id:{message_id.strip()}"
     x_email_id = normalized_event.get("x_email_id")
     if isinstance(x_email_id, str) and x_email_id.strip():
-        return client_id, source_id, f"x_email_id:{x_email_id.strip()}"
-    return client_id, source_id, f"event_id:{event_id}"
+        return f"x_email_id:{x_email_id.strip()}"
+    return f"event_id:{event_id}"
 
 
 def _parse_iso(iso_str: str | None) -> datetime | None:
@@ -1167,6 +1219,14 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
     return None
 
 
+def _event_needs_review(evt: dict[str, Any]) -> bool:
+    return (
+        bool(evt.get("is_fallback"))
+        or evt.get("priority") == "high"
+        or evt.get("case_type") == "duplicate"
+    )
+
+
 def _build_business_kpi(
     classified_list: list[dict[str, Any]],
     normalized_list: list[dict[str, Any]],
@@ -1193,7 +1253,7 @@ def _build_business_kpi(
             follow_ups += 1
         if evt.get("priority") == "high":
             high_priority += 1
-        if evt.get("is_fallback") or evt.get("priority") == "high":
+        if _event_needs_review(evt):
             needs_review += 1
 
     bitrix_kpi = bitrix_state.get("kpi", {})
@@ -1241,7 +1301,7 @@ def _count_period_attachment_refused(
     if not isinstance(attachment_extraction, dict):
         return 0
 
-    event_identities: set[tuple[str, str, str]] = set()
+    event_identities: set[tuple[str, str, str, str]] = set()
     for evt in [*classified_list, *normalized_list]:
         if not isinstance(evt, dict):
             continue
@@ -1252,6 +1312,7 @@ def _count_period_attachment_refused(
                     str(evt.get("_dashboard_origin_run_id") or ""),
                     str(evt.get("source_id") or ""),
                     event_id,
+                    str(evt.get("event_instance_id") or ""),
                 )
             )
 
@@ -1266,12 +1327,13 @@ def _count_period_attachment_refused(
                 continue
             run_key = str(item.get("_dashboard_origin_run_id") or "")
             source_key = str(item.get("source_id") or "")
+            instance_key = str(item.get("event_instance_id") or "")
             if not run_key and not source_key:
                 if event_id not in {
-                    eid for (rk, _sk, eid) in event_identities if not rk
+                    eid for (rk, _sk, eid, _inst) in event_identities if not rk
                 }:
                     continue
-            elif (run_key, source_key, event_id) not in event_identities:
+            elif (run_key, source_key, event_id, instance_key) not in event_identities:
                 continue
             status = str(item.get("extraction_status") or "").lower()
             if (
@@ -1397,7 +1459,7 @@ def _build_queues(
                     bitrix_status
                 )
 
-    seen_review: set[tuple[str, str, str]] = set()
+    seen_review: set[tuple[str, str, str, str]] = set()
 
     for evt in classified_list:
         if not isinstance(evt, dict):
@@ -1407,6 +1469,7 @@ def _build_queues(
         event_id = raw_event_id if isinstance(raw_event_id, str) else ""
         origin_run_id = str(evt.get("_dashboard_origin_run_id") or run_id)
         source_id = str(evt.get("source_id") or "")
+        event_instance_id = str(evt.get("event_instance_id") or "")
         bitrix_status = bitrix_status_by_event.get(
             (origin_run_id, source_id, event_id), ""
         )
@@ -1420,8 +1483,8 @@ def _build_queues(
         if evt.get("priority") == "high":
             high_priority.append(entry)
 
-        if evt.get("is_fallback") or evt.get("priority") == "high":
-            review_key = (origin_run_id, source_id, event_id)
+        if _event_needs_review(evt):
+            review_key = (origin_run_id, source_id, event_id, event_instance_id)
             if review_key not in seen_review:
                 needs_review.append(entry)
                 seen_review.add(review_key)
@@ -1570,6 +1633,7 @@ def _operator_queue_entry(
     priority = evt.get("priority", "")
     return {
         "event_id": evt.get("event_id", ""),
+        "event_instance_id": evt.get("event_instance_id", ""),
         "source_id": evt.get("source_id", ""),
         "source_display_name": evt.get("source_display_name")
         or evt.get("source_id", ""),

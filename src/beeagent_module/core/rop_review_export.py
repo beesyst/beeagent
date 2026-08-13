@@ -192,6 +192,7 @@ def _build_attachment_summary(attachments: Any) -> str:
 def review_tsv_columns() -> list[str]:
     return [
         "event_id",
+        "event_instance_id",
         "source_id",
         "source_type",
         "source_role",
@@ -268,7 +269,14 @@ def _build_review_tsv_rows(
     action_drafts_data: dict | None = None,
     adjudicator_results_data: dict | None = None,
 ) -> list[dict[str, str]]:
-    normalized_lookup = {evt.get("event_id"): evt for evt in normalized_events}
+    normalized_lookup = {
+        (
+            str(evt.get("event_id") or ""),
+            str(evt.get("event_instance_id") or ""),
+        ): evt
+        for evt in normalized_events
+        if isinstance(evt, dict)
+    }
 
     bitrix_lookup: dict[str, dict] = {}
     if reconciliation_data and isinstance(reconciliation_data, dict):
@@ -288,21 +296,27 @@ def _build_review_tsv_rows(
                 if eid:
                     action_drafts_lookup[eid] = item
 
-    adjudicator_results_lookup: dict[str, dict] = {}
+    adjudicator_results_lookup: dict[tuple[str, str], dict] = {}
     if adjudicator_results_data and isinstance(adjudicator_results_data, dict):
         items = adjudicator_results_data.get("results", [])
         if isinstance(items, list):
             for item in items:
                 eid = item.get("event_id", "")
                 if eid:
-                    adjudicator_results_lookup[eid] = item
+                    adjudicator_results_lookup[
+                        (eid, str(item.get("event_instance_id") or ""))
+                    ] = item
 
     rows: list[dict[str, str]] = []
 
     for classified_evt in classified_events:
         event_id = classified_evt.get("event_id", "")
+        event_instance_id = str(classified_evt.get("event_instance_id") or "")
         original_event_id = classified_evt.get("original_event_id", event_id)
-        normalized_evt = normalized_lookup.get(original_event_id, {})
+        normalized_evt = normalized_lookup.get(
+            (str(original_event_id or ""), event_instance_id),
+            {},
+        )
 
         body_short = _build_body_short(normalized_evt)
         attachments_summary = _build_attachment_summary(
@@ -312,6 +326,18 @@ def _build_review_tsv_rows(
         bot_reasoning = classified_evt.get("reasoning", "")
         is_duplicate = classified_evt.get("is_duplicate")
         duplicate_of = classified_evt.get("duplicate_of", "")
+        duplicate_block = classified_evt.get("duplicate")
+        if isinstance(duplicate_block, dict):
+            if is_duplicate is None:
+                is_duplicate = duplicate_block.get("is_duplicate")
+            if not duplicate_of:
+                duplicate_candidate = duplicate_block.get("candidate")
+                if isinstance(duplicate_candidate, dict):
+                    duplicate_of = str(
+                        duplicate_candidate.get("event_id")
+                        or duplicate_candidate.get("existing_lead_id")
+                        or ""
+                    )
 
         recon_item = bitrix_lookup.get(event_id, {})
         bitrix_entity_type = recon_item.get("bitrix_entity_type", "")
@@ -345,7 +371,10 @@ def _build_review_tsv_rows(
         recommended_next_step = action_draft_item.get("recommended_next_step", "")
         action_queue = action_draft_item.get("queue", "")
 
-        adj_result = adjudicator_results_lookup.get(event_id, {})
+        adj_result = adjudicator_results_lookup.get(
+            (str(event_id or ""), event_instance_id),
+            {},
+        )
 
         bot_should_rop_see = classified_evt.get("should_rop_see")
         bot_should_rop_see_value = (
@@ -354,6 +383,7 @@ def _build_review_tsv_rows(
 
         row = {
             "event_id": _safe_tsv_value(event_id),
+            "event_instance_id": _safe_tsv_value(event_instance_id),
             "source_id": _safe_tsv_value(classified_evt.get("source_id", "")),
             "source_type": _safe_tsv_value(classified_evt.get("source_type", "")),
             "source_role": _safe_tsv_value(classified_evt.get("source_role", "")),

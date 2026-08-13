@@ -8043,7 +8043,7 @@ Tests:
 
 ### Итерация 35 — ROP duplicate runtime integration and reviewed classifier rollout v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -8154,6 +8154,46 @@ ROP runtime передаёт current-batch candidate context в `beeagent-rop`, 
 - docs are updated;
 - BeeAgent version is not changed;
 - PR is ready to close Iteration 35.
+
+#### Implementation notes (It35)
+
+Canonical ordering:
+
+- events обрабатываются в deterministic порядке `(received_at/date/event_date/timestamp ASC с UTC normalization, event_id tie-break)` внутри `_classify_normalized_events`, поэтому earliest event становится canonical original, а более поздние exact/near повторы получают `case_type=duplicate` относительно него;
+- BeeAgent присваивает каждому normalized processing item additive `event_instance_id` в пределах run; public transport/business `event_id` остаётся неизменным module contract, а selector используется только для artifact joins и Queue/Event Detail navigation, поэтому повторяющиеся Message-ID не схлопываются downstream;
+- duplicate candidates строятся только из уже обработанных canonical events текущего batch; из canonical pool исключаются только confirmed `case_type=duplicate` события, а successful semantic/fallback module classifications остаются кандидатами независимо от `is_fallback`; BeeAgent-generated processing failure/non-ok события в pool не попадают (они идут через controlled fallback вне pool); scope ограничен `client_id`, self-match исключён;
+- candidate records передаются в public `lead_classification` contract через `payload.duplicate_candidates` (bounded keys: `existing_lead_id`, `sender`, `subject`, `body`, `event_id`, `thread_id`, `message_id`, `raw_metadata`), упорядочены по source timestamp с `event_id` tie-break;
+- matching thresholds/reason semantics остаются в `beeagent-rop` (`EntityResolutionService`), BeeAgent не дублирует duplicate logic.
+
+Runtime integration (`rop_operator.py`):
+
+- `_build_duplicate_candidates(...)`, `_duplicate_candidate_from_event(...)`, `_is_eligible_canonical_source(...)`, `_event_source_sort_key(...)`;
+- `_classify_normalized_events` поддерживает canonical pool и передаёт `duplicate_candidates` в per-event `lead_classification`;
+- `classification_diagnostics["duplicate_count"]` в `operator_summary.json`;
+- legacy AI assist (`_is_event_eligible_for_ai_assist`) и AI adjudicator (`_is_event_eligible_for_adjudicator`) явно skip deterministic `duplicate`.
+
+Artifacts / final decisions:
+
+- `classified_events.json` сохраняет module-returned `base_classification` и `duplicate` (bounded candidate/confidence/reason evidence);
+- `rop_final_decisions.json` добавляет `base_classification` и `duplicate` в каждый final decision event (None, когда нет duplicate context); deterministic confident duplicate сохраняется как `deterministic_case_type/final_case_type=duplicate`, `final_decision_source=deterministic`, без AI invalidation;
+- `_is_final_decisions_payload` валидирует новые optional поля (backward-compatible).
+
+UI:
+
+- Queue (`rop_dashboard._build_queues`, `rop_current_state._build_queues`) добавляет `case_type=duplicate` rows в `needs_review`;
+- `rop_current_state._build_kpi` учитывает duplicates в `needs_manual_review`;
+- Classification filter автоматически содержит `Duplicate` при наличии duplicate rows (`_build_filter_options`);
+- Event Detail (`rop_event_detail`) показывает bounded duplicate evidence: candidate event/existing_lead id, confidence, reason_code/path, matched_fields, reasoning, `base_case_type`.
+
+Reason catalog:
+
+- добавлен display для нового public reason code `duplicate_candidate_confirmed` (It20 reviewed classifier rollout), coverage test зелёный.
+
+Dependency model:
+
+- BeeAgent consumes `beeagent-rop==0.19.2` from the declared private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`); `uv sync --frozen` succeeds and the installed module reports version 0.19.2.
+- Registry/PyPI publication is not a prerequisite of the current private-module dependency model; the local editable source is the working resolution and is intentionally kept for development.
+- No dependency/version change is introduced by this iteration; `pyproject.toml` and `uv.lock` are untouched.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

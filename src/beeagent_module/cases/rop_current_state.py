@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -218,7 +218,7 @@ def build_rop_current_state(
         "run_id": run_id,
         "status": "ok",
         "read_only": True,
-        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "client_id": client_id,
         "current_alias": current_alias,
         "source": source_block,
@@ -377,7 +377,12 @@ def _build_kpi(
     needs_manual_review = sum(
         1
         for c in classified_events
-        if isinstance(c, dict) and (c.get("is_fallback") or c.get("priority") == "high")
+        if isinstance(c, dict)
+        and (
+            c.get("is_fallback")
+            or c.get("priority") == "high"
+            or c.get("case_type") == "duplicate"
+        )
     )
 
     attachment_count = 0
@@ -493,16 +498,19 @@ def _build_queues(
                     if eid:
                         bitrix_by_event[eid] = item
 
-    seen_review: set[str] = set()
+    seen_review: set[tuple[str, str]] = set()
 
     for evt in classified_events:
         if not isinstance(evt, dict):
             continue
         eid = evt.get("event_id", "")
+        event_instance_id = str(evt.get("event_instance_id") or "")
+        review_identity = (str(eid), event_instance_id)
         bitrix_item = bitrix_by_event.get(eid)
 
         queue_entry = {
             "event_id": eid,
+            "event_instance_id": event_instance_id,
             "case_type": evt.get("case_type", ""),
             "priority": evt.get("priority", ""),
             "is_fallback": bool(evt.get("is_fallback")),
@@ -514,19 +522,19 @@ def _build_queues(
                 matched.append({**queue_entry, "bitrix_status": match_status})
             elif match_status == "not_found":
                 lost_in_bitrix.append({**queue_entry, "bitrix_status": match_status})
-                if eid not in seen_review:
+                if review_identity not in seen_review:
                     needs_review.append(queue_entry)
-                    seen_review.add(eid)
+                    seen_review.add(review_identity)
             elif match_status == "weak_match":
                 weak_matches.append({**queue_entry, "bitrix_status": match_status})
-                if eid not in seen_review:
+                if review_identity not in seen_review:
                     needs_review.append(queue_entry)
-                    seen_review.add(eid)
+                    seen_review.add(review_identity)
             elif match_status in ("ambiguous", "duplicate_candidate"):
                 ambiguous.append({**queue_entry, "bitrix_status": match_status})
-                if eid not in seen_review:
+                if review_identity not in seen_review:
                     needs_review.append(queue_entry)
-                    seen_review.add(eid)
+                    seen_review.add(review_identity)
             elif match_status in ("connector_degraded", "error"):
                 degraded.append({**queue_entry, "bitrix_status": match_status})
             elif match_status == "skipped":
@@ -539,10 +547,14 @@ def _build_queues(
         if evt.get("priority") == "high":
             high_priority.append(queue_entry)
 
-        if evt.get("is_fallback") or evt.get("priority") == "high":
-            if eid not in seen_review:
+        if (
+            evt.get("is_fallback")
+            or evt.get("priority") == "high"
+            or evt.get("case_type") == "duplicate"
+        ):
+            if review_identity not in seen_review:
                 needs_review.append(queue_entry)
-                seen_review.add(eid)
+                seen_review.add(review_identity)
 
     return {
         "lost_in_bitrix": lost_in_bitrix,
