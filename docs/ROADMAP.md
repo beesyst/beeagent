@@ -8041,6 +8041,120 @@ Tests:
 
 - `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
 
+### Итерация 35 — ROP duplicate runtime integration and reviewed classifier rollout v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Подключить released duplicate-aware `beeagent-rop` classification contract к реальному ROP batch path, чтобы current-batch duplicates определялись domain-модулем, сохранялись в artifacts/final decisions и были видимы РОПу в Queue/Event Detail без дублирования business matching logic в BeeAgent.
+
+#### Scope
+
+Включено:
+
+- потребить released `beeagent-rop` contract из Iteration 20;
+- сохранить BeeAgent responsibility только за orchestration/context/artifacts/UI;
+- построить deterministic bounded duplicate candidate context из уже загруженных событий текущего ROP batch;
+- ограничить duplicate candidates одинаковым client scope;
+- сравнивать текущее событие только с предыдущими canonical candidates;
+- использовать source timestamp с deterministic fallback/tie-break для стабильного canonical ordering;
+- не сравнивать event с самим собой;
+- не превращать уже обнаруженный duplicate в новый canonical original;
+- передавать candidate context в public `lead_classification` module call;
+- не реализовывать sender/subject/body similarity thresholds в BeeAgent;
+- принять module-returned `case_type=duplicate` и structured duplicate evidence;
+- сохранить base classification / duplicate candidate / confidence / reason traceability в ROP artifacts;
+- гарантировать, что final decision сохраняет confident deterministic `duplicate`;
+- explicit skip/preserve behavior для duplicate в AI adjudicator path;
+- убедиться, что summary/current-state/dashboard не теряют duplicate;
+- показывать duplicate в Queue;
+- обеспечить появление `Duplicate` в Classification filter при наличии duplicate rows;
+- показывать bounded duplicate evidence в Event Detail;
+- добавить integration fixtures/smoke на exact duplicate, near duplicate, non-duplicate и cross-source same-client scenario;
+- проверить reviewed classifier outcomes после обновления module dependency;
+- обновить docs и dependency pin только на реально выпущенную версию `beeagent-rop`.
+
+#### Excluded
+
+- новые duplicate matching rules в BeeAgent;
+- изменение domain thresholds;
+- cross-run persistent duplicate database/index;
+- historical mailbox duplicate search;
+- live CRM/Bitrix entity-resolution as duplicate source;
+- Bitrix merge/write-back;
+- automatic deletion/suppression of duplicate emails;
+- изменение AI в основной classifier;
+- ослабление AI safety merge для reviewed supplier false positives;
+- mailbox connector redesign;
+- attachment parser/OCR changes;
+- новая database/storage subsystem;
+- новая config surface без необходимости;
+- BeeAgent `pyproject.toml.version` change.
+
+#### Deliverable
+
+ROP runtime передаёт current-batch candidate context в `beeagent-rop`, получает domain-owned duplicate-aware classification, сохраняет audit evidence и показывает `duplicate` как полноценную classification в Queue/Event Detail.
+
+#### Acceptance criteria
+
+- production ROP batch фактически использует duplicate-aware module contract;
+- второй exact duplicate в текущем client-scoped batch получает `case_type=duplicate`;
+- canonical first occurrence не становится duplicate своего последующего повторения;
+- near duplicate определяется только по module result;
+- unrelated similar emails не получают false duplicate;
+- candidates из другого client scope не сравниваются;
+- duplicate candidate/confidence/reason доступны в artifacts;
+- base semantic classification доступна для audit;
+- `rop_final_decisions.json` сохраняет deterministic duplicate;
+- AI adjudicator не превращает confident duplicate в invalid/manual-review result;
+- Queue показывает duplicate rows;
+- Classification filter автоматически содержит Duplicate при наличии таких rows;
+- Event Detail объясняет, с каким candidate найдено совпадение;
+- existing new-lead/existing-deal/irrelevant flows остаются backward-compatible;
+- reviewed It20 scenarios проходят BeeAgent integration regression.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted ROP batch integration tests;
+- module contract integration smoke;
+- exact duplicate current-batch test;
+- canonical ordering test;
+- near-duplicate test;
+- non-duplicate false-positive test;
+- client-scope isolation test;
+- multi-source same-client test where applicable;
+- AI-adjudicator duplicate preservation test;
+- final-decision artifact test;
+- dashboard/Queue/Event Detail read-model tests;
+- ROP runtime smoke through intended entrypoint;
+- inspect `classified_events.json`;
+- inspect `rop_final_decisions.json`;
+- inspect relevant Queue/Event Detail output;
+- inspect `logs/app.log`;
+- SAST;
+- SCA for the updated `beeagent-rop` dependency release;
+- DAST/IAST/fuzzing not required for this scope;
+- no secrets/raw email payloads added to committed fixtures;
+- BeeAgent version unchanged.
+
+#### DoD
+
+- duplicate engine is no longer disconnected from production ROP flow;
+- BeeAgent only supplies deterministic candidate context and does not own duplicate semantics;
+- later duplicate occurrence is distinguishable from canonical original;
+- `duplicate` reaches artifacts, final decision and operator UI;
+- reviewed classifier improvements from `beeagent-rop` are consumed successfully;
+- no cross-run/CRM overengineering is introduced;
+- no automatic destructive duplicate action is added;
+- AI safety boundaries remain intact;
+- runtime, artifact and UI checks are green;
+- dependency points to an actually released compatible module version;
+- docs are updated;
+- BeeAgent version is not changed;
+- PR is ready to close Iteration 35.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
