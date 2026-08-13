@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.0...beeagent-v0.51.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* integrate duplicate-aware ROP classification into batch runtime ([#187](https://github.com/beesyst/beeagent/issues/187)) ([6b61e89](https://github.com/beesyst/beeagent/commit/6b61e89c4fd75ebf3a9c4bea69c239f222eed449))
+
 ## [0.51.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.50.2...beeagent-v0.51.0) (2026-08-12)
 
 
