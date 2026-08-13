@@ -11,6 +11,7 @@ from beeagent_module.cases.rop_dashboard import (
     ALLOWED_BITRIX_STATUSES,
     ALLOWED_QUEUE_IDS,
     DEFAULT_PAGE_SIZE,
+    _event_needs_review,
     _list_rop_run_ids,
     apply_queue_filters,
     build_rop_dashboard,
@@ -134,10 +135,7 @@ def build_dashboard(storage_dir: Path, locale: str = "en") -> dict[str, Any]:
         if isinstance(classified, list):
             rop_classified = len(classified)
             needs_review = sum(
-                1
-                for c in classified
-                if isinstance(c, dict)
-                and (c.get("is_fallback") or c.get("priority") == "high")
+                1 for c in classified if isinstance(c, dict) and _event_needs_review(c)
             )
         source_diag = _read_json(latest_dir / "source_diagnostics.json")
         if isinstance(source_diag, dict):
@@ -477,9 +475,12 @@ def _build_funnel(
         {"stage": "Classified Events", "count": kpis.get("classified_count", 0)}
     )
 
-    review_candidates = kpis.get("fallback_count", 0) + kpis.get(
-        "high_priority_count", 0
-    )
+    if isinstance(classified, list):
+        review_candidates = sum(
+            1 for c in classified if isinstance(c, dict) and _event_needs_review(c)
+        )
+    else:
+        review_candidates = 0
     funnel.append({"stage": "Review Candidates", "count": review_candidates})
 
     return funnel
@@ -843,13 +844,13 @@ def _build_attention_events(
     if not isinstance(classified, list):
         return events
 
-    norm_by_id: dict[str, dict] = {}
+    norm_by_id: dict[tuple[str, str], dict] = {}
     if isinstance(normalized, list):
         for n in normalized:
             if isinstance(n, dict):
                 eid = n.get("event_id") or n.get("original_event_id")
                 if eid:
-                    norm_by_id[eid] = n
+                    norm_by_id[(str(eid), str(n.get("event_instance_id") or ""))] = n
 
     src_display: dict[str, str] = {}
     for sh in source_health:
@@ -875,7 +876,8 @@ def _build_attention_events(
         if not isinstance(item, dict):
             continue
         eid = item.get("event_id", "")
-        norm = norm_by_id.get(eid, {})
+        event_instance_id = str(item.get("event_instance_id") or "")
+        norm = norm_by_id.get((str(eid), event_instance_id), {})
         sid = item.get("source_id", "") or norm.get("source_id", "")
 
         reasons: list[str] = []
@@ -901,6 +903,7 @@ def _build_attention_events(
 
         evt = {
             "event_id": eid,
+            "event_instance_id": event_instance_id,
             "run_id": run_id,
             "source_id": sid,
             "source_display_name": src_display.get(sid, ""),
@@ -916,7 +919,9 @@ def _build_attention_events(
                 norm.get("attachment_count", item.get("attachment_count", 0))
             ),
             "review_reason": "; ".join(reasons),
-            "detail_href": _rop_event_detail_href(str(eid), run_id, locale)
+            "detail_href": _rop_event_detail_href(
+                str(eid), run_id, locale, event_instance_id=event_instance_id
+            )
             if eid and run_id
             else None,
         }
@@ -943,7 +948,7 @@ def _canonical_queue_rows(
         (queue_filter,) if queue_filter in ALLOWED_QUEUE_IDS else ALLOWED_QUEUE_IDS
     )
     rows: list[dict[str, Any]] = []
-    seen_identities: set[tuple[str, str, str]] = set()
+    seen_identities: set[tuple[str, str, str, str]] = set()
     for queue_id in queue_ids:
         source_rows = queues.get(queue_id, [])
         if not isinstance(source_rows, list):
@@ -956,6 +961,7 @@ def _canonical_queue_rows(
                 str(item.get("run_id") or ""),
                 str(item.get("source_id") or ""),
                 event_id,
+                str(item.get("event_instance_id") or ""),
             )
             if event_id and identity in seen_identities:
                 continue
@@ -2825,10 +2831,12 @@ def _rop_event_detail_href(
     page_size: int | None = None,
     sort: str | None = None,
     order: str | None = None,
+    event_instance_id: str | None = None,
 ) -> str:
     return build_rop_event_url(
         event_id,
         run_id,
+        event_instance_id=event_instance_id,
         lang=locale,
         period=period,
         filter_params=filter_params,
@@ -2877,7 +2885,7 @@ def _collect_priority_queue_preview(
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for bucket in ALLOWED_QUEUE_IDS:
         items = queues.get(bucket, [])
         if not isinstance(items, list):
@@ -2890,6 +2898,7 @@ def _collect_priority_queue_preview(
                 str(item.get("run_id") or run_id or ""),
                 str(item.get("source_id") or ""),
                 event_id,
+                str(item.get("event_instance_id") or ""),
             )
             if event_id and identity in seen:
                 continue
@@ -2910,7 +2919,13 @@ def _collect_priority_queue_preview(
             next_step = item.get("recommended_next_step") or t("Open Queue", locale)
             item_run_id = str(item.get("run_id") or run_id)
             detail_href = (
-                _rop_event_detail_href(event_id, item_run_id, locale, current_period)
+                _rop_event_detail_href(
+                    event_id,
+                    item_run_id,
+                    locale,
+                    current_period,
+                    event_instance_id=str(item.get("event_instance_id") or ""),
+                )
                 if event_id and item_run_id
                 else _rop_href(
                     tab="queue", period=current_period, locale=locale, run_id=run_id
@@ -3839,6 +3854,7 @@ def _queue_table(
                 page_size,
                 sort,
                 order,
+                str(item.get("event_instance_id") or ""),
             )
         rows.append(
             {

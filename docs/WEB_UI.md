@@ -134,6 +134,7 @@ CLI overrides:
 Query parameters:
 
 - `run_id` (required): run identifier
+- `event_instance_id` (optional): additive run-local selector for a distinct processing occurrence when several items share the same public `event_id`; omitted for old runs and unique event ids.
 - `lang` (optional, `en`/`ru`): locale override
 
 ## JSON API routes
@@ -239,6 +240,7 @@ Widget API response fields (MVP):
   "events": [
     {
       "event_id": "...",
+      "event_instance_id": "event-000001",
       "source_id": "...",
       "sender": "...",
       "subject": "...",
@@ -256,7 +258,9 @@ Widget API response fields (MVP):
       "needs_attention": false,
       "attention_reason": null,
       "automation_allowed": false,
-      "bitrix_write_allowed": false
+      "bitrix_write_allowed": false,
+      "base_classification": null,
+      "duplicate": null
     }
   ]
 }
@@ -271,6 +275,42 @@ Policy v1:
 - Invalid/unusable → `final_decision_source=fallback_policy`, `needs_attention=true`
 
 Always `automation_allowed=false` and `bitrix_write_allowed=false`.
+
+Additive It35 fields (backward-compatible):
+
+- `base_classification: object | null` — module-returned original semantic classification preserved for audit (present when duplicate candidate context was passed and the module returned it; `null` for events without duplicate context / old runs).
+- `duplicate: object | null` — bounded module-returned duplicate evidence (see duplicate evidence contract below); `null` for non-duplicate / old / malformed-safe events.
+- `event_instance_id: string` — BeeAgent-owned run-local processing occurrence selector; it does not replace or alter public `event_id` and is not part of the module duplicate contract.
+- Old or non-duplicate runs tolerate missing or `null` values for both fields; readers must not require them.
+
+### ROP duplicate classification contract (It35)
+
+Источник: module-returned `base_classification` / `duplicate` blocks в `classified_events.json` и `rop_final_decisions.json`.
+
+Event Detail classification (additive, backward-compatible):
+
+- `classification.base_case_type` — `string`, original semantic case type from `base_classification` (empty when absent).
+- `classification.duplicate` — `object | null`, bounded duplicate evidence:
+  - `is_duplicate` — boolean
+  - `confidence` — number (`0.0 – 1.0`)
+  - `reason_code` — string (e.g. `exact_email_body_match`, `near_duplicate_subject_body`, `duplicate_candidate_confirmed`)
+  - `reason_path` — string array
+  - `reasoning` — string (bounded)
+  - `is_fallback` — boolean
+  - candidate evidence:
+    - `candidate_event_id` — string
+    - `existing_lead_id` — string
+    - `similarity_score` — number
+    - `matched_fields` — string array
+    - (candidate reason fields `reason_code` / `reason_path` / `reasoning` are preserved in the raw module block)
+- `classification` fields `case_type`/`reason_code`/`confidence` etc. remain unchanged for non-duplicate events.
+- Queue detail links retain `/rop/events/{event_id}` and add `event_instance_id` only when present, so repeated transport Message-ID occurrences open their own artifact-backed detail while old links remain valid.
+
+Behavior / safety:
+
+- old and non-duplicate runs render without duplicate fields (missing or `null` tolerated);
+- malformed or unsafe restored duplicate evidence is **not** exposed — the read-model uses the existing safe computed fallback (warning emitted, no raw content rendered);
+- dynamic Classification filter includes `Duplicate` only when duplicate rows exist (`case_type=duplicate` present in displayed queue/classified data); absent otherwise.
 
 ### Artifact allowlist additions (UI-8)
 
@@ -856,8 +896,12 @@ ROP dashboard агрегирует события по периоду для в�
 
 - `run_id` — anchor run и client scope для выбранного-run operational evidence;
 - `business_kpi`, `series` и period queues агрегируют уникальные same-client события по релевантным успешным run'ам (degraded/error run'ы исключаются с bounded warning `incomplete_run_skipped`);
-- canonical winner для дубликатов — newest occurrence, приоритет identity: `message_id`, затем `x_email_id`, затем `event_id` (в пределах same client + source);
-- identity очередей — `(run_id, source_id, event_id)` с legacy-safe fallback; разные source события с одинаковым `event_id` не схлопываются;
+- stable base identity события: `client_id + source_id + (message_id → x_email_id → event_id)`;
+- внутри одного run повторяющиеся occurrences одного stable base (например, одно письмо с одним `message_id`, попавшее в батч несколько раз) различаются deterministic occurrence slot (по source timestamp order, `event_id`/`event_instance_id` tie-break) и сохраняются раздельно;
+- cross-run canonical winner — newest run per `(client_id, source_id, stable base, occurrence slot)`, поэтому одно и то же письмо в нескольких mailbox polls/runs не умножается в `7d/30d/all`; `run_id + event_instance_id` не является cross-run business identity;
+- `event_instance_id` — BeeAgent-owned run-local processing occurrence selector: используется только для ordering/disambiguation внутри run и artifact/UI lookup, не передаётся как domain matching signal и не заменяет public `event_id`;
+- identity очередей — `(origin_run_id, source_id, event_id, event_instance_id)` с legacy-safe fallback (пустой selector для старых run'ов); разные source события с одинаковым `event_id` не схлопываются; разные occurrence одного `event_id` внутри run сохраняются отдельно;
+- attachment items (`attachment_extraction.json`) несут аддитивное поле `event_instance_id`, чтобы привязывать каждый item к своему run-local occurrence; повторные occurrences одного `event_id` получают только свои attachment items; legacy item без `event_instance_id` привязывается только когда соответствие однозначно (одно occurrence), иначе не приписывается ни одному из повторных occurrences; `attachment_refused` KPI считается по occurrence-aware identity;
 - `latest_selection`, threads, AI evidence, evidence links и source health остаются anchor-run specific;
 - queue/detail links используют origin `run_id` события;
 - period filtering применяется к агрегированному business view;

@@ -781,11 +781,12 @@ class TestRopCliExportReview:
 
 
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_67_fields(self) -> None:
+    def test_tsv_columns_order_has_68_fields(self) -> None:
         columns = review_tsv_columns()
-        assert len(columns) == 67
+        assert len(columns) == 68
         expected_order = [
             "event_id",
+            "event_instance_id",
             "source_id",
             "source_type",
             "source_role",
@@ -1141,6 +1142,73 @@ class TestRopTsvEnriched:
 
         assert row["is_duplicate"] == "false"
         assert row["duplicate_of"] == ""
+
+    def test_tsv_duplicate_block_populates_duplicate_columns(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        run_dir = tmp_path / "runs" / "test-tsv-dup-block-run"
+        run_dir.mkdir(parents=True)
+
+        normalized_events = [
+            {
+                "event_id": "evt-002",
+                "source_id": "test",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "body": "Please send quote.",
+            }
+        ]
+        classified_events = [
+            {
+                "event_id": "evt-002",
+                "source_id": "test",
+                "case_type": "duplicate",
+                "reason_code": "duplicate_candidate_confirmed",
+                "confidence": 0.95,
+                "is_fallback": False,
+                "original_event_id": "evt-002",
+                "base_classification": {"case_type": "new_lead"},
+                "duplicate": {
+                    "is_duplicate": True,
+                    "confidence": 0.95,
+                    "reason_code": "exact_email_body_match",
+                    "candidate": {
+                        "existing_lead_id": "evt-001",
+                        "event_id": "evt-001",
+                        "similarity_score": 0.95,
+                    },
+                },
+            }
+        ]
+
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized_events),
+            encoding="utf-8",
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified_events),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+
+        args = argparse.Namespace(run_id="test-tsv-dup-block-run", format="tsv")
+        handle_rop_export_review(args, logger=_null_logger())
+
+        tsv_path = run_dir / "rop_review_table.tsv"
+        with tsv_path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            row = next(reader)
+
+        assert row["is_duplicate"] == "true"
+        assert row["duplicate_of"] == "evt-001"
+        assert row["bot_case_type"] == "duplicate"
 
     def test_tsv_body_short_sanitized_no_tabs_newlines(
         self,

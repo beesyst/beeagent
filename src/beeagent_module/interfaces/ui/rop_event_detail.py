@@ -9,6 +9,10 @@ from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
 )
+from beeagent_module.core.rop_reason_contract import (
+    AI_EVIDENCE_CODES,
+    AI_EVIDENCE_CODES_MAX,
+)
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 from beeagent_module.interfaces.ui.locale import t
 from beeagent_module.interfaces.ui.reason_catalog import (
@@ -16,10 +20,6 @@ from beeagent_module.interfaces.ui.reason_catalog import (
     get_ai_reason_display,
     get_attention_reason_display,
     get_classification_reason_display,
-)
-from beeagent_module.core.rop_reason_contract import (
-    AI_EVIDENCE_CODES,
-    AI_EVIDENCE_CODES_MAX,
 )
 from beeagent_module.interfaces.ui.url_builder import build_rop_url
 
@@ -141,11 +141,20 @@ def _resolve_run_dir(storage_dir: Path, run_id: str) -> tuple[Path | None, str]:
     return run_dir, ""
 
 
-def _find_event(events: list | None, event_id: str) -> dict[str, Any] | None:
+def _find_event(
+    events: list | None,
+    event_id: str,
+    event_instance_id: str | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(events, list):
         return None
     for evt in events:
-        if isinstance(evt, dict) and evt.get("event_id") == event_id:
+        if not isinstance(evt, dict) or evt.get("event_id") != event_id:
+            continue
+        if (
+            event_instance_id is None
+            or evt.get("event_instance_id") == event_instance_id
+        ):
             return evt
     return None
 
@@ -160,14 +169,23 @@ def _find_events_for_id(events: list | None, event_id: str) -> list[dict[str, An
     ]
 
 
-def _match_by_event_id(artifact: dict | None, event_id: str) -> dict[str, Any] | None:
+def _match_by_event_id(
+    artifact: dict | None,
+    event_id: str,
+    event_instance_id: str | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(artifact, dict):
         return None
     items = _safe_list(
         artifact.get("results", artifact.get("items", artifact.get("events", [])))
     )
     for item in items:
-        if isinstance(item, dict) and item.get("event_id") == event_id:
+        if not isinstance(item, dict) or item.get("event_id") != event_id:
+            continue
+        if (
+            event_instance_id is None
+            or item.get("event_instance_id") == event_instance_id
+        ):
             return item
     return None
 
@@ -193,6 +211,7 @@ def build_rop_event_detail_read_model(
     run_id: str,
     event_id: str,
     *,
+    event_instance_id: str | None = None,
     lang: str = "en",
     period: str | None = None,
     filter_params: dict[str, str] | None = None,
@@ -217,8 +236,8 @@ def build_rop_event_detail_read_model(
     action_drafts = _read_json(run_dir / "rop_action_drafts.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
 
-    norm_event = _find_event(_safe_list(normalized), event_id)
-    class_event = _find_event(_safe_list(classified), event_id)
+    norm_event = _find_event(_safe_list(normalized), event_id, event_instance_id)
+    class_event = _find_event(_safe_list(classified), event_id, event_instance_id)
 
     if norm_event is None and class_event is None:
         return {
@@ -314,6 +333,53 @@ def build_rop_event_detail_read_model(
             "correct_action": _str(class_event.get("correct_action", "")),
             "should_rop_see": class_event.get("should_rop_see"),
         }
+        duplicate_block = class_event.get("duplicate")
+        if isinstance(duplicate_block, dict):
+            base_classification = class_event.get("base_classification")
+            candidate = duplicate_block.get("candidate")
+            classification_section["base_case_type"] = (
+                _str(base_classification.get("case_type"))
+                if isinstance(base_classification, dict)
+                else ""
+            )
+            classification_section["duplicate"] = {
+                "is_duplicate": bool(duplicate_block.get("is_duplicate", False)),
+                "confidence": duplicate_block.get("confidence"),
+                "reason_code": _bounded_str(
+                    duplicate_block.get("reason_code"), _MAX_REASON_CODE_LENGTH
+                ),
+                "reason_path": [
+                    str(item)
+                    for item in duplicate_block.get("reason_path", [])
+                    if isinstance(item, str)
+                ],
+                "reasoning": _bounded_str(
+                    duplicate_block.get("reasoning"), _MAX_REASON_TEXT_LENGTH
+                ),
+                "candidate_event_id": (
+                    _str(candidate.get("event_id"))
+                    if isinstance(candidate, dict)
+                    else ""
+                ),
+                "existing_lead_id": (
+                    _str(candidate.get("existing_lead_id"))
+                    if isinstance(candidate, dict)
+                    else ""
+                ),
+                "similarity_score": (
+                    candidate.get("similarity_score")
+                    if isinstance(candidate, dict)
+                    else None
+                ),
+                "matched_fields": [
+                    str(item)
+                    for item in candidate.get("matched_fields", [])
+                    if isinstance(item, str)
+                ]
+                if isinstance(candidate, dict)
+                else [],
+                "is_fallback": bool(duplicate_block.get("is_fallback", False)),
+            }
     else:
         warnings.append("Event not found in classified_events.json")
 
@@ -344,7 +410,7 @@ def build_rop_event_detail_read_model(
 
     ai_section: dict[str, Any] = {}
     if isinstance(ai_results, dict):
-        matched = _match_by_event_id(ai_results, event_id)
+        matched = _match_by_event_id(ai_results, event_id, event_instance_id)
         if matched:
             ai_section = {
                 "ai_assist_status": _str(
@@ -375,6 +441,7 @@ def build_rop_event_detail_read_model(
         matched_adjudicator = _match_by_event_id(
             ai_adjudicator_results,
             event_id,
+            event_instance_id,
         )
         if matched_adjudicator:
             ai_reason_code_str = _bounded_str(
@@ -416,9 +483,7 @@ def build_rop_event_detail_read_model(
                 if ev_warn:
                     warnings.append(ev_warn)
 
-                ai_evidence_display_list.append(
-                    {"code": code, "display": ev_display}
-                )
+                ai_evidence_display_list.append({"code": code, "display": ev_display})
             adj_section = {
                 "ai_adjudicator_used": _nullable_bool(
                     matched_adjudicator.get("ai_used")
@@ -427,9 +492,7 @@ def build_rop_event_detail_read_model(
                     matched_adjudicator.get("ai_status", ""),
                     _MAX_REASON_CODE_LENGTH,
                 ),
-                "ai_adjudicator_confidence": matched_adjudicator.get(
-                    "ai_confidence"
-                ),
+                "ai_adjudicator_confidence": matched_adjudicator.get("ai_confidence"),
                 "ai_adjudicator_reason": _bounded_str(
                     matched_adjudicator.get("ai_reason", ""),
                     _MAX_REASON_TEXT_LENGTH,
@@ -437,9 +500,7 @@ def build_rop_event_detail_read_model(
                 "ai_adjudicator_reason_code": ai_reason_code_str,
                 "ai_adjudicator_evidence_codes": ai_evidence_display_list,
                 "ai_adjudicator_reason_display": ai_reason_display_val,
-                "final_case_type": _str(
-                    matched_adjudicator.get("final_case_type", "")
-                ),
+                "final_case_type": _str(matched_adjudicator.get("final_case_type", "")),
                 "final_case_subtype": _str(
                     matched_adjudicator.get("final_case_subtype", "")
                 ),
@@ -452,7 +513,11 @@ def build_rop_event_detail_read_model(
             }
 
     final_decisions, _ = load_or_build_final_decisions(run_dir)
-    final_decision = find_final_decision(final_decisions, event_id)
+    final_decision = find_final_decision(
+        final_decisions,
+        event_id,
+        event_instance_id,
+    )
     if final_decision:
         final_case_subtype = final_decision.get("final_case_subtype")
         attention_reason = _bounded_str(
@@ -590,7 +655,11 @@ def build_rop_event_detail_read_model(
         )
 
     if isinstance(attachment_extraction, dict):
-        extracted = _match_by_event_id(attachment_extraction, event_id)
+        extracted = _match_by_event_id(
+            attachment_extraction,
+            event_id,
+            event_instance_id,
+        )
         if extracted:
             evidence_links.append(
                 {
@@ -608,6 +677,7 @@ def build_rop_event_detail_read_model(
     result = {
         "run_id": run_id,
         "event_id": event_id,
+        "event_instance_id": event_instance_id or "",
         "source": source_section,
         "message": message_section,
         "classification": classification_section,
@@ -664,6 +734,7 @@ def build_rop_event_detail_page_model(
     run_id: str,
     event_id: str,
     *,
+    event_instance_id: str | None = None,
     lang: str = "en",
     period: str | None = None,
     filter_params: dict[str, str] | None = None,
@@ -676,6 +747,7 @@ def build_rop_event_detail_page_model(
         storage_dir=storage_dir,
         run_id=run_id,
         event_id=event_id,
+        event_instance_id=event_instance_id,
         lang=lang,
     )
     if not data.get("ok", True):
@@ -684,6 +756,7 @@ def build_rop_event_detail_page_model(
     source = _safe_dict(data.get("source"))
     message = _safe_dict(data.get("message"))
     classification = _safe_dict(data.get("classification"))
+    duplicate = _safe_dict(classification.get("duplicate"))
     thread = _safe_dict(data.get("thread"))
     ai_assist = _safe_dict(data.get("ai_assist"))
     ai_adjudicator = _safe_dict(data.get("ai_adjudicator"))
@@ -775,6 +848,40 @@ def build_rop_event_detail_page_model(
                         tone="warning"
                         if classification.get("should_rop_see") is True
                         else "muted",
+                    ),
+                    *(
+                        [
+                            _kv(
+                                t("Base case type", lang),
+                                classification.get("base_case_type"),
+                            ),
+                            _kv(
+                                t("Duplicate candidate event", lang),
+                                duplicate.get("candidate_event_id"),
+                            ),
+                            _kv(
+                                t("Duplicate candidate entity", lang),
+                                duplicate.get("existing_lead_id"),
+                            ),
+                            _kv(
+                                t("Duplicate confidence", lang),
+                                duplicate.get("confidence"),
+                                hint="confidence",
+                            ),
+                            _kv(
+                                t("Duplicate reason code", lang),
+                                duplicate.get("reason_code"),
+                            ),
+                            _kv(
+                                t("Duplicate reasoning", lang),
+                                duplicate.get("reasoning"),
+                                variant="long_text",
+                                collapsible=True,
+                                display=duplicate.get("reasoning", ""),
+                            ),
+                        ]
+                        if duplicate.get("is_duplicate") is True
+                        else []
                     ),
                 ]
             ),

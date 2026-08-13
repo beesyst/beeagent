@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -336,6 +337,70 @@ def _write_sample_batch(directory: Path) -> Path:
     path = directory / "test_batch.json"
     path.write_text(json.dumps(batch), encoding="utf-8")
     return path
+
+
+def _write_raw_events_batch(
+    directory: Path,
+    events: list[dict],
+    period: str = "2026-05",
+) -> Path:
+    batch = {"period": period, "items": events}
+    path = directory / "raw_events_batch.json"
+    path.write_text(json.dumps(batch), encoding="utf-8")
+    return path
+
+
+def _make_raw_batch_settings(
+    batch_path: str,
+    client_id: str = "welding",
+    source_id: str = "test-batch",
+) -> dict:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": _attachment_settings(),
+        "sources": [
+            {
+                "source_id": source_id,
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": client_id,
+                "display_name": "Test Batch Source",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {"path": batch_path, "period": "2026-05"},
+            }
+        ],
+    }
+    return settings
+
+
+def _classify_raw_batch(
+    tmp_path: Path,
+    events: list[dict],
+    run_id: str,
+) -> list[dict]:
+    batch_path = _write_raw_events_batch(tmp_path, events)
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+    result = run_rop_batch_case(
+        settings=_make_raw_batch_settings(str(batch_path.relative_to(tmp_path))),
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id=run_id,
+        session_id=f"session-{run_id}",
+    )
+
+    assert result["status"] == "ok"
+    return json.loads(
+        (tmp_path / "runs" / run_id / "classified_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
@@ -1202,6 +1267,114 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
     assert "RAW-EML-SHOULD-NOT-PERSIST" not in serialized
 
 
+def test_rop_batch_attachment_items_carry_event_instance_id(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+
+    batch_file = tmp_path / "batch_attachment_instance.json"
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "evt-inst-001",
+                "source": "email",
+                "sender": "lead@example.com",
+                "subject": "RFQ welding wire",
+                "received_at": "2026-05-01T10:00:00Z",
+                "attachments": [
+                    {
+                        "filename": "first.txt",
+                        "content_type": "text/plain",
+                        "size_bytes": 32,
+                        "text_preview": "first safe preview",
+                    }
+                ],
+            },
+            {
+                "event_id": "evt-inst-001",
+                "source": "email",
+                "sender": "lead@example.com",
+                "subject": "RFQ welding wire",
+                "received_at": "2026-05-02T10:00:00Z",
+                "attachments": [
+                    {
+                        "filename": "second.txt",
+                        "content_type": "text/plain",
+                        "size_bytes": 32,
+                        "text_preview": "second safe preview",
+                    }
+                ],
+            },
+        ],
+    }
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": {
+            "enabled": True,
+            "chars_max": 120,
+            "size_max": 4096,
+            "types": ["text/plain"],
+        },
+        "sources": [
+            {
+                "source_id": "test-batch-attachment-instance",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "welding",
+                "display_name": "Test Batch Attachment Instance",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {
+                    "path": str(batch_file.relative_to(tmp_path)),
+                    "period": "2026-05",
+                },
+            }
+        ],
+    }
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-batch-attachment-instance",
+        session_id="session-batch-attachment-instance",
+    )
+
+    run_dir = tmp_path / "runs" / "run-batch-attachment-instance"
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    items = extraction["items"]
+    assert len(items) == 2
+    assert {item["event_instance_id"] for item in items} == {
+        "event-000001",
+        "event-000002",
+    }
+    by_filename = {item["filename"]: item for item in items}
+    normalized_by_instance = {event["event_instance_id"]: event for event in normalized}
+    for item in items:
+        normalized_event = normalized_by_instance[item["event_instance_id"]]
+        assert item["filename"] in {
+            attachment.get("filename")
+            for attachment in normalized_event.get("attachments", [])
+            if isinstance(attachment, dict)
+        }
+    assert (
+        by_filename["first.txt"]["event_instance_id"]
+        != by_filename["second.txt"]["event_instance_id"]
+    )
+
+
 def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -1277,6 +1450,1197 @@ def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
         "runs/run-batch-classification-success/classified_events.json"
         in operator_summary["artifact_refs"]
     )
+
+
+def test_rop_batch_exact_duplicate_classified_with_evidence(tmp_path: Path) -> None:
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "dup-a",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Need a quote for welding wire",
+                "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                "message_id": "<dup-a@example.com>",
+                "thread_id": "th-dup",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "dup-b",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Need a quote for welding wire",
+                "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                "message_id": "<dup-b@example.com>",
+                "thread_id": "th-dup",
+                "received_at": "2026-08-05T10:00:00Z",
+            },
+            {
+                "event_id": "dup-c",
+                "source": "email",
+                "sender": "hr@example.com",
+                "subject": "Weekly HR newsletter",
+                "body": "Vacation schedule and onboarding updates.",
+                "message_id": "<dup-c@example.com>",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+    )
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-dup-exact",
+        session_id="session-dup-exact",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "run-dup-exact"
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["dup-a"]["case_type"] == "new_lead"
+    assert by_id["dup-b"]["case_type"] == "duplicate"
+    assert by_id["dup-b"]["reason_code"] == "duplicate_candidate_confirmed"
+    dup_block = by_id["dup-b"]["duplicate"]
+    assert dup_block["is_duplicate"] is True
+    assert dup_block["candidate"]["event_id"] == "dup-a"
+    assert isinstance(dup_block["confidence"], (int, float))
+    assert dup_block["confidence"] > 0
+    assert by_id["dup-b"]["base_classification"]["case_type"] == "new_lead"
+    assert by_id["dup-c"]["case_type"] != "duplicate"
+
+    final = json.loads(
+        (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+    )
+    final_by_id = {event["event_id"]: event for event in final["events"]}
+    assert final_by_id["dup-b"]["deterministic_case_type"] == "duplicate"
+    assert final_by_id["dup-b"]["final_case_type"] == "duplicate"
+    assert final_by_id["dup-b"]["final_decision_source"] == "deterministic"
+    assert final_by_id["dup-b"]["duplicate"]["is_duplicate"] is True
+    assert final_by_id["dup-b"]["base_classification"]["case_type"] == "new_lead"
+    assert final_by_id["dup-a"]["deterministic_case_type"] == "new_lead"
+    assert final_by_id["dup-a"]["final_case_type"] == "new_lead"
+    assert final_by_id["dup-a"]["duplicate"] is None
+    assert final_by_id["dup-a"]["base_classification"] is None
+
+    operator = json.loads(
+        (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+    )
+    assert operator["classification"]["duplicate_count"] == 1
+    assert operator["classification"]["classified_count"] == 3
+
+
+def test_rop_batch_duplicates_do_not_become_canonical_source(tmp_path: Path) -> None:
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "chain-1",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding electrodes",
+                "body": "Please quote 200 kg of welding electrodes 3 mm.",
+                "message_id": "<chain-1@example.com>",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "chain-2",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding electrodes",
+                "body": "Please quote 200 kg of welding electrodes 3 mm.",
+                "message_id": "<chain-2@example.com>",
+                "received_at": "2026-08-03T10:00:00Z",
+            },
+            {
+                "event_id": "chain-3",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding electrodes",
+                "body": "Please quote 200 kg of welding electrodes 3 mm.",
+                "message_id": "<chain-3@example.com>",
+                "received_at": "2026-08-05T10:00:00Z",
+            },
+        ],
+    )
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-dup-chain",
+        session_id="session-dup-chain",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "run-dup-chain"
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["chain-1"]["case_type"] == "new_lead"
+    assert by_id["chain-2"]["case_type"] == "duplicate"
+    assert by_id["chain-3"]["case_type"] == "duplicate"
+    assert by_id["chain-2"]["duplicate"]["candidate"]["event_id"] == "chain-1"
+    assert by_id["chain-3"]["duplicate"]["candidate"]["event_id"] == "chain-1"
+    assert result["classification"]["duplicate_count"] == 2
+
+
+def test_rop_batch_duplicate_message_id_items_are_not_self_matches(
+    tmp_path: Path,
+) -> None:
+    transport_event_id = "<shared-message@example.test>"
+    classified = _classify_raw_batch(
+        tmp_path,
+        [
+            {
+                "event_id": transport_event_id,
+                "message_id": transport_event_id,
+                "source": "email",
+                "sender": "buyer@example.test",
+                "subject": "Need a quote for welding wire",
+                "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": transport_event_id,
+                "message_id": transport_event_id,
+                "source": "email",
+                "sender": "buyer@example.test",
+                "subject": "Need a quote for welding wire",
+                "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+        "run-duplicate-message-id-pair",
+    )
+
+    assert [event["case_type"] for event in classified] == ["new_lead", "duplicate"]
+    assert classified[1]["duplicate"]["candidate"]["event_id"] == transport_event_id
+
+
+def test_rop_batch_duplicate_message_id_does_not_form_duplicate_chain(
+    tmp_path: Path,
+) -> None:
+    transport_event_id = "<shared-message-chain@example.test>"
+    event = {
+        "event_id": transport_event_id,
+        "message_id": transport_event_id,
+        "source": "email",
+        "sender": "buyer@example.test",
+        "subject": "RFQ welding electrodes",
+        "body": "Please quote 200 kg of welding electrodes 3 mm.",
+    }
+    classified = _classify_raw_batch(
+        tmp_path,
+        [
+            dict(event, received_at="2026-08-01T10:00:00Z"),
+            dict(event, received_at="2026-08-02T10:00:00Z"),
+            dict(event, received_at="2026-08-03T10:00:00Z"),
+        ],
+        "run-duplicate-message-id-chain",
+    )
+
+    assert [event["case_type"] for event in classified] == [
+        "new_lead",
+        "duplicate",
+        "duplicate",
+    ]
+    assert len(classified[1]["duplicate"]["candidates"]) == 1
+    assert len(classified[2]["duplicate"]["candidates"]) == 1
+    assert classified[2]["duplicate"]["candidate"]["event_id"] == transport_event_id
+    assert [event["event_instance_id"] for event in classified] == [
+        "event-000003",
+        "event-000002",
+        "event-000001",
+    ]
+
+    run_dir = tmp_path / "runs" / "run-duplicate-message-id-chain"
+    final_decisions = json.loads(
+        (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+    )
+    assert [event["event_instance_id"] for event in final_decisions["events"]] == [
+        "event-000003",
+        "event-000002",
+        "event-000001",
+    ]
+
+    from beeagent_module.core.rop_review_export import export_review_tsv_for_run
+
+    review_path = export_review_tsv_for_run(
+        tmp_path,
+        "run-duplicate-message-id-chain",
+        _null_logger(),
+    )
+    with Path(review_path).open(encoding="utf-8", newline="") as review_file:
+        review_rows = list(csv.DictReader(review_file, delimiter="\t"))
+    assert [row["event_instance_id"] for row in review_rows] == [
+        "event-000003",
+        "event-000002",
+        "event-000001",
+    ]
+    assert [row["bot_case_type"] for row in review_rows] == [
+        "new_lead",
+        "duplicate",
+        "duplicate",
+    ]
+
+
+def test_duplicate_candidates_exclude_only_the_same_processing_item() -> None:
+    from beeagent_module.cases.rop_operator import _build_duplicate_candidates
+
+    event = {
+        "event_id": "<same-message@example.test>",
+        "client_id": "welding",
+        "sender": "buyer@example.test",
+    }
+    canonical = [(4, event)]
+
+    assert _build_duplicate_candidates(event, canonical, current_item_index=4) == []
+    assert _build_duplicate_candidates(event, canonical, current_item_index=5) == [
+        {
+            "existing_lead_id": "<same-message@example.test>",
+            "sender": "buyer@example.test",
+            "subject": "",
+            "body": "",
+            "event_id": "<same-message@example.test>",
+            "thread_id": None,
+            "message_id": None,
+            "raw_metadata": {},
+        }
+    ]
+
+
+def test_rop_batch_same_message_id_isolated_by_client(tmp_path: Path) -> None:
+    transport_event_id = "<shared-client-scope@example.test>"
+    event = {
+        "event_id": transport_event_id,
+        "message_id": transport_event_id,
+        "source": "email",
+        "sender": "buyer@example.test",
+        "subject": "Need a quote for welding wire",
+        "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+        "received_at": "2026-08-01T10:00:00Z",
+    }
+    for source_id in ("client-a", "client-b"):
+        (tmp_path / f"{source_id}.json").write_text(
+            json.dumps({"period": "2026-05", "items": [event]}),
+            encoding="utf-8",
+        )
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": _attachment_settings(),
+        "sources": [
+            {
+                "source_id": source_id,
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": client_id,
+                "display_name": source_id,
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {"path": f"{source_id}.json", "period": "2026-05"},
+            }
+            for source_id, client_id in (("client-a", "a"), ("client-b", "b"))
+        ],
+    }
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-duplicate-message-id-client-scope",
+        session_id="session-duplicate-message-id-client-scope",
+        all_sources=True,
+    )
+    classified = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-duplicate-message-id-client-scope"
+            / "classified_events.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "ok"
+    assert len(classified) == 2
+    assert all(event["case_type"] == "new_lead" for event in classified)
+    assert result["classification"]["duplicate_count"] == 0
+
+
+def test_rop_batch_fallback_first_classification_is_canonical_for_duplicates(
+    tmp_path: Path,
+) -> None:
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "fb-1",
+                "source": "email",
+                "sender": "neutral@example.com",
+                "subject": "Status update",
+                "body": "Nothing specific to report. Regards.",
+                "message_id": "<fb-1@example.com>",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "fb-2",
+                "source": "email",
+                "sender": "neutral@example.com",
+                "subject": "Status update",
+                "body": "Nothing specific to report. Regards.",
+                "message_id": "<fb-2@example.com>",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+            {
+                "event_id": "fb-3",
+                "source": "email",
+                "sender": "neutral@example.com",
+                "subject": "Status update",
+                "body": "Nothing specific to report. Regards.",
+                "message_id": "<fb-3@example.com>",
+                "received_at": "2026-08-03T10:00:00Z",
+            },
+        ],
+    )
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-fb-dup",
+        session_id="session-fb-dup",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "run-fb-dup"
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["fb-1"]["case_type"] == "irrelevant"
+    assert by_id["fb-1"]["is_fallback"] is True
+    assert by_id["fb-2"]["case_type"] == "duplicate"
+    assert by_id["fb-3"]["case_type"] == "duplicate"
+    assert by_id["fb-2"]["duplicate"]["candidate"]["event_id"] == "fb-1"
+    assert by_id["fb-3"]["duplicate"]["candidate"]["event_id"] == "fb-1"
+    assert by_id["fb-2"]["base_classification"]["case_type"] == "irrelevant"
+    assert result["classification"]["duplicate_count"] == 2
+
+
+def test_rop_batch_client_scope_isolation_for_duplicates(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": _attachment_settings(),
+        "sources": [
+            {
+                "source_id": "source-a",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "client-a",
+                "display_name": "Source A",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {
+                    "path": "client_a_batch.json",
+                    "period": "2026-05",
+                },
+            },
+            {
+                "source_id": "source-b",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "client-b",
+                "display_name": "Source B",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {
+                    "path": "client_b_batch.json",
+                    "period": "2026-05",
+                },
+            },
+        ],
+    }
+
+    def _client_batch(suffix: str) -> dict:
+        return {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": f"{suffix}-first",
+                    "source": "email",
+                    "sender": "buyer@shared.example.com",
+                    "subject": "Need a quote for welding wire",
+                    "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                    "message_id": f"<{suffix}-first@example.com>",
+                    "received_at": "2026-08-01T10:00:00Z",
+                },
+                {
+                    "event_id": f"{suffix}-second",
+                    "source": "email",
+                    "sender": "buyer@shared.example.com",
+                    "subject": "Need a quote for welding wire",
+                    "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                    "message_id": f"<{suffix}-second@example.com>",
+                    "received_at": "2026-08-02T10:00:00Z",
+                },
+            ],
+        }
+
+    (tmp_path / "client_a_batch.json").write_text(
+        json.dumps(_client_batch("a")), encoding="utf-8"
+    )
+    (tmp_path / "client_b_batch.json").write_text(
+        json.dumps(_client_batch("b")), encoding="utf-8"
+    )
+
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-dup-isolation",
+        session_id="session-dup-isolation",
+        all_sources=True,
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "run-dup-isolation"
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["a-first"]["case_type"] == "new_lead"
+    assert by_id["a-second"]["case_type"] == "duplicate"
+    assert by_id["a-second"]["duplicate"]["candidate"]["event_id"] == "a-first"
+    assert by_id["b-first"]["case_type"] == "new_lead"
+    assert by_id["b-second"]["case_type"] == "duplicate"
+    assert by_id["b-second"]["duplicate"]["candidate"]["event_id"] == "b-first"
+    assert result["classification"]["duplicate_count"] == 2
+
+
+def test_rop_batch_near_duplicate_uses_module_evidence(tmp_path: Path) -> None:
+    classified = _classify_raw_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "near-first",
+                "source": "email",
+                "sender": "Buyer Team <buyer@example.com>",
+                "subject": "Просим выслать коммерческое предложение на электроды",
+                "body": (
+                    "Просим выслать коммерческое предложение на сварочные "
+                    "электроды АНО-21 3.0 мм с доставкой."
+                ),
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "near-second",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Просим выслать коммерческое предложение на электроды",
+                "body": "Просим выслать коммерческое предложение на сварочные электроды АНО-21.",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+        "run-dup-near",
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["near-first"]["case_type"] == "new_lead"
+    assert by_id["near-second"]["case_type"] == "duplicate"
+    assert by_id["near-second"]["duplicate"]["is_duplicate"] is True
+    assert by_id["near-second"]["duplicate"]["reason_code"] == (
+        "near_duplicate_subject_body"
+    )
+
+
+def test_rop_batch_similar_unrelated_event_stays_non_duplicate(tmp_path: Path) -> None:
+    classified = _classify_raw_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "unrelated-first",
+                "source": "email",
+                "sender": "other@example.com",
+                "subject": "Need a quote for welding wire",
+                "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "unrelated-second",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Request for welding electrodes quote",
+                "body": "Please send a quote for welding electrodes АНО-21.",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+        "run-dup-unrelated",
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["unrelated-second"]["case_type"] != "duplicate"
+    assert by_id["unrelated-second"]["duplicate"]["is_duplicate"] is False
+    assert by_id["unrelated-second"]["duplicate"]["reason_code"] == (
+        "no_duplicate_candidate"
+    )
+
+
+def test_rop_batch_same_client_multi_source_duplicate(tmp_path: Path) -> None:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": _attachment_settings(),
+        "sources": [
+            {
+                "source_id": "source-a",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "same-client",
+                "display_name": "Source A",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {"path": "same_client_a.json", "period": "2026-05"},
+            },
+            {
+                "source_id": "source-b",
+                "source_type": "json_batch",
+                "source_role": "batch_sample",
+                "client_id": "same-client",
+                "display_name": "Source B",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 100,
+                "batch": {"path": "same_client_b.json", "period": "2026-05"},
+            },
+        ],
+    }
+    first = {
+        "event_id": "multi-source-first",
+        "source": "email",
+        "sender": "buyer@example.com",
+        "subject": "Need a quote for welding wire",
+        "body": "Please send quote for welding wire ER70S-6 1.2 mm.",
+        "received_at": "2026-08-01T10:00:00Z",
+    }
+    second = dict(
+        first, event_id="multi-source-second", received_at="2026-08-02T10:00:00Z"
+    )
+    (tmp_path / "same_client_a.json").write_text(
+        json.dumps({"period": "2026-05", "items": [first]}), encoding="utf-8"
+    )
+    (tmp_path / "same_client_b.json").write_text(
+        json.dumps({"period": "2026-05", "items": [second]}), encoding="utf-8"
+    )
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-dup-same-client-multi-source",
+        session_id="session-dup-same-client-multi-source",
+        all_sources=True,
+    )
+    classified = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-dup-same-client-multi-source"
+            / "classified_events.json"
+        ).read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert result["status"] == "ok"
+    assert by_id["multi-source-first"]["case_type"] == "new_lead"
+    assert by_id["multi-source-second"]["case_type"] == "duplicate"
+    assert by_id["multi-source-second"]["duplicate"]["candidate"]["event_id"] == (
+        "multi-source-first"
+    )
+
+
+def test_rop_batch_duplicate_candidates_use_bounded_preview_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.cases import rop_operator as rop_operator_module
+
+    oversized_body = "Please send a quote for welding wire. " + "x" * 10000
+    captured_payloads: list[dict] = []
+    original_execute = rop_operator_module.execute_module_case
+
+    def _capture_execute(**kwargs):
+        if kwargs["case_type"] == "lead_classification":
+            captured_payloads.append(kwargs["payload"])
+        return original_execute(**kwargs)
+
+    monkeypatch.setattr(rop_operator_module, "execute_module_case", _capture_execute)
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "bounded-first",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Need a quote for welding wire",
+                "body": oversized_body,
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "bounded-second",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "Need a quote for welding wire",
+                "body": oversized_body,
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+    )
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+    settings["rop"]["email_preview"]["body_chars_max"] = 64
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-bounded-candidate",
+        session_id="session-bounded-candidate",
+    )
+
+    candidate_body = captured_payloads[1]["duplicate_candidates"][0]["body"]
+    assert result["status"] == "ok"
+    assert candidate_body != oversized_body
+    assert len(candidate_body) <= 64
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        (
+            {
+                "event_id": "reviewed-0001",
+                "source": "mailbox_readonly",
+                "sender": "hr-platform@example.test",
+                "subject": "Вакансия инженера по закупкам",
+                "body": "Требуется инженер по закупкам сварочных материалов. Отклик кандидата и резюме во вложении.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "irrelevant",
+                "priority": "low",
+                "reason_codes": {"irrelevant_service_notification"},
+                "is_fallback": False,
+                "min_confidence": 0.7,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0002",
+                "source": "mailbox_readonly",
+                "sender": "no-reply@crm.example.test",
+                "subject": "CRM: напоминание о задаче по сделке",
+                "body": "Автоматическое уведомление CRM. Задача по сделке DEAL-123 просрочена. Обратите внимание.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "irrelevant",
+                "priority": "low",
+                "reason_codes": {"irrelevant_service_notification"},
+                "is_fallback": False,
+                "min_confidence": 0.7,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0003",
+                "source": "mailbox_readonly",
+                "sender": "supplier-electrode@example.test",
+                "subject": "Коммерческое предложение на сварочные электроды",
+                "body": "Добрый день! Мы производитель сварочных электродов. Направляем коммерческое предложение на нашу продукцию и каталог. Предлагаем сотрудничество.",
+                "attachments": [
+                    {
+                        "attachment_id": "att-reviewed-0003-a",
+                        "filename": "kommercheskoe_predlozhenie.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 90000,
+                        "is_inline": False,
+                    }
+                ],
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "irrelevant",
+                "priority": "low",
+                "reason_codes": {"irrelevant_supplier_or_bulk_signal"},
+                "is_fallback": False,
+                "min_confidence": 0.75,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0004",
+                "source": "mailbox_readonly",
+                "sender": "service-promo@example.test",
+                "subject": "Продвижение сайта для вашей компании",
+                "body": "Мы предлагаем услуги по продвижению сайта, рекламе и SEO. Коммерческое предложение прилагаем.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "irrelevant",
+                "priority": "low",
+                "reason_codes": {"irrelevant_supplier_or_bulk_signal"},
+                "is_fallback": False,
+                "min_confidence": 0.75,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0005",
+                "source": "mailbox_readonly",
+                "sender": "expo-events@example.test",
+                "subject": "Приглашение на выставку Weldex",
+                "body": "Приглашаем вас посетить наш стенд на международной выставке сварочного оборудования. Демонстрация новой продукции.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "irrelevant",
+                "priority": "low",
+                "reason_codes": {
+                    "irrelevant_bulk_signal",
+                    "irrelevant_supplier_or_bulk_signal",
+                },
+                "is_fallback": False,
+                "min_confidence": 0.75,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0006",
+                "source": "mailbox_readonly",
+                "sender": "buyer-welding@example.test",
+                "subject": "Запрос коммерческого предложения на электроды",
+                "body": "Добрый день! Просим предоставить коммерческое предложение на сварочные электроды АНО-21 для нашей закупки. Нужна цена и сроки поставки.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "new_lead",
+                "priority": "high",
+                "reason_codes": {"new_lead_request_signal"},
+                "case_subtype": "new_lead_rfq",
+                "is_fallback": False,
+                "min_confidence": 0.7,
+            },
+        ),
+        (
+            {
+                "event_id": "reviewed-0007",
+                "source": "mailbox_readonly",
+                "sender": "procurement-buyer@example.test",
+                "subject": "02-1130",
+                "body": "Добрый день! Прошу ознакомиться и отправить коммерческое на sales@example.test. При отправке не менять тему сообщения.",
+                "attachments": [
+                    {
+                        "attachment_id": "att-reviewed-0007-a",
+                        "filename": "document.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 45000,
+                        "is_inline": False,
+                    }
+                ],
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            {
+                "case_type": "new_lead",
+                "priority": "high",
+                "reason_codes": {"new_lead_request_signal"},
+                "case_subtype": "new_lead_rfq",
+                "is_fallback": False,
+                "min_confidence": 0.8,
+            },
+        ),
+    ],
+    ids=(
+        "hr_vacancy",
+        "bitrix_reminder",
+        "supplier_outreach",
+        "service_promo",
+        "event_invitation",
+        "buyer_electrode_request",
+        "buyer_commercial_offer_request",
+    ),
+)
+def test_rop_batch_preserves_reviewed_it20_classification_outcomes(
+    tmp_path: Path,
+    event: dict,
+    expected: dict,
+) -> None:
+    classified = _classify_raw_batch(
+        tmp_path,
+        [dict(event, received_at="2026-08-01T10:00:00Z")],
+        f"run-reviewed-{event['event_id']}",
+    )
+
+    result = classified[0]
+    assert result["case_type"] == expected["case_type"]
+    assert result["priority"] == expected["priority"]
+    assert result["reason_code"] in expected["reason_codes"]
+    assert result["is_fallback"] is expected["is_fallback"]
+    assert result["confidence"] >= expected["min_confidence"]
+    if "case_subtype" in expected:
+        assert result["case_subtype"] == expected["case_subtype"]
+
+
+def test_build_duplicate_candidates_deterministic_order_and_self_exclusion() -> None:
+    from beeagent_module.cases.rop_operator import _build_duplicate_candidates
+
+    canonical = [
+        (
+            0,
+            {
+                "event_id": "b",
+                "client_id": "c1",
+                "sender": "b@example.com",
+                "subject": "B",
+                "received_at": "2026-08-02T00:00:00Z",
+            },
+        ),
+        (
+            1,
+            {
+                "event_id": "a",
+                "client_id": "c1",
+                "sender": "a@example.com",
+                "subject": "A",
+                "received_at": "2026-08-01T00:00:00Z",
+            },
+        ),
+        (
+            2,
+            {
+                "event_id": "x",
+                "client_id": "c2",
+                "sender": "x@example.com",
+                "subject": "X",
+                "received_at": "2026-08-03T00:00:00Z",
+            },
+        ),
+    ]
+    current = {"event_id": "b", "client_id": "c1"}
+
+    candidates = _build_duplicate_candidates(current, canonical, current_item_index=0)
+
+    assert [candidate["event_id"] for candidate in candidates] == ["a"]
+    assert all(candidate["event_id"] != "b" for candidate in candidates)
+    assert all(candidate["existing_lead_id"] == "a" for candidate in candidates)
+
+    ordered_candidates = _build_duplicate_candidates(
+        {"event_id": "new", "client_id": "c1"}, canonical, current_item_index=3
+    )
+    assert [candidate["event_id"] for candidate in ordered_candidates] == ["a", "b"]
+
+
+def test_build_duplicate_candidates_tie_break_by_event_id() -> None:
+    from beeagent_module.cases.rop_operator import _build_duplicate_candidates
+
+    canonical = [
+        (
+            0,
+            {
+                "event_id": "z",
+                "client_id": "c1",
+                "sender": "z@example.com",
+                "subject": "Z",
+                "received_at": "2026-08-01T00:00:00Z",
+            },
+        ),
+        (
+            1,
+            {
+                "event_id": "a",
+                "client_id": "c1",
+                "sender": "a@example.com",
+                "subject": "A",
+                "received_at": "2026-08-01T00:00:00Z",
+            },
+        ),
+    ]
+    candidates = _build_duplicate_candidates(
+        {"event_id": "new", "client_id": "c1"}, canonical, current_item_index=2
+    )
+
+    assert [candidate["event_id"] for candidate in candidates] == ["a", "z"]
+
+
+def test_rop_batch_orders_offset_timestamps_in_utc(tmp_path: Path) -> None:
+    classified = _classify_raw_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "offset-later",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "body": "Please send quote for welding wire.",
+                "received_at": "2026-07-31T22:30:00Z",
+            },
+            {
+                "event_id": "offset-earlier",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "body": "Please send quote for welding wire.",
+                "received_at": "2026-08-01T00:15:00+02:00",
+            },
+        ],
+        "run-offset-order",
+    )
+
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["offset-earlier"]["case_type"] == "new_lead"
+    assert by_id["offset-later"]["case_type"] == "duplicate"
+    assert by_id["offset-later"]["duplicate"]["candidate"]["event_id"] == (
+        "offset-earlier"
+    )
+
+
+def test_duplicate_candidates_order_offset_timestamps_in_utc() -> None:
+    from beeagent_module.cases.rop_operator import _build_duplicate_candidates
+
+    candidates = _build_duplicate_candidates(
+        {"event_id": "current", "client_id": "welding"},
+        [
+            (
+                0,
+                {
+                    "event_id": "offset-later",
+                    "client_id": "welding",
+                    "received_at": "2026-07-31T22:30:00Z",
+                },
+            ),
+            (
+                1,
+                {
+                    "event_id": "offset-earlier",
+                    "client_id": "welding",
+                    "received_at": "2026-08-01T00:15:00+02:00",
+                },
+            ),
+        ],
+        current_item_index=2,
+    )
+
+    assert [candidate["event_id"] for candidate in candidates] == [
+        "offset-earlier",
+        "offset-later",
+    ]
+
+
+def test_ai_paths_skip_deterministic_duplicate() -> None:
+    from beeagent_module.cases.rop_operator import _is_event_eligible_for_ai_assist
+    from beeagent_module.core.rop_ai_adjudicator import (
+        _is_event_eligible_for_adjudicator,
+    )
+
+    duplicate_event = {
+        "case_type": "duplicate",
+        "confidence": 0.99,
+        "is_fallback": False,
+    }
+    assert _is_event_eligible_for_adjudicator(duplicate_event) is False
+    assert _is_event_eligible_for_ai_assist(duplicate_event, 0.70) is False
+
+
+def test_ai_adjudicator_preserves_deterministic_duplicate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider_calls: list[dict] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(kwargs)
+        return (
+            "```json\n"
+            + json.dumps(
+                {
+                    "case_type": "manual_review",
+                    "case_subtype": "",
+                    "recommended_queue": "manual_review",
+                    "should_rop_see": True,
+                    "correct_action": "manual_review",
+                    "confidence": 0.9,
+                    "reason": "unexpected adjudication",
+                    "risk_flags": [],
+                    "reason_code": "conflicting_business_signals",
+                    "evidence_codes": [],
+                }
+            )
+            + "\n```"
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = True
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "adj-dup-1",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "body": "Please send quote for welding wire.",
+                "message_id": "<adj-dup-1@example.com>",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "adj-dup-2",
+                "source": "email",
+                "sender": "buyer@example.com",
+                "subject": "RFQ welding wire",
+                "body": "Please send quote for welding wire.",
+                "message_id": "<adj-dup-2@example.com>",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+    )
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "test-batch",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "Test Batch Source",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": str(batch_path.relative_to(tmp_path)),
+                "period": "2026-05",
+            },
+        }
+    ]
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-dup-adj",
+        session_id="session-dup-adj",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "run-dup-adj"
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert by_id["adj-dup-1"]["case_type"] == "new_lead"
+    assert by_id["adj-dup-2"]["case_type"] == "duplicate"
+    assert by_id["adj-dup-2"].get("ai_adjudicator_status") is None
+
+    final = json.loads(
+        (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+    )
+    final_by_id = {event["event_id"]: event for event in final["events"]}
+    assert final_by_id["adj-dup-2"]["final_case_type"] == "duplicate"
+    assert final_by_id["adj-dup-2"]["final_decision_source"] == "deterministic"
+    assert final_by_id["adj-dup-2"]["duplicate"]["is_duplicate"] is True
+    assert not any(
+        "adj-dup-2" in str(call.get("prompt", "")) for call in provider_calls
+    )
+
+
+def test_final_decision_preserves_deterministic_duplicate() -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    decisions = build_final_decisions(
+        [
+            {
+                "event_id": "duplicate-final",
+                "case_type": "duplicate",
+                "recommended_queue": "manual_review",
+                "correct_action": "review",
+                "confidence": 0.99,
+                "reason_code": "duplicate_candidate_confirmed",
+                "is_fallback": False,
+            }
+        ],
+        [
+            {
+                "event_id": "duplicate-final",
+                "ai_status": "ok",
+                "final_case_type": "manual_review",
+                "final_recommended_queue": "manual_review",
+                "final_correct_action": "manual_review",
+                "ai_confidence": 0.9,
+            }
+        ],
+    )
+
+    event = decisions["events"][0]
+    assert event["final_case_type"] == "duplicate"
+    assert event["final_decision_source"] == "deterministic"
 
 
 def test_filter_event_for_module_normalizes_empty_received_at_to_none() -> None:

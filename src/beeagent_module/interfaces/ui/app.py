@@ -816,6 +816,7 @@ def _register_custom_routes(
             storage_dir=app.state.beeagent_storage_dir,
             run_id=run_id,
             event_id=event_id,
+            event_instance_id=request.query_params.get("event_instance_id"),
             lang=resolve_locale(request.query_params.get("lang")),
         )
         if not result.get("ok", True) and result.get("error") == "not_found":

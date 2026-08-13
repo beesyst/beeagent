@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,19 @@ _AI_ADJUDICATOR_FINAL_KEYS = (
     "recommended_queue",
     "correct_action",
     "should_rop_see",
+)
+_DUPLICATE_CANDIDATE_RAW_METADATA_KEYS = (
+    "clean_subject",
+    "transport_labels",
+    "spam_label_present",
+    "reply_label_present",
+    "forwarded_wrapper",
+    "original_sender",
+    "original_sender_email",
+    "original_recipient",
+    "original_message_date",
+    "date_source",
+    "x_email_id",
 )
 
 
@@ -292,6 +306,94 @@ def _build_batch_operator_text(
     )
 
 
+def _event_source_sort_key(event: dict[str, Any]) -> tuple[int, datetime, str]:
+    event_id = str(event.get("event_id") or "")
+
+    for key in ("received_at", "date", "event_date", "timestamp"):
+        value = event.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            continue
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+
+        return 0, parsed.astimezone(UTC), event_id
+
+    return 1, datetime.max.replace(tzinfo=UTC), event_id
+
+
+def _is_eligible_canonical_source(event: dict[str, Any]) -> bool:
+    if not isinstance(event, dict):
+        return False
+    case_type = event.get("case_type", "")
+    if not isinstance(case_type, str) or not case_type:
+        return False
+    if case_type == "duplicate":
+        return False
+    return True
+
+
+def _duplicate_candidate_from_event(
+    event: dict[str, Any],
+    existing_lead_id: str,
+) -> dict[str, Any]:
+    body = ""
+    for preview_key in ("body_preview", "attachment_text_preview"):
+        preview = event.get(preview_key)
+        if isinstance(preview, str) and preview.strip():
+            body = preview
+            break
+
+    raw_metadata = event.get("raw_metadata")
+    if not isinstance(raw_metadata, dict):
+        raw_metadata = {}
+
+    return {
+        "existing_lead_id": existing_lead_id,
+        "sender": str(event.get("sender") or ""),
+        "subject": str(event.get("subject") or ""),
+        "body": body if isinstance(body, str) else "",
+        "event_id": event.get("event_id"),
+        "thread_id": event.get("thread_id"),
+        "message_id": event.get("message_id"),
+        "raw_metadata": {
+            key: raw_metadata[key]
+            for key in _DUPLICATE_CANDIDATE_RAW_METADATA_KEYS
+            if key in raw_metadata
+        },
+    }
+
+
+def _build_duplicate_candidates(
+    event: dict[str, Any],
+    canonical_events: list[tuple[int, dict[str, Any]]],
+    current_item_index: int,
+) -> list[dict[str, Any]]:
+    client_id = event.get("client_id")
+    candidates: list[dict[str, Any]] = []
+    for candidate_item_index, candidate in sorted(
+        canonical_events,
+        key=lambda item: (*_event_source_sort_key(item[1]), item[0]),
+    ):
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("client_id") != client_id:
+            continue
+        if candidate_item_index == current_item_index:
+            continue
+        candidate_event_id = candidate.get("event_id")
+        if not isinstance(candidate_event_id, str) or not candidate_event_id:
+            continue
+        candidates.append(
+            _duplicate_candidate_from_event(candidate, candidate_event_id)
+        )
+    return candidates
+
+
 def _classify_normalized_events(
     events: list[dict[str, Any]],
     registry: ModuleRegistry,
@@ -307,6 +409,7 @@ def _classify_normalized_events(
     classified_count = 0
     already_classified_count = 0
     failed_count = 0
+    canonical_events: list[tuple[int, dict[str, Any]]] = []
 
     context_map: dict[str, dict[str, Any]] = {}
     if thread_context and isinstance(thread_context, dict):
@@ -316,7 +419,12 @@ def _classify_normalized_events(
                 if eid:
                     context_map[eid] = ctx
 
-    for index, event in enumerate(events):
+    ordered_events = sorted(
+        enumerate(events),
+        key=lambda item: (*_event_source_sort_key(item[1]), item[0]),
+    )
+
+    for index, (item_index, event) in enumerate(ordered_events):
         if "case_type" in event and "confidence" in event:
             classified_events.append(
                 _attach_existing_classification_trace(
@@ -325,6 +433,8 @@ def _classify_normalized_events(
                 )
             )
             already_classified_count += 1
+            if _is_eligible_canonical_source(event):
+                canonical_events.append((item_index, event))
             logger.debug(
                 "event already classified: run_id=%s event_index=%d event_id=%s",
                 run_id,
@@ -342,6 +452,13 @@ def _classify_normalized_events(
             )
 
             filtered_event = _filter_event_for_module(event)
+            duplicate_candidates = _build_duplicate_candidates(
+                event=event,
+                canonical_events=canonical_events,
+                current_item_index=item_index,
+            )
+            if duplicate_candidates:
+                filtered_event["duplicate_candidates"] = duplicate_candidates
 
             event_id = event.get("event_id", "")
             event_tc = context_map.get(event_id)
@@ -377,6 +494,8 @@ def _classify_normalized_events(
                 )
                 classified_events.append(classified_event)
                 classified_count += 1
+                if _is_eligible_canonical_source(classified_event):
+                    canonical_events.append((item_index, event))
                 logger.debug(
                     "event classified successfully: run_id=%s event_id=%s case_type=%s",
                     run_id,
@@ -409,15 +528,21 @@ def _classify_normalized_events(
         "normalized_count": len(events),
         "classified_count": classified_count + already_classified_count,
         "classification_failed_count": failed_count,
+        "duplicate_count": sum(
+            1
+            for item in classified_events
+            if isinstance(item, dict) and item.get("case_type") == "duplicate"
+        ),
     }
 
     logger.info(
-        "batch classification finished: run_id=%s normalized=%d classified=%d already_classified=%d failed=%d",
+        "batch classification finished: run_id=%s normalized=%d classified=%d already_classified=%d failed=%d duplicates=%d",
         run_id,
         len(events),
         classified_count,
         already_classified_count,
         failed_count,
+        classification_diagnostics["duplicate_count"],
     )
 
     return classified_events, classification_diagnostics
@@ -431,6 +556,9 @@ def _attach_existing_classification_trace(
 
     if not enriched.get("original_event_id"):
         enriched["original_event_id"] = enriched.get("event_id")
+
+    if "event_instance_id" not in enriched:
+        enriched["event_instance_id"] = ""
 
     if not enriched.get("source_id"):
         enriched["source_id"] = source_id
@@ -463,6 +591,7 @@ def _make_fallback_event(
 ) -> dict[str, Any]:
     fallback_event = {
         "event_id": event.get("event_id"),
+        "event_instance_id": event.get("event_instance_id"),
         "source_id": event.get("source_id") or source_id,
         "source_type": event.get("source_type"),
         "source_role": event.get("source_role"),
@@ -590,6 +719,7 @@ def _attach_classification_trace(
         enriched["event_id"] = source_event.get("event_id")
 
     enriched["original_event_id"] = source_event.get("event_id")
+    enriched["event_instance_id"] = source_event.get("event_instance_id")
     enriched["source_id"] = source_event.get("source_id") or source_id
     enriched["source_type"] = source_event.get("source_type")
     enriched["source_role"] = source_event.get("source_role")
@@ -683,6 +813,13 @@ def _attach_source_metadata_to_event(
     enriched["source_display_name"] = source_meta.get("source_display_name")
     enriched["client_id"] = source_meta.get("client_id")
     return enriched
+
+
+def _assign_event_instance_ids(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {**event, "event_instance_id": f"event-{index:06d}"}
+        for index, event in enumerate(events, start=1)
+    ]
 
 
 def _sum_int(values: list[Any]) -> int:
@@ -956,6 +1093,7 @@ def run_rop_batch_case(
         if not isinstance(attachment_settings, dict):
             raise RuntimeError("Invalid settings.rop.attachments, expected mapping")
 
+        normalized_events = _assign_event_instance_ids(normalized_events)
         extraction_artifact, normalized_events = build_attachment_extraction(
             run_id=effective_run_id,
             events=normalized_events,
@@ -1509,6 +1647,9 @@ def _is_event_eligible_for_ai_assist(
     min_confidence: float,
 ) -> bool:
     case_type = event.get("case_type", "")
+    if case_type == "duplicate":
+        return False
+
     is_fallback = event.get("is_fallback", False)
     confidence = event.get("confidence", 1.0)
     if isinstance(confidence, (int, float)):
@@ -1635,8 +1776,11 @@ def _apply_ai_adjudicator_results(
     events: list[dict[str, Any]],
     results: list[dict[str, Any]],
 ) -> None:
-    results_by_event_id = {
-        result.get("event_id", ""): result
+    results_by_identity = {
+        (
+            result.get("event_id", ""),
+            result.get("event_instance_id", ""),
+        ): result
         for result in results
         if isinstance(result, dict) and result.get("event_id")
     }
@@ -1645,7 +1789,9 @@ def _apply_ai_adjudicator_results(
         if not isinstance(event, dict):
             continue
 
-        result = results_by_event_id.get(event.get("event_id", ""))
+        result = results_by_identity.get(
+            (event.get("event_id", ""), event.get("event_instance_id", ""))
+        )
         if not isinstance(result, dict):
             continue
         event["ai_adjudicator_used"] = bool(result.get("ai_used", False))
