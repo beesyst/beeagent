@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.1...beeagent-v0.51.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **rop:** harden tender AI qualification ([#189](https://github.com/beesyst/beeagent/issues/189)) ([b716b90](https://github.com/beesyst/beeagent/commit/b716b9083691b33938cccff874d07a856be3061c))
+
 ## [0.51.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.0...beeagent-v0.51.1) (2026-08-13)
 
 
