@@ -28,6 +28,7 @@ from beeagent_module.core.rop_ai_assist import (
     write_ai_assist_artifacts,
 )
 from beeagent_module.core.rop_final_decision import build_final_decisions
+from beeagent_module.core.rop_thread_context import build_public_thread_context
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 from beeagent_module.core.settings import (
     apply_runtime_settings_overrides,
@@ -403,21 +404,13 @@ def _classify_normalized_events(
     run_id: str,
     session_id: str,
     source_id: str | None,
-    thread_context: dict[str, Any] | None = None,
+    thread_index: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     classified_events: list[dict[str, Any]] = []
     classified_count = 0
     already_classified_count = 0
     failed_count = 0
     canonical_events: list[tuple[int, dict[str, Any]]] = []
-
-    context_map: dict[str, dict[str, Any]] = {}
-    if thread_context and isinstance(thread_context, dict):
-        for ctx in thread_context.get("contexts", []):
-            if isinstance(ctx, dict):
-                eid = ctx.get("event_id", "")
-                if eid:
-                    context_map[eid] = ctx
 
     ordered_events = sorted(
         enumerate(events),
@@ -461,19 +454,23 @@ def _classify_normalized_events(
                 filtered_event["duplicate_candidates"] = duplicate_candidates
 
             event_id = event.get("event_id", "")
+            current_thread_context = build_thread_context(
+                events=[item for _, item in ordered_events],
+                thread_index=thread_index or {},
+                classified_events=classified_events,
+                logger=logger,
+            )
+            context_map = {
+                item.get("event_id", ""): item
+                for item in current_thread_context.get("contexts", [])
+                if isinstance(item, dict) and item.get("event_id")
+            }
             event_tc = context_map.get(event_id)
             if event_tc:
-                filtered_event["thread_context"] = {
-                    "thread_id": event_tc.get("thread_id", ""),
-                    "previous_event_ids": event_tc.get("previous_event_ids", []),
-                    "previous_case_type": event_tc.get("previous_case_type", ""),
-                    "previous_case_subtype": event_tc.get("previous_case_subtype", ""),
-                    "participant_overlap": event_tc.get("participant_overlap", False),
-                    "thread_context_confidence": event_tc.get(
-                        "thread_context_confidence", 0.0
-                    ),
-                    "reply_or_forward": event_tc.get("reply_or_forward", False),
-                }
+                filtered_event["thread_context"] = build_public_thread_context(
+                    event_tc,
+                    event,
+                )
 
             result = execute_module_case(
                 registry=registry,
@@ -1163,24 +1160,17 @@ def run_rop_batch_case(
         if registry is None:
             registry = build_registry(settings=settings, logger=logger)
 
+        ordered_events = [
+            event
+            for _, event in sorted(
+                enumerate(normalized_events),
+                key=lambda item: (*_event_source_sort_key(item[1]), item[0]),
+            )
+        ]
         thread_index = build_thread_index(
-            events=normalized_events,
+            events=ordered_events,
             logger=logger,
         )
-        thread_context = build_thread_context(
-            events=normalized_events,
-            thread_index=thread_index,
-            classified_events=None,
-            logger=logger,
-        )
-        thread_refs = write_thread_artifacts(
-            storage_dir=storage_dir,
-            run_id=effective_run_id,
-            thread_index=thread_index,
-            thread_context=thread_context,
-            logger=logger,
-        )
-        artifact_refs.extend(thread_refs)
 
         classified_events, classification_diagnostics = _classify_normalized_events(
             events=normalized_events,
@@ -1191,8 +1181,23 @@ def run_rop_batch_case(
             run_id=effective_run_id,
             session_id=effective_session_id,
             source_id=None,
-            thread_context=thread_context,
+            thread_index=thread_index,
         )
+
+        thread_context = build_thread_context(
+            events=ordered_events,
+            thread_index=thread_index,
+            classified_events=classified_events,
+            logger=logger,
+        )
+        thread_refs = write_thread_artifacts(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            thread_index=thread_index,
+            thread_context=thread_context,
+            logger=logger,
+        )
+        artifact_refs.extend(thread_refs)
 
         enriched_classified = _enrich_classified_events(
             classified_events=classified_events,
@@ -1805,7 +1810,15 @@ def _apply_ai_adjudicator_results(
             result.get("deterministic_recommended_queue") == "tender"
             or result.get("deterministic_correct_action") == "review_tender"
         )
-        if ai_status == "ok" or (is_tender and ai_status != "not_eligible"):
+        possible_duplicate = (
+            isinstance(event.get("duplicate"), dict)
+            and event["duplicate"].get("resolution_status") == "possible"
+        )
+        if (
+            ai_status == "ok"
+            or (is_tender and ai_status != "not_eligible")
+            or (possible_duplicate and ai_status == "manual_review_degrade")
+        ):
             for key in _AI_ADJUDICATOR_FINAL_KEYS:
                 deterministic_key = f"deterministic_{key}"
                 if deterministic_key in result:

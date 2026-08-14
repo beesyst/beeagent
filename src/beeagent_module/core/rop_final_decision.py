@@ -69,6 +69,9 @@ _DUPLICATE_RESULT_KEYS = frozenset(
         "is_fallback",
     }
 )
+_DUPLICATE_RESULT_KEYS_WITH_STATUS = _DUPLICATE_RESULT_KEYS | frozenset(
+    {"resolution_status"}
+)
 _DUPLICATE_MATCH_KEYS = frozenset(
     {
         "existing_lead_id",
@@ -179,9 +182,18 @@ def _sanitize_duplicate(
     value: Any,
     candidates_max: int,
 ) -> dict[str, Any] | None:
-    if not isinstance(value, dict) or set(value) != _DUPLICATE_RESULT_KEYS:
+    if not isinstance(value, dict) or set(value) not in {
+        _DUPLICATE_RESULT_KEYS,
+        _DUPLICATE_RESULT_KEYS_WITH_STATUS,
+    }:
         return None
     if not isinstance(value["is_duplicate"], bool):
+        return None
+    if "resolution_status" in value and value["resolution_status"] not in {
+        "confirmed",
+        "possible",
+        "not_duplicate",
+    }:
         return None
     if not _is_confidence(value["confidence"]):
         return None
@@ -210,7 +222,7 @@ def _sanitize_duplicate(
             return None
         sanitized_candidates.append(sanitized_item)
 
-    return {
+    result = {
         "is_duplicate": value["is_duplicate"],
         "confidence": value["confidence"],
         "reason_code": value["reason_code"],
@@ -220,6 +232,9 @@ def _sanitize_duplicate(
         "candidates": sanitized_candidates,
         "is_fallback": value["is_fallback"],
     }
+    if "resolution_status" in value:
+        result["resolution_status"] = value["resolution_status"]
+    return result
 
 
 def _deterministic_value(event: dict[str, Any], key: str, fallback: Any) -> Any:
@@ -324,6 +339,11 @@ def build_final_decisions(
 
         attention_reason_code: str | None = None
         attention_evidence_codes: list[str] | None = None
+        duplicate_status = (
+            event.get("duplicate", {}).get("resolution_status")
+            if isinstance(event.get("duplicate"), dict)
+            else None
+        )
 
         if deterministic_case_type == "duplicate":
             adj = None
@@ -388,6 +408,20 @@ def build_final_decisions(
                     adj.get("ai_evidence_codes")
                 )
                 final_decision_source = "fallback_policy"
+
+        if duplicate_status == "possible" and (
+            not isinstance(adj, dict) or adj.get("ai_status") != "ok"
+        ):
+            base = event.get("base_classification")
+            if isinstance(base, dict):
+                final_case_type = base.get("case_type", final_case_type)
+                final_case_subtype = base.get("case_subtype", final_case_subtype)
+            final_queue = "manual_review"
+            final_action = "manual_review"
+            needs_attention = True
+            attention_reason_code = "possible_duplicate_manual_review"
+            attention_reason = attention_reason_code
+            final_decision_source = "deterministic_preserved"
 
         if needs_attention:
             attention_count += 1

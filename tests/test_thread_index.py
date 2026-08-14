@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 
+from beeagent_module.core.rop_thread_context import build_public_thread_context
 from beeagent_module.core.thread_index import (
     _has_reply_prefix,
     _normalize_subject,
@@ -256,6 +257,198 @@ def test_thread_context_malformed_degraded_path() -> None:
         logger=_null_logger(),
     )
     assert isinstance(context2["contexts"], list)
+
+
+def test_thread_context_does_not_self_reference_repeated_message_id() -> None:
+    events = [
+        {
+            "event_id": "<same@example.test>",
+            "message_id": "<same@example.test>",
+            "subject": "RE: 955551 / 0346 Invoice",
+            "sender": "prior@example.test",
+            "in_reply_to": "<prior@example.test>",
+        },
+        {
+            "event_id": "<same@example.test>",
+            "message_id": "<same@example.test>",
+            "subject": "RE: 955551 / 0346 Invoice",
+            "sender": "prior@example.test",
+            "in_reply_to": "<prior@example.test>",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[
+            {
+                "event_id": "<same@example.test>",
+                "case_type": "existing_deal",
+                "reasoning": "Bounded prior summary",
+            },
+            {
+                "event_id": "<same@example.test>",
+                "case_type": "duplicate",
+                "reasoning": "exact duplicate matched by message_id",
+            },
+        ],
+        logger=_null_logger(),
+    )
+
+    for entry in context["contexts"]:
+        assert entry["event_id"] not in entry["previous_event_ids"]
+
+
+def test_thread_context_uses_only_prior_classified_events_and_public_adapter() -> None:
+    from beeagent_rop.domain.thread_context import validate_thread_context
+
+    events = [
+        {
+            "event_id": "evt-early",
+            "message_id": "<early@example.test>",
+            "subject": "Delivery update",
+            "sender": "buyer@example.test",
+        },
+        {
+            "event_id": "evt-late",
+            "message_id": "<late@example.test>",
+            "in_reply_to": "<early@example.test>",
+            "subject": "Re: Delivery update",
+            "sender": "buyer@example.test",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[
+            {
+                "event_id": "evt-early",
+                "case_type": "existing_deal",
+                "subject": "Delivery update",
+                "reasoning": "Bounded prior summary",
+            },
+            {
+                "event_id": "evt-late",
+                "case_type": "new_lead",
+            },
+        ],
+        logger=_null_logger(),
+    )
+
+    assert [item["event_id"] for item in context["contexts"]] == ["evt-late"]
+    runtime_context = context["contexts"][0]
+    assert runtime_context["previous_event_ids"] == ["evt-early"]
+    assert runtime_context["previous_case_type"] == "existing_deal"
+    payload = build_public_thread_context(runtime_context, events[1])
+    validated, errors = validate_thread_context(payload)
+    assert errors == []
+    assert validated is not None
+    assert set(payload) == {
+        "thread_id",
+        "previous_event_id",
+        "reply_markers",
+        "forward_markers",
+        "previous_case_type",
+        "participant_hints",
+        "previous_subject",
+        "previous_summary",
+        "crm_deal_hint_summary",
+        "thread_confidence",
+        "reason_codes",
+    }
+
+
+def test_thread_context_does_not_use_current_participant_as_prior_overlap() -> None:
+    events = [
+        {
+            "event_id": "evt-prior",
+            "message_id": "<prior@example.test>",
+            "subject": "Delivery update",
+            "sender": "prior@example.test",
+        },
+        {
+            "event_id": "evt-current",
+            "message_id": "<current@example.test>",
+            "in_reply_to": "<prior@example.test>",
+            "subject": "Re: Delivery update",
+            "sender": "current@example.test",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=None,
+        logger=_null_logger(),
+    )
+
+    assert context["contexts"][0]["participant_overlap"] is False
+
+
+def test_thread_context_ignores_future_thread_evidence() -> None:
+    initial_events = [
+        {
+            "event_id": "evt-prior",
+            "message_id": "<prior@example.test>",
+            "subject": "Delivery update",
+            "sender": "prior@example.test",
+        },
+        {
+            "event_id": "evt-current",
+            "message_id": "<current@example.test>",
+            "subject": "Re: Delivery update",
+            "sender": "current@example.test",
+        },
+    ]
+    future_event = {
+        "event_id": "evt-future",
+        "message_id": "<future@example.test>",
+        "references": "<prior@example.test> <current@example.test>",
+        "subject": "Re: Delivery update",
+        "sender": "future@example.test",
+    }
+
+    initial_context = build_thread_context(
+        events=initial_events,
+        thread_index=build_thread_index(initial_events, logger=_null_logger()),
+        classified_events=None,
+        logger=_null_logger(),
+    )
+    full_events = [*initial_events, future_event]
+    full_context = build_thread_context(
+        events=full_events,
+        thread_index=build_thread_index(full_events, logger=_null_logger()),
+        classified_events=None,
+        logger=_null_logger(),
+    )
+
+    initial_current = initial_context["contexts"][0]
+    full_current = next(
+        item for item in full_context["contexts"] if item["event_id"] == "evt-current"
+    )
+    assert full_current["reason_codes"] == initial_current["reason_codes"]
+    assert (
+        full_current["thread_context_confidence"]
+        == initial_current["thread_context_confidence"]
+    )
+
+
+def test_public_thread_context_preserves_auto_forward_marker() -> None:
+    payload = build_public_thread_context(
+        {
+            "thread_id": "thr-001",
+            "previous_event_ids": ["evt-previous"],
+            "thread_context_confidence": 0.5,
+        },
+        {
+            "transport_labels": ["auto_fwd"],
+            "forwarded_wrapper": False,
+        },
+    )
+
+    assert payload["forward_markers"] is True
+    assert "forward_only" in payload["reason_codes"]
 
 
 def test_normalize_subject() -> None:

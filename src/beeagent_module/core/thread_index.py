@@ -39,6 +39,12 @@ def _extract_message_ids(
     message_id = event.get("message_id") or event.get("Message-ID") or ""
     in_reply_to_raw = event.get("in_reply_to") or event.get("In-Reply-To") or ""
     references_raw = event.get("references") or event.get("References") or ""
+    if not isinstance(message_id, str):
+        message_id = ""
+    if not isinstance(in_reply_to_raw, str):
+        in_reply_to_raw = ""
+    if not isinstance(references_raw, str):
+        references_raw = ""
 
     in_reply_to = [
         x.strip() for x in in_reply_to_raw.replace(",", " ").split() if x.strip()
@@ -274,7 +280,8 @@ def build_thread_context(
     contexts: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    for event in events:
+    prior_event_ids: list[str] = []
+    for event_position, event in enumerate(events):
         event_id = event.get("event_id") or ""
         if not event_id:
             continue
@@ -283,12 +290,14 @@ def build_thread_context(
         if thread is None:
             continue
 
-        thread_event_ids = thread.get("event_ids", [])
-        if not isinstance(thread_event_ids, list):
-            continue
-
-        previous_ids = [eid for eid in thread_event_ids if eid != event_id]
+        previous_ids = [
+            prior_event_id
+            for prior_event_id in prior_event_ids
+            if prior_event_id != event_id
+            and event_to_thread.get(prior_event_id) is thread
+        ]
         if not previous_ids:
+            prior_event_ids.append(event_id)
             continue
 
         previous_classified: dict[str, Any] | None = None
@@ -309,16 +318,61 @@ def build_thread_context(
             prev_case_type = previous_classified.get("case_type", "")
             prev_case_subtype = previous_classified.get("case_subtype", "")
 
+        previous_events = [
+            previous_event
+            for previous_event in events[:event_position]
+            if event_to_thread.get(previous_event.get("event_id") or "") is thread
+        ]
+
         evt_participants = _participants(event)
-        thread_participants = set(thread.get("participants", []))
-        participant_overlap = bool(evt_participants & thread_participants)
+        prior_participants: set[str] = set()
+        prior_message_ids: set[str] = set()
+        prior_link_ids: set[str] = set()
+
+        for previous_event in previous_events:
+            prior_participants.update(_participants(previous_event))
+            (
+                previous_message_id,
+                previous_in_reply_to,
+                previous_references,
+            ) = _extract_message_ids(previous_event)
+
+            if previous_message_id:
+                prior_message_ids.add(previous_message_id)
+                prior_link_ids.add(previous_message_id)
+
+            prior_link_ids.update(previous_in_reply_to)
+            prior_link_ids.update(previous_references)
+
+        current_message_id, current_in_reply_to, current_references = (
+            _extract_message_ids(event)
+        )
+        current_reference_ids = {*current_in_reply_to, *current_references}
+        current_subject_key = _normalized_subject_key(event)
+
+        local_evidence = {
+            "message_id_link": bool(
+                current_message_id and current_message_id in prior_message_ids
+            ),
+            "references_link": bool(current_reference_ids & prior_link_ids),
+            "subject_fallback": bool(
+                _has_reply_prefix(event.get("subject") or "")
+                and current_subject_key
+                and any(
+                    _normalized_subject_key(previous_event) == current_subject_key
+                    for previous_event in previous_events
+                )
+            ),
+        }
+
+        participant_overlap = bool(evt_participants & prior_participants)
 
         reason_codes: list[str] = []
-        if thread.get("evidence", {}).get("message_id_link"):
+        if local_evidence["message_id_link"]:
             reason_codes.append("message_id_chain")
-        if thread.get("evidence", {}).get("references_link"):
+        if local_evidence["references_link"]:
             reason_codes.append("references_chain")
-        if thread.get("evidence", {}).get("subject_fallback"):
+        if local_evidence["subject_fallback"]:
             reason_codes.append("subject_match")
         if is_reply:
             reason_codes.append("reply_or_forward")
@@ -338,7 +392,7 @@ def build_thread_context(
             "previous_subject": "",
             "previous_summary": "",
             "thread_context_confidence": _compute_confidence(
-                evidence=thread.get("evidence", {}),
+                evidence=local_evidence,
                 is_reply=is_reply,
                 prev_case_type=prev_case_type,
             ),
@@ -352,6 +406,7 @@ def build_thread_context(
             context_entry["previous_summary"] = prev_reasoning[:300]
 
         contexts.append(context_entry)
+        prior_event_ids.append(event_id)
 
     return {
         "contexts": contexts,

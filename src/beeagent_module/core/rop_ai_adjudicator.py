@@ -171,6 +171,10 @@ _RISKY_REASON_CODE_PARTS = (
     "existing_deal_reference_signal",
 )
 _VALID_CASE_TYPES = frozenset({"new_lead", "existing_deal", "irrelevant"})
+_DUPLICATE_DECISIONS = frozenset({"confirm_duplicate", "reject_duplicate"})
+_DUPLICATE_REASON_CODES = frozenset(
+    {"duplicate_hypothesis_confirmed", "duplicate_hypothesis_rejected"}
+)
 _VALID_QUEUES = frozenset(
     {
         "sales",
@@ -226,6 +230,7 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
         "risk_flags",
         "reason_code",
         "evidence_codes",
+        "duplicate_decision",
     ],
     "properties": {
         "case_type": {
@@ -281,6 +286,12 @@ _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA: dict[str, Any] = {
                 "Bounded allowlisted evidence codes supporting "
                 "the AI adjudicator decision."
             ),
+        },
+        "duplicate_decision": {
+            "anyOf": [
+                {"type": "string", "enum": sorted(_DUPLICATE_DECISIONS)},
+                {"type": "null"},
+            ],
         },
     },
 }
@@ -625,10 +636,67 @@ def _build_bitrix_match_summary(event: dict[str, Any]) -> dict[str, Any] | None:
     return summary or None
 
 
+def _bounded_classification(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: _sanitize_prompt_text(value.get(key), 200)
+        for key in (
+            "case_type",
+            "case_subtype",
+            "recommended_queue",
+            "correct_action",
+            "reason_code",
+        )
+        if value.get(key) is not None
+    }
+
+
+def _bounded_duplicate_candidate(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, Any] = {}
+    for key in ("existing_lead_id", "event_id", "reason_code"):
+        if isinstance(value.get(key), str):
+            result[key] = _sanitize_prompt_text(value[key], 200)
+    if isinstance(value.get("matched_fields"), list):
+        result["matched_fields"] = _sanitize_prompt_list(
+            value["matched_fields"], max_items=8, item_chars=80
+        )
+    return result
+
+
+def _is_possible_duplicate(event: dict[str, Any]) -> bool:
+    duplicate = event.get("duplicate")
+    return (
+        isinstance(duplicate, dict)
+        and duplicate.get("resolution_status") == "possible"
+    )
+
+
+def _base_classification_fields(event: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
+    base = event.get("base_classification")
+    if not isinstance(base, dict):
+        return (
+            event.get("case_type", "unknown"),
+            event.get("case_subtype"),
+            event.get("recommended_queue"),
+            event.get("correct_action"),
+            event.get("should_rop_see"),
+        )
+    return (
+        base.get("case_type", event.get("case_type", "unknown")),
+        base.get("case_subtype", event.get("case_subtype")),
+        base.get("recommended_queue", event.get("recommended_queue")),
+        base.get("correct_action", event.get("correct_action")),
+        base.get("should_rop_see", event.get("should_rop_see")),
+    )
+
+
 def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
     attachment_filenames, attachment_mime_types = _extract_attachment_metadata(event)
 
-    return {
+    payload = {
         "event_id": event.get("event_id", ""),
         "source_id": event.get("source_id", ""),
         "sender": _sanitize_prompt_text(event.get("sender") or "", 200),
@@ -686,6 +754,20 @@ def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
         "conflict_signals": _build_conflict_signals(event),
         "bitrix_match_summary": _build_bitrix_match_summary(event),
     }
+    duplicate = event.get("duplicate")
+    if isinstance(duplicate, dict) and duplicate.get("resolution_status") == "possible":
+        candidate = duplicate.get("candidate")
+        payload["adjudication_kind"] = "possible_duplicate"
+        payload["base_classification"] = _bounded_classification(
+            event.get("base_classification")
+        )
+        payload["duplicate_hypothesis"] = {
+            "resolution_status": "possible",
+            "reason_code": _sanitize_prompt_text(duplicate.get("reason_code"), 80),
+            "reasoning": _sanitize_prompt_text(duplicate.get("reasoning"), 300),
+            "candidate": _bounded_duplicate_candidate(candidate),
+        }
+    return payload
 
 
 def _event_text_for_marker_scan(event: dict[str, Any]) -> str:
@@ -885,7 +967,11 @@ def _parse_ai_response(raw_text: str) -> dict[str, Any] | None:
     return data
 
 
-def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
+def _validate_ai_output(
+    data: dict[str, Any],
+    *,
+    possible_duplicate: bool = False,
+) -> dict[str, Any]:
     validated: dict[str, Any] = {}
     errors: list[str] = []
     warnings: list[str] = []
@@ -958,7 +1044,28 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
         data.get("reason_code"), _MAX_AI_REASON_CODE_LENGTH
     )
     reason_code_diagnostic = reason_code or "<invalid>"
-    if reason_code in AI_REASON_CODES:
+    if possible_duplicate:
+        duplicate_decision = data.get("duplicate_decision", "")
+        if duplicate_decision in _DUPLICATE_DECISIONS:
+            validated["duplicate_decision"] = duplicate_decision
+        else:
+            errors.append(f"invalid duplicate_decision: {duplicate_decision}")
+            validated["duplicate_decision"] = ""
+        if reason_code in _DUPLICATE_REASON_CODES:
+            expected_reason = (
+                "duplicate_hypothesis_confirmed"
+                if validated["duplicate_decision"] == "confirm_duplicate"
+                else "duplicate_hypothesis_rejected"
+            )
+            if reason_code == expected_reason:
+                validated["reason_code"] = reason_code
+            else:
+                errors.append("reason_code incompatible with duplicate_decision")
+                validated["reason_code"] = ""
+        else:
+            errors.append(f"invalid duplicate reason_code: {reason_code_diagnostic}")
+            validated["reason_code"] = ""
+    elif reason_code in AI_REASON_CODES:
         allowed_reason_codes = AI_REASON_CODES_BY_CASE_TYPE[validated["case_type"]]
         if reason_code in allowed_reason_codes:
             validated["reason_code"] = reason_code
@@ -999,6 +1106,8 @@ def _validate_ai_output(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_event_eligible_for_adjudicator(event: dict[str, Any]) -> bool:
+    if _is_possible_duplicate(event):
+        return True
     case_type = event.get("case_type", "")
     if case_type == "duplicate":
         return False
@@ -1233,6 +1342,7 @@ def run_adjudicator_for_event(
     eligible = _is_event_eligible_for_adjudicator(event)
     provider = profile_cfg["provider"]
     model = profile_cfg["model"]
+    possible_duplicate = _is_possible_duplicate(event)
     final_case_type = event.get("case_type", "unknown")
     final_case_subtype = event.get("case_subtype")
     final_recommended_queue = event.get("recommended_queue")
@@ -1421,7 +1531,7 @@ def run_adjudicator_for_event(
             ),
         }
 
-    validated = _validate_ai_output(parsed)
+    validated = _validate_ai_output(parsed, possible_duplicate=possible_duplicate)
     ai_confidence = float(validated.get("confidence", 0.0))
     ai_reason = str(validated.get("reason", ""))
     ai_risk_flags = list(validated.get("risk_flags", []))
@@ -1429,6 +1539,86 @@ def run_adjudicator_for_event(
     validation_warnings = list(validated.get("warnings", []))
     dropped_risk_flags = list(validated.get("dropped_risk_flags", []))
     min_confidence = float(adj_cfg["confidence_accept_min"])
+
+    if possible_duplicate:
+        if ai_confidence >= min_confidence and not validation_errors:
+            if validated.get("duplicate_decision") == "confirm_duplicate":
+                final_case_type = "duplicate"
+                final_case_subtype = "manual_review"
+                final_recommended_queue = "manual_review"
+                final_correct_action = "manual_review"
+                final_should_rop_see = True
+                merge_reason = "possible_duplicate_confirmed"
+            else:
+                (
+                    final_case_type,
+                    final_case_subtype,
+                    final_recommended_queue,
+                    final_correct_action,
+                    final_should_rop_see,
+                ) = _base_classification_fields(event)
+                merge_reason = "possible_duplicate_rejected_base_preserved"
+            status = "ok"
+            ai_error = ""
+        else:
+            status = "manual_review_degrade"
+            (
+                final_case_type,
+                final_case_subtype,
+                _base_queue,
+                _base_action,
+                _base_should_see,
+            ) = _base_classification_fields(event)
+            final_recommended_queue = "manual_review"
+            final_correct_action = "manual_review"
+            final_should_rop_see = True
+            ai_error = "Possible duplicate AI result was not accepted; manual review required"
+            merge_reason = "possible_duplicate_manual_review"
+
+        decision = {
+            "event_id": event.get("event_id", ""),
+            "provider": provider,
+            "model": model,
+            "status": status,
+            "reason_code": merge_reason,
+            "duplicate_decision": validated.get("duplicate_decision", ""),
+            "ai_confidence": ai_confidence,
+            "ai_reason": ai_reason,
+            "ai_risk_flags": ai_risk_flags,
+            "ai_reason_code": str(validated.get("reason_code", "")),
+            "ai_evidence_codes": list(validated.get("evidence_codes", [])),
+            "validation_errors": validation_errors,
+            "validation_warnings": validation_warnings,
+            "dropped_risk_flags": dropped_risk_flags,
+            "dropped_evidence_codes": list(validated.get("dropped_evidence_codes", [])),
+            "error": ai_error,
+        }
+        return {
+            "request": request_artifact,
+            "decision": decision,
+            "result": _build_result(
+                event,
+                ai_used=True,
+                ai_provider=provider,
+                ai_model=model,
+                ai_status=status,
+                ai_confidence=ai_confidence,
+                ai_reason=ai_reason,
+                ai_reason_code=str(validated.get("reason_code", "")),
+                ai_evidence_codes=list(validated.get("evidence_codes", [])),
+                ai_risk_flags=ai_risk_flags,
+                ai_error=ai_error,
+                final_case_type=final_case_type,
+                final_case_subtype=final_case_subtype,
+                final_recommended_queue=final_recommended_queue,
+                final_correct_action=final_correct_action,
+                final_should_rop_see=final_should_rop_see,
+                merge_reason=merge_reason,
+                errors=validation_errors,
+                warnings=validation_warnings,
+                dropped_risk_flags=dropped_risk_flags,
+            ),
+        }
 
     status = "ok"
     ai_error = ""

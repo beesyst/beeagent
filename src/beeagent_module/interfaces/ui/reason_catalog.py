@@ -123,6 +123,14 @@ _AI_REASON_DISPLAY = {
         "en": "Conflicting business signals detected",
         "ru": "Обнаружены противоречивые бизнес-сигналы",
     },
+    "duplicate_hypothesis_confirmed": {
+        "en": "Possible duplicate confirmed by AI adjudication",
+        "ru": "Возможный дубликат подтверждён ИИ-проверкой",
+    },
+    "duplicate_hypothesis_rejected": {
+        "en": "Possible duplicate rejected by AI adjudication",
+        "ru": "Возможный дубликат отклонён ИИ-проверкой",
+    },
 }
 _ATTENTION_REASON_DISPLAY = {
     "ai_low_confidence_safe_ignore_preserved": {
@@ -140,6 +148,10 @@ _ATTENTION_REASON_DISPLAY = {
     "ai_validation_error_manual_review": {
         "en": "AI output validation failed; manual review required",
         "ru": "Проверка результата ИИ не пройдена; требуется ручная проверка",
+    },
+    "possible_duplicate_manual_review": {
+        "en": "Possible duplicate requires manual review",
+        "ru": "Возможный дубликат требует ручной проверки",
     },
     "ai_output_with_validation_errors_deterministic_result_preserved": {
         "en": "AI output had validation errors; deterministic result preserved",

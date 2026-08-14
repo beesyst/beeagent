@@ -602,6 +602,51 @@ def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert diagnostics["loaded_count"] == 1
 
 
+def test_load_mailbox_readonly_preserves_bounded_thread_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    raw_message = (
+        b"From: lead@example.test\nTo: hotline@example.test\n"
+        b"Subject: Re: Synthetic request\nMessage-ID: <reply@example.test>\n"
+        b"In-Reply-To: <original@example.test>\n"
+        b"References: <root@example.test> <original@example.test>\n\nBody"
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    assert events[0]["in_reply_to"] == "<original@example.test>"
+    assert events[0]["references"] == "<root@example.test> <original@example.test>"
+
+
+def test_mailbox_malformed_thread_headers_are_non_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    raw_message = (
+        b"From: lead@example.test\nTo: hotline@example.test\n"
+        b"Subject: Synthetic request\nMessage-ID: <message@example.test>\n"
+        b"In-Reply-To: " + b"x" * 2000 + b"\nReferences: \x00broken\n\nBody"
+    )
+
+    events, _metadata, diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    assert len(events[0]["in_reply_to"]) <= 1000
+    assert diagnostics["malformed_count"] == 0
+
+
 def test_load_mailbox_readonly_missing_credentials_degraded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

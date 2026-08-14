@@ -11,6 +11,7 @@ import pytest
 from beeagent_module.core.rop_ai_adjudicator import (
     _build_adjudicator_prompt,
     _build_openai_response_format,
+    _build_prompt_event_payload,
     _build_prompt_messages_by_key,
     _build_request_artifact,
     _is_event_eligible_for_adjudicator,
@@ -259,6 +260,33 @@ def _sample_tender_candidate_event() -> dict:
     }
 
 
+def _sample_possible_duplicate_event() -> dict:
+    event = _sample_ineligible_event()
+    event.update(
+        {
+            "event_id": "possible-duplicate",
+            "base_classification": {
+                "case_type": "new_lead",
+                "case_subtype": "",
+                "recommended_queue": "sales",
+                "correct_action": "review_new_lead",
+                "should_rop_see": True,
+            },
+            "duplicate": {
+                "resolution_status": "possible",
+                "reason_code": "near_duplicate_subject_body",
+                "reasoning": "bounded candidate evidence",
+                "candidate": {
+                    "existing_lead_id": "prior-event",
+                    "event_id": "prior-event",
+                    "matched_fields": ["sender_email", "subject"],
+                },
+            },
+        }
+    )
+    return event
+
+
 class TestEligibility:
     def test_fallback_is_eligible(self) -> None:
         assert _is_event_eligible_for_adjudicator(_sample_eligible_event()) is True
@@ -301,8 +329,35 @@ class TestEligibility:
         event["deterministic_case_type"] = "duplicate"
         assert _is_event_eligible_for_adjudicator(event) is False
 
+    def test_possible_duplicate_is_eligible_without_score_policy(self) -> None:
+        assert _is_event_eligible_for_adjudicator(_sample_possible_duplicate_event())
+
+    def test_not_duplicate_has_no_duplicate_adjudication_payload(self) -> None:
+        event = _sample_possible_duplicate_event()
+        event["duplicate"]["resolution_status"] = "not_duplicate"
+
+        assert "adjudication_kind" not in _build_prompt_event_payload(event)
+
 
 class TestPromptBuilding:
+    def test_possible_duplicate_prompt_has_noncontradictory_reason_contract(
+        self,
+    ) -> None:
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=_sample_possible_duplicate_event(),
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+
+        assert "For normal semantic adjudication, reason_code must be one of:" in prompt
+        assert (
+            "For adjudication_kind=possible_duplicate, reason_code must be exactly"
+            in prompt
+        )
+        assert "duplicate_hypothesis_confirmed" in prompt
+        assert "duplicate_hypothesis_rejected" in prompt
+
     def test_prompt_contains_safe_bounded_fields(self) -> None:
         prompt = _build_adjudicator_prompt(
             prompts_cfg=_minimal_prompts_cfg(),
@@ -766,6 +821,111 @@ class TestSchemaContract:
 
 
 class TestAdjudicatorForEvent:
+    def test_possible_duplicate_confirmed_and_rejected_preserve_contract(self) -> None:
+        confirm = json.dumps(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "",
+                "recommended_queue": "sales",
+                "correct_action": "review_new_lead",
+                "should_rop_see": True,
+                "confidence": 0.91,
+                "reason": "Candidate is the same request.",
+                "risk_flags": [],
+                "reason_code": "duplicate_hypothesis_confirmed",
+                "evidence_codes": [],
+                "duplicate_decision": "confirm_duplicate",
+            }
+        )
+        reject = confirm.replace(
+            "duplicate_hypothesis_confirmed", "duplicate_hypothesis_rejected"
+        ).replace("confirm_duplicate", "reject_duplicate")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                side_effect=[confirm, reject],
+            ):
+                confirmed = run_adjudicator_for_event(
+                    _sample_possible_duplicate_event(),
+                    _minimal_adj_cfg(),
+                    _minimal_profile_cfg(),
+                    _minimal_prompts_cfg(),
+                    _null_logger(),
+                )
+                rejected = run_adjudicator_for_event(
+                    _sample_possible_duplicate_event(),
+                    _minimal_adj_cfg(),
+                    _minimal_profile_cfg(),
+                    _minimal_prompts_cfg(),
+                    _null_logger(),
+                )
+
+        assert confirmed["result"]["final_case_type"] == "duplicate"
+        assert rejected["result"]["final_case_type"] == "new_lead"
+        assert rejected["result"]["final_recommended_queue"] == "sales"
+
+    @pytest.mark.parametrize("provider_response", [None, "not-json"])
+    def test_possible_duplicate_unavailable_or_invalid_is_not_accepted(
+        self, provider_response: str | None
+    ) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                return_value=provider_response,
+            ):
+                result = run_adjudicator_for_event(
+                    _sample_possible_duplicate_event(),
+                    _minimal_adj_cfg(),
+                    _minimal_profile_cfg(),
+                    _minimal_prompts_cfg(),
+                    _null_logger(),
+                )
+
+        assert result["result"]["ai_status"] in {"degraded", "invalid"}
+
+    def test_possible_duplicate_low_confidence_or_missing_key_requires_manual_review(
+        self,
+    ) -> None:
+        response = json.dumps(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "",
+                "recommended_queue": "sales",
+                "correct_action": "review_new_lead",
+                "should_rop_see": True,
+                "confidence": 0.2,
+                "reason": "Evidence is insufficient.",
+                "risk_flags": [],
+                "reason_code": "duplicate_hypothesis_rejected",
+                "evidence_codes": [],
+                "duplicate_decision": "reject_duplicate",
+            }
+        )
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                return_value=response,
+            ):
+                low_confidence = run_adjudicator_for_event(
+                    _sample_possible_duplicate_event(),
+                    _minimal_adj_cfg(),
+                    _minimal_profile_cfg(),
+                    _minimal_prompts_cfg(),
+                    _null_logger(),
+                )
+        with patch.dict(os.environ, {}, clear=True):
+            missing_key = run_adjudicator_for_event(
+                _sample_possible_duplicate_event(),
+                _minimal_adj_cfg(),
+                _minimal_profile_cfg(),
+                _minimal_prompts_cfg(),
+                _null_logger(),
+            )
+
+        assert low_confidence["result"]["ai_status"] == "manual_review_degrade"
+        assert low_confidence["result"]["final_recommended_queue"] == "manual_review"
+        assert missing_key["result"]["ai_status"] == "degraded"
+
     def test_not_eligible_skips_provider(self) -> None:
         result = run_adjudicator_for_event(
             event=_sample_ineligible_event(),
