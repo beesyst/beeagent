@@ -1800,13 +1800,22 @@ def _apply_ai_adjudicator_results(
         event["ai_adjudicator_reason"] = result.get("ai_reason", "")
         event["ai_adjudicator_risk_flags"] = list(result.get("ai_risk_flags", []))
         event["ai_adjudicator_merge_reason"] = result.get("merge_reason", "")
-        if result.get("ai_status") == "ok":
+        ai_status = result.get("ai_status")
+        is_tender = (
+            result.get("deterministic_recommended_queue") == "tender"
+            or result.get("deterministic_correct_action") == "review_tender"
+        )
+        if ai_status == "ok" or (is_tender and ai_status != "not_eligible"):
+            for key in _AI_ADJUDICATOR_FINAL_KEYS:
+                deterministic_key = f"deterministic_{key}"
+                if deterministic_key in result:
+                    event.setdefault(deterministic_key, result[deterministic_key])
             for key in _AI_ADJUDICATOR_FINAL_KEYS:
                 final_key = f"final_{key}"
                 if final_key in result:
                     event[key] = result[final_key]
 
-            if result.get("ai_confidence") is not None:
+            if ai_status == "ok" and result.get("ai_confidence") is not None:
                 event["confidence"] = result["ai_confidence"]
-            if result.get("ai_reason"):
+            if ai_status == "ok" and result.get("ai_reason"):
                 event["reasoning"] = result["ai_reason"]

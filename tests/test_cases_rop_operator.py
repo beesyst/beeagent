@@ -2643,6 +2643,155 @@ def test_final_decision_preserves_deterministic_duplicate() -> None:
     assert event["final_decision_source"] == "deterministic"
 
 
+def test_final_decisions_route_degraded_tender_to_manual_review() -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    event = {
+        "event_id": "tender-final",
+        "case_type": "new_lead",
+        "case_subtype": "tender",
+        "recommended_queue": "tender",
+        "correct_action": "review_tender",
+        "confidence": 0.95,
+        "reason_code": "tender_or_rfq_detected",
+    }
+    for status in ("low_confidence", "manual_review_degrade", "degraded", "invalid"):
+        decisions = build_final_decisions(
+            [event],
+            [
+                {
+                    "event_id": "tender-final",
+                    "ai_status": status,
+                    "merge_reason": "provider_call_failed_deterministic_result_preserved",
+                    "ai_evidence_codes": [],
+                }
+            ],
+        )
+        decision = decisions["events"][0]
+        assert decision["deterministic_queue"] == "tender"
+        assert decision["deterministic_action"] == "review_tender"
+        assert decision["final_queue"] == "manual_review"
+        assert decision["final_action"] == "manual_review"
+        assert decision["needs_attention"] is True
+
+    for case_type, queue, action in (
+        ("new_lead", "tender", "review_tender"),
+        ("existing_deal", "tender", "review_tender"),
+        ("irrelevant", "ignore", "ignore"),
+    ):
+        decisions = build_final_decisions(
+            [event],
+            [
+                {
+                    "event_id": "tender-final",
+                    "ai_status": "ok",
+                    "final_case_type": case_type,
+                    "final_case_subtype": None,
+                    "final_recommended_queue": queue,
+                    "final_correct_action": action,
+                    "ai_confidence": 0.91,
+                }
+            ],
+        )
+        decision = decisions["events"][0]
+        assert decision["final_case_type"] == case_type
+        assert decision["final_queue"] == queue
+        assert decision["final_action"] == action
+        assert decision["needs_attention"] is False
+
+
+def test_entity_encoded_rfq_reaches_public_module_and_ai_qualification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider_calls: list[dict] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(kwargs)
+        assert "Запрос цен № T-0002338" in kwargs["prompt"]
+        return json.dumps(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.40,
+                "reason": "Insufficient evidence for an automated decision.",
+                "risk_flags": ["low_signal"],
+                "reason_code": "insufficient_business_signal",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    settings = _adjudicator_enabled_settings()
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "synthetic-rfq-001",
+                "sender": "notifications@example.test",
+                "subject": "&#1053;&#1086;&#1074;&#1099;&#1077; &#1089;&#1086;&#1073;&#1099;&#1090;&#1080;&#1103; &#1087;&#1086; &#1074;&#1072;&#1096;&#1080;&#1084; &#1087;&#1086;&#1076;&#1087;&#1080;&#1089;&#1082;&#1072;&#1084;",
+                "body": "&#1047;&#1072;&#1087;&#1088;&#1086;&#1089; &#1094;&#1077;&#1085; &#8470; T-0002338. &#x42d;&#x43b;&#x435;&#x43a;&#x442;&#x440;&#x43e;- &#x438; &#x440;&#x443;&#x447;&#x43d;&#x44b;&#x435; &#x438;&#x43d;&#x441;&#x442;&#x440;&#x443;&#x43c;&#x435;&#x43d;&#x442;&#x44b; &amp; &#x43e;&#x441;&#x43d;&#x430;&#x441;&#x442;&#x43a;&#x430;.",
+                "received_at": "2026-08-10T10:00:00Z",
+            }
+        ],
+    )
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "synthetic-rfq-source",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "synthetic-client",
+            "display_name": "Synthetic RFQ source",
+            "enabled": True,
+            "authority": "read_only",
+            "items_max": 20,
+            "batch": {
+                "path": str(batch_path.relative_to(tmp_path)),
+                "period": "2026-08",
+            },
+        }
+    ]
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()],
+        logger=_null_logger(),
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="synthetic-entity-rfq",
+        session_id="synthetic-entity-rfq-session",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / "synthetic-entity-rfq"
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    assert "Запрос цен № T-0002338" in normalized[0]["body_preview"]
+    ai_results = json.loads(
+        (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
+    )
+    assert ai_results["results"][0]["ai_status"] == "manual_review_degrade"
+    assert provider_calls
+    final = json.loads(
+        (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+    )["events"][0]
+    assert final["final_queue"] == "manual_review"
+    assert final["final_action"] == "manual_review"
+    assert final["needs_attention"] is True
+
+
 def test_filter_event_for_module_normalizes_empty_received_at_to_none() -> None:
     filtered = _filter_event_for_module({"event_id": "e1", "received_at": ""})
 
@@ -4028,6 +4177,290 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         assert final_decision["bitrix_write_allowed"] is False
     finally:
         _remove_fake_package("test_stub_adj_ok")
+
+
+def _make_deterministic_adjudicator_stub(
+    *,
+    case_type: str,
+    case_subtype: str | None,
+    recommended_queue: str,
+    correct_action: str,
+    confidence: float,
+    reason_code: str,
+    is_fallback: bool = False,
+) -> type:
+    class _Stub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"unknown": 1}},
+                )
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": context.payload.get("event_id"),
+                    "case_type": case_type,
+                    "case_subtype": case_subtype,
+                    "recommended_queue": recommended_queue,
+                    "should_rop_see": True,
+                    "correct_action": correct_action,
+                    "priority": "medium",
+                    "confidence": confidence,
+                    "reason_code": reason_code,
+                    "is_fallback": is_fallback,
+                },
+            )
+
+    return _Stub
+
+
+def _write_adjudicator_batch_source(
+    tmp_path: Path,
+    source_id: str,
+    filename: str,
+    items: list[dict],
+) -> dict:
+    batch_file = tmp_path / filename
+    batch_file.write_text(
+        json.dumps({"period": "2026-05", "items": items}),
+        encoding="utf-8",
+    )
+    return {
+        "source_id": source_id,
+        "source_type": "json_batch",
+        "source_role": "batch_sample",
+        "client_id": "welding",
+        "display_name": "Test adjudicator batch",
+        "enabled": True,
+        "authority": "read_only",
+        "items_max": 10,
+        "batch": {
+            "path": str(batch_file.relative_to(tmp_path)),
+            "period": "2026-05",
+        },
+    }
+
+
+def _adjudicator_enabled_settings() -> dict:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"]["ai_assist"]["enabled"] = True
+    settings["rop"]["ai_assist"]["dry_run"] = True
+    settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
+    return settings
+
+
+def test_ai_adjudicator_high_confidence_tender_candidate_ignores_non_actionable_digest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider_calls: list[None] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(None)
+        return json.dumps(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "tender_digest",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.91,
+                "reason": "Generic tender digest with no actionable opportunity.",
+                "risk_flags": ["low_signal"],
+                "reason_code": "non_actionable_bulk_or_newsletter",
+                "evidence_codes": ["newsletter_bulk"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = _adjudicator_enabled_settings()
+    settings["rop"]["sources"] = [
+        _write_adjudicator_batch_source(
+            tmp_path,
+            "test-adj-tender-digest",
+            "batch_tender_digest.json",
+            [
+                {
+                    "event_id": "evt-tender-digest",
+                    "sender": "tenders@example.com",
+                    "subject": "Tender digest for welding",
+                    "body": "Weekly tender digest subscription. Unsubscribe to stop.",
+                }
+            ],
+        )
+    ]
+
+    stub_class = _make_deterministic_adjudicator_stub(
+        case_type="new_lead",
+        case_subtype="tender",
+        recommended_queue="tender",
+        correct_action="review_tender",
+        confidence=0.95,
+        reason_code="tender_or_rfq_detected",
+    )
+    _make_fake_package("test_stub_adj_tender_digest", "RopModule", stub_class)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_tender_digest",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adj-tender-digest",
+            session_id="session-adj-tender-digest",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adj-tender-digest"
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["ai_adjudicator_eligible_count"] == 1
+        assert operator_summary["classification"]["ai_adjudicator_used_count"] == 1
+
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event = classified_events[0]
+        assert event["deterministic_case_type"] == "new_lead"
+        assert event["deterministic_recommended_queue"] == "tender"
+        assert event["ai_adjudicator_status"] == "ok"
+        assert event["case_type"] == "irrelevant"
+        assert event["recommended_queue"] == "ignore"
+        assert event["correct_action"] == "ignore"
+
+        final_decisions = json.loads(
+            (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+        )
+        final_decision = final_decisions["events"][0]
+        assert final_decision["final_decision_source"] == "ai_adjudicator"
+        assert final_decision["final_case_type"] == "irrelevant"
+        assert final_decision["final_queue"] == "ignore"
+        assert final_decision["final_action"] == "ignore"
+        assert provider_calls == [None]
+    finally:
+        _remove_fake_package("test_stub_adj_tender_digest")
+
+
+def test_tender_adjudicator_provider_failure_routes_projection_and_final(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    settings = _adjudicator_enabled_settings()
+    settings["rop"]["sources"] = [
+        _write_adjudicator_batch_source(
+            tmp_path,
+            "test-adj-tender-failure",
+            "batch_tender_failure.json",
+            [
+                {
+                    "event_id": "evt-tender-failure",
+                    "sender": "tenders@example.test",
+                    "subject": "Tender invitation",
+                    "body": "Tender invitation for review.",
+                }
+            ],
+        )
+    ]
+    stub_class = _make_deterministic_adjudicator_stub(
+        case_type="new_lead",
+        case_subtype="tender",
+        recommended_queue="tender",
+        correct_action="review_tender",
+        confidence=0.95,
+        reason_code="tender_or_rfq_detected",
+    )
+    _make_fake_package("test_stub_adj_tender_failure", "RopModule", stub_class)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_tender_failure",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adj-tender-failure",
+            session_id="session-adj-tender-failure",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adj-tender-failure"
+        result = json.loads(
+            (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
+        )["results"][0]
+        classified = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )[0]
+        final = json.loads(
+            (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+        )["events"][0]
+
+        assert result["ai_status"] == "degraded"
+        assert result["deterministic_recommended_queue"] == "tender"
+        assert result["deterministic_correct_action"] == "review_tender"
+        assert result["final_recommended_queue"] == "manual_review"
+        assert result["final_correct_action"] == "manual_review"
+        assert classified["deterministic_recommended_queue"] == "tender"
+        assert classified["deterministic_correct_action"] == "review_tender"
+        assert classified["recommended_queue"] == "manual_review"
+        assert classified["correct_action"] == "manual_review"
+        assert final["deterministic_queue"] == "tender"
+        assert final["deterministic_action"] == "review_tender"
+        assert final["final_queue"] == "manual_review"
+        assert final["final_action"] == "manual_review"
+        assert final["needs_attention"] is True
+    finally:
+        _remove_fake_package("test_stub_adj_tender_failure")
 
 
 def test_adjudicator_enabled_skips_legacy_ai_assist_provider_path(

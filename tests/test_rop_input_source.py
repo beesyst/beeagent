@@ -416,6 +416,123 @@ def test_load_json_batch_bounds_existing_body_preview(tmp_path: Path) -> None:
     assert "bad()" not in events[0]["body_preview"]
 
 
+def test_load_json_batch_body_entities_decode_to_human_readable_text(
+    tmp_path: Path,
+) -> None:
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-entities",
+                "body": (
+                    "&#1055;&#1088;&#1080;&#1074;&#1077;&#1090; &amp; "
+                    "&#x43f;&#x440;&#x438;&#x432;&#x435;&#x442; "
+                    "&nbsp; &lt;script&gt;bad()&lt;/script&gt; &amp;unknown; &"
+                ),
+            }
+        ],
+    }
+    batch_file = tmp_path / "entities.json"
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+    )
+
+    preview = events[0]["body_preview"]
+    assert "&#1055;" not in preview
+    assert "&#x43f;" not in preview
+    assert "&amp;" not in preview
+    assert "&nbsp;" not in preview
+    assert "&lt;script" not in preview
+    assert "script" not in preview.lower()
+    assert "bad()" not in preview
+    assert "Привет & привет" in preview
+    assert "&unknown; &" in preview
+    assert events[0]["body_preview_source"] == "html_text"
+
+
+def test_load_json_batch_plain_entities_decode_once_without_html_source(
+    tmp_path: Path,
+) -> None:
+    batch_file = tmp_path / "plain_entities.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [{"event_id": "e-plain", "body": "A &amp; B"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+    )
+
+    assert events[0]["body_preview"] == "A & B"
+    assert events[0]["body_preview_source"] == "text_plain"
+
+
+def test_load_json_batch_double_encoded_tag_is_not_decoded_again(
+    tmp_path: Path,
+) -> None:
+    batch_file = tmp_path / "double_encoded_tag.json"
+    batch_file.write_text(
+        json.dumps(
+            {
+                "period": "2026-05",
+                "items": [
+                    {
+                        "event_id": "e-double-encoded",
+                        "body": "&amp;lt;script&amp;gt;bad()&amp;lt;/script&amp;gt;",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+    )
+
+    assert events[0]["body_preview"] == "&lt;script&gt;bad()&lt;/script&gt;"
+    assert events[0]["body_preview_source"] == "text_plain"
+
+
+def test_load_json_batch_entity_body_preview_respects_chars_max(
+    tmp_path: Path,
+) -> None:
+    batch = {
+        "period": "2026-05",
+        "items": [{"event_id": "e-bounded", "body": "A&amp;" * 60}],
+    }
+    batch_file = tmp_path / "entities_bounded.json"
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=16,
+    )
+
+    preview = events[0]["body_preview"]
+    assert len(preview) <= 16
+    assert preview == "A&A&A&A&A&A&A&A&"
+    assert "&amp;" not in preview
+
+
 class _FakeMailboxClient:
     def __init__(
         self, messages: list[bytes] | None = None, error: Exception | None = None
@@ -636,6 +753,149 @@ def test_load_mailbox_readonly_bounds_and_strips_html_body_preview(
     assert "<script" not in events[0]["body_preview"]
     assert "bad()" not in events[0]["body_preview"]
     assert "<p>" not in events[0]["body_preview"]
+
+
+def test_mailbox_html_body_entities_decode_to_human_readable_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "<html><body><p>Добрый день &amp; спасибо</p>"
+        "<p>&#1079;&#1072;&#1087;&#1088;&#1086;&#1089; "
+        "&#x43a;&#x43e;&#x442;&#x438;&#x440;&#x43e;&#x432;&#x43a;&#x438;</p>"
+        "<p>Price &lt; 1000 &amp; terms &gt; 30 days</p></body></html>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: HTML entities\n"
+        "Message-ID: <mail-entities@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "&amp;" not in preview
+    assert "&lt;" not in preview
+    assert "&gt;" not in preview
+    assert "&#1079;" not in preview
+    assert "&#x43a;" not in preview
+    assert "Добрый день & спасибо" in preview
+    assert "запрос котировки" in preview
+    assert "Price < 1000 & terms > 30 days" in preview
+    assert events[0]["body_preview_source"] == "html_text"
+
+
+def test_mailbox_html_entity_encoded_tags_are_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "&lt;script&gt;alert(1)&lt;/script&gt;"
+        "&#60;b&#62;visible&#60;/b&#62;"
+        "&#60;style&#62;.x{}</style>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: Encoded tags\n"
+        "Message-ID: <mail-encoded-tags@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "script" not in preview.lower()
+    assert "alert(1)" not in preview
+    assert "<" not in preview
+    assert ">" not in preview
+    assert "visible" in preview
+    assert "style" not in preview.lower()
+
+
+def test_mailbox_plain_text_body_entities_decode_to_human_readable_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    raw_message = (
+        b"From: lead@example.com\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Plain entities\n"
+        b"Message-ID: <mail-plain-entities@example.com>\n"
+        b"Content-Type: text/plain; charset=utf-8\n"
+        b"\n"
+        b"Need &#1089;&#1095;&#1105;&#1090; &amp; &#1090;&#1077;&#1085;&#1076;&#1077;&#1088;"
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "&#" not in preview
+    assert "&amp;" not in preview
+    assert "счёт & тендер" in preview
+    assert events[0]["body_preview_source"] == "text_plain"
+
+
+def test_mailbox_plaintext_entities_strip_decoded_markup_without_stripping_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    raw_message = (
+        b"From: lead@example.com\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Plain encoded markup\n"
+        b"Message-ID: <mail-plain-encoded-markup@example.com>\n"
+        b"Content-Type: text/plain; charset=utf-8\n"
+        b"\n"
+        b"Contact &lt;lead@example.test&gt;\n"
+        b"&lt;script&gt;alert(1)&lt;/script&gt;\n"
+        b"&#60;b&#62;visible&#60;/b&#62;"
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "Contact <lead@example.test>" in preview
+    assert "visible" in preview
+    assert "script" not in preview.lower()
+    assert "alert(1)" not in preview
+    assert "<b>" not in preview
+    assert "</b>" not in preview
+    assert events[0]["body_preview_source"] == "text_plain"
 
 
 def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:

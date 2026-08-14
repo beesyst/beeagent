@@ -235,6 +235,13 @@ def _deterministic_value(event: dict[str, Any], key: str, fallback: Any) -> Any:
     return value
 
 
+def _is_deterministic_tender_candidate(
+    queue: str,
+    action: str,
+) -> bool:
+    return queue == "tender" or action == "review_tender"
+
+
 def _results_by_event_identity(
     adjudicator_results: list[dict[str, Any]] | dict[str, Any] | None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -354,6 +361,12 @@ def build_final_decisions(
                 final_decision_source = "deterministic_preserved"
             elif ai_status == "manual_review_degrade":
                 needs_attention = True
+                if _is_deterministic_tender_candidate(
+                    deterministic_queue,
+                    deterministic_action,
+                ):
+                    final_queue = "manual_review"
+                    final_action = "manual_review"
                 attention_reason_code = _attention_reason_code(adj)
                 ai_reason = _bounded_attention_reason(adj.get("ai_reason"))
                 attention_reason = ai_reason if ai_reason else attention_reason_code
@@ -363,6 +376,12 @@ def build_final_decisions(
                 final_decision_source = "deterministic_preserved"
             else:
                 needs_attention = True
+                if _is_deterministic_tender_candidate(
+                    deterministic_queue,
+                    deterministic_action,
+                ):
+                    final_queue = "manual_review"
+                    final_action = "manual_review"
                 attention_reason_code = _attention_reason_code(adj)
                 attention_reason = attention_reason_code
                 attention_evidence_codes = _attention_evidence_codes(

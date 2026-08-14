@@ -11,6 +11,7 @@ import pytest
 from beeagent_module.core.rop_ai_adjudicator import (
     _build_adjudicator_prompt,
     _build_openai_response_format,
+    _build_prompt_messages_by_key,
     _build_request_artifact,
     _is_event_eligible_for_adjudicator,
     _parse_ai_response,
@@ -229,6 +230,35 @@ def _sample_logistics_existing_deal_event() -> dict:
     }
 
 
+def _sample_tender_candidate_event() -> dict:
+    return {
+        "event_id": "evt-tender-001",
+        "case_type": "new_lead",
+        "case_subtype": "tender",
+        "recommended_queue": "tender",
+        "correct_action": "review_tender",
+        "should_rop_see": True,
+        "confidence": 0.95,
+        "is_fallback": False,
+        "reason_code": "tender_or_rfq_detected",
+        "sender": "tenders@example.com",
+        "subject": "Tender invitation",
+        "clean_subject": "Tender invitation",
+        "body_preview": "Приглашение к участию в тендере. Запрос котировок.",
+        "transport_labels": [],
+        "spam_label_present": False,
+        "reply_label_present": False,
+        "forwarded_wrapper": False,
+        "attachments": [],
+        "deterministic_case_type": "new_lead",
+        "deterministic_case_subtype": "tender",
+        "deterministic_recommended_queue": "tender",
+        "deterministic_correct_action": "review_tender",
+        "deterministic_confidence": 0.95,
+        "deterministic_reason_code": "tender_or_rfq_detected",
+    }
+
+
 class TestEligibility:
     def test_fallback_is_eligible(self) -> None:
         assert _is_event_eligible_for_adjudicator(_sample_eligible_event()) is True
@@ -251,6 +281,25 @@ class TestEligibility:
             )
             is True
         )
+
+    def test_deterministic_tender_candidate_is_eligible_high_confidence(self) -> None:
+        event = _sample_tender_candidate_event()
+        assert event["confidence"] == 0.95
+        assert _is_event_eligible_for_adjudicator(event) is True
+
+    def test_tender_candidate_via_correct_action_is_eligible(self) -> None:
+        event = _sample_tender_candidate_event()
+        event["deterministic_recommended_queue"] = "sales"
+        event["recommended_queue"] = "sales"
+        event["deterministic_correct_action"] = "review_tender"
+        event["correct_action"] = "review_tender"
+        assert _is_event_eligible_for_adjudicator(event) is True
+
+    def test_duplicate_with_tender_queue_is_not_eligible(self) -> None:
+        event = _sample_tender_candidate_event()
+        event["case_type"] = "duplicate"
+        event["deterministic_case_type"] = "duplicate"
+        assert _is_event_eligible_for_adjudicator(event) is False
 
 
 class TestPromptBuilding:
@@ -307,6 +356,25 @@ rop:
         assert "Analyze this bounded ROP event." in prompt
         assert "Template variables JSON" not in prompt
         assert '"event_id": "evt-prompt"' in prompt
+
+    def test_prompt_guidance_requires_actionable_tender_opportunity(self) -> None:
+        system, _user = _build_prompt_messages_by_key(
+            prompts_path="config/prompts.yml",
+            prompt_key="rop.ai_adjudicator",
+            template_vars={"event_json": "{}"},
+        )
+        assert (
+            "Tender, procurement, or RFQ terminology alone does not prove new_lead"
+            in system
+        )
+        assert (
+            "A generic tender digest, subscription, or marketplace notification"
+            in system
+        )
+        assert (
+            "new_lead requires a concrete actionable inbound commercial opportunity"
+            in system
+        )
 
     def test_prompt_sanitizes_html_and_base64_like_text(self) -> None:
         event = _sample_eligible_event()
@@ -550,10 +618,9 @@ class TestProviderCall:
         assert result is None
 
     def test_provider_timeout_returns_none(self) -> None:
-        import socket
 
         def _raise_timeout(*args: object, **kwargs: object) -> object:
-            raise socket.timeout("timed out")
+            raise TimeoutError("timed out")
 
         with patch(
             "beeagent_module.core.rop_ai_adjudicator.request.urlopen",
@@ -574,7 +641,7 @@ class TestProviderCall:
         captured: dict[str, object] = {}
 
         class _FakeResponse:
-            def __enter__(self) -> "_FakeResponse":
+            def __enter__(self) -> _FakeResponse:
                 return self
 
             def __exit__(self, exc_type, exc, tb) -> None:
@@ -775,6 +842,234 @@ class TestAdjudicatorForEvent:
         assert result["result"]["ai_confidence"] == 0.85
         assert result["result"]["ai_reason"] == "Clear RFQ content"
         assert result["result"]["errors"] == []
+
+    def test_tender_candidate_high_confidence_ai_ignore_is_accepted(self) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "tender_digest",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.92,
+                    "reason": (
+                        "Generic tender digest notification with no actionable "
+                        "inbound commercial opportunity."
+                    ),
+                    "risk_flags": ["low_signal"],
+                    "reason_code": "non_actionable_bulk_or_newsletter",
+                    "evidence_codes": ["newsletter_bulk"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["decision"]["status"] == "ok"
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "irrelevant"
+        assert result["result"]["final_recommended_queue"] == "ignore"
+        assert result["result"]["final_correct_action"] == "ignore"
+        assert result["result"]["final_should_rop_see"] is False
+
+    def test_tender_candidate_high_confidence_ai_new_lead_is_accepted(self) -> None:
+        def _return_new_lead(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "tender",
+                    "recommended_queue": "tender",
+                    "should_rop_see": True,
+                    "correct_action": "review_tender",
+                    "confidence": 0.90,
+                    "reason": "Actionable tender invitation with RFQ details.",
+                    "risk_flags": [],
+                    "reason_code": "tender_or_rfq_detected",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_new_lead,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
+
+    def test_tender_candidate_high_confidence_ai_existing_deal_is_accepted(
+        self,
+    ) -> None:
+        def _return_existing_deal(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "existing_deal",
+                    "case_subtype": "existing_deal_tender",
+                    "recommended_queue": "tender",
+                    "should_rop_see": True,
+                    "correct_action": "review_tender",
+                    "confidence": 0.88,
+                    "reason": "Continuation of an existing tender discussion.",
+                    "risk_flags": [],
+                    "reason_code": "existing_deal_continuation",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_existing_deal,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "existing_deal"
+
+    def test_tender_candidate_low_confidence_ai_routes_manual_review(self) -> None:
+        def _return_low_conf(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "tender_digest",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.40,
+                    "reason": "Unclear whether this tender is actionable.",
+                    "risk_flags": ["low_signal"],
+                    "reason_code": "insufficient_business_signal",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_low_conf,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["decision"]["status"] == "manual_review_degrade"
+        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_should_rop_see"] is True
+        assert result["result"]["merge_reason"] == "ai_low_confidence_manual_review"
+
+    def test_tender_candidate_invalid_ai_routes_manual_review(self) -> None:
+        def _return_invalid_taxonomy(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "logistics",
+                    "recommended_queue": "logistics",
+                    "correct_action": "attach_to_deal",
+                    "should_rop_see": True,
+                    "confidence": 0.95,
+                    "reason": "Bad taxonomy",
+                    "risk_flags": [],
+                    "reason_code": "existing_deal_continuation",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_invalid_taxonomy,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["errors"]
+
+    def test_tender_candidate_provider_failure_routes_manual_review(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                lambda **kwargs: None,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["decision"]["status"] == "degraded"
+        assert result["result"]["ai_status"] == "degraded"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_should_rop_see"] is True
+        assert result["result"]["ai_error"]
+
+    def test_tender_candidate_missing_api_key_routes_manual_review(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            result = run_adjudicator_for_event(
+                event=_sample_tender_candidate_event(),
+                adj_cfg=_minimal_adj_cfg(),
+                profile_cfg=_minimal_profile_cfg(),
+                prompts_cfg=_minimal_prompts_cfg(),
+                logger=_null_logger(),
+            )
+        assert result["result"]["ai_status"] == "degraded"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
+
+    def test_tender_candidate_unparseable_ai_routes_manual_review(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                lambda **kwargs: "not JSON",
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "invalid"
+        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_correct_action"] == "manual_review"
 
     def test_conflicting_high_confidence_ai_output_routes_to_manual_review(
         self,
@@ -1135,20 +1430,22 @@ class TestAdjudicatorBatch:
     def test_env_kill_switch_disables_batch_and_skips_provider(self) -> None:
         settings = _settings(ai_assist_enabled=True, adjudicator_enabled=True)
 
-        with patch.dict(
-            os.environ,
-            {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "0"},
-            clear=True,
-        ):
-            with patch(
+        with (
+            patch.dict(
+                os.environ,
+                {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "0"},
+                clear=True,
+            ),
+            patch(
                 "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
                 side_effect=AssertionError("adjudicator provider must not run"),
-            ):
-                requests, decisions, results, counters = run_adjudicator_batch(
-                    events=[_sample_eligible_event()],
-                    settings=settings,
-                    logger=_null_logger(),
-                )
+            ),
+        ):
+            requests, decisions, results, counters = run_adjudicator_batch(
+                events=[_sample_eligible_event()],
+                settings=settings,
+                logger=_null_logger(),
+            )
 
         assert requests == []
         assert decisions == []
@@ -1211,27 +1508,66 @@ class TestAdjudicatorBatch:
             )
 
         settings = _settings(ai_assist_enabled=True, adjudicator_enabled=False)
-        with patch.dict(
-            os.environ,
-            {
-                "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "1",
-                "OPENAI_API_KEY": "sk-test",
-            },
-            clear=True,
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "1",
+                    "OPENAI_API_KEY": "sk-test",
+                },
+                clear=True,
+            ),
+            patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _fake_call,
+            ),
         ):
+            _, _, results, counters = run_adjudicator_batch(
+                events=[_sample_eligible_event()],
+                settings=settings,
+                logger=_null_logger(),
+            )
+
+        assert len(calls) == 1
+        assert counters["adjudicator_enabled"] == 1
+        assert results[0]["ai_status"] == "ok"
+
+    def test_batch_tender_candidate_calls_provider_once(self) -> None:
+        calls: list[str] = []
+
+        def _fake_call(**kwargs: object) -> str:
+            calls.append("called")
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "tender_digest",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.91,
+                    "reason": "Generic tender digest with no actionable opportunity.",
+                    "risk_flags": ["low_signal"],
+                    "reason_code": "non_actionable_bulk_or_newsletter",
+                    "evidence_codes": ["newsletter_bulk"],
+                }
+            )
+
+        settings = _settings(ai_assist_enabled=True, adjudicator_enabled=True)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
             with patch(
                 "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
                 _fake_call,
             ):
                 _, _, results, counters = run_adjudicator_batch(
-                    events=[_sample_eligible_event()],
+                    events=[_sample_tender_candidate_event()],
                     settings=settings,
                     logger=_null_logger(),
                 )
-
         assert len(calls) == 1
-        assert counters["adjudicator_enabled"] == 1
+        assert counters["adjudicator_eligible_count"] == 1
         assert results[0]["ai_status"] == "ok"
+        assert results[0]["final_case_type"] == "irrelevant"
+        assert results[0]["final_correct_action"] == "ignore"
 
 
 class TestArtifacts:
@@ -1320,14 +1656,10 @@ class TestArtifacts:
         )
         run_dir = tmp_path / "runs" / "incompatible-reason"
         decisions = json.loads(
-            (run_dir / "rop_ai_adjudicator_decisions.json").read_text(
-                encoding="utf-8"
-            )
+            (run_dir / "rop_ai_adjudicator_decisions.json").read_text(encoding="utf-8")
         )
         results = json.loads(
-            (run_dir / "rop_ai_adjudicator_results.json").read_text(
-                encoding="utf-8"
-            )
+            (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
         )
         assert decisions["decisions"][0]["ai_reason_code"] == ""
         assert results["results"][0]["ai_reason_code"] == ""
@@ -1382,8 +1714,7 @@ class TestArtifacts:
             if value.startswith("dropped unknown evidence_code:")
         )
         assert all(
-            len(value) <= 80
-            for value in output["decision"]["dropped_evidence_codes"]
+            len(value) <= 80 for value in output["decision"]["dropped_evidence_codes"]
         )
 
         write_adjudicator_artifacts(
@@ -1583,18 +1914,20 @@ class TestConfig:
     def test_invalid_adjudicator_env_value_fails_fast(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
 
-        with patch.dict(
-            os.environ,
-            {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "maybe"},
-            clear=True,
-        ):
-            with pytest.raises(
+        with (
+            patch.dict(
+                os.environ,
+                {"BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED": "maybe"},
+                clear=True,
+            ),
+            pytest.raises(
                 RuntimeError,
                 match="Invalid BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED value: maybe",
-            ):
-                _validate_rop_ai_adjudicator_settings(
-                    _settings(ai_assist_enabled=True, adjudicator_enabled=True)
-                )
+            ),
+        ):
+            _validate_rop_ai_adjudicator_settings(
+                _settings(ai_assist_enabled=True, adjudicator_enabled=True)
+            )
 
     def test_openai_compatible_provider_rejected_for_enabled_adjudicator(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
@@ -1635,16 +1968,18 @@ class TestConfig:
                 "enabled": True,
             },
         }
-        with patch.dict(
-            os.environ,
-            {"OPENAI_API_KEY": "sk-test", "DEEPSEEK_API_KEY": "sk-test"},
-            clear=True,
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "sk-test", "DEEPSEEK_API_KEY": "sk-test"},
+                clear=True,
+            ),
+            pytest.raises(RuntimeError, match="Exactly one ai.profiles"),
         ):
-            with pytest.raises(RuntimeError, match="Exactly one ai.profiles"):
-                _validate_rop_ai_adjudicator_settings(
-                    _settings(
-                        ai_assist_enabled=True,
-                        adjudicator_enabled=True,
-                        profiles=profiles,
-                    )
+            _validate_rop_ai_adjudicator_settings(
+                _settings(
+                    ai_assist_enabled=True,
+                    adjudicator_enabled=True,
+                    profiles=profiles,
                 )
+            )
