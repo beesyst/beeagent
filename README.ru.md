@@ -1186,7 +1186,7 @@ rop:
 - допустимый диапазон: `200..10000`;
 - preview строится для `json_batch` и `mailbox_readonly`;
 - raw `.eml` и attachment content не сохраняются;
-- HTML предпочитает text/plain, для HTML body используется stripped text;
+- HTML предпочитает text/plain; character entities декодируются ровно один раз перед bounded preview processing, HTML text после decode strip-ится, а double-encoded markup рекурсивно не декодируется;
 - результат фиксируется в `normalized_events.json`.
 
 ### ROP AI assist и OpenAI adjudicator
@@ -1260,6 +1260,7 @@ ROP OpenAI adjudicator контролируется через `rop.ai_assist.ad
 Сейчас поддерживается `openai_responses`.
 При active OpenAI profile требуется `OPENAI_API_KEY`.
 Adjudicator использует strict `json_schema`.
+Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence. `duplicate` остаётся deterministic и AI provider не вызывает.
 
 Allowed `case_type`:
 
@@ -1287,7 +1288,7 @@ Allowed `correct_action`:
 - `ignore`
 
 Unknown `risk_flags` отбрасываются как bounded diagnostics.
-Provider failure, invalid JSON и invalid taxonomy сохраняют deterministic result или переводят кейс в manual review в зависимости от risk/conflict context.
+Для tender candidate provider/parse/validation/low-confidence failures сохраняют deterministic audit fields, но final queue/action переводятся в `manual_review`. Для non-tender событий provider failure, invalid JSON и invalid taxonomy сохраняют deterministic result или переводят кейс в manual review в зависимости от risk/conflict context.
 Safe deterministic ignore может быть сохранён как `low_confidence_preserve`.
 Risky/conflict cases могут перейти в `manual_review_degrade`.
 Write-back в этом path не выполняется.
@@ -1647,9 +1648,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent пишет AI assist evidence artifacts;
 - AI assist disabled by default и не делает write-back;
 - AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
-- OpenAI adjudicator может быть включён для eligible grey-zone events;
+- OpenAI adjudicator может быть включён для eligible grey-zone events и deterministic tender candidates независимо от confidence;
 - OpenAI adjudicator пишет `rop_ai_adjudicator_*` artifacts;
-- unsafe provider/parse/validation failures сохраняют deterministic decisions;
+- unsafe provider/parse/validation failures сохраняют deterministic decisions; для tender candidates final queue/action безопасно переводятся в manual review;
 - risky/conflicting uncertain adjudicator results уходят в manual review;
 - safe ignore может сохраняться, а safe supplier/newsletter false positives могут резолвиться в ignore;
 - write-back в adjudicator path не добавляется;

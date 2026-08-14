@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -802,15 +803,18 @@ def _extract_body_preview(
         collect_part(message)
 
     if text_parts:
+        decoded_text = html.unescape("\n".join(text_parts))
         return _build_body_preview_metadata(
-            text="\n".join(text_parts),
+            text=_strip_html(decoded_text)
+            if _HTML_TAG_RE.search(decoded_text)
+            else decoded_text,
             source="text_plain",
             email_preview_body_chars_max=email_preview_body_chars_max,
         )
 
     if html_parts:
         return _build_body_preview_metadata(
-            text=_strip_html("\n".join(html_parts)),
+            text=_strip_html(html.unescape("\n".join(html_parts))),
             source="html_text",
             email_preview_body_chars_max=email_preview_body_chars_max,
         )
@@ -1311,20 +1315,22 @@ def _build_batch_body_preview(
     if not raw_body:
         return None
 
-    stripped = _strip_html(raw_body)
-    is_html = stripped != raw_body
+    decoded_body = html.unescape(raw_body)
+    is_html = bool(_HTML_TAG_RE.search(decoded_body))
     preview_source = (
         source if source == "existing" else ("html_text" if is_html else "text_plain")
     )
 
     return _build_body_preview_metadata(
-        text=stripped if is_html else raw_body,
+        text=_strip_html(decoded_body) if is_html else decoded_body,
         source=preview_source,
         email_preview_body_chars_max=email_preview_body_chars_max,
     )
 
 
-_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_HTML_TAG_RE = re.compile(
+    r"<!--[^>]*-->|<\?[^>]*\?>|</?[a-zA-Z][a-zA-Z0-9:_-]*(?:\s[^>]*)?\s*/?>"
+)
 _SCRIPT_STYLE_RE = re.compile(
     r"<(script|style)[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL
 )

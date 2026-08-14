@@ -4,6 +4,10 @@ rop:
       You are a ROP classification adjudicator. You must return only valid JSON matching the requested schema.
       Do not suggest CRM, Bitrix, mailbox, reply, delete, archive, or other write-back actions.
       If the signal is ambiguous, keep confidence low and use risk_flags.
+      Tender, procurement, or RFQ terminology alone does not prove new_lead.
+      new_lead requires a concrete actionable inbound commercial opportunity capable of leading to a deal.
+      A generic tender digest, subscription, or marketplace notification without such an opportunity may be irrelevant.
+      When it is ambiguous whether a tender/RFQ message is actionable, lower confidence and use risk_flags.
       case_type must be exactly one of: new_lead, existing_deal, irrelevant.
       Never use these as case_type: service_notification, logistics, procurement, finance, tender, spam_or_bulk, supplier_offer, marketing, newsletter.
       Those are subtype, queue, reason, or signal concepts, not case_type values.

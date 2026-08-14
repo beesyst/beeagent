@@ -480,6 +480,15 @@ def _has_actionable_business_evidence(event: dict[str, Any]) -> bool:
     )
 
 
+def _has_non_tender_actionable_signal(event: dict[str, Any]) -> bool:
+    signal_map = _event_signal_map(event)
+    return (
+        (signal_map["customer_request"] and not signal_map["tender"])
+        or signal_map["logistics"]
+        or signal_map["finance"]
+    )
+
+
 def _has_false_positive_markers(event: dict[str, Any]) -> bool:
     signal_map = _event_signal_map(event)
     return (
@@ -494,6 +503,23 @@ def _deterministic_is_safe_ignore(event: dict[str, Any]) -> bool:
         _deterministic_value(event, "case_type", "") == "irrelevant"
         and _deterministic_value(event, "recommended_queue", "") == "ignore"
         and _deterministic_value(event, "correct_action", "") == "ignore"
+    )
+
+
+def _is_deterministic_tender_candidate(event: dict[str, Any]) -> bool:
+    return (
+        _deterministic_value(event, "recommended_queue", "") == "tender"
+        or _deterministic_value(event, "correct_action", "") == "review_tender"
+    )
+
+
+def _degraded_final_routing(event: dict[str, Any]) -> tuple[Any, Any, Any]:
+    if _is_deterministic_tender_candidate(event):
+        return "manual_review", "manual_review", True
+    return (
+        event.get("recommended_queue"),
+        event.get("correct_action"),
+        event.get("should_rop_see"),
     )
 
 
@@ -755,6 +781,8 @@ def _ai_output_conflicts_with_marker_signals(
         and ai_correct_action == "ignore"
     )
     if safe_ignore:
+        if _is_deterministic_tender_candidate(event):
+            return _has_non_tender_actionable_signal(event)
         return _has_actionable_business_evidence(event)
 
     risky_ai_continuation = (
@@ -974,6 +1002,9 @@ def _is_event_eligible_for_adjudicator(event: dict[str, Any]) -> bool:
     case_type = event.get("case_type", "")
     if case_type == "duplicate":
         return False
+
+    if _is_deterministic_tender_candidate(event):
+        return True
 
     is_fallback = event.get("is_fallback", False)
     confidence = event.get("confidence", 1.0)
@@ -1265,6 +1296,9 @@ def run_adjudicator_for_event(
     api_key = os.getenv(api_key_env, "").strip()
     if not api_key:
         error = "AI adjudicator API key not found; deterministic result preserved"
+        final_recommended_queue, final_correct_action, final_should_rop_see = (
+            _degraded_final_routing(event)
+        )
         return {
             "request": request_artifact,
             "decision": {
@@ -1310,6 +1344,9 @@ def run_adjudicator_for_event(
     )
     if raw_response is None:
         error = "AI provider call failed; deterministic result preserved"
+        final_recommended_queue, final_correct_action, final_should_rop_see = (
+            _degraded_final_routing(event)
+        )
         return {
             "request": request_artifact,
             "decision": {
@@ -1347,6 +1384,9 @@ def run_adjudicator_for_event(
     parsed = _parse_ai_response(raw_response)
     if parsed is None:
         error = "AI output was unparseable; deterministic result preserved"
+        final_recommended_queue, final_correct_action, final_should_rop_see = (
+            _degraded_final_routing(event)
+        )
         return {
             "request": request_artifact,
             "decision": {
