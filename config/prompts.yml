@@ -20,15 +20,28 @@ rop:
     user: >
       Analyze this bounded ROP event and return only JSON with fields:
       case_type, case_subtype, recommended_queue, should_rop_see, correct_action,
-      confidence, reason, risk_flags, reason_code, evidence_codes.
+      confidence, reason, risk_flags, reason_code, evidence_codes,
+      duplicate_decision.
 
-      reason_code must be one of: customer_request_detected, tender_or_rfq_detected,
+      When adjudication_kind is possible_duplicate, decide only the duplicate
+      hypothesis: also include duplicate_decision as confirm_duplicate or
+      reject_duplicate.
+      Otherwise duplicate_decision must be null.
+      Use duplicate_hypothesis_confirmed or duplicate_hypothesis_rejected as
+      reason_code respectively. Do not invent or replace semantic classification;
+      base_classification is preserved when the hypothesis is rejected.
+
+      For normal semantic adjudication, reason_code must be one of:
+      customer_request_detected, tender_or_rfq_detected,
       existing_deal_continuation, logistics_or_finance_continuation,
       non_actionable_supplier_outreach, non_actionable_bulk_or_newsletter,
       non_actionable_service_notification, insufficient_business_signal,
-      conflicting_business_signals. reason_code explains why the event was
-      classified and must not contain provider, validation, confidence-threshold,
-      degrade, fallback, or merge-policy statuses.
+      conflicting_business_signals.
+      For adjudication_kind=possible_duplicate, reason_code must be exactly
+      duplicate_hypothesis_confirmed when duplicate_decision=confirm_duplicate
+      or duplicate_hypothesis_rejected when duplicate_decision=reject_duplicate.
+      reason_code explains the adjudicator decision and must not contain provider,
+      validation, confidence-threshold, degrade, fallback, or merge-policy statuses.
       evidence_codes must be a subset of: marketing_conflict, spam_rfq_conflict,
       supplier_outreach, low_signal, ambiguous_bitrix, newsletter_bulk,
       finance_sales_conflict, business_ignore_conflict, attachment_mismatch.

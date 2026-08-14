@@ -11,6 +11,8 @@ AI_REASON_CODES = frozenset(
         "non_actionable_service_notification",
         "insufficient_business_signal",
         "conflicting_business_signals",
+        "duplicate_hypothesis_confirmed",
+        "duplicate_hypothesis_rejected",
     }
 )
 AI_REASON_CODES_BY_CASE_TYPE = {
@@ -64,6 +66,7 @@ ATTENTION_REASON_CODES = frozenset(
         "ai_output_invalid_deterministic_result_preserved",
         "deterministic_result_preserved",
         "ai_adjudicator_unexpected_status",
+        "possible_duplicate_manual_review",
     }
 )
 AI_EVIDENCE_CODES_MAX = 5

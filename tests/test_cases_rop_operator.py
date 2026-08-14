@@ -482,6 +482,91 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     assert loaded == artifact
 
 
+def test_rop_batch_indexes_newest_first_source_events_in_canonical_order(
+    tmp_path: Path,
+) -> None:
+    from beeagent_rop.domain.thread_context import validate_thread_context
+
+    from beeagent_module.core.rop_thread_context import build_public_thread_context
+
+    run_id = "run-newest-first-thread"
+    events = [
+        {
+            "event_id": "evt-reply",
+            "message_id": "<reply@example.test>",
+            "in_reply_to": "<original@example.test>",
+            "sender": "reply@example.test",
+            "subject": "Re: Synthetic quote request",
+            "body": "Following up on the requested quote.",
+            "date": "2026-05-02T10:00:00+00:00",
+        },
+        {
+            "event_id": "evt-original",
+            "message_id": "<original@example.test>",
+            "sender": "buyer@example.test",
+            "subject": "Synthetic quote request",
+            "body": "Please send a quote for the specified equipment.",
+            "date": "2026-05-01T10:00:00+00:00",
+        },
+    ]
+    batch_path = _write_raw_events_batch(tmp_path, events)
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=_make_raw_batch_settings(str(batch_path.relative_to(tmp_path))),
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id=run_id,
+        session_id=f"session-{run_id}",
+    )
+
+    assert result["status"] == "ok"
+    run_dir = tmp_path / "runs" / run_id
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    assert [event["event_id"] for event in normalized] == [
+        "evt-reply",
+        "evt-original",
+    ]
+    thread_index = json.loads(
+        (run_dir / "mail_thread_index.json").read_text(encoding="utf-8")
+    )
+    assert len(thread_index["threads"]) == 1
+    assert thread_index["threads"][0]["event_ids"] == [
+        "evt-original",
+        "evt-reply",
+    ]
+    thread_context = json.loads(
+        (run_dir / "mail_thread_context.json").read_text(encoding="utf-8")
+    )
+    assert len(thread_context["contexts"]) == 1
+    reply_context = thread_context["contexts"][0]
+    assert reply_context["event_id"] == "evt-reply"
+    assert reply_context["previous_event_ids"] == ["evt-original"]
+    assert reply_context["participant_overlap"] is False
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified_by_id = {event["event_id"]: event for event in classified}
+    assert (
+        reply_context["previous_case_type"]
+        == classified_by_id["evt-original"]["case_type"]
+    )
+    normalized_by_id = {event["event_id"]: event for event in normalized}
+    payload = build_public_thread_context(
+        reply_context,
+        normalized_by_id["evt-reply"],
+    )
+    validated, errors = validate_thread_context(payload)
+    assert errors == []
+    assert validated is not None
+
+
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     settings["rop"] = {
@@ -1984,8 +2069,9 @@ def test_rop_batch_near_duplicate_uses_module_evidence(tmp_path: Path) -> None:
     by_id = {event["event_id"]: event for event in classified}
 
     assert by_id["near-first"]["case_type"] == "new_lead"
-    assert by_id["near-second"]["case_type"] == "duplicate"
-    assert by_id["near-second"]["duplicate"]["is_duplicate"] is True
+    assert by_id["near-second"]["case_type"] == "new_lead"
+    assert by_id["near-second"]["duplicate"]["is_duplicate"] is False
+    assert by_id["near-second"]["duplicate"]["resolution_status"] == "possible"
     assert by_id["near-second"]["duplicate"]["reason_code"] == (
         "near_duplicate_subject_body"
     )
@@ -2641,6 +2727,60 @@ def test_final_decision_preserves_deterministic_duplicate() -> None:
     event = decisions["events"][0]
     assert event["final_case_type"] == "duplicate"
     assert event["final_decision_source"] == "deterministic"
+
+
+@pytest.mark.parametrize("ai_status", ["degraded", "invalid", "manual_review_degrade"])
+def test_final_decision_routes_unavailable_possible_duplicate_to_manual_review(
+    ai_status: str,
+) -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    base = {
+        "case_type": "new_lead",
+        "priority": "medium",
+        "reason_code": "customer_request_detected",
+        "confidence": 0.8,
+        "reasoning": "bounded base classification",
+        "is_fallback": False,
+        "case_subtype": "",
+        "recommended_queue": "sales",
+        "should_rop_see": True,
+        "correct_action": "review_new_lead",
+    }
+    duplicate = {
+        "is_duplicate": False,
+        "resolution_status": "possible",
+        "confidence": 0.86,
+        "reason_code": "near_duplicate_subject_body",
+        "reason_path": ["subject_similarity"],
+        "reasoning": "bounded duplicate evidence",
+        "candidate": None,
+        "candidates": [],
+        "is_fallback": False,
+    }
+    decisions = build_final_decisions(
+        [
+            {
+                "event_id": "possible-final",
+                **base,
+                "base_classification": base,
+                "duplicate": duplicate,
+            }
+        ],
+        [
+            {
+                "event_id": "possible-final",
+                "ai_status": ai_status,
+                "merge_reason": "missing_api_key_deterministic_result_preserved",
+            }
+        ],
+    )
+
+    event = decisions["events"][0]
+    assert event["final_case_type"] == "new_lead"
+    assert event["final_queue"] == "manual_review"
+    assert event["needs_attention"] is True
+    assert event["duplicate"]["resolution_status"] == "possible"
 
 
 def test_final_decisions_route_degraded_tender_to_manual_review() -> None:

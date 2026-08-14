@@ -292,6 +292,7 @@ Event Detail classification (additive, backward-compatible):
 - `classification.base_case_type` — `string`, original semantic case type from `base_classification` (empty when absent).
 - `classification.duplicate` — `object | null`, bounded duplicate evidence:
   - `is_duplicate` — boolean
+  - `resolution_status` — optional module resolution state: `confirmed`, `possible` or `not_duplicate`
   - `confidence` — number (`0.0 – 1.0`)
   - `reason_code` — string (e.g. `exact_email_body_match`, `near_duplicate_subject_body`, `duplicate_candidate_confirmed`)
   - `reason_path` — string array
@@ -304,6 +305,7 @@ Event Detail classification (additive, backward-compatible):
     - `matched_fields` — string array
     - (candidate reason fields `reason_code` / `reason_path` / `reasoning` are preserved in the raw module block)
 - `classification` fields `case_type`/`reason_code`/`confidence` etc. remain unchanged for non-duplicate events.
+- `confirmed` remains terminal; `possible` is adjudicated only through the bounded AI duplicate decision, where rejection preserves `base_classification` and unavailable/invalid/low-confidence output routes to manual review.
 - Queue detail links retain `/rop/events/{event_id}` and add `event_instance_id` only when present, so repeated transport Message-ID occurrences open their own artifact-backed detail while old links remain valid.
 
 Behavior / safety:

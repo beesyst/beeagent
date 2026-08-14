@@ -746,6 +746,8 @@ def _normalize_mailbox_message(
         "source": "mailbox_readonly",
         "source_id": source_id,
         "message_id": message_id,
+        "in_reply_to": _clean_thread_header(message.get("In-Reply-To")),
+        "references": _clean_thread_header(message.get("References")),
         "sender": sender_list[0] if sender_list else "",
         "to": to_list,
         "cc": cc_list,
@@ -935,6 +937,10 @@ def _clean_header_value(value: Any) -> str:
     if value is None:
         return ""
     return _sanitize_text(str(value))
+
+
+def _clean_thread_header(value: Any) -> str:
+    return _clean_header_value(value)[:1000]
 
 
 def _is_blocked_email_attachment(filename: str, content_type: str) -> bool:
@@ -1184,6 +1190,10 @@ def _sanitize_batch_item(
     sanitized = {
         key: value for key, value in item.items() if key not in blocked_top_level_keys
     }
+
+    for key in ("in_reply_to", "In-Reply-To", "references", "References"):
+        if key in sanitized:
+            sanitized[key] = _clean_thread_header(sanitized[key])
 
     attachments = sanitized.get("attachments")
     if isinstance(attachments, list):

@@ -1260,7 +1260,7 @@ ROP OpenAI adjudicator контролируется через `rop.ai_assist.ad
 Сейчас поддерживается `openai_responses`.
 При active OpenAI profile требуется `OPENAI_API_KEY`.
 Adjudicator использует strict `json_schema`.
-Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence. `duplicate` остаётся deterministic и AI provider не вызывает.
+Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence. Module-returned `duplicate.resolution_status=confirmed` остаётся terminal и AI provider не вызывает; только explicit `possible` проходит bounded duplicate-vs-not-duplicate adjudication. Rejection сохраняет module `base_classification`, а unavailable/invalid/low-confidence AI направляет событие в manual review.
 
 Allowed `case_type`:
 
@@ -1644,7 +1644,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - event detail HTML рендерится через BeeUI generic detail renderer;
 - event detail использует bounded `body_preview_*`, classification, thread, AI, Bitrix, action draft, attachments metadata и evidence links;
 - raw `.eml`, raw attachment content и secret-like payload не рендерятся;
-- BeeAgent передаёт bounded `thread_context` в `beeagent-rop` classification path;
+- BeeAgent передаёт bounded artifact-derived context через public `beeagent-rop` `ThreadContext` adapter; artifact shape и public module payload намеренно различаются;
 - BeeAgent пишет AI assist evidence artifacts;
 - AI assist disabled by default и не делает write-back;
 - AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
