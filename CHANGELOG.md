@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.2...beeagent-v0.51.3) (2026-08-14)
+
+
+### Bug Fixes
+
+* **rop:** repair thread context and adjudicate possible duplicates ([#192](https://github.com/beesyst/beeagent/issues/192)) ([7f8eaee](https://github.com/beesyst/beeagent/commit/7f8eaee44a2a0c94c063911e2cb328b310288dfb))
+
 ## [0.51.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.1...beeagent-v0.51.2) (2026-08-14)
 
 
