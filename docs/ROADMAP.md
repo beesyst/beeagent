@@ -1039,7 +1039,7 @@ BeeAgent получает минимальный capability boundary v0: мод�
 
 ---
 
-## Этап 4 — First real client module integration (итерации 15–34)
+## Этап 4 — First real client module integration (итерации 15–36)
 
 ### Purpose of stage
 
@@ -8194,6 +8194,230 @@ Dependency model:
 - BeeAgent consumes `beeagent-rop==0.19.2` from the declared private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`); `uv sync --frozen` succeeds and the installed module reports version 0.19.2.
 - Registry/PyPI publication is not a prerequisite of the current private-module dependency model; the local editable source is the working resolution and is intentionally kept for development.
 - No dependency/version change is introduced by this iteration; `pyproject.toml` and `uv.lock` are untouched.
+
+### Итерация 36 — ROP multi-mailbox recipient routing and Bitrix responsible draft v0
+
+**Статус:** PLANNED
+
+#### Goal
+
+Расширить production ROP polling с одного mailbox source до нескольких configured mailbox sources и сохранить адресную принадлежность каждого письма до Bitrix draft layer: BeeAgent должен детерминированно определить business recipient по существующему mailbox evidence, разрешить recipient email в active Bitrix user через read-only lookup и показать proposed responsible в artifacts/action draft/Event Detail без CRM write-back и без изменений business-classification semantics в `beeagent-rop`.
+
+Целевой flow:
+
+```text
+enabled mailbox sources
+→ per-source UID poll/checkpoint
+→ normalized event with source_id / To / Cc / original_recipient
+→ deterministic recipient attribution
+→ beeagent-rop classification
+→ read-only Bitrix user resolution
+→ rop_recipient_routing.json
+→ action draft / Event Detail proposed responsible
+→ no CRM mutation
+```
+
+#### Scope
+
+Включено:
+
+- сохранить existing `rop.sources[]` как единственный source of truth для mailbox sources;
+- расширить `rop.mailbox_poll` до controlled all-enabled-sources mode с backward-compatible single-source mode;
+- не добавлять отдельный дублирующий список mailbox source IDs;
+- поддержать optional CLI source override для безопасного per-source poll/rebaseline;
+- выполнять production poll независимо по каждому enabled `mailbox_readonly` / `read_only` source;
+- сохранить per-source UIDVALIDITY / last_processed_uid checkpoint semantics;
+- сохранять at-least-once invariant: checkpoint конкретного source продвигается только после успешного ROP pipeline и обязательного postprocessing для этого source;
+- failure одного mailbox source не должен останавливать попытку обработки остальных selected sources;
+- successful source checkpoints не откатываются из-за failure другого source;
+- новый source без checkpoint получает только свой baseline без изменения checkpoint уже существующих sources;
+- использовать уже существующие normalized fields `source_id`, `source_role`, `source_display_name`, `client_id`, `to`, `cc`, `original_recipient`, `forwarded_wrapper`;
+- добавить optional source routing fallback `routing.recipient_email` для mailbox source;
+- `routing.recipient_email` является business recipient fallback и не должен браться из IMAP username/env;
+- deterministic recipient attribution precedence:
+  - `original_recipient`;
+  - `to`;
+  - configured source recipient fallback;
+  - unresolved;
+
+- несколько recipient candidates на одном evidence level → `ambiguous`, без выбора первого;
+- `cc` может сохраняться как evidence, но не используется для automatic responsible selection;
+- добавить BeeAgent-owned read-only Bitrix user lookup через exact normalized email;
+- расширить existing `BitrixReadonlyClient` только read-only method/capability, не добавляя CRM writes;
+- active exact email match only; никаких fuzzy user matches;
+- Bitrix user directory должен загружаться bounded образом и не запрашиваться отдельно для каждого письма;
+- создать artifact:
+  - `storage/runs/<run_id>/rop_recipient_routing.json`;
+
+- artifact должен сохранять `event_id` + `event_instance_id`, source provenance, recipient status/evidence и proposed Bitrix responsible;
+- statuses должны явно различать как минимум:
+  - `resolved`;
+  - `ambiguous`;
+  - `unresolved`;
+  - `matched`;
+  - `not_found`;
+  - `connector_degraded`;
+
+- обогатить `rop_action_drafts.json` proposed recipient/responsible evidence;
+- сохранить action drafts `read_only=true` / `draft_only=true`;
+- минимально показать source / recipient / proposed responsible в existing ROP Event Detail;
+- сохранить существующую `beeagent-rop` classification/subtype/queue/action semantics без изменений;
+- обновить ROADMAP/README/DEV_GUIDE/WEB_UI там, где меняются config/artifact/UI contracts.
+
+#### Excluded
+
+- changes to `beeagent-rop`;
+- новые ROP classification rules в BeeAgent;
+- `crm.item.add`;
+- `crm.item.update`;
+- `crm.item.delete`;
+- lead/deal/task creation;
+- automatic responsible assignment in Bitrix;
+- execution-capable Bitrix adapter;
+- automatic timeline comments;
+- mailbox delete/archive/reply/mark-as-read;
+- fuzzy email/user matching;
+- Bitrix user ID stored as source-of-truth config;
+- использование IMAP username как business recipient;
+- использование `Cc` для automatic responsible selection;
+- assumption that existing `rop.routing.queues.*.bitrix_category` is a real Bitrix `categoryId`;
+- CRM stage/category/custom-field mapping for write-back;
+- new `region_code` contract without a concrete downstream requirement;
+- new BeeUI generic components;
+- broad Queue/filter redesign;
+- 1C integration;
+- dependency changes unless implementation proves they are required.
+
+#### Deliverable
+
+BeeAgent production ROP poll can process all enabled mailbox sources independently and preserve recipient provenance through the draft layer.
+
+For every processed event BeeAgent can show:
+
+```text
+source mailbox
+business recipient
+recipient evidence source
+recipient resolution status
+proposed Bitrix responsible user
+responsible match status
+```
+
+Expected new artifact:
+
+```text
+storage/runs/<run_id>/rop_recipient_routing.json
+```
+
+Existing draft/UI artifacts remain non-executing.
+
+#### Acceptance criteria
+
+- existing single-source mailbox poll remains backward-compatible;
+- all-sources poll processes all enabled read-only mailbox sources;
+- one mailbox failure does not prevent other selected sources from being processed;
+- failed source checkpoint is not advanced;
+- successful source checkpoint is advanced only after full source flow succeeds;
+- adding a new source does not reset existing source checkpoints;
+- per-source rebaseline does not require resetting unrelated sources;
+- direct mail can resolve recipient from `To`;
+- forwarded mail can resolve recipient from `original_recipient`;
+- configured source recipient is used only as fallback;
+- multiple recipients are not silently reduced to the first address;
+- `Cc` never assigns responsible;
+- malformed/missing recipient evidence degrades to explicit unresolved/ambiguous status;
+- Bitrix user lookup uses exact normalized email only;
+- inactive user is not accepted as responsible;
+- no matching user produces explicit `not_found`;
+- multiple exact eligible users produce explicit `ambiguous`;
+- Bitrix connector failure produces explicit degraded state;
+- recipient/user lookup is not executed once per email;
+- `rop_recipient_routing.json` is bounded and contains `event_instance_id`;
+- action drafts contain proposed recipient/responsible evidence;
+- Event Detail exposes source, recipient and proposed responsible;
+- `automation_allowed` and `bitrix_write_allowed` remain false;
+- no CRM/mailbox mutation exists;
+- `beeagent-rop` public contract remains unchanged.
+
+#### Checks
+
+Required:
+
+```bash
+uv run pytest -q
+uv run pytest -q -k "rop or mailbox or bitrix or ui or web"
+```
+
+Targeted verification:
+
+```text
+mailbox_poll single-source backward compatibility
+mailbox_poll all enabled sources
+multi-source no-new-message behavior
+one source failure + one source success
+successful-source checkpoint commit
+failed-source checkpoint preservation
+postprocessing failure does not advance affected checkpoint
+new source baseline preserves existing checkpoints
+per-source rebaseline
+UIDVALIDITY failure isolated to affected source
+
+recipient original_recipient precedence
+recipient To fallback
+configured source recipient fallback
+multiple To recipients -> ambiguous
+Cc ignored for responsibility
+missing/malformed recipient -> unresolved
+recipient email normalization
+
+Bitrix exact active user match
+Bitrix inactive user rejected
+Bitrix no user -> not_found
+Bitrix duplicate exact users -> ambiguous
+Bitrix permission/transport/error -> connector_degraded
+bounded user pagination/directory lookup
+no per-event Bitrix user API loop
+
+rop_recipient_routing.json contract
+event_instance_id preserved
+action draft responsible enrichment
+Event Detail recipient/responsible evidence
+missing/malformed optional routing artifact degrades safely
+HTML/API escaping
+no write method callable
+```
+
+Security:
+
+```text
+SAST required
+SCA only if dependencies change
+DAST-style connector misuse/error checks required for changed Bitrix runtime behavior
+IAST not required
+fuzzing not required unless a new custom email parser is introduced
+```
+
+Optional live read-only smoke only when the required mailbox/Bitrix credentials and permissions are available.
+
+#### DoD
+
+- production mailbox poll is no longer limited to one configured mailbox;
+- checkpoint semantics remain independent and safe per source;
+- partial mailbox degradation does not discard successful source work;
+- BeeAgent preserves actual recipient evidence through forwarding;
+- recipient attribution is deterministic and explainable;
+- Bitrix responsible resolution is exact-email/read-only;
+- Bitrix remains identity source of truth; Bitrix user IDs are not hardcoded into mailbox config;
+- `rop_recipient_routing.json` exists and is safe to inspect;
+- proposed responsible is visible in action draft and Event Detail;
+- all outputs remain read-only/draft-only;
+- no Bitrix write-back is introduced;
+- no mailbox destructive action is introduced;
+- no new ROP business rules are added to BeeAgent;
+- `beeagent-rop` is unchanged;
+- no secrets/raw `.eml`/raw attachment content are exposed;
+- tests/docs/security checks are completed;
+- `pyproject.toml.version` is not changed.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
