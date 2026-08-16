@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -368,6 +369,81 @@ class TestBuildActionDrafts:
                 recon,
                 _null_logger(),
             )
+
+    def test_draft_enriched_with_recipient_routing_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        (run_dir / "rop_recipient_routing.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "test-action-drafts",
+                    "items": [
+                        {
+                            "event_id": "evt-001",
+                            "event_instance_id": "event-000001",
+                            "recipient": "boss@welding.kz",
+                            "recipient_evidence_source": "original_recipient",
+                            "recipient_status": "resolved",
+                            "responsible": {
+                                "status": "matched",
+                                "user_id": 12,
+                                "name": "Ivan Petrov",
+                                "email": "boss@welding.kz",
+                                "reason": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        item = _sample_item(
+            "evt-001",
+            match_status="matched_lead",
+            case_type="new_lead",
+        )
+        recon = _make_reconciliation([item])
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            recon,
+            _null_logger(),
+        )
+        draft = artifact["items"][0]
+        assert draft["recipient"] == "boss@welding.kz"
+        assert draft["recipient_evidence_source"] == "original_recipient"
+        assert draft["recipient_status"] == "resolved"
+        assert draft["proposed_responsible_user_id"] == 12
+        assert draft["proposed_responsible_name"] == "Ivan Petrov"
+        assert draft["proposed_responsible_email"] == "boss@welding.kz"
+        assert draft["responsible_status"] == "matched"
+        assert draft["read_only"] is True
+
+    def test_draft_without_routing_artifact_keeps_safe_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        item = _sample_item(
+            "evt-001",
+            match_status="matched_lead",
+            case_type="new_lead",
+        )
+        recon = _make_reconciliation([item])
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            recon,
+            _null_logger(),
+        )
+        draft = artifact["items"][0]
+        assert draft["recipient"] == ""
+        assert draft["recipient_status"] == ""
+        assert draft["proposed_responsible_user_id"] is None
+        assert draft["responsible_status"] == ""
+        assert draft["read_only"] is True
 
 
 class TestMapActionV0:

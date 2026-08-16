@@ -408,6 +408,32 @@ class TestBitrixClient:
         assert "crm.item.add" in str(exc_info.value)
         assert "not in allowed list" in str(exc_info.value)
 
+    def test_user_get_is_allowed_read_only(self) -> None:
+        assert "user.get" in ALLOWED_METHODS
+
+    def test_list_users_calls_user_get(self) -> None:
+        client = BitrixReadonlyClient(
+            webhook_url="https://test.bitrix24.kz/rest/1/token/",
+            timeout=5,
+        )
+        body = json.dumps({"result": [{"ID": 1}], "next": None}).encode("utf-8")
+        with patch(
+            "beeagent_module.adapters.bitrix_client.urlopen",
+            return_value=_FakeHttpResponse(body),
+        ) as mocked_urlopen:
+            result = client.list_users(
+                select=["ID", "EMAIL", "ACTIVE"],
+                start=0,
+                limit=50,
+            )
+
+        assert result == {"result": [{"ID": 1}], "next": None}
+        request = mocked_urlopen.call_args.args[0]
+        assert request.full_url.endswith("/user.get")
+        payload = json.loads(request.data.decode("utf-8"))
+        assert payload["select"] == ["ID", "EMAIL", "ACTIVE"]
+        assert payload["limit"] == 50
+
     def test_rejects_insecure_webhook_url(self) -> None:
         with pytest.raises(BitrixConnectorError) as exc_info:
             BitrixReadonlyClient(
@@ -1528,8 +1554,9 @@ class TestBitrixTsvEnrichment:
 
 class TestBitrixSafety:
     def test_no_write_methods_in_allowed(self) -> None:
+        assert "user.get" in ALLOWED_METHODS
         for method in ALLOWED_METHODS:
-            assert method.startswith("crm.")
+            assert method.startswith(("crm.", "user."))
             assert "add" not in method.split(".")
             assert "update" not in method.split(".")
             assert "delete" not in method.split(".")

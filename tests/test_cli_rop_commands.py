@@ -372,6 +372,63 @@ class TestRopCliRun:
         assert "Paste this TSV into Google Sheets for human review." in output
         assert tsv_path.as_posix() in output
 
+    def test_rop_run_writes_recipient_routing_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = False
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-routing-001",
+                    "sender": "client@example.com",
+                    "subject": "Need welding quote",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "routing_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id="test-cli-run-routing",
+        )
+
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        routing_path = tmp_path / "runs" / "test-cli-run-routing" / (
+            "rop_recipient_routing.json"
+        )
+        assert routing_path.exists()
+        artifact = json.loads(routing_path.read_text(encoding="utf-8"))
+        assert artifact["read_only"] is True
+        assert artifact["draft_only"] is True
+        item = artifact["items"][0]
+        assert item["event_id"] == "evt-routing-001"
+        assert item["recipient_status"] == "resolved"
+        assert item["responsible"]["status"] == "not_attempted"
+
     def test_rop_run_all_sources_partial_degradation_keeps_run(
         self,
         tmp_path: Path,

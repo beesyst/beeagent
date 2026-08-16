@@ -267,6 +267,11 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid rop.mailbox_poll.source_id, expected non-empty string"
         )
+    poll_all_sources = mailbox_poll.get("all_sources")
+    if poll_all_sources is not None and not isinstance(poll_all_sources, bool):
+        raise RuntimeError(
+            "Invalid type for rop.mailbox_poll.all_sources, expected bool"
+        )
 
     input_sources = _get_nested_value(settings, ("rop", "sources"))
     if not isinstance(input_sources, list):
@@ -391,24 +396,68 @@ def validate_settings(settings: dict) -> None:
                 raise RuntimeError(
                     f"Missing or invalid rop.sources[{idx}].mailbox.use_ssl, expected bool"
                 )
+        routing = source.get("routing")
+        if routing is not None:
+            if not isinstance(routing, dict):
+                raise RuntimeError(
+                    f"Invalid type for rop.sources[{idx}].routing, expected mapping"
+                )
+            unsupported_routing_keys = sorted(set(routing) - {"recipient_email"})
+            if unsupported_routing_keys:
+                raise RuntimeError(
+                    f"Unsupported rop.sources[{idx}].routing keys: "
+                    + ", ".join(unsupported_routing_keys)
+                )
+            recipient_email = routing.get("recipient_email")
+            if recipient_email is not None:
+                if not isinstance(recipient_email, str) or not recipient_email.strip():
+                    raise RuntimeError(
+                        f"Invalid or missing rop.sources[{idx}].routing.recipient_email, expected non-empty string"
+                    )
+                if (
+                    not recipient_email.strip()
+                    or any(ch.isspace() for ch in recipient_email)
+                    or "@" not in recipient_email
+                ):
+                    raise RuntimeError(
+                        f"Invalid rop.sources[{idx}].routing.recipient_email, expected a single email address"
+                    )
 
     if mailbox_poll["enabled"]:
-        poll_source = next(
-            (
+        if poll_all_sources is True:
+            mailbox_sources = [
                 source
                 for source in input_sources
-                if source.get("source_id") == poll_source_id
-            ),
-            None,
-        )
-        if poll_source is None:
-            raise RuntimeError("rop.mailbox_poll.source_id not found in rop.sources")
-        if poll_source.get("enabled") is not True:
-            raise RuntimeError("rop.mailbox_poll source must be enabled")
-        if poll_source.get("source_type") != "mailbox_readonly":
-            raise RuntimeError("rop.mailbox_poll source must be mailbox_readonly")
-        if poll_source.get("authority") != "read_only":
-            raise RuntimeError("rop.mailbox_poll source authority must be read_only")
+                if source.get("enabled") is True
+                and source.get("source_type") == "mailbox_readonly"
+                and source.get("authority") == "read_only"
+            ]
+            if not mailbox_sources:
+                raise RuntimeError(
+                    "rop.mailbox_poll.all_sources requires at least one enabled "
+                    "read_only mailbox_readonly source in rop.sources"
+                )
+        else:
+            poll_source = next(
+                (
+                    source
+                    for source in input_sources
+                    if source.get("source_id") == poll_source_id
+                ),
+                None,
+            )
+            if poll_source is None:
+                raise RuntimeError(
+                    "rop.mailbox_poll.source_id not found in rop.sources"
+                )
+            if poll_source.get("enabled") is not True:
+                raise RuntimeError("rop.mailbox_poll source must be enabled")
+            if poll_source.get("source_type") != "mailbox_readonly":
+                raise RuntimeError("rop.mailbox_poll source must be mailbox_readonly")
+            if poll_source.get("authority") != "read_only":
+                raise RuntimeError(
+                    "rop.mailbox_poll source authority must be read_only"
+                )
 
     _validate_rop_dashboard_settings(settings)
 

@@ -21,6 +21,7 @@ from beeagent_module.cases.rop_current_state import (
 )
 from beeagent_module.cases.rop_dashboard import build_rop_dashboard, write_rop_dashboard
 from beeagent_module.cases.rop_operator import run_rop_batch_case
+from beeagent_module.cases.rop_recipient_routing import build_recipient_routing_artifact
 from beeagent_module.cases.rop_recommendations import (
     build_recommendations,
     build_routing_map,
@@ -47,22 +48,40 @@ def _checkpoint_path(storage_dir: Path) -> Path:
     return storage_dir / "interfaces" / CHECKPOINT_FILENAME
 
 
-def _load_checkpoint(path: Path, source_id: str, folder: str) -> dict[str, Any] | None:
+def _load_checkpoint(
+    path: Path,
+    source_id: str,
+    folder: str,
+    require_source: bool = True,
+) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        entry = data["sources"][source_id]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise MailboxPollError(
             "Mailbox checkpoint is invalid; run rop poll --rebaseline"
         ) from exc
-    if data.get("version") != CHECKPOINT_VERSION or not isinstance(entry, dict):
+    if not isinstance(data, dict):
         raise MailboxPollError(
             "Mailbox checkpoint is invalid; run rop poll --rebaseline"
         )
+    if data.get("version") != CHECKPOINT_VERSION or not isinstance(
+        data.get("sources"), dict
+    ):
+        raise MailboxPollError(
+            "Mailbox checkpoint is invalid; run rop poll --rebaseline"
+        )
+    if source_id not in data["sources"]:
+        if require_source:
+            raise MailboxPollError(
+                "Mailbox checkpoint is stale or invalid; run rop poll --rebaseline"
+            )
+        return data
+    entry = data["sources"][source_id]
     if (
-        entry.get("folder") != folder
+        not isinstance(entry, dict)
+        or entry.get("folder") != folder
         or type(entry.get("uidvalidity")) is not int
         or entry["uidvalidity"] <= 0
         or type(entry.get("last_processed_uid")) is not int
@@ -114,23 +133,149 @@ def _entry(folder: str, uidvalidity: int, uid: int) -> dict[str, Any]:
     }
 
 
+def _is_poll_mailbox_source(source: dict[str, Any]) -> bool:
+    return (
+        source.get("source_type") == "mailbox_readonly"
+        and source.get("authority") == "read_only"
+    )
+
+
+def _select_poll_sources(
+    settings: dict[str, Any],
+    source_id: str | None = None,
+    all_sources: bool = False,
+) -> list[dict[str, Any]]:
+    if source_id and all_sources:
+        raise MailboxPollError("--source-id and --all-sources cannot be used together")
+
+    input_sources = settings["rop"]["sources"]
+
+    if source_id:
+        for source in input_sources:
+            if source.get("source_id") != source_id:
+                continue
+            if not source.get("enabled", False):
+                raise MailboxPollError(
+                    f"mailbox poll source '{source_id}' is disabled"
+                )
+            if not _is_poll_mailbox_source(source):
+                raise MailboxPollError(
+                    f"mailbox poll source '{source_id}' must be read-only mailbox source"
+                )
+            return [source]
+        raise MailboxPollError(
+            f"mailbox poll source '{source_id}' not found in rop.sources"
+        )
+
+    if all_sources:
+        enabled = [
+            source
+            for source in input_sources
+            if source.get("enabled") is True and _is_poll_mailbox_source(source)
+        ]
+        if not enabled:
+            raise MailboxPollError(
+                "no enabled read-only mailbox sources configured for all-sources poll"
+            )
+        return enabled
+
+    poll_source_id = settings["rop"]["mailbox_poll"]["source_id"]
+    for source in input_sources:
+        if source.get("source_id") == poll_source_id:
+            return [source]
+    raise MailboxPollError(
+        "rop.mailbox_poll.source_id not found in rop.sources"
+    )
+
+
 def handle_mailbox_poll(
     settings: dict,
     storage_dir: Path,
     project_root: Path,
     logger: logging.Logger,
     rebaseline: bool = False,
+    source_id: str | None = None,
+    all_sources: bool | None = None,
 ) -> None:
     poll = settings["rop"]["mailbox_poll"]
     if not poll["enabled"]:
         logger.info("mailbox poll disabled")
         return
-    source_id = poll["source_id"]
-    source = next(
-        source
-        for source in settings["rop"]["sources"]
-        if source["source_id"] == source_id
+
+    if source_id and all_sources:
+        raise MailboxPollError("--source-id and --all-sources cannot be used together")
+
+    effective_all_sources = bool(all_sources) or (
+        poll.get("all_sources", False) is True
     )
+    if source_id:
+        effective_all_sources = False
+
+    selected = _select_poll_sources(
+        settings,
+        source_id=source_id,
+        all_sources=effective_all_sources,
+    )
+
+    require_checkpoint_source = not (effective_all_sources or bool(source_id))
+
+    if len(selected) == 1:
+        _poll_single_source(
+            settings=settings,
+            storage_dir=storage_dir,
+            project_root=project_root,
+            logger=logger,
+            source=selected[0],
+            rebaseline=rebaseline,
+            require_checkpoint_source=require_checkpoint_source,
+        )
+        return
+
+    successes: list[str] = []
+    failures: list[str] = []
+    for source in selected:
+        source_key = str(source.get("source_id", "unknown"))
+        try:
+            _poll_single_source(
+                settings=settings,
+                storage_dir=storage_dir,
+                project_root=project_root,
+                logger=logger,
+                source=source,
+                rebaseline=rebaseline,
+                require_checkpoint_source=False,
+            )
+            successes.append(source_key)
+        except Exception as exc:
+            failures.append(source_key)
+            logger.warning(
+                "mailbox poll source failed: source_id=%s reason=%s",
+                source_key,
+                exc,
+            )
+
+    if failures and not successes:
+        raise MailboxPollError(
+            "mailbox poll failed for all selected sources: "
+            + ", ".join(failures)
+        )
+    if failures:
+        logger.warning(
+            "mailbox poll completed with partial source failures: failed=%s",
+            ",".join(failures),
+        )
+
+
+def _poll_single_source(
+    settings: dict,
+    storage_dir: Path,
+    project_root: Path,
+    logger: logging.Logger,
+    source: dict[str, Any],
+    rebaseline: bool = False,
+    require_checkpoint_source: bool = True,
+) -> None:
+    source_id = str(source["source_id"])
     mailbox = source["mailbox"]
     folder = (
         os.getenv(
@@ -150,10 +295,10 @@ def handle_mailbox_poll(
     password = os.getenv(mailbox["password_env"], "").strip()
     if not all((folder, host, username, password)):
         raise MailboxPollError(
-            "Missing required mailbox environment for configured poll source"
+            f"Missing required mailbox environment for poll source: source_id={source_id}"
         )
     if host.lower().startswith(("http://", "https://")) or "/" in host:
-        raise MailboxPollError("Invalid IMAP host for configured poll source")
+        raise MailboxPollError(f"Invalid IMAP host for poll source: source_id={source_id}")
     client = ImapReadonlyMailboxClient(
         host, mailbox["port"], mailbox["use_ssl"], username, password
     )
@@ -162,7 +307,12 @@ def handle_mailbox_poll(
     if rebaseline:
         data = _load_rebaseline_checkpoint(path)
     else:
-        data = _load_checkpoint(path, source_id, folder)
+        data = _load_checkpoint(
+            path,
+            source_id,
+            folder,
+            require_source=require_checkpoint_source,
+        )
     highest = max(available, default=0)
     if rebaseline:
         data = data or {"version": CHECKPOINT_VERSION, "sources": {}}
@@ -184,15 +334,34 @@ def handle_mailbox_poll(
                 "sources": {source_id: _entry(folder, uidvalidity, highest)},
             },
         )
-        logger.info("mailbox poll baseline initialized")
+        logger.info(
+            "mailbox poll baseline initialized: source_id=%s folder=%s uidvalidity=%s uid=%s",
+            source_id,
+            folder,
+            uidvalidity,
+            highest,
+        )
+        return
+    if source_id not in data["sources"]:
+        data["sources"][source_id] = _entry(folder, uidvalidity, highest)
+        _write_checkpoint(path, data)
+        logger.info(
+            "mailbox poll baseline initialized for new source: source_id=%s folder=%s uidvalidity=%s uid=%s",
+            source_id,
+            folder,
+            uidvalidity,
+            highest,
+        )
         return
     checkpoint = data["sources"][source_id]
     if checkpoint["uidvalidity"] != uidvalidity:
-        raise MailboxPollError("Mailbox UIDVALIDITY changed; run rop poll --rebaseline")
+        raise MailboxPollError(
+            f"Mailbox UIDVALIDITY changed for source_id={source_id}; run rop poll --rebaseline"
+        )
     pending = sorted(uid for uid in available if uid > checkpoint["last_processed_uid"])
     selected = pending[: source["items_max"]]
     if not selected:
-        logger.info("mailbox poll: no new messages")
+        logger.info("mailbox poll: no new messages: source_id=%s", source_id)
         return
     messages = client.fetch_uids(
         folder,
@@ -215,6 +384,12 @@ def handle_mailbox_poll(
     if isinstance(source_result, dict) and source_result.get("malformed_count", 0) > 0:
         raise MailboxPollError("ROP poll batch contains malformed mailbox messages")
     run_id = str(result["run_id"])
+    build_recipient_routing_artifact(
+        storage_dir=storage_dir,
+        run_id=run_id,
+        settings=settings,
+        logger=logger,
+    )
     export_review_tsv_for_run(
         storage_dir=storage_dir,
         run_id=run_id,

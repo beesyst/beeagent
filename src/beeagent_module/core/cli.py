@@ -139,6 +139,23 @@ def handle_rop_run(
             )
 
         try:
+            from beeagent_module.cases.rop_recipient_routing import (
+                build_recipient_routing_artifact,
+            )
+
+            build_recipient_routing_artifact(
+                storage_dir=storage_dir,
+                run_id=effective_run_id,
+                settings=effective_settings,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: recipient routing build failed after run: %s",
+                exc,
+            )
+
+        try:
             state = build_rop_current_state(
                 storage_dir=storage_dir,
                 run_id=effective_run_id,
@@ -199,6 +216,9 @@ def handle_rop_poll(
         handle_mailbox_poll,
     )
 
+    if args.source_id and args.all_sources:
+        raise RopCliError("--source-id and --all-sources cannot be used together")
+
     try:
         handle_mailbox_poll(
             settings=settings,
@@ -206,6 +226,8 @@ def handle_rop_poll(
             project_root=get_project_root(),
             logger=logger,
             rebaseline=args.rebaseline,
+            source_id=args.source_id,
+            all_sources=args.all_sources,
         )
     except MailboxPollError as exc:
         raise RopCliError(str(exc)) from exc
@@ -1171,6 +1193,17 @@ def create_rop_parser() -> argparse.ArgumentParser:
 
     poll_parser = subparsers.add_parser(
         "poll", help="Poll configured mailbox for new UID messages"
+    )
+    poll_parser.add_argument(
+        "--source-id",
+        type=str,
+        default=None,
+        help="Override source_id from rop.sources (optional)",
+    )
+    poll_parser.add_argument(
+        "--all-sources",
+        action="store_true",
+        help="Poll all enabled read-only mailbox sources from rop.sources",
     )
     poll_parser.add_argument(
         "--rebaseline",

@@ -3800,6 +3800,81 @@ def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
     assert availability["rop_final_decisions_json"] is True
 
 
+def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-routing")
+    (run_dir / "rop_recipient_routing.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-detail-routing",
+                "status": "ok",
+                "read_only": True,
+                "draft_only": True,
+                "directory": {"status": "loaded", "reason": None},
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "event_instance_id": "event-000001",
+                        "source_id": "hotline_mailbox",
+                        "recipient": "boss@welding.kz",
+                        "recipient_candidates": ["boss@welding.kz"],
+                        "recipient_evidence_source": "to",
+                        "recipient_status": "resolved",
+                        "responsible": {
+                            "status": "matched",
+                            "user_id": 12,
+                            "name": "Ivan Petrov",
+                            "email": "boss@welding.kz",
+                            "reason": None,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-routing", "evt-1"
+    )
+    routing = data["recipient_routing"]
+    assert routing["available"] is True
+    assert routing["recipient"] == "boss@welding.kz"
+    assert routing["recipient_evidence_source"] == "to"
+    assert routing["recipient_status"] == "resolved"
+    assert routing["proposed_responsible_user_id"] == 12
+    assert routing["proposed_responsible_name"] == "Ivan Petrov"
+    assert routing["responsible_status"] == "matched"
+    availability = {
+        item["artifact_id"]: item["available"] for item in data["evidence_links"]
+    }
+    assert availability["rop_recipient_routing_json"] is True
+
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-detail-routing", "evt-1"
+    )
+    section_titles = [section.get("title") for section in page["sections"]]
+    assert "Recipient routing" in section_titles
+
+
+def test_rop_event_detail_recipient_routing_absent_is_safe(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-no-routing")
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-no-routing", "evt-1"
+    )
+    assert data["recipient_routing"]["available"] is False
+
+
 def test_rop_event_detail_exposes_duplicate_evidence(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,

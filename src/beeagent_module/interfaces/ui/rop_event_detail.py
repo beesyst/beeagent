@@ -74,6 +74,24 @@ def _queue_action_tone(value: str) -> str:
     return _QUEUE_ACTION_TONE.get(value, "default")
 
 
+def _routing_status_tone(value: str) -> str:
+    if value == "resolved":
+        return "success"
+    if value in ("ambiguous", "unresolved"):
+        return "warning"
+    return "muted"
+
+
+def _responsible_status_tone(value: str) -> str:
+    if value == "matched":
+        return "success"
+    if value == "not_found":
+        return "muted"
+    if value in ("ambiguous", "connector_degraded"):
+        return "warning"
+    return "muted"
+
+
 def _format_iso_datetime(value: Any) -> str:
     """Parse an ISO datetime string and return as DD.MM.YYYY, HH:MM."""
     if not isinstance(value, str) or not value.strip():
@@ -234,6 +252,7 @@ def build_rop_event_detail_read_model(
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
     action_drafts = _read_json(run_dir / "rop_action_drafts.json")
+    recipient_routing = _read_json(run_dir / "rop_recipient_routing.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
 
     norm_event = _find_event(_safe_list(normalized), event_id, event_instance_id)
@@ -616,6 +635,39 @@ def build_rop_event_detail_read_model(
     if not draft_available:
         action_draft_section = {"available": False}
 
+    recipient_routing_section: dict[str, Any] = {}
+    routing_available = False
+    if isinstance(recipient_routing, dict):
+        routing_items = _safe_list(
+            recipient_routing.get("items", recipient_routing.get("results", []))
+        )
+        for item in routing_items:
+            if not isinstance(item, dict) or item.get("event_id") != event_id:
+                continue
+            if (
+                event_instance_id is not None
+                and item.get("event_instance_id") != event_instance_id
+            ):
+                continue
+            responsible = _safe_dict(item.get("responsible"))
+            recipient_routing_section = {
+                "available": True,
+                "recipient": _str(item.get("recipient")),
+                "recipient_candidates": _safe_list(item.get("recipient_candidates")),
+                "recipient_evidence_source": _str(
+                    item.get("recipient_evidence_source")
+                ),
+                "recipient_status": _str(item.get("recipient_status")),
+                "responsible_status": _str(responsible.get("status")),
+                "proposed_responsible_user_id": responsible.get("user_id"),
+                "proposed_responsible_name": _str(responsible.get("name")),
+                "proposed_responsible_email": _str(responsible.get("email")),
+            }
+            routing_available = True
+            break
+    if not routing_available:
+        recipient_routing_section = {"available": False}
+
     attachments_section: list[dict[str, Any]] = []
     if norm_event:
         for att in _safe_list(norm_event.get("attachments")):
@@ -640,6 +692,7 @@ def build_rop_event_detail_read_model(
         "rop_final_decisions_json",
         "bitrix_reconciliation_json",
         "rop_action_drafts_json",
+        "rop_recipient_routing_json",
         "rop_review_table_tsv",
         "operator_summary_json",
     ]
@@ -687,6 +740,7 @@ def build_rop_event_detail_read_model(
         "final_decision": final_decision_section,
         "bitrix": bitrix_section,
         "action_draft": action_draft_section,
+        "recipient_routing": recipient_routing_section,
         "attachments": attachments_section,
         "evidence_links": evidence_links,
         "operator_summary": operator_text,
@@ -763,6 +817,7 @@ def build_rop_event_detail_page_model(
     final_decision = _safe_dict(data.get("final_decision"))
     bitrix = _safe_dict(data.get("bitrix"))
     action_draft = _safe_dict(data.get("action_draft"))
+    recipient_routing = _safe_dict(data.get("recipient_routing"))
     attachments = _safe_list(data.get("attachments"))
     evidence_links = _safe_list(data.get("evidence_links"))
 
@@ -1085,6 +1140,41 @@ def build_rop_event_detail_page_model(
                     _kv(t("Action type", lang), action_draft.get("action_type")),
                     _kv(t("Summary", lang), action_draft.get("summary")),
                     _kv(t("Draft status", lang), action_draft.get("draft_status")),
+                ]
+            ),
+        },
+        {
+            "kind": "key_value",
+            "title": t("Recipient routing", lang),
+            "no_data": not recipient_routing.get("available", False),
+            "items": _page_kv_items(
+                [
+                    _kv(t("Recipient", lang), recipient_routing.get("recipient")),
+                    _kv(
+                        t("Recipient evidence", lang),
+                        recipient_routing.get("recipient_evidence_source"),
+                    ),
+                    _kv(
+                        t("Recipient status", lang),
+                        recipient_routing.get("recipient_status"),
+                        variant="badge",
+                        tone=_routing_status_tone(
+                            recipient_routing.get("recipient_status", "")
+                        ),
+                    ),
+                    _kv(
+                        t("Proposed responsible", lang),
+                        recipient_routing.get("proposed_responsible_name")
+                        or recipient_routing.get("proposed_responsible_email"),
+                    ),
+                    _kv(
+                        t("Responsible status", lang),
+                        recipient_routing.get("responsible_status"),
+                        variant="badge",
+                        tone=_responsible_status_tone(
+                            recipient_routing.get("responsible_status", "")
+                        ),
+                    ),
                 ]
             ),
         },

@@ -37,6 +37,10 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
             "not found",
         ),
         (
+            lambda data: data["rop"]["mailbox_poll"].update(all_sources="true"),
+            "all_sources",
+        ),
+        (
             lambda data: data["rop"]["sources"][1].update(
                 source_type="json_batch",
                 batch={"path": "storage/mock/rop_batch_sample.json", "period": "x"},
@@ -46,6 +50,28 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
         (
             lambda data: data["rop"]["sources"][1].update(authority="draft_only"),
             "read_only",
+        ),
+        (
+            lambda data: data["rop"]["sources"][1].update(routing="invalid"),
+            "routing",
+        ),
+        (
+            lambda data: data["rop"]["sources"][1].update(
+                routing={"recipient_email": "not-an-email"}
+            ),
+            "recipient_email",
+        ),
+        (
+            lambda data: data["rop"]["sources"][1].update(
+                routing={"recipient_email": "a b@welding.kz"}
+            ),
+            "recipient_email",
+        ),
+        (
+            lambda data: data["rop"]["sources"][1].update(
+                routing={"recipient_email": "a@welding.kz", "other": "x"}
+            ),
+            "Unsupported",
         ),
     ],
 )
@@ -58,4 +84,33 @@ def test_mailbox_poll_settings_fail_fast(monkeypatch, mutate, match):
     changed = deepcopy(settings)
     mutate(changed)
     with pytest.raises(RuntimeError, match=match):
+        validate_settings(changed)
+
+
+def _base_env(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+
+
+def test_mailbox_poll_all_sources_true_with_enabled_mailbox_passes(
+    monkeypatch,
+) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["mailbox_poll"]["all_sources"] = True
+    validate_settings(changed)
+
+
+def test_mailbox_poll_all_sources_true_without_mailbox_source_fails(
+    monkeypatch,
+) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["mailbox_poll"]["all_sources"] = True
+    changed["rop"]["sources"][1]["enabled"] = False
+    with pytest.raises(RuntimeError, match="all_sources"):
         validate_settings(changed)

@@ -16,6 +16,7 @@ ALLOWED_METHODS: frozenset[str] = frozenset(
         "crm.lead.list",
         "crm.contact.list",
         "crm.company.list",
+        "user.get",
     }
 )
 ENTITY_TYPE_NAMES: dict[int, str] = {
@@ -160,6 +161,21 @@ class BitrixReadonlyClient:
 
     def category_list(self, entity_type_id: int) -> dict[str, Any]:
         return self.call("crm.category.list", {"entityTypeId": entity_type_id})
+
+    def list_users(
+        self,
+        select: list[str] | None = None,
+        start: int = 0,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if select:
+            params["select"] = select
+        if start:
+            params["start"] = start
+        if limit:
+            params["limit"] = limit
+        return self.call("user.get", params)
 
     def search_candidates(
         self,

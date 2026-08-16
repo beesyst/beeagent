@@ -8,6 +8,28 @@ from pathlib import Path
 from typing import Any
 
 ACTION_DRAFTS_ARTIFACT = "rop_action_drafts.json"
+RECIPIENT_ROUTING_ARTIFACT = "rop_recipient_routing.json"
+
+
+def _load_routing_lookup(run_dir: Path) -> dict[str, dict[str, Any]]:
+    routing_path = run_dir / RECIPIENT_ROUTING_ARTIFACT
+    if not routing_path.exists():
+        return {}
+    try:
+        data = json.loads(routing_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    items = data.get("items", []) if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        return {}
+    lookup: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        event_id = item.get("event_id")
+        if isinstance(event_id, str) and event_id and event_id not in lookup:
+            lookup[event_id] = item
+    return lookup
 
 
 def build_action_drafts(
@@ -29,6 +51,8 @@ def build_action_drafts(
     if not isinstance(items_raw, list):
         raise ValueError("reconciliation items must be a list")
 
+    routing_lookup = _load_routing_lookup(run_dir)
+
     action_items: list[dict[str, Any]] = []
     warnings: list[str] = []
 
@@ -36,7 +60,12 @@ def build_action_drafts(
         if not isinstance(item, dict):
             continue
         try:
-            draft = _build_action_draft_item(item, run_id=run_id)
+            routing_evidence = routing_lookup.get(str(item.get("event_id", "")), {})
+            draft = _build_action_draft_item(
+                item,
+                run_id=run_id,
+                routing_evidence=routing_evidence,
+            )
             action_items.append(draft)
         except Exception as exc:
             warnings.append(
@@ -98,6 +127,7 @@ def build_action_drafts(
 def _build_action_draft_item(
     item: dict[str, Any],
     run_id: str,
+    routing_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_id = item.get("event_id", "")
     bot_case_type = item.get("bot_case_type", "")
@@ -112,6 +142,11 @@ def _build_action_draft_item(
 
     if queue == "ignore":
         needs_manual = False
+
+    routing = routing_evidence if isinstance(routing_evidence, dict) else {}
+    responsible = routing.get("responsible")
+    if not isinstance(responsible, dict):
+        responsible = {}
 
     return {
         "action_draft_id": str(uuid.uuid4()),
@@ -129,9 +164,20 @@ def _build_action_draft_item(
         "safe_to_use_as_target": safe_target,
         "target_entity_type": item.get("bitrix_entity_type", ""),
         "target_entity_id": item.get("bitrix_entity_id"),
+        "recipient": str(routing.get("recipient", "")),
+        "recipient_evidence_source": str(
+            routing.get("recipient_evidence_source", "")
+        ),
+        "recipient_status": str(routing.get("recipient_status", "")),
+        "proposed_responsible_user_id": responsible.get("user_id"),
+        "proposed_responsible_name": str(responsible.get("name", "")),
+        "proposed_responsible_email": str(responsible.get("email", "")),
+        "responsible_status": str(responsible.get("status", "")),
+        "responsible_reason": str(responsible.get("reason", "")),
         "evidence_refs": [
             "bitrix_reconciliation_json",
             "classified_events_json",
+            "rop_recipient_routing_json",
         ],
         "read_only": True,
     }

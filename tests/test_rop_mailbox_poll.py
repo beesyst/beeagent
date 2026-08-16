@@ -12,6 +12,116 @@ from beeagent_module.cases.rop_mailbox_poll import (
 )
 
 
+class _MultiPollMailbox:
+    def __init__(self, uidvalidity: int, uids: list[int]) -> None:
+        self.uidvalidity = uidvalidity
+        self.uids = uids
+        self.fetched: list[int] = []
+
+    def uid_state(self, _folder: str):
+        return self.uidvalidity, self.uids
+
+    def fetch_uids(self, _folder: str, uids: list[int], *, expected_uidvalidity: int):
+        assert expected_uidvalidity == self.uidvalidity
+        self.fetched = uids
+        return [b"raw"] * len(uids)
+
+
+def _multi_poll_settings() -> dict:
+    return {
+        "rop": {
+            "mailbox_poll": {
+                "enabled": True,
+                "source_id": "source_a",
+                "all_sources": True,
+            },
+            "sources": [
+                {
+                    "source_id": "source_a",
+                    "source_type": "mailbox_readonly",
+                    "authority": "read_only",
+                    "enabled": True,
+                    "items_max": 20,
+                    "mailbox": {
+                        "host": "imap.example",
+                        "folder": "INBOX",
+                        "username_env": "TEST_USER_A",
+                        "password_env": "TEST_PASSWORD_A",
+                        "port": 993,
+                        "use_ssl": True,
+                    },
+                },
+                {
+                    "source_id": "source_b",
+                    "source_type": "mailbox_readonly",
+                    "authority": "read_only",
+                    "enabled": True,
+                    "items_max": 20,
+                    "mailbox": {
+                        "host": "imap.example",
+                        "folder": "INBOX",
+                        "username_env": "TEST_USER_B",
+                        "password_env": "TEST_PASSWORD_B",
+                        "port": 993,
+                        "use_ssl": True,
+                    },
+                },
+            ],
+            "dashboard": {"default_period": "7d"},
+        },
+        "bitrix": {"enabled": True, "reconciliation": {"enabled": True}},
+    }
+
+
+def _multi_poll_env(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_USER_A", "user_a")
+    monkeypatch.setenv("TEST_PASSWORD_A", "pass_a")
+    monkeypatch.setenv("TEST_USER_B", "user_b")
+    monkeypatch.setenv("TEST_PASSWORD_B", "pass_b")
+
+
+def _patch_multi_mailboxes(
+    monkeypatch, mailboxes: dict[str, _MultiPollMailbox]
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda _host, _port, _ssl, username, _password: mailboxes[username],
+    )
+
+
+def _patch_multi_postprocessing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {
+            "status": "ok",
+            "module_status": "ok",
+            "source": {},
+            "run_id": "run-" + str(_kwargs["source_id"]),
+        },
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+
+
 class _FakeImap:
     def __init__(
         self,
@@ -274,6 +384,7 @@ def test_poll_oldest_batch_advances_checkpoint_after_full_flow(
         lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
     )
     for name, result in (
+        ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
         ("build_action_drafts", {}),
         ("build_context_enrichment", {}),
@@ -417,6 +528,7 @@ def test_poll_rebaseline_preserves_other_sources_and_replaces_stale_source(
 @pytest.mark.parametrize(
     "failing_stage",
     [
+        "build_recipient_routing_artifact",
         "export_review_tsv_for_run",
         "run_reconciliation",
         "build_action_drafts",
@@ -454,6 +566,7 @@ def test_poll_commit_gate_at_least_once_on_postprocessing_failure(
         lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
     )
     successful = {
+        "build_recipient_routing_artifact": lambda *args, **kwargs: {},
         "export_review_tsv_for_run": lambda *args, **kwargs: "x",
         "run_reconciliation": lambda *args, **kwargs: {"status": "ok"},
         "build_action_drafts": lambda *args, **kwargs: {},
@@ -486,3 +599,298 @@ def test_poll_commit_gate_at_least_once_on_postprocessing_failure(
     assert (
         json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 100
     )
+
+
+def test_poll_all_sources_processes_all_enabled(monkeypatch, tmp_path: Path):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 200,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [101, 102]),
+        "user_b": _MultiPollMailbox(9, [201, 202]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    _patch_multi_postprocessing(monkeypatch)
+    handle_mailbox_poll(
+        _multi_poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+    )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"]["last_processed_uid"] == 102
+    assert data["sources"]["source_b"]["last_processed_uid"] == 202
+    assert mailboxes["user_a"].fetched == [101, 102]
+    assert mailboxes["user_b"].fetched == [201, 202]
+
+
+def test_poll_multi_source_no_new_messages_skips_pipeline(
+    monkeypatch, tmp_path: Path
+):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 200,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 300,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [100, 200]),
+        "user_b": _MultiPollMailbox(9, [250, 300]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: pytest.fail("pipeline"),
+    )
+    before = path.read_text()
+    handle_mailbox_poll(
+        _multi_poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+    )
+    assert path.read_text() == before
+    assert mailboxes["user_a"].fetched == []
+    assert mailboxes["user_b"].fetched == []
+
+
+def test_poll_source_failure_isolated_and_checkpoint_preserved(
+    monkeypatch, tmp_path: Path
+):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 200,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [101, 102]),
+        "user_b": _MultiPollMailbox(99, [201, 202]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    _patch_multi_postprocessing(monkeypatch)
+    handle_mailbox_poll(
+        _multi_poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+    )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"]["last_processed_uid"] == 102
+    assert data["sources"]["source_b"]["last_processed_uid"] == 200
+
+
+def test_poll_all_sources_fail_raises(monkeypatch, tmp_path: Path):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 200,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(99, [101, 102]),
+        "user_b": _MultiPollMailbox(98, [201, 202]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    _patch_multi_postprocessing(monkeypatch)
+    with pytest.raises(RuntimeError, match="all selected sources"):
+        handle_mailbox_poll(
+            _multi_poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+        )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"]["last_processed_uid"] == 100
+    assert data["sources"]["source_b"]["last_processed_uid"] == 200
+
+
+def test_poll_new_source_baseline_preserves_existing_checkpoints(
+    monkeypatch, tmp_path: Path
+):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [50, 100]),
+        "user_b": _MultiPollMailbox(9, [10, 20, 30]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: pytest.fail("pipeline"),
+    )
+    handle_mailbox_poll(
+        _multi_poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+    )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"] == {
+        "folder": "INBOX",
+        "uidvalidity": 7,
+        "last_processed_uid": 100,
+    }
+    assert data["sources"]["source_b"]["folder"] == "INBOX"
+    assert data["sources"]["source_b"]["uidvalidity"] == 9
+    assert data["sources"]["source_b"]["last_processed_uid"] == 30
+    assert mailboxes["user_a"].fetched == []
+    assert mailboxes["user_b"].fetched == []
+
+
+def test_poll_per_source_rebaseline_preserves_other_sources(
+    monkeypatch, tmp_path: Path
+):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 200,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [100]),
+        "user_b": _MultiPollMailbox(9, [201, 202, 203]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: pytest.fail("pipeline"),
+    )
+    handle_mailbox_poll(
+        _multi_poll_settings(),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+        rebaseline=True,
+        source_id="source_b",
+    )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"]["last_processed_uid"] == 100
+    assert data["sources"]["source_b"]["last_processed_uid"] == 203
+    assert mailboxes["user_a"].fetched == []
+    assert mailboxes["user_b"].fetched == []
+
+
+def test_poll_source_id_override_polls_only_that_source(monkeypatch, tmp_path: Path):
+    _multi_poll_env(monkeypatch)
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source_a": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                },
+                "source_b": {
+                    "folder": "INBOX",
+                    "uidvalidity": 9,
+                    "last_processed_uid": 200,
+                },
+            },
+        },
+    )
+    mailboxes = {
+        "user_a": _MultiPollMailbox(7, [101, 102]),
+        "user_b": _MultiPollMailbox(9, [201, 202]),
+    }
+    _patch_multi_mailboxes(monkeypatch, mailboxes)
+    _patch_multi_postprocessing(monkeypatch)
+    handle_mailbox_poll(
+        _multi_poll_settings(),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+        source_id="source_a",
+    )
+    data = json.loads(path.read_text())
+    assert data["sources"]["source_a"]["last_processed_uid"] == 102
+    assert data["sources"]["source_b"]["last_processed_uid"] == 200
+    assert mailboxes["user_a"].fetched == [101, 102]
+    assert mailboxes["user_b"].fetched == []
+
+
+def test_poll_source_id_and_all_sources_conflict(monkeypatch, tmp_path: Path):
+    _multi_poll_env(monkeypatch)
+    with pytest.raises(RuntimeError, match="cannot be used together"):
+        handle_mailbox_poll(
+            _multi_poll_settings(),
+            tmp_path,
+            tmp_path,
+            logging.getLogger("test"),
+            source_id="source_a",
+            all_sources=True,
+        )

@@ -287,6 +287,21 @@ BeeAgent уже прошёл этап **module platform v0**:
 - Event Detail показывает bounded duplicate evidence (candidate, confidence, reason) и `base_case_type`;
 - reviewed It20 reason code `duplicate_candidate_confirmed` покрыт reason catalog.
 
+Итерация 36 реализует:
+
+- production ROP mailbox poll обрабатывает несколько enabled read-only mailbox sources независимо;
+- backward-compatible `rop.mailbox_poll.all_sources` (без дублирующего списка source IDs);
+- per-source UIDVALIDITY / last_processed_uid checkpoint: продвижение только после полного успешного flow source, failure одного source не блокирует остальные и не откатывает успешные checkpoints;
+- новый source без checkpoint получает только свой baseline без изменения существующих checkpoints;
+- per-source poll/rebaseline override через `./start.sh rop poll --source-id <id>`;
+- optional business fallback `rop.sources[].routing.recipient_email` (не IMAP username, не Bitrix ID);
+- deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved; несколько адресов на одном evidence level → `ambiguous` без выбора первого; `Cc` только evidence, никогда responsible;
+- BeeAgent-owned read-only Bitrix `user.get` directory lookup (exact normalized active user email, bounded pagination, не per-email API call);
+- новый read-only artifact `storage/runs/<run_id>/rop_recipient_routing.json` с `event_id` + `event_instance_id`, source provenance, recipient/ responsible statuses (resolved/ambiguous/unresolved, matched/not_found/connector_degraded/not_attempted);
+- обогащение `rop_action_drafts.json` proposed recipient/responsible evidence при сохранении `read_only`/`draft_only`;
+- секция Recipient routing на read-only Event Detail странице;
+- без CRM/mailbox write-back, `automation_allowed=false`, `bitrix_write_allowed=false`, `beeagent-rop` без изменений.
+
 BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
 
 Текущий фокус:
@@ -592,9 +607,19 @@ principal token rotation требует повторного входа; каж�
 # Явное recovery при UIDVALIDITY change или повреждённом checkpoint.
 ./start.sh rop poll --rebaseline
 
+# Poll только одного source (в т.ч. per-source rebaseline).
+./start.sh rop poll --source-id hotline_mailbox
+./start.sh rop poll --source-id hotline_mailbox --rebaseline
+
+# Poll всех enabled read-only mailbox sources (overrides rop.mailbox_poll.all_sources).
+./start.sh rop poll --all-sources
+
 # Checkpoint: storage/interfaces/rop_mailbox_checkpoint.json.
 # Первый poll создаёт baseline на текущем highest UID и не обрабатывает историю.
 # Периодичность задаётся внешним systemd timer, не BeeAgent loop.
+# rop.mailbox_poll.all_sources: true включает multi-source mode;
+# каждый source хранит собственный UIDVALIDITY/last_processed_uid checkpoint,
+# новый source получает только свой baseline, failure одного source не блокирует остальные.
 
 # Запустить ROP batch через default enabled source из config/settings.yml.
 # Сейчас это может быть hotline_mailbox, если он включён в rop.sources.
@@ -1155,12 +1180,29 @@ rop:
         folder_env: "ROP_MAILBOX_FOLDER"
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
+      routing:
+        recipient_email: "hotline@welding.kz"
 ```
 
 Для `mailbox_readonly` в config хранятся имена env-переменных.
 `ROP_MAILBOX_HOST` должен содержать IMAP host, например `web01.srv.welding.kz`, без `https://` и без `/webmail`.
 `ROP_MAILBOX_FOLDER` задаёт mailbox folder, например `INBOX` или `welding`.
 `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
+`routing.recipient_email` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
+
+Production mailbox polling:
+
+```
+rop:
+  mailbox_poll:
+    enabled: true
+    source_id: "hotline_mailbox"
+    all_sources: false
+```
+
+- `source_id` — default single-source mode (backward-compatible);
+- `all_sources: true` — poll каждый enabled read-only `mailbox_readonly` source независимо, с собственным checkpoint;
+- per-source override/rebaseline: `./start.sh rop poll --source-id <id>`.
 
 Обязательный source profile contract для каждого `rop.sources[]`:
 
@@ -1169,6 +1211,18 @@ rop:
 - `display_name`
 
 Эти поля валидируются fail-fast в `core/settings.py` и прокидываются в BeeAgent-owned artifacts как `source_role`, `client_id`, `source_display_name`.
+
+### ROP recipient routing
+
+`storage/runs/<run_id>/rop_recipient_routing.json` фиксирует адресную принадлежность каждого письма:
+
+- deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved;
+- несколько адресов на одном evidence level → `ambiguous` (без выбора первого);
+- `cc` сохраняется как evidence, но никогда не становится responsible;
+- proposed Bitrix responsible — exact normalized active user email через read-only `user.get` directory (bounded pagination);
+- статусы: recipient `resolved`/`ambiguous`/`unresolved`; responsible `matched`/`not_found`/`ambiguous`/`connector_degraded`/`not_attempted`;
+- каждый item содержит `event_id` + `event_instance_id` + source provenance;
+- action drafts и Event Detail показывают bounded recipient/responsible evidence без CRM/mailbox write-back.
 
 ### ROP email preview
 
