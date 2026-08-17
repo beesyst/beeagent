@@ -8425,6 +8425,104 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 - tests/docs/security checks are completed;
 - `pyproject.toml.version` is not changed.
 
+### Итерация 37 — Controlled Bitrix CRM write-back v0
+
+**Статус:** PLANNED
+
+#### Goal
+
+Перевести существующий read-only/draft Bitrix flow в ограниченный production write-back: каждое классифицированное ROP-событие должно получить явное Bitrix delivery decision, новые лиды создаваться через `crm.item.add`, письма по безопасно найденным существующим CRM entities прикрепляться к ним без создания дубля, а ответственный определяться из уже реализованного recipient routing.
+
+Поле `should_rop_see` не должно разрешать или запрещать отправку в Bitrix.
+
+#### Scope
+
+- реализовать write-back только в `beeagent`, без изменений `beeagent-rop`;
+- сохранить существующий `BitrixReadonlyClient` строго read-only;
+- добавить отдельную bounded execution-capable Bitrix boundary с отдельным write credential;
+- добавить config-driven `bitrix.writeback` policy и fail-fast validation;
+- хранить Bitrix `stageId` как изменяемый config, а не hardcoded business value;
+- включить `irrelevant` в read-only reconciliation и delivery planning;
+- использовать existing safe reconciliation result для выбора existing CRM target;
+- использовать existing `rop_recipient_routing.json` для exact responsible resolution;
+- `new_lead` и `irrelevant` без safe existing target создавать как Lead через `crm.item.add`, `entityTypeId=1`;
+- `existing_deal` / `duplicate` и любой safe existing target обрабатывать через attach-existing path без создания нового Lead;
+- unsafe/ambiguous target или responsible переводить в explicit pending/deferred state без silent drop;
+- использовать deterministic cross-run event identity для idempotency;
+- сохранять durable write-back intent до mailbox checkpoint commit;
+- добавить bounded retry/recovery для retryable и uncertain Bitrix failures;
+- сохранять per-run write-back state/results без credentials, raw `.eml` и raw attachments;
+- добавить controlled CLI/runtime path для pending write-back execution;
+- синхронизировать operator-facing draft semantics с execution plan;
+- обновить tests и документацию.
+
+#### Excluded
+
+- изменения classification, duplicate thresholds или taxonomy в `beeagent-rop`;
+- использование deprecated `crm.lead.add`;
+- broad `crm.item.update` / `crm.item.delete`;
+- automatic reassignment существующей CRM entity;
+- fuzzy responsible or CRM-target matching;
+- использование `should_rop_see` как execution gate;
+- использование `rop.routing.queues.*.bitrix_category` как Bitrix stage ID;
+- hardcoded customer stage names/IDs;
+- raw `.eml` persistence в BeeAgent artifacts;
+- arbitrary custom-field upload вместо официального email-binding contract;
+- Bitrix write actions из GET/UI routes;
+- operator control panel и config editor;
+- dependency changes без отдельного обоснования.
+
+#### Deliverable
+
+BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-back flow: каждый processed event получает `create_lead`, `attach_existing` или explicit deferred outcome; successful new Lead получает configured stage и exact mapped responsible; повторный processing того же email не создаёт второй CRM object или второе email attachment.
+
+#### Acceptance criteria
+
+- `should_rop_see=false` не исключает событие из Bitrix delivery planning;
+- `irrelevant` без existing target создаётся как Lead в configured classification stage;
+- `new_lead` создаётся через `crm.item.add` с `entityTypeId=1`;
+- safe existing lead/deal получает email attachment и не создаёт новый Lead;
+- ambiguous/unsafe existing target никогда не выбирается автоматически;
+- unresolved/ambiguous responsible не заменяется Bitrix caller default;
+- configured stage IDs валидируются до POST;
+- repeated run/poll одного email не создаёт duplicate Lead;
+- uncertain POST outcome reconciles before retry;
+- Bitrix outage не теряет pending work и не требует повторного mailbox ingestion;
+- read-only Bitrix client не получает write methods;
+- credentials/raw email/raw attachments не попадают в logs/artifacts;
+- `beeagent-rop` public contract остаётся неизменным.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted settings, reconciliation, recipient-routing, write-back planner and executor tests;
+- create-lead, irrelevant, existing-target, duplicate, ambiguous and degraded scenarios;
+- idempotent replay and ambiguous-timeout recovery;
+- mailbox checkpoint versus durable-intent regression;
+- 400/401/403/429/5xx/timeout/malformed-response scenarios;
+- dry-run/disabled mode with zero Bitrix mutations;
+- controlled Bitrix test-portal smoke after stage IDs and email-binding API are confirmed;
+- logs/artifacts review for secret and raw-content leakage;
+- SAST;
+- DAST-style external connector misuse/error checks;
+- SCA only if dependency files unexpectedly change.
+
+#### DoD
+
+- production write-back authority находится только в BeeAgent server-side policy;
+- all classified events enter the delivery plan without `should_rop_see` filtering;
+- create versus attach behavior is deterministic and explainable;
+- durable pending state survives restart/retry;
+- mailbox checkpoint semantics no longer depend on Bitrix availability after durable intent persistence;
+- CRM creation and email attachment are idempotent;
+- stage/responsible/target failures fail closed;
+- exact official Bitrix email-binding contract is documented and tested;
+- no unnecessary write methods are exposed;
+- no changes are required in `beeagent-rop`;
+- dependencies and `uv.lock` remain unchanged unless separately approved;
+- `pyproject.toml.version` is not changed;
+- tests, smoke evidence, logs/artifacts and documentation are ready for PR review.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
