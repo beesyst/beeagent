@@ -74,6 +74,24 @@ def _queue_action_tone(value: str) -> str:
     return _QUEUE_ACTION_TONE.get(value, "default")
 
 
+def _routing_status_tone(value: str) -> str:
+    if value == "resolved":
+        return "success"
+    if value in ("ambiguous", "unresolved"):
+        return "warning"
+    return "muted"
+
+
+def _responsible_status_tone(value: str) -> str:
+    if value == "matched":
+        return "success"
+    if value == "not_found":
+        return "muted"
+    if value in ("ambiguous", "connector_degraded"):
+        return "warning"
+    return "muted"
+
+
 def _format_iso_datetime(value: Any) -> str:
     """Parse an ISO datetime string and return as DD.MM.YYYY, HH:MM."""
     if not isinstance(value, str) or not value.strip():
@@ -148,15 +166,14 @@ def _find_event(
 ) -> dict[str, Any] | None:
     if not isinstance(events, list):
         return None
-    for evt in events:
-        if not isinstance(evt, dict) or evt.get("event_id") != event_id:
-            continue
-        if (
-            event_instance_id is None
-            or evt.get("event_instance_id") == event_instance_id
-        ):
-            return evt
-    return None
+    return _select_event_occurrence(
+        [
+            evt
+            for evt in events
+            if isinstance(evt, dict) and evt.get("event_id") == event_id
+        ],
+        event_instance_id,
+    )
 
 
 def _find_events_for_id(events: list | None, event_id: str) -> list[dict[str, Any]]:
@@ -179,15 +196,36 @@ def _match_by_event_id(
     items = _safe_list(
         artifact.get("results", artifact.get("items", artifact.get("events", [])))
     )
-    for item in items:
-        if not isinstance(item, dict) or item.get("event_id") != event_id:
-            continue
-        if (
-            event_instance_id is None
-            or item.get("event_instance_id") == event_instance_id
-        ):
-            return item
-    return None
+    return _select_event_occurrence(
+        [
+            item
+            for item in items
+            if isinstance(item, dict) and item.get("event_id") == event_id
+        ],
+        event_instance_id,
+    )
+
+
+def _select_event_occurrence(
+    candidates: list[dict[str, Any]],
+    event_instance_id: str | None,
+) -> dict[str, Any] | None:
+    if event_instance_id is not None:
+        exact = [
+            item
+            for item in candidates
+            if item.get("event_instance_id") == event_instance_id
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        legacy = [
+            item
+            for item in candidates
+            if not isinstance(item.get("event_instance_id"), str)
+            or not item.get("event_instance_id")
+        ]
+        return legacy[0] if len(candidates) == len(legacy) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _safe_artifact_ref(
@@ -234,6 +272,7 @@ def build_rop_event_detail_read_model(
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
     action_drafts = _read_json(run_dir / "rop_action_drafts.json")
+    recipient_routing = _read_json(run_dir / "rop_recipient_routing.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
 
     norm_event = _find_event(_safe_list(normalized), event_id, event_instance_id)
@@ -576,10 +615,13 @@ def build_rop_event_detail_read_model(
     bitrix_section: dict[str, Any] = {}
     bitrix_available = False
     if isinstance(bitrix_reconciliation, dict):
-        items = _safe_list(bitrix_reconciliation.get("items"))
-        for item in items:
-            if isinstance(item, dict) and item.get("event_id") == event_id:
-                bitrix_section = {
+        item = _match_by_event_id(
+            bitrix_reconciliation,
+            event_id,
+            event_instance_id,
+        )
+        if item:
+            bitrix_section = {
                     "available": True,
                     "bitrix_status": _str(
                         item.get("bitrix_match_status")
@@ -592,29 +634,49 @@ def build_rop_event_detail_read_model(
                     "entity_type": _str(item.get("entity_type", "")),
                     "entity_id": _int(item.get("entity_id", 0)),
                     "entity_url": _str(item.get("entity_url", "")),
-                }
-                bitrix_available = True
-                break
+            }
+            bitrix_available = True
     if not bitrix_available:
         bitrix_section = {"available": False}
 
     action_draft_section: dict[str, Any] = {}
     draft_available = False
     if isinstance(action_drafts, dict):
-        items = _safe_list(action_drafts.get("items", action_drafts.get("drafts", [])))
-        for item in items:
-            if isinstance(item, dict) and item.get("event_id") == event_id:
-                action_draft_section = {
+        item = _match_by_event_id(action_drafts, event_id, event_instance_id)
+        if item:
+            action_draft_section = {
                     "available": True,
                     "action_type": _str(item.get("action_type", item.get("type", ""))),
                     "summary": _str(item.get("summary", item.get("description", ""))),
                     "draft_status": _str(item.get("status", "draft")),
                     "read_only": True,
-                }
-                draft_available = True
-                break
+            }
+            draft_available = True
     if not draft_available:
         action_draft_section = {"available": False}
+
+    recipient_routing_section: dict[str, Any] = {}
+    routing_available = False
+    if isinstance(recipient_routing, dict):
+        item = _match_by_event_id(recipient_routing, event_id, event_instance_id)
+        if item:
+            responsible = _safe_dict(item.get("responsible"))
+            recipient_routing_section = {
+                "available": True,
+                "recipient": _str(item.get("recipient")),
+                "recipient_candidates": _safe_list(item.get("recipient_candidates")),
+                "recipient_evidence_source": _str(
+                    item.get("recipient_evidence_source")
+                ),
+                "recipient_status": _str(item.get("recipient_status")),
+                "responsible_status": _str(responsible.get("status")),
+                "proposed_responsible_user_id": responsible.get("user_id"),
+                "proposed_responsible_name": _str(responsible.get("name")),
+                "proposed_responsible_email": _str(responsible.get("email")),
+            }
+            routing_available = True
+    if not routing_available:
+        recipient_routing_section = {"available": False}
 
     attachments_section: list[dict[str, Any]] = []
     if norm_event:
@@ -640,6 +702,7 @@ def build_rop_event_detail_read_model(
         "rop_final_decisions_json",
         "bitrix_reconciliation_json",
         "rop_action_drafts_json",
+        "rop_recipient_routing_json",
         "rop_review_table_tsv",
         "operator_summary_json",
     ]
@@ -687,6 +750,7 @@ def build_rop_event_detail_read_model(
         "final_decision": final_decision_section,
         "bitrix": bitrix_section,
         "action_draft": action_draft_section,
+        "recipient_routing": recipient_routing_section,
         "attachments": attachments_section,
         "evidence_links": evidence_links,
         "operator_summary": operator_text,
@@ -763,6 +827,7 @@ def build_rop_event_detail_page_model(
     final_decision = _safe_dict(data.get("final_decision"))
     bitrix = _safe_dict(data.get("bitrix"))
     action_draft = _safe_dict(data.get("action_draft"))
+    recipient_routing = _safe_dict(data.get("recipient_routing"))
     attachments = _safe_list(data.get("attachments"))
     evidence_links = _safe_list(data.get("evidence_links"))
 
@@ -1085,6 +1150,41 @@ def build_rop_event_detail_page_model(
                     _kv(t("Action type", lang), action_draft.get("action_type")),
                     _kv(t("Summary", lang), action_draft.get("summary")),
                     _kv(t("Draft status", lang), action_draft.get("draft_status")),
+                ]
+            ),
+        },
+        {
+            "kind": "key_value",
+            "title": t("Recipient routing", lang),
+            "no_data": not recipient_routing.get("available", False),
+            "items": _page_kv_items(
+                [
+                    _kv(t("Recipient", lang), recipient_routing.get("recipient")),
+                    _kv(
+                        t("Recipient evidence", lang),
+                        recipient_routing.get("recipient_evidence_source"),
+                    ),
+                    _kv(
+                        t("Recipient status", lang),
+                        recipient_routing.get("recipient_status"),
+                        variant="badge",
+                        tone=_routing_status_tone(
+                            recipient_routing.get("recipient_status", "")
+                        ),
+                    ),
+                    _kv(
+                        t("Proposed responsible", lang),
+                        recipient_routing.get("proposed_responsible_name")
+                        or recipient_routing.get("proposed_responsible_email"),
+                    ),
+                    _kv(
+                        t("Responsible status", lang),
+                        recipient_routing.get("responsible_status"),
+                        variant="badge",
+                        tone=_responsible_status_tone(
+                            recipient_routing.get("responsible_status", "")
+                        ),
+                    ),
                 ]
             ),
         },

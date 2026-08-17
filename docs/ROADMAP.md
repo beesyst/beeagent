@@ -156,7 +156,7 @@ ROADMAP фиксирует iteration-level contract.
 - **Этап 1 (Итерации 0–4):** pre-MVP каркас + запуск + transport + mock/demo flow.
 - **Этап 2 (Итерации 5–10):** reusable core: cases/adapters/scheduler/observability/multi-agent + quiz + explainable recommendations.
 - **Этап 3 (Итерации 11–14):** module platform v0 (module contract, registry, context, artifact API, capability boundary).
-- **Этап 4 (Итерации 15–34):** интеграция первого реального доменного модуля (`beeagent-rop`) и развитие ROP flow до read-only customer-delivery MVP с source ingestion, artifacts, Bitrix evidence и bounded AI adjudication.
+- **Этап 4 (Итерации 15–36):** интеграция первого реального доменного модуля (`beeagent-rop`) и развитие ROP flow до read-only customer-delivery MVP с source ingestion, artifacts, Bitrix evidence и bounded AI adjudication.
 - **Этап 5 (ориентир):** оставшиеся core-side operator/product contracts; подробное развитие Web Console и operator UI ведётся в `docs/product/ui_roadmap.md`.
 - **Этап 6 (ориентир):** multi-module scaling (`beescan`, `merch`, другие модули).
 
@@ -8197,7 +8197,7 @@ Dependency model:
 
 ### Итерация 36 — ROP multi-mailbox recipient routing and Bitrix responsible draft v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -8232,8 +8232,8 @@ enabled mailbox sources
 - successful source checkpoints не откатываются из-за failure другого source;
 - новый source без checkpoint получает только свой baseline без изменения checkpoint уже существующих sources;
 - использовать уже существующие normalized fields `source_id`, `source_role`, `source_display_name`, `client_id`, `to`, `cc`, `original_recipient`, `forwarded_wrapper`;
-- добавить optional source routing fallback `routing.recipient_email` для mailbox source;
-- `routing.recipient_email` является business recipient fallback и не должен браться из IMAP username/env;
+- добавить optional source routing fallback `routing.email_recipient` для mailbox source;
+- `routing.email_recipient` является business recipient fallback и не должен браться из IMAP username/env;
 - deterministic recipient attribution precedence:
   - `original_recipient`;
   - `to`;
@@ -8280,6 +8280,8 @@ enabled mailbox sources
 - Bitrix user ID stored as source-of-truth config;
 - использование IMAP username как business recipient;
 - использование `Cc` для automatic responsible selection;
+- automatic inference of deliberate human reassignment from email forwarding;
+- responsible reassignment / override workflow;
 - assumption that existing `rop.routing.queues.*.bitrix_category` is a real Bitrix `categoryId`;
 - CRM stage/category/custom-field mapping for write-back;
 - new `region_code` contract without a concrete downstream requirement;
@@ -8338,6 +8340,10 @@ Existing draft/UI artifacts remain non-executing.
 - `automation_allowed` and `bitrix_write_allowed` remain false;
 - no CRM/mailbox mutation exists;
 - `beeagent-rop` public contract remains unchanged.
+
+#### Known limitation
+
+Deliberate human reassignment by forwarding an email from one business mailbox to another cannot be reliably distinguished from ordinary transport forwarding using email headers alone. It36 therefore preserves deterministic `original_recipient` precedence; proposed responsible remains read-only/draft-only and may require operator correction for this edge case. Automatic reassignment inference and a responsible override/reassignment workflow are outside It36 and require a separate explicit workflow/policy contract.
 
 #### Checks
 

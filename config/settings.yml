@@ -84,6 +84,7 @@ rop:
   mailbox_poll:
     enabled: true
     source_id: "hotline_mailbox"
+    sources_all: false
   email_preview:
     body_chars_max: 4000
   ai_assist:
@@ -146,6 +147,8 @@ rop:
         folder_env: "ROP_MAILBOX_FOLDER" # имя env переменной с mailbox folder
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
+      routing:
+        email_recipient: "hotline@welding.kz"
   dashboard:
     default_period: "7d"
     periods:

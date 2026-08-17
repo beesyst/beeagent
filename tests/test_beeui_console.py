@@ -3800,6 +3800,183 @@ def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
     assert availability["rop_final_decisions_json"] is True
 
 
+def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-routing")
+    (run_dir / "rop_recipient_routing.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-detail-routing",
+                "status": "ok",
+                "read_only": True,
+                "draft_only": True,
+                "directory": {"status": "loaded", "reason": None},
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "event_instance_id": "event-000001",
+                        "source_id": "hotline_mailbox",
+                        "recipient": "boss@welding.kz",
+                        "recipient_candidates": ["boss@welding.kz"],
+                        "recipient_evidence_source": "to",
+                        "recipient_status": "resolved",
+                        "responsible": {
+                            "status": "matched",
+                            "user_id": 12,
+                            "name": "Ivan Petrov",
+                            "email": "boss@welding.kz",
+                            "reason": None,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-routing", "evt-1"
+    )
+    routing = data["recipient_routing"]
+    assert routing["available"] is True
+    assert routing["recipient"] == "boss@welding.kz"
+    assert routing["recipient_evidence_source"] == "to"
+    assert routing["recipient_status"] == "resolved"
+    assert routing["proposed_responsible_user_id"] == 12
+    assert routing["proposed_responsible_name"] == "Ivan Petrov"
+    assert routing["responsible_status"] == "matched"
+    availability = {
+        item["artifact_id"]: item["available"] for item in data["evidence_links"]
+    }
+    assert availability["rop_recipient_routing_json"] is True
+
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-detail-routing", "evt-1"
+    )
+    section_titles = [section.get("title") for section in page["sections"]]
+    assert "Recipient routing" in section_titles
+
+
+def test_rop_event_detail_recipient_routing_absent_is_safe(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-no-routing")
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-no-routing", "evt-1"
+    )
+    assert data["recipient_routing"]["available"] is False
+
+
+def test_event_detail_joins_occurrence_evidence_by_event_instance_id(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-occurrence")
+    event_id = "evt-shared"
+    instances = ("event-000001", "event-000002")
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": event_id,
+                    "event_instance_id": instance_id,
+                    "source_id": "hotline_mailbox",
+                    "subject": instance_id,
+                }
+                for instance_id in instances
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": event_id,
+                    "event_instance_id": instance_id,
+                    "case_type": "new_lead",
+                }
+                for instance_id in instances
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": event_id,
+                        "event_instance_id": instance_id,
+                        "bitrix_match_status": f"matched_{index}",
+                    }
+                    for index, instance_id in enumerate(instances, start=1)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_action_drafts.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": event_id,
+                        "event_instance_id": instance_id,
+                        "action_type": f"draft_{index}",
+                    }
+                    for index, instance_id in enumerate(instances, start=1)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "rop_recipient_routing.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": event_id,
+                        "event_instance_id": instance_id,
+                        "recipient": f"recipient{index}@welding.kz",
+                        "recipient_status": "resolved",
+                        "responsible": {
+                            "status": "matched",
+                            "user_id": index,
+                        },
+                    }
+                    for index, instance_id in enumerate(instances, start=1)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-occurrence",
+        event_id,
+        event_instance_id="event-000002",
+    )
+
+    assert data["bitrix"]["bitrix_status"] == "matched_2"
+    assert data["action_draft"]["action_type"] == "draft_2"
+    assert data["recipient_routing"]["recipient"] == "recipient2@welding.kz"
+    assert data["recipient_routing"]["proposed_responsible_user_id"] == 2
+
+
 def test_rop_event_detail_exposes_duplicate_evidence(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,

@@ -8,6 +8,47 @@ from pathlib import Path
 from typing import Any
 
 ACTION_DRAFTS_ARTIFACT = "rop_action_drafts.json"
+RECIPIENT_ROUTING_ARTIFACT = "rop_recipient_routing.json"
+
+
+def _load_routing_items(run_dir: Path) -> list[dict[str, Any]]:
+    routing_path = run_dir / RECIPIENT_ROUTING_ARTIFACT
+    if not routing_path.exists():
+        return []
+    try:
+        data = json.loads(routing_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    items = data.get("items", []) if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _routing_evidence_for_event(
+    items: list[dict[str, Any]],
+    event_id: str,
+    event_instance_id: str | None,
+) -> dict[str, Any]:
+    candidates = [item for item in items if item.get("event_id") == event_id]
+    if event_instance_id:
+        exact = [
+            item
+            for item in candidates
+            if item.get("event_instance_id") == event_instance_id
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        legacy = [
+            item
+            for item in candidates
+            if not isinstance(item.get("event_instance_id"), str)
+            or not item.get("event_instance_id")
+        ]
+        return legacy[0] if len(candidates) == len(legacy) == 1 else {}
+    if len(candidates) == 1:
+        return candidates[0]
+    return {}
 
 
 def build_action_drafts(
@@ -29,6 +70,8 @@ def build_action_drafts(
     if not isinstance(items_raw, list):
         raise ValueError("reconciliation items must be a list")
 
+    routing_items = _load_routing_items(run_dir)
+
     action_items: list[dict[str, Any]] = []
     warnings: list[str] = []
 
@@ -36,7 +79,17 @@ def build_action_drafts(
         if not isinstance(item, dict):
             continue
         try:
-            draft = _build_action_draft_item(item, run_id=run_id)
+            event_instance_id = item.get("event_instance_id")
+            routing_evidence = _routing_evidence_for_event(
+                routing_items,
+                str(item.get("event_id", "")),
+                event_instance_id if isinstance(event_instance_id, str) else None,
+            )
+            draft = _build_action_draft_item(
+                item,
+                run_id=run_id,
+                routing_evidence=routing_evidence,
+            )
             action_items.append(draft)
         except Exception as exc:
             warnings.append(
@@ -98,6 +151,7 @@ def build_action_drafts(
 def _build_action_draft_item(
     item: dict[str, Any],
     run_id: str,
+    routing_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_id = item.get("event_id", "")
     bot_case_type = item.get("bot_case_type", "")
@@ -113,9 +167,15 @@ def _build_action_draft_item(
     if queue == "ignore":
         needs_manual = False
 
+    routing = routing_evidence if isinstance(routing_evidence, dict) else {}
+    responsible = routing.get("responsible")
+    if not isinstance(responsible, dict):
+        responsible = {}
+
     return {
         "action_draft_id": str(uuid.uuid4()),
         "event_id": event_id,
+        "event_instance_id": item.get("event_instance_id", ""),
         "run_id": run_id,
         "source_id": item.get("source_id", ""),
         "bot_case_type": bot_case_type,
@@ -129,9 +189,20 @@ def _build_action_draft_item(
         "safe_to_use_as_target": safe_target,
         "target_entity_type": item.get("bitrix_entity_type", ""),
         "target_entity_id": item.get("bitrix_entity_id"),
+        "recipient": str(routing.get("recipient", "")),
+        "recipient_evidence_source": str(
+            routing.get("recipient_evidence_source", "")
+        ),
+        "recipient_status": str(routing.get("recipient_status", "")),
+        "proposed_responsible_user_id": responsible.get("user_id"),
+        "proposed_responsible_name": str(responsible.get("name", "")),
+        "proposed_responsible_email": str(responsible.get("email", "")),
+        "responsible_status": str(responsible.get("status", "")),
+        "responsible_reason": str(responsible.get("reason", "")),
         "evidence_refs": [
             "bitrix_reconciliation_json",
             "classified_events_json",
+            "rop_recipient_routing_json",
         ],
         "read_only": True,
     }

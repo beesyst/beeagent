@@ -338,6 +338,22 @@ New allowlisted artifacts:
 - AI Adjudicator section when adjudicator data exists for the event
 - Final Decision section with final fields, nullable subtype/attention reason and decision source
 
+### Event detail recipient routing (It36)
+
+`/rop/events/{event_id}?run_id=<run_id>` now shows a **Recipient routing** section when `rop_recipient_routing.json` exists for the run:
+
+- `recipient` — resolved business recipient email (empty for ambiguous/unresolved)
+- `recipient_evidence_source` — `original_recipient`, `to`, `source_recipient` or empty
+- `recipient_status` — `resolved`, `ambiguous` or `unresolved`
+- `proposed responsible` — matched Bitrix active user name/email
+- `responsible_status` — `matched`, `not_found`, `ambiguous`, `connector_degraded` or `not_attempted`
+
+The read-model also exposes `recipient_routing` and adds `rop_recipient_routing_json` to evidence artifact links. The section is read-only, additive and backward-compatible: runs without the routing artifact render no section and no warning is required.
+
+New allowlisted artifact:
+
+- `rop_recipient_routing.json` — bounded per-event recipient attribution and proposed Bitrix responsible evidence (`event_id`, `event_instance_id`, source provenance, recipient/responsible statuses); `read_only=true`, `draft_only=true`; no body/raw attachment content.
+
 ### Locale-aware reason display (UI-8.4)
 
 `/rop/events/{event_id}?run_id=<run_id>&lang=ru` and `?lang=en` now render three key explanations in the requested locale using structured reason codes instead of raw AI prose:

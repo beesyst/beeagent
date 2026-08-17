@@ -36,6 +36,25 @@ runtime storage, not configuration or Git state. Use `./start.sh rop poll --reba
 only for explicit operator recovery. Scheduling belongs to an external systemd timer,
 not to a BeeAgent loop.
 
+Polling mode is controlled by `rop.mailbox_poll` in `config/settings.yml`:
+
+- `source_id` — default single-source mode (backward-compatible);
+- `sources_all: true` — poll every enabled read-only `mailbox_readonly` source independently.
+
+Optional CLI overrides:
+
+- `./start.sh rop poll --source-id <id>` — poll only that source (also for per-source rebaseline);
+- `./start.sh rop poll --all-sources` — poll all enabled read-only mailbox sources;
+- `./start.sh rop poll --rebaseline [--source-id <id>]` — reset baseline for the selected source(s).
+
+Per-source semantics:
+
+- each enabled source has its own `UIDVALIDITY` / `last_processed_uid` checkpoint entry;
+- a source checkpoint advances only after its full ROP pipeline and postprocessing succeed;
+- one source failure never blocks the other selected sources and never rolls back successful checkpoints;
+- a new source without a checkpoint receives its own baseline without resetting existing sources;
+- an explicit per-source rebaseline does not reset unrelated sources.
+
 ## Установка (dev)
 
 В корне модуля:
