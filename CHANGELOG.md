@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.3...beeagent-v0.52.0) (2026-08-17)
+
+
+### Features
+
+* **rop:** multi-mailbox recipient routing and Bitrix responsible draft ([#195](https://github.com/beesyst/beeagent/issues/195)) ([c8c137d](https://github.com/beesyst/beeagent/commit/c8c137d64285147c50a6488ba41e7bee2ed8e454))
+
 ## [0.51.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.2...beeagent-v0.51.3) (2026-08-14)
 
 
