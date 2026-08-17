@@ -109,7 +109,7 @@ def run_reconciliation(
             )
             item = _make_error_item(evt, exc.__class__.__name__)
 
-        items.append(item)
+        items.append(_with_event_instance_id(item, evt))
 
         status = item.get("bitrix_match_status", "error")
         if status.startswith("matched_"):
@@ -207,37 +207,68 @@ def _merge_events(
     normalized: list[dict[str, Any]],
     classified: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    classified_lookup = {
-        evt.get("event_id"): evt for evt in classified if evt.get("event_id")
-    }
-    normalized_lookup = {
-        evt.get("event_id"): evt for evt in normalized if evt.get("event_id")
-    }
+    normalized_by_id: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    classified_by_id: dict[str, list[dict[str, Any]]] = {}
+    for index, event in enumerate(normalized):
+        event_id = event.get("event_id")
+        if event_id:
+            normalized_by_id.setdefault(event_id, []).append((index, event))
+    for event in classified:
+        event_id = event.get("event_id")
+        if event_id:
+            classified_by_id.setdefault(event_id, []).append(event)
 
-    all_ids: list[str] = []
-    seen: set[str] = set()
-
-    for evt in classified:
-        eid = evt.get("event_id")
-        if eid and eid not in seen:
-            all_ids.append(eid)
-            seen.add(eid)
-
-    for evt in normalized:
-        eid = evt.get("event_id")
-        if eid and eid not in seen:
-            all_ids.append(eid)
-            seen.add(eid)
-
+    used_normalized: set[int] = set()
     merged: list[dict[str, Any]] = []
-    for eid in all_ids:
-        cls = classified_lookup.get(eid, {})
-        norm = normalized_lookup.get(eid, {})
-        event = {**norm, **cls}
-        event["event_id"] = eid
-        merged.append(event)
+    for classified_event in classified:
+        event_id = classified_event.get("event_id")
+        if not event_id:
+            continue
+        candidates = [
+            pair
+            for pair in normalized_by_id.get(event_id, [])
+            if pair[0] not in used_normalized
+        ]
+        instance_id = _event_instance_id(classified_event)
+        exact = [
+            pair
+            for pair in candidates
+            if instance_id is not None and _event_instance_id(pair[1]) == instance_id
+        ]
+        if len(exact) == 1:
+            index, normalized_event = exact[0]
+            used_normalized.add(index)
+            merged.append({**normalized_event, **classified_event})
+            continue
+        if (
+            len(candidates) == 1
+            and len(classified_by_id.get(event_id, [])) == 1
+        ):
+            index, normalized_event = candidates[0]
+            used_normalized.add(index)
+            merged.append({**normalized_event, **classified_event})
+            continue
+        merged.append(dict(classified_event))
 
+    for index, normalized_event in enumerate(normalized):
+        if index not in used_normalized and normalized_event.get("event_id"):
+            merged.append(dict(normalized_event))
     return merged
+
+
+def _event_instance_id(event: dict[str, Any]) -> str | None:
+    value = event.get("event_instance_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _with_event_instance_id(
+    item: dict[str, Any],
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    instance_id = _event_instance_id(event)
+    if instance_id is not None:
+        item["event_instance_id"] = instance_id
+    return item
 
 
 def _reconcile_event(

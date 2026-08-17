@@ -290,11 +290,11 @@ BeeAgent уже прошёл этап **module platform v0**:
 Итерация 36 реализует:
 
 - production ROP mailbox poll обрабатывает несколько enabled read-only mailbox sources независимо;
-- backward-compatible `rop.mailbox_poll.all_sources` (без дублирующего списка source IDs);
+- `rop.mailbox_poll.sources_all` (без дублирующего списка source IDs);
 - per-source UIDVALIDITY / last_processed_uid checkpoint: продвижение только после полного успешного flow source, failure одного source не блокирует остальные и не откатывает успешные checkpoints;
 - новый source без checkpoint получает только свой baseline без изменения существующих checkpoints;
 - per-source poll/rebaseline override через `./start.sh rop poll --source-id <id>`;
-- optional business fallback `rop.sources[].routing.recipient_email` (не IMAP username, не Bitrix ID);
+- optional business fallback `rop.sources[].routing.email_recipient` (не IMAP username, не Bitrix ID);
 - deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved; несколько адресов на одном evidence level → `ambiguous` без выбора первого; `Cc` только evidence, никогда responsible;
 - BeeAgent-owned read-only Bitrix `user.get` directory lookup (exact normalized active user email, bounded pagination, не per-email API call);
 - новый read-only artifact `storage/runs/<run_id>/rop_recipient_routing.json` с `event_id` + `event_instance_id`, source provenance, recipient/ responsible statuses (resolved/ambiguous/unresolved, matched/not_found/connector_degraded/not_attempted);
@@ -611,13 +611,13 @@ principal token rotation требует повторного входа; каж�
 ./start.sh rop poll --source-id hotline_mailbox
 ./start.sh rop poll --source-id hotline_mailbox --rebaseline
 
-# Poll всех enabled read-only mailbox sources (overrides rop.mailbox_poll.all_sources).
+# Poll всех enabled read-only mailbox sources (overrides rop.mailbox_poll.sources_all).
 ./start.sh rop poll --all-sources
 
 # Checkpoint: storage/interfaces/rop_mailbox_checkpoint.json.
 # Первый poll создаёт baseline на текущем highest UID и не обрабатывает историю.
 # Периодичность задаётся внешним systemd timer, не BeeAgent loop.
-# rop.mailbox_poll.all_sources: true включает multi-source mode;
+# rop.mailbox_poll.sources_all: true включает multi-source mode;
 # каждый source хранит собственный UIDVALIDITY/last_processed_uid checkpoint,
 # новый source получает только свой baseline, failure одного source не блокирует остальные.
 
@@ -1181,14 +1181,14 @@ rop:
         username_env: "ROP_MAILBOX_USERNAME"
         password_env: "ROP_MAILBOX_PASSWORD"
       routing:
-        recipient_email: "hotline@welding.kz"
+        email_recipient: "hotline@welding.kz"
 ```
 
 Для `mailbox_readonly` в config хранятся имена env-переменных.
 `ROP_MAILBOX_HOST` должен содержать IMAP host, например `web01.srv.welding.kz`, без `https://` и без `/webmail`.
 `ROP_MAILBOX_FOLDER` задаёт mailbox folder, например `INBOX` или `welding`.
 `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
-`routing.recipient_email` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
+`routing.email_recipient` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
 
 Production mailbox polling:
 
@@ -1197,11 +1197,11 @@ rop:
   mailbox_poll:
     enabled: true
     source_id: "hotline_mailbox"
-    all_sources: false
+    sources_all: false
 ```
 
 - `source_id` — default single-source mode (backward-compatible);
-- `all_sources: true` — poll каждый enabled read-only `mailbox_readonly` source независимо, с собственным checkpoint;
+- `sources_all: true` — poll каждый enabled read-only `mailbox_readonly` source независимо, с собственным checkpoint;
 - per-source override/rebaseline: `./start.sh rop poll --source-id <id>`.
 
 Обязательный source profile contract для каждого `rop.sources[]`:
@@ -1223,6 +1223,8 @@ rop:
 - статусы: recipient `resolved`/`ambiguous`/`unresolved`; responsible `matched`/`not_found`/`ambiguous`/`connector_degraded`/`not_attempted`;
 - каждый item содержит `event_id` + `event_instance_id` + source provenance;
 - action drafts и Event Detail показывают bounded recipient/responsible evidence без CRM/mailbox write-back.
+- deliberate human reassignment by forwarding cannot be reliably distinguished from ordinary transport forwarding from email headers alone; It36 preserves `original_recipient` precedence, so this edge case may require operator correction.
+- automatic reassignment inference and a responsible override/reassignment workflow are outside It36 and require a separate explicit workflow/policy contract.
 
 ### ROP email preview
 

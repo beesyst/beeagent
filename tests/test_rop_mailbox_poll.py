@@ -33,7 +33,7 @@ def _multi_poll_settings() -> dict:
             "mailbox_poll": {
                 "enabled": True,
                 "source_id": "source_a",
-                "all_sources": True,
+                "sources_all": True,
             },
             "sources": [
                 {
@@ -636,6 +636,30 @@ def test_poll_all_sources_processes_all_enabled(monkeypatch, tmp_path: Path):
     assert data["sources"]["source_b"]["last_processed_uid"] == 202
     assert mailboxes["user_a"].fetched == [101, 102]
     assert mailboxes["user_b"].fetched == [201, 202]
+
+
+def test_cli_all_sources_overrides_configured_single_source(
+    monkeypatch, tmp_path: Path
+):
+    settings = _multi_poll_settings()
+    settings["rop"]["mailbox_poll"]["sources_all"] = False
+    selected: list[str] = []
+
+    def _poll(*_args, **kwargs):
+        selected.append(kwargs["source"]["source_id"])
+
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._poll_single_source",
+        _poll,
+    )
+    handle_mailbox_poll(
+        settings,
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+        all_sources=True,
+    )
+    assert selected == ["source_a", "source_b"]
 
 
 def test_poll_multi_source_no_new_messages_skips_pipeline(

@@ -166,15 +166,14 @@ def _find_event(
 ) -> dict[str, Any] | None:
     if not isinstance(events, list):
         return None
-    for evt in events:
-        if not isinstance(evt, dict) or evt.get("event_id") != event_id:
-            continue
-        if (
-            event_instance_id is None
-            or evt.get("event_instance_id") == event_instance_id
-        ):
-            return evt
-    return None
+    return _select_event_occurrence(
+        [
+            evt
+            for evt in events
+            if isinstance(evt, dict) and evt.get("event_id") == event_id
+        ],
+        event_instance_id,
+    )
 
 
 def _find_events_for_id(events: list | None, event_id: str) -> list[dict[str, Any]]:
@@ -197,15 +196,36 @@ def _match_by_event_id(
     items = _safe_list(
         artifact.get("results", artifact.get("items", artifact.get("events", [])))
     )
-    for item in items:
-        if not isinstance(item, dict) or item.get("event_id") != event_id:
-            continue
-        if (
-            event_instance_id is None
-            or item.get("event_instance_id") == event_instance_id
-        ):
-            return item
-    return None
+    return _select_event_occurrence(
+        [
+            item
+            for item in items
+            if isinstance(item, dict) and item.get("event_id") == event_id
+        ],
+        event_instance_id,
+    )
+
+
+def _select_event_occurrence(
+    candidates: list[dict[str, Any]],
+    event_instance_id: str | None,
+) -> dict[str, Any] | None:
+    if event_instance_id is not None:
+        exact = [
+            item
+            for item in candidates
+            if item.get("event_instance_id") == event_instance_id
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        legacy = [
+            item
+            for item in candidates
+            if not isinstance(item.get("event_instance_id"), str)
+            or not item.get("event_instance_id")
+        ]
+        return legacy[0] if len(candidates) == len(legacy) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _safe_artifact_ref(
@@ -595,10 +615,13 @@ def build_rop_event_detail_read_model(
     bitrix_section: dict[str, Any] = {}
     bitrix_available = False
     if isinstance(bitrix_reconciliation, dict):
-        items = _safe_list(bitrix_reconciliation.get("items"))
-        for item in items:
-            if isinstance(item, dict) and item.get("event_id") == event_id:
-                bitrix_section = {
+        item = _match_by_event_id(
+            bitrix_reconciliation,
+            event_id,
+            event_instance_id,
+        )
+        if item:
+            bitrix_section = {
                     "available": True,
                     "bitrix_status": _str(
                         item.get("bitrix_match_status")
@@ -611,44 +634,32 @@ def build_rop_event_detail_read_model(
                     "entity_type": _str(item.get("entity_type", "")),
                     "entity_id": _int(item.get("entity_id", 0)),
                     "entity_url": _str(item.get("entity_url", "")),
-                }
-                bitrix_available = True
-                break
+            }
+            bitrix_available = True
     if not bitrix_available:
         bitrix_section = {"available": False}
 
     action_draft_section: dict[str, Any] = {}
     draft_available = False
     if isinstance(action_drafts, dict):
-        items = _safe_list(action_drafts.get("items", action_drafts.get("drafts", [])))
-        for item in items:
-            if isinstance(item, dict) and item.get("event_id") == event_id:
-                action_draft_section = {
+        item = _match_by_event_id(action_drafts, event_id, event_instance_id)
+        if item:
+            action_draft_section = {
                     "available": True,
                     "action_type": _str(item.get("action_type", item.get("type", ""))),
                     "summary": _str(item.get("summary", item.get("description", ""))),
                     "draft_status": _str(item.get("status", "draft")),
                     "read_only": True,
-                }
-                draft_available = True
-                break
+            }
+            draft_available = True
     if not draft_available:
         action_draft_section = {"available": False}
 
     recipient_routing_section: dict[str, Any] = {}
     routing_available = False
     if isinstance(recipient_routing, dict):
-        routing_items = _safe_list(
-            recipient_routing.get("items", recipient_routing.get("results", []))
-        )
-        for item in routing_items:
-            if not isinstance(item, dict) or item.get("event_id") != event_id:
-                continue
-            if (
-                event_instance_id is not None
-                and item.get("event_instance_id") != event_instance_id
-            ):
-                continue
+        item = _match_by_event_id(recipient_routing, event_id, event_instance_id)
+        if item:
             responsible = _safe_dict(item.get("responsible"))
             recipient_routing_section = {
                 "available": True,
@@ -664,7 +675,6 @@ def build_rop_event_detail_read_model(
                 "proposed_responsible_email": _str(responsible.get("email")),
             }
             routing_available = True
-            break
     if not routing_available:
         recipient_routing_section = {"available": False}
 

@@ -102,6 +102,12 @@ class TestRopCliArgumentParser:
         assert args.rop_command == "poll"
         assert args.rebaseline is True
 
+    def test_rop_poll_parser_accepts_all_sources_flag(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["poll", "--all-sources"])
+        assert args.rop_command == "poll"
+        assert args.all_sources is True
+
     def test_rop_summary_parser_requires_run_id(self) -> None:
         parser = create_rop_parser()
         args = parser.parse_args(["summary", "--run-id", "test-run-123"])

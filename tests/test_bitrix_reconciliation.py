@@ -26,6 +26,7 @@ from beeagent_module.adapters.bitrix_client import (
 )
 from beeagent_module.cases.rop_bitrix_reconciliation import (
     _classify_candidates,
+    _merge_events,
     _reconcile_event,
     run_reconciliation,
 )
@@ -71,6 +72,39 @@ def _make_fake_bitrix_response(
         result["error"] = error
         result["error_description"] = f"Test error: {error}"
     return result
+
+
+def test_reconciliation_merge_preserves_distinct_event_instances() -> None:
+    normalized = [
+        {
+            "event_id": "evt-shared",
+            "event_instance_id": "event-000001",
+            "subject": "first",
+        },
+        {
+            "event_id": "evt-shared",
+            "event_instance_id": "event-000002",
+            "subject": "second",
+        },
+    ]
+    classified = [
+        {
+            "event_id": "evt-shared",
+            "event_instance_id": "event-000001",
+            "case_type": "new_lead",
+        },
+        {
+            "event_id": "evt-shared",
+            "event_instance_id": "event-000002",
+            "case_type": "existing_deal",
+        },
+    ]
+    merged = _merge_events(normalized, classified)
+    by_instance = {item["event_instance_id"]: item for item in merged}
+    assert by_instance["event-000001"]["subject"] == "first"
+    assert by_instance["event-000001"]["case_type"] == "new_lead"
+    assert by_instance["event-000002"]["subject"] == "second"
+    assert by_instance["event-000002"]["case_type"] == "existing_deal"
 
 
 class _FakeHttpResponse:

@@ -11,25 +11,44 @@ ACTION_DRAFTS_ARTIFACT = "rop_action_drafts.json"
 RECIPIENT_ROUTING_ARTIFACT = "rop_recipient_routing.json"
 
 
-def _load_routing_lookup(run_dir: Path) -> dict[str, dict[str, Any]]:
+def _load_routing_items(run_dir: Path) -> list[dict[str, Any]]:
     routing_path = run_dir / RECIPIENT_ROUTING_ARTIFACT
     if not routing_path.exists():
-        return {}
+        return []
     try:
         data = json.loads(routing_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {}
+        return []
     items = data.get("items", []) if isinstance(data, dict) else []
     if not isinstance(items, list):
-        return {}
-    lookup: dict[str, dict[str, Any]] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        event_id = item.get("event_id")
-        if isinstance(event_id, str) and event_id and event_id not in lookup:
-            lookup[event_id] = item
-    return lookup
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _routing_evidence_for_event(
+    items: list[dict[str, Any]],
+    event_id: str,
+    event_instance_id: str | None,
+) -> dict[str, Any]:
+    candidates = [item for item in items if item.get("event_id") == event_id]
+    if event_instance_id:
+        exact = [
+            item
+            for item in candidates
+            if item.get("event_instance_id") == event_instance_id
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        legacy = [
+            item
+            for item in candidates
+            if not isinstance(item.get("event_instance_id"), str)
+            or not item.get("event_instance_id")
+        ]
+        return legacy[0] if len(candidates) == len(legacy) == 1 else {}
+    if len(candidates) == 1:
+        return candidates[0]
+    return {}
 
 
 def build_action_drafts(
@@ -51,7 +70,7 @@ def build_action_drafts(
     if not isinstance(items_raw, list):
         raise ValueError("reconciliation items must be a list")
 
-    routing_lookup = _load_routing_lookup(run_dir)
+    routing_items = _load_routing_items(run_dir)
 
     action_items: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -60,7 +79,12 @@ def build_action_drafts(
         if not isinstance(item, dict):
             continue
         try:
-            routing_evidence = routing_lookup.get(str(item.get("event_id", "")), {})
+            event_instance_id = item.get("event_instance_id")
+            routing_evidence = _routing_evidence_for_event(
+                routing_items,
+                str(item.get("event_id", "")),
+                event_instance_id if isinstance(event_instance_id, str) else None,
+            )
             draft = _build_action_draft_item(
                 item,
                 run_id=run_id,
@@ -151,6 +175,7 @@ def _build_action_draft_item(
     return {
         "action_draft_id": str(uuid.uuid4()),
         "event_id": event_id,
+        "event_instance_id": item.get("event_instance_id", ""),
         "run_id": run_id,
         "source_id": item.get("source_id", ""),
         "bot_case_type": bot_case_type,

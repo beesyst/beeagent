@@ -46,7 +46,7 @@ def _settings(
         },
     }
     if source_recipient:
-        source["routing"] = {"recipient_email": source_recipient}
+        source["routing"] = {"email_recipient": source_recipient}
     return {
         "rop": {"sources": [source]},
         "bitrix": {
@@ -520,6 +520,57 @@ class TestResponsibleResolution:
             bitrix_client_factory=lambda _settings: client,
         )
         assert len(client.calls) == 3
+
+    def test_incomplete_directory_degrades_all_resolutions(self, tmp_path: Path) -> None:
+        _write_run(
+            tmp_path,
+            "run-incomplete-directory",
+            [_event(to=["boss@welding.kz"])],
+        )
+        client = _FakeBitrixClient(
+            [
+                _active_user(12, "boss@welding.kz"),
+                _active_user(13, "other@welding.kz"),
+            ]
+        )
+        artifact = build_recipient_routing_artifact(
+            tmp_path,
+            "run-incomplete-directory",
+            _settings(bitrix_enabled=True, page_size=1, pages_max=1),
+            _null_logger(),
+            bitrix_client_factory=lambda _settings: client,
+        )
+        assert len(client.calls) == 1
+        assert artifact["directory"]["status"] == "connector_degraded"
+        assert artifact["items"][0]["responsible"]["status"] == "connector_degraded"
+
+    @pytest.mark.parametrize(
+        "user_id",
+        [None, True, 0, -1, "bad-id", "0", "-1"],
+    )
+    def test_malformed_exact_active_user_id_degrades(
+        self, tmp_path: Path, user_id: object
+    ) -> None:
+        _write_run(
+            tmp_path,
+            "run-malformed-id",
+            [_event(to=["boss@welding.kz"])],
+        )
+        user = _active_user(12, "boss@welding.kz")
+        if user_id is None:
+            user.pop("ID")
+        else:
+            user["ID"] = user_id
+        artifact = build_recipient_routing_artifact(
+            tmp_path,
+            "run-malformed-id",
+            _settings(bitrix_enabled=True),
+            _null_logger(),
+            bitrix_client_factory=lambda _settings: _FakeBitrixClient([user]),
+        )
+        responsible = artifact["items"][0]["responsible"]
+        assert responsible["status"] == "connector_degraded"
+        assert responsible["status"] != "not_found"
 
 
 class TestArtifactContract:

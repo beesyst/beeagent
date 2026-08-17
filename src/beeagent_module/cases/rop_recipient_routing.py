@@ -73,9 +73,9 @@ def _source_recipient_map(settings: dict[str, Any]) -> dict[str, str]:
         routing = source.get("routing")
         if not isinstance(routing, dict):
             continue
-        recipient_email = routing.get("recipient_email")
-        if isinstance(recipient_email, str) and recipient_email.strip():
-            result[source_id] = recipient_email
+        email_recipient = routing.get("email_recipient")
+        if isinstance(email_recipient, str) and email_recipient.strip():
+            result[source_id] = email_recipient
     return result
 
 
@@ -163,6 +163,10 @@ def _load_user_pages(
                 "Bitrix returned malformed user.get pagination cursor"
             )
         start = next_start
+    else:
+        raise BitrixMalformedResponse(
+            "Bitrix user directory pagination limit reached before completion"
+        )
     return users
 
 
@@ -211,13 +215,16 @@ def _resolve_responsible(
             "reason": "multiple_active_users_for_email",
         }
     user = matches[0]
+    user_id = _int_or_none(user.get("ID"))
+    if user_id is None:
+        return _connector_degraded_responsible()
     name_parts = [
         str(user.get("NAME", "") or ""),
         str(user.get("LAST_NAME", "") or ""),
     ]
     return {
         "status": "matched",
-        "user_id": _int_or_none(user.get("ID")),
+        "user_id": user_id,
         "name": " ".join(part for part in name_parts if part),
         "email": recipient_email,
         "reason": None,
@@ -225,10 +232,11 @@ def _resolve_responsible(
 
 
 def _int_or_none(value: Any) -> int | None:
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     if isinstance(value, str) and value.strip().isdigit():
-        return int(value)
+        parsed = int(value)
+        return parsed if parsed > 0 else None
     return None
 
 

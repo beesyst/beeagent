@@ -39,7 +39,7 @@ not to a BeeAgent loop.
 Polling mode is controlled by `rop.mailbox_poll` in `config/settings.yml`:
 
 - `source_id` — default single-source mode (backward-compatible);
-- `all_sources: true` — poll every enabled read-only `mailbox_readonly` source independently.
+- `sources_all: true` — poll every enabled read-only `mailbox_readonly` source independently.
 
 Optional CLI overrides:
 

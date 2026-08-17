@@ -84,7 +84,7 @@ rop:
   mailbox_poll:
     enabled: true
     source_id: "hotline_mailbox"
-    all_sources: false # true - poll all enabled read-only mailbox sources; false - poll only source_id
+    sources_all: false
   email_preview:
     body_chars_max: 4000
   ai_assist:
@@ -148,7 +148,7 @@ rop:
         username_env: "ROP_MAILBOX_USERNAME" # имя env переменной с логином
         password_env: "ROP_MAILBOX_PASSWORD" # имя env переменной с паролем
       routing:
-        recipient_email: "hotline@welding.kz" # business recipient fallback (не IMAP username, не Bitrix ID)
+        email_recipient: "hotline@welding.kz"
   dashboard:
     default_period: "7d"
     periods:

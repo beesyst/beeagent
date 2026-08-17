@@ -206,7 +206,7 @@ def handle_mailbox_poll(
         raise MailboxPollError("--source-id and --all-sources cannot be used together")
 
     effective_all_sources = bool(all_sources) or (
-        poll.get("all_sources", False) is True
+        poll.get("sources_all", False) is True
     )
     if source_id:
         effective_all_sources = False

@@ -421,6 +421,72 @@ class TestBuildActionDrafts:
         assert draft["responsible_status"] == "matched"
         assert draft["read_only"] is True
 
+    def test_drafts_join_routing_by_event_instance_id(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        (run_dir / "rop_recipient_routing.json").write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "event_id": "evt-shared",
+                            "event_instance_id": "event-000001",
+                            "recipient": "first@welding.kz",
+                            "recipient_status": "resolved",
+                            "responsible": {"status": "matched", "user_id": 1},
+                        },
+                        {
+                            "event_id": "evt-shared",
+                            "event_instance_id": "event-000002",
+                            "recipient": "second@welding.kz",
+                            "recipient_status": "resolved",
+                            "responsible": {"status": "matched", "user_id": 2},
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        first = _sample_item("evt-shared")
+        first["event_instance_id"] = "event-000001"
+        second = _sample_item("evt-shared")
+        second["event_instance_id"] = "event-000002"
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            _make_reconciliation([first, second]),
+            _null_logger(),
+        )
+        drafts = {item["event_instance_id"]: item for item in artifact["items"]}
+        assert drafts["event-000001"]["recipient"] == "first@welding.kz"
+        assert drafts["event-000001"]["proposed_responsible_user_id"] == 1
+        assert drafts["event-000002"]["recipient"] == "second@welding.kz"
+        assert drafts["event-000002"]["proposed_responsible_user_id"] == 2
+
+    def test_ambiguous_legacy_routing_is_not_selected(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        (run_dir / "rop_recipient_routing.json").write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {"event_id": "evt-shared", "recipient": "first@welding.kz"},
+                        {"event_id": "evt-shared", "recipient": "second@welding.kz"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        item = _sample_item("evt-shared")
+        item["event_instance_id"] = "event-000002"
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            _make_reconciliation([item]),
+            _null_logger(),
+        )
+        assert artifact["items"][0]["recipient"] == ""
+
     def test_draft_without_routing_artifact_keeps_safe_defaults(
         self, tmp_path: Path
     ) -> None:
