@@ -143,6 +143,24 @@ class TestRopCliArgumentParser:
         with pytest.raises(RopCliError, match="Invalid period"):
             handle_rop_dashboard(args, settings=settings, logger=_null_logger())
 
+    def test_rop_writeback_execute_parser_accepts_retry_failed(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(
+            ["writeback", "execute", "--run-id", "test-run-123", "--retry-failed"]
+        )
+        assert args.rop_command == "writeback"
+        assert args.writeback_command == "execute"
+        assert args.run_id == "test-run-123"
+        assert args.dry_run is False
+        assert args.retry_failed is True
+
+    def test_rop_writeback_execute_parser_retry_failed_defaults_false(
+        self,
+    ) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["writeback", "execute", "--run-id", "test-run-123"])
+        assert args.retry_failed is False
+
     def test_rop_mvp_pack_rejects_period_not_configured(self) -> None:
         import argparse
 
@@ -593,6 +611,104 @@ class TestRopCliRun:
         with pytest.raises(RopCliError) as exc_info:
             handle_rop_run(args, settings=settings, logger=logger)
         assert "Source not found" in str(exc_info.value)
+
+    def _rop_run_writeback_batch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_id: str,
+        writeback_enabled: bool,
+    ) -> dict:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = True
+        settings["bitrix"]["reconciliation"]["enabled"] = True
+        settings["bitrix"]["writeback"]["enabled"] = writeback_enabled
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-wb-001",
+                    "sender": "client@example.com",
+                    "subject": "Need welding quote",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "wb_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
+            lambda *a, **k: calls.append("reconciliation") or {"status": "ok"},
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_action_drafts.build_action_drafts",
+            lambda *a, **k: calls.append("drafts"),
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.build_writeback_plan",
+            lambda **k: calls.append("plan"),
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.execute_writeback_pending",
+            lambda **k: calls.append("execute")
+            or {"status": "executed", "writes_performed": 1},
+        )
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id=run_id,
+        )
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+        return {"settings": settings, "calls": calls}
+
+    def test_rop_run_executes_writeback_when_enabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-enabled",
+            writeback_enabled=True,
+        )
+        assert result["calls"] == [
+            "reconciliation",
+            "drafts",
+            "plan",
+            "execute",
+        ]
+
+    def test_rop_run_skips_writeback_when_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-disabled",
+            writeback_enabled=False,
+        )
+        assert result["calls"] == []
 
 
 class TestRopCliSummary:

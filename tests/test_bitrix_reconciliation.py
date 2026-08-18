@@ -542,6 +542,51 @@ class TestBitrixClient:
 
         assert client.search_candidates(2, "client@example.com") == []
 
+    def test_email_search_uses_exact_match_filter(self) -> None:
+        client = BitrixReadonlyClient(
+            webhook_url="https://test.bitrix24.kz/rest/1/token/",
+            timeout=5,
+        )
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_call(
+            method: str, params: dict[str, Any] | None = None
+        ) -> dict:
+            calls.append((method, params or {}))
+            return {"result": []}
+
+        client.call = fake_call  # type: ignore[method-assign]
+
+        client.search_candidates(1, "client@example.com")
+
+        assert calls
+        method, params = calls[0]
+        assert method == "crm.lead.list"
+        filter_params = params.get("filter", {})
+        assert "EMAIL" in filter_params
+        assert "%EMAIL" not in filter_params
+        assert filter_params["EMAIL"] == "client@example.com"
+
+    def test_title_search_skipped_for_contacts(self) -> None:
+        client = BitrixReadonlyClient(
+            webhook_url="https://test.bitrix24.kz/rest/1/token/",
+            timeout=5,
+        )
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_call(
+            method: str, params: dict[str, Any] | None = None
+        ) -> dict:
+            calls.append((method, params or {}))
+            return {"result": {"items": []}}
+
+        client.call = fake_call  # type: ignore[method-assign]
+
+        result = client.search_candidates(3, "plain subject text")
+
+        assert result == []
+        assert calls == []
+
     def test_entity_type_names_defined(self) -> None:
         from beeagent_module.adapters.bitrix_client import ENTITY_TYPE_NAMES
 
@@ -562,11 +607,11 @@ class TestBitrixClient:
 
 
 class TestBitrixReconciliation:
-    def test_irrelevant_event_is_skipped_non_actionable(self) -> None:
+    def test_spam_event_is_skipped_non_actionable(self) -> None:
         result = _reconcile_event(
             event={
-                "event_id": "evt-irrelevant",
-                "case_type": "irrelevant",
+                "event_id": "evt-spam",
+                "case_type": "spam",
                 "sender": "ignore@example.com",
                 "subject": "Ignore me",
             },
@@ -581,6 +626,30 @@ class TestBitrixReconciliation:
         assert result["bitrix_match_reason"] == "bot_case_type_not_actionable"
         assert result["needs_manual_review"] is False
         assert result["safe_to_use_as_target"] is False
+
+    def test_irrelevant_event_enters_reconciliation(self) -> None:
+        class _NoCandidatesClient(BitrixReadonlyClient):
+            def search_candidates(
+                self, *args: Any, **kwargs: Any
+            ) -> list[dict[str, Any]]:
+                return []
+
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-irrelevant",
+                "case_type": "irrelevant",
+                "sender": "contact@example.com",
+                "subject": "Request about equipment",
+            },
+            client=_NoCandidatesClient("https://portal.test/rest/1/token/"),
+            entity_types=[1, 2],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "not_found"
+        assert result["bitrix_match_reason"] == "no_candidate_found"
 
     def test_phone_exact_match_is_strong_and_safe(self) -> None:
         result = _classify_candidates(
@@ -1325,8 +1394,8 @@ class TestBitrixArtifact:
                     filter_params = (params or {}).get("filter", {})
                     if (
                         method == "crm.lead.list"
-                        and "%EMAIL" in filter_params
-                        and "matched" in filter_params.get("%EMAIL", "")
+                        and "EMAIL" in filter_params
+                        and "matched" in filter_params.get("EMAIL", "")
                     ):
                         return {
                             "result": [

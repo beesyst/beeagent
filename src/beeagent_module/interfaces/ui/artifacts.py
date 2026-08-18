@@ -33,6 +33,7 @@ ARTIFACT_ALLOWLIST: dict[str, str] = {
     "rop_ai_adjudicator_decisions_json": "rop_ai_adjudicator_decisions.json",
     "rop_ai_adjudicator_results_json": "rop_ai_adjudicator_results.json",
     "rop_final_decisions_json": "rop_final_decisions.json",
+    "rop_writeback_summary_json": "rop_writeback_summary.json",
 }
 MODULE_ARTIFACT_IDS = frozenset(
     {
@@ -70,6 +71,7 @@ CONTENT_TYPE_MAP: dict[str, str] = {
     "rop_ai_adjudicator_decisions_json": "application/json",
     "rop_ai_adjudicator_results_json": "application/json",
     "rop_final_decisions_json": "application/json",
+    "rop_writeback_summary_json": "application/json",
 }
 
 

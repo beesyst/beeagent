@@ -55,6 +55,44 @@ Per-source semantics:
 - a new source without a checkpoint receives its own baseline without resetting existing sources;
 - an explicit per-source rebaseline does not reset unrelated sources.
 
+When Bitrix reconciliation is enabled, the poll also persists durable ROP write-back
+intent (`storage/interfaces/rop_writeback_state.json` via `build_writeback_plan`) before
+the source checkpoint advances. With `bitrix.writeback.enabled: true` a write-back plan
+persistence failure blocks checkpoint advancement (fail closed); with write-back disabled
+the failure is logged and does not block ingestion. With `bitrix.writeback.enabled: true`
+both `rop poll` and `rop run` execute pending write-back work automatically after the plan
+is persisted. Bitrix unavailability never blocks ingestion: the durable intent survives in
+`rop_writeback_state.json`, and retryable/uncertain records are re-attempted on subsequent
+poll/run executions. `rop writeback plan/execute` remains available as a controlled manual
+path.
+
+## Controlled Bitrix write-back (Iteration 37)
+
+Write-back is disabled by default (`bitrix.writeback.enabled: false`) and performs zero
+writes until it is explicitly enabled with a dedicated env credential and configured
+customer Lead `stageId` values.
+
+When enabled, pending write-back work is executed automatically as part of `rop poll` and
+`rop run` (after the durable plan is persisted), in addition to the explicit CLI commands:
+
+- `./start.sh rop writeback plan --run-id <id>` — build the authoritative execution plan
+  from final classification, read-only reconciliation and recipient routing; persists the
+  canonical `storage/interfaces/rop_writeback_state.json` and the per-run
+  `rop_writeback_summary.json` projection. Zero writes.
+- `./start.sh rop writeback execute [--run-id <id>] [--dry-run] [--retry-failed]` — execute
+  pending write-back work per server-side `bitrix.writeback` policy (bounded retry,
+  idempotent create via `crm.item.add`, `entityTypeId=1`, fail-closed
+  stage/responsible/target validation). `--dry-run` performs zero writes.
+  `--retry-failed` re-arms retry-exhausted create records with a fresh retry budget
+  (terminal permission/config failures are never retried).
+
+Per-event outcomes are `create_lead`, `attach_existing` or `deferred`. `rop_action_drafts.json`
+remains a read-only/draft-only artifact and is not execution authority.
+
+`bitrix.writeback.fallback_responsible_user_id` (optional int > 0) sets a default Lead
+`ASSIGNED_BY_ID` when recipient routing cannot resolve an active responsible user; without
+it, unresolved responsible fails closed to `deferred` (`responsible_unresolved`).
+
 ## Установка (dev)
 
 В корне модуля:

@@ -207,6 +207,40 @@ Transport/UI:
 - видимым оператору;
 - не скрытым в prompt или случайном code path.
 
+### Bitrix write-back v0 (ROP, Iteration 37)
+
+BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP-событий.
+
+Поведение:
+
+- каждое классифицированное событие (включая `irrelevant` и события с
+  `should_rop_see=false`) попадает в delivery planning;
+- каждый processed event получает outcome `create_lead`, `attach_existing` или
+  `deferred`;
+- новые eligible Lead создаются через `crm.item.add` с `entityTypeId=1` в configured
+  customer `stageId` и с exact matched active responsible из `rop_recipient_routing.json`;
+  optional config-driven `source_id` задаёт Lead `SOURCE_ID` (например `EMAIL` =
+  «Входящее письмо»);
+- при `bitrix.writeback.attach_email: true` к созданному лиду через официальный
+  `crm.activity.add` прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/
+  body/отправителем;
+- безопасно найденный существующий Lead/Deal обрабатывается через attach-existing path
+  без создания нового Lead; email/activity binding для существующих сущностей остаётся
+  явным `deferred` (`email_binding_contract_unconfirmed`);
+- unresolved `existing_deal`/`duplicate`, ambiguous/unsafe target и unresolved responsible
+  fail closed в `deferred` без спекулятивного создания;
+- стабильная cross-run идентичность — `client_id + source_id +
+  (message_id → x_email_id → event_id)`, `event_instance_id` не является remote business
+  identity;
+- `rop_action_drafts.json` — read-only/draft-only артефакт и не является execution
+  authority;
+- authoritative write-back intent durable сохраняется до advancement mailbox checkpoint.
+
+Артефакты:
+
+- `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
+- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection.
+
 ## 11. Стек
 
 Текущий стек:

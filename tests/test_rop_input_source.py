@@ -588,6 +588,7 @@ def test_load_mailbox_readonly_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert events[0]["body_preview_source"] == "text_plain"
     assert events[0]["message_id"] == "<mail-1@example.com>"
     assert events[0]["sender"] == "lead@example.com"
+    assert events[0]["from_name"] == "Sender"
     assert events[0]["to"] == ["hotline@example.com"]
     assert events[0]["cc"] == ["cc@example.com"]
     assert events[0]["attachments"][0]["filename"] == "brief.pdf"

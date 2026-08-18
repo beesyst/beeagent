@@ -165,7 +165,7 @@ bitrix:
   webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
   timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
   page_size: 50 # размер страницы для Bitrix list-запросов
-  pages_max: 3 # максимальное число страниц пагинации
+  pages_max: 15 # максимальное число страниц пагинации (557 users on portal)
   types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
     - 1
     - 2
@@ -175,6 +175,18 @@ bitrix:
     enabled: true # true/false - включить/выключить reconciliation по умолчанию
     candidate_limit: 20 # максимальное число кандидатов на одно событие
     window_date: 180 # окно поиска по дате события (дней назад)
+  writeback:
+    enabled: false # true/false - включить/выключить Bitrix write-back (disabled by default)
+    webhook_env: "BITRIX_WRITEBACK_WEBHOOK_URL" # имя env переменной с отдельным write credential (https URL)
+    timeout: 10 # таймаут HTTP-запроса для write-back (сек)
+    retry_attempts_max: 3 # максимум bounded попыток для retryable failures
+    dry_run: false # true/false - планировать без реальных write-операций (zero writes)
+    attach_email: true # true/false - прикреплять email-активность (crm.activity.add) к созданному лиду
+    source_id: "EMAIL" # Bitrix lead SOURCE_ID для создаваемых лидов (например EMAIL = "Входящее письмо"); пусто = не задавать
+    fallback_responsible_user_id: 1563 # ответственный по умолчанию, если маршрутизация не нашла пользователя (1563 = Разработчик Аутсорс); null/0 = не задавать
+    stages: # customer Lead stageId mapping (configurable, validated against Bitrix before POST when enabled)
+      new_lead: "NEW" # Bitrix stageId for new_lead classification (required when enabled)
+      irrelevant: "UC_UNT5M1" # Bitrix stageId for irrelevant classification (required when enabled)
   widget:
     enabled: false
     token_env: BITRIX_ROP_WIDGET_TOKEN

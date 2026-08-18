@@ -27,10 +27,11 @@ ENTITY_TYPE_NAMES: dict[int, str] = {
 }
 ENTITY_TYPE_IDS: dict[str, int] = {v: k for k, v in ENTITY_TYPE_NAMES.items()}
 COMMUNICATION_ENTITY_TYPE_IDS: frozenset[int] = frozenset({1, 3, 4})
+TITLE_SEARCH_ENTITY_TYPE_IDS: frozenset[int] = frozenset({1, 2, 4})
 
 
 class BitrixConnectorError(RuntimeError):
-    pass
+    code: int | str | None = None
 
 
 class BitrixAuthError(BitrixConnectorError):
@@ -234,7 +235,7 @@ class BitrixReadonlyClient:
         if not legacy_method:
             return []
 
-        filter_key = "%EMAIL" if is_email else "%PHONE"
+        filter_key = "EMAIL" if is_email else "%PHONE"
         filter_params: dict[str, Any] = {filter_key: query}
         if date_from:
             filter_params[">=DATE_CREATE"] = date_from
@@ -253,6 +254,8 @@ class BitrixReadonlyClient:
         select_fields: list[str],
         date_from: str | None = None,
     ) -> list[dict[str, Any]]:
+        if entity_type_id not in TITLE_SEARCH_ENTITY_TYPE_IDS:
+            return []
         camel_fields = _convert_select_to_camel(select_fields)
         filter_params: dict[str, Any] = {"%title": query}
         if date_from:

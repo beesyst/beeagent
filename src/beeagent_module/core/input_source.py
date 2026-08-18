@@ -749,6 +749,7 @@ def _normalize_mailbox_message(
         "in_reply_to": _clean_thread_header(message.get("In-Reply-To")),
         "references": _clean_thread_header(message.get("References")),
         "sender": sender_list[0] if sender_list else "",
+        "from_name": _extract_sender_name(message),
         "to": to_list,
         "cc": cc_list,
         "subject": subject,
@@ -892,6 +893,22 @@ def _extract_addresses(message: Any, header_name: str) -> list[str]:
             continue
         addresses.extend(addr for _name, addr in pairs if addr)
     return addresses
+
+
+def _extract_sender_name(message: Any, header_name: str = "From") -> str:
+    for name, value in message.raw_items():
+        if name.lower() != header_name.lower():
+            continue
+        try:
+            header = message.policy.header_fetch_parse(name, value)
+            pairs = getaddresses([header])
+        except TypeError, ValueError, IndexError:
+            continue
+        for display_name, _addr in pairs:
+            display_name = (display_name or "").strip().strip('"')
+            if display_name:
+                return display_name
+    return ""
 
 
 def _normalize_message_date(value: Any) -> str:

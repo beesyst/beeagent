@@ -302,6 +302,21 @@ BeeAgent уже прошёл этап **module platform v0**:
 - секция Recipient routing на read-only Event Detail странице;
 - без CRM/mailbox write-back, `automation_allowed=false`, `bitrix_write_allowed=false`, `beeagent-rop` без изменений.
 
+Итерация 37 реализует (controlled Bitrix CRM write-back v0, disabled by default):
+
+- `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`irrelevant` и отдельный write credential env; дополнительные `bitrix.writeback.attach_email` (email-activity binding на созданные лиды) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»);
+- отдельный bounded `BitrixWriteClient` (allowlist `crm.item.add`, `crm.activity.add`, `entityTypeId=1`) с отдельным env credential `BITRIX_WRITEBACK_WEBHOOK_URL`; `BitrixReadonlyClient` остаётся строго read-only;
+- `irrelevant` включён в read-only reconciliation и delivery planning; `should_rop_see` не является execution gate;
+- authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy; `rop_action_drafts.json` не является execution authority;
+- canonical durable state `storage/interfaces/rop_writeback_state.json` + per-run read-only projection `storage/runs/<run_id>/rop_writeback_summary.json` (artifact allowlist);
+- idempotent create через stable cross-run identity `client_id + source_id + (message_id → x_email_id → event_id)` и bounded `ORIGINATOR_ID`/`ORIGIN_ID`; recovery uncertain POST по idempotency lookup перед повторным POST; bounded retry для transport/429/5xx; terminal 400/401/403/API errors не ретраятся;
+- прикрепление письма к созданному лиду через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.attach_email: true`;
+- durable intent persistуется до mailbox checkpoint advancement; при `bitrix.writeback.enabled: true` failure planning блокирует checkpoint, иначе не блокирует ingestion;
+- fail closed: unresolved responsible, ambiguous/unsafe/duplicate target, unresolved `existing_deal`/`duplicate` → `deferred` без спекулятивного create; existing CRM entity никогда не reassign;
+- CLI `./start.sh rop writeback plan --run-id <id>` и `./start.sh rop writeback execute [--run-id <id>] [--dry-run]`; disabled/dry-run/planning = zero writes;
+- прикрепление к существующим сущностям (`attach_existing`) остаётся явно `deferred` (`email_binding_contract_unconfirmed`); live-проверка на портале: тестовые лиды 199263/199264 созданы со стадией `NEW`, ответственным из routing и прикреплённой email-активностью;
+- без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
+
 BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
 
 Текущий фокус:
@@ -528,6 +543,7 @@ web:
 - `LMSTUDIO_API_KEY`
 - `CUSTOM_AI_API_KEY`
 - `BITRIX_WEBHOOK_URL`
+- `BITRIX_WRITEBACK_WEBHOOK_URL` (отдельный write credential для `bitrix.writeback`, обязателен только при `bitrix.writeback.enabled: true`)
 - `ROP_MAILBOX_USERNAME`
 - `ROP_MAILBOX_PASSWORD`
 
@@ -664,6 +680,14 @@ principal token rotation требует повторного входа; каж�
 
 # Собрать MVP handoff/readiness pack.
 ./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
+
+# Построить authoritative Bitrix write-back execution plan (zero writes, disabled by default).
+# Персистирует storage/interfaces/rop_writeback_state.json и per-run projection.
+./start.sh rop writeback plan --run-id live-review-2026-05-15
+
+# Выполнить pending write-back work per server-side bitrix.writeback policy.
+# --dry-run = планирование без реальных write-операций (zero writes).
+./start.sh rop writeback execute --run-id live-review-2026-05-15 [--dry-run]
 ```
 
 **ROP dashboard (`rop dashboard`):**

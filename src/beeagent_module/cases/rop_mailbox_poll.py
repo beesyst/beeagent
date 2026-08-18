@@ -26,6 +26,10 @@ from beeagent_module.cases.rop_recommendations import (
     build_recommendations,
     build_routing_map,
 )
+from beeagent_module.cases.rop_writeback import (
+    build_writeback_plan,
+    execute_writeback_pending,
+)
 from beeagent_module.core.rop_review_export import export_review_tsv_for_run
 
 CHECKPOINT_VERSION = 1
@@ -405,6 +409,50 @@ def _poll_single_source(
                 "Bitrix reconciliation did not complete successfully"
             )
         build_action_drafts(storage_dir, run_id, reconciliation, logger)
+        writeback_enabled = (
+            settings.get("bitrix", {})
+            .get("writeback", {})
+            .get("enabled")
+            is True
+        )
+        try:
+            build_writeback_plan(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                settings=settings,
+                logger=logger,
+            )
+        except Exception as exc:
+            if writeback_enabled:
+                raise MailboxPollError(
+                    f"ROP write-back plan persistence failed: {exc}"
+                ) from exc
+            logger.warning(
+                "ROP write-back plan persistence skipped: run_id=%s reason=%s",
+                run_id,
+                exc,
+            )
+        if writeback_enabled:
+            try:
+                execute_result = execute_writeback_pending(
+                    storage_dir=storage_dir,
+                    run_id=run_id,
+                    settings=settings,
+                    logger=logger,
+                )
+                logger.info(
+                    "ROP write-back executed during poll: run_id=%s status=%s "
+                    "writes=%d",
+                    run_id,
+                    execute_result.get("status"),
+                    execute_result.get("writes_performed", 0),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ROP write-back execute skipped after poll: run_id=%s reason=%s",
+                    run_id,
+                    exc,
+                )
     enrichment = build_context_enrichment(
         storage_dir=storage_dir, run_id=run_id, logger=logger
     )

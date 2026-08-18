@@ -17,6 +17,7 @@ RUN_ARTIFACT_WHITELIST = {
     "normalized_events.json",
     "classified_events.json",
     "rop_review_table.tsv",
+    "rop_writeback_summary.json",
 }
 MODULE_ARTIFACT_WHITELIST = {
     "module_result.json",

@@ -972,6 +972,92 @@ def _validate_bitrix_settings(settings: dict) -> None:
             "Invalid bitrix.reconciliation.window_date, expected int > 0"
         )
 
+    writeback_cfg = bitrix_cfg.get("writeback")
+    if writeback_cfg is not None:
+        if not isinstance(writeback_cfg, dict):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback, expected mapping"
+            )
+        if not isinstance(writeback_cfg.get("enabled"), bool):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.enabled, expected bool"
+            )
+        writeback_env = writeback_cfg.get("webhook_env")
+        if not isinstance(writeback_env, str) or not writeback_env.strip():
+            raise RuntimeError(
+                "Invalid or missing bitrix.writeback.webhook_env, "
+                "expected non-empty string"
+            )
+        writeback_timeout = writeback_cfg.get("timeout")
+        if not isinstance(writeback_timeout, int) or writeback_timeout <= 0:
+            raise RuntimeError(
+                "Invalid bitrix.writeback.timeout, expected int > 0"
+            )
+        retry_attempts_max = writeback_cfg.get("retry_attempts_max")
+        if not isinstance(retry_attempts_max, int) or retry_attempts_max <= 0:
+            raise RuntimeError(
+                "Invalid bitrix.writeback.retry_attempts_max, expected int > 0"
+            )
+        if not isinstance(writeback_cfg.get("dry_run"), bool):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.dry_run, expected bool"
+            )
+        attach_email = writeback_cfg.get("attach_email", False)
+        if not isinstance(attach_email, bool):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.attach_email, expected bool"
+            )
+        source_id_value = writeback_cfg.get("source_id")
+        if source_id_value is not None and not isinstance(source_id_value, str):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.source_id, expected string or null"
+            )
+        fallback_responsible = writeback_cfg.get("fallback_responsible_user_id")
+        if fallback_responsible is not None and (
+            not isinstance(fallback_responsible, int)
+            or isinstance(fallback_responsible, bool)
+            or fallback_responsible <= 0
+        ):
+            raise RuntimeError(
+                "Invalid bitrix.writeback.fallback_responsible_user_id, "
+                "expected int > 0 or null"
+            )
+        stages_cfg = writeback_cfg.get("stages")
+        if not isinstance(stages_cfg, dict):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.stages, expected mapping"
+            )
+        unsupported_stage_keys = sorted(set(stages_cfg) - {"new_lead", "irrelevant"})
+        if unsupported_stage_keys:
+            raise RuntimeError(
+                "Unsupported bitrix.writeback.stages keys: "
+                + ", ".join(unsupported_stage_keys)
+            )
+        if writeback_cfg.get("enabled"):
+            if not bitrix_cfg.get("enabled"):
+                raise RuntimeError(
+                    "Invalid bitrix config: bitrix.writeback.enabled requires "
+                    "bitrix.enabled: true"
+                )
+            if not recon_cfg.get("enabled"):
+                raise RuntimeError(
+                    "Invalid bitrix config: bitrix.writeback.enabled requires "
+                    "bitrix.reconciliation.enabled: true"
+                )
+            for stage_key in ("new_lead", "irrelevant"):
+                stage_value = stages_cfg.get(stage_key)
+                if not isinstance(stage_value, str) or not stage_value.strip():
+                    raise RuntimeError(
+                        f"Invalid bitrix.writeback.stages.{stage_key}, "
+                        "expected non-empty string when "
+                        "bitrix.writeback.enabled=true"
+                    )
+            if not os.environ.get(writeback_env):
+                raise RuntimeError(
+                    f"Missing required env var '{writeback_env}' for "
+                    "bitrix.writeback.webhook_env when bitrix.writeback.enabled=true"
+                )
+
 
 def _validate_rop_routing_settings(settings: dict) -> None:
     routing_cfg = _get_nested_value(settings, ("rop", "routing"))

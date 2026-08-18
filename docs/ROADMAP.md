@@ -8427,7 +8427,7 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 
 ### Итерация 37 — Controlled Bitrix CRM write-back v0
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -8522,6 +8522,31 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 - dependencies and `uv.lock` remain unchanged unless separately approved;
 - `pyproject.toml.version` is not changed;
 - tests, smoke evidence, logs/artifacts and documentation are ready for PR review.
+
+#### Implemented (v0, Issue #199)
+
+- `bitrix.writeback` config (disabled by default) с fail-fast validation; `attach_email`
+  (email-activity binding на созданные лиды) и `source_id` (Lead SOURCE_ID);
+- отдельный `BitrixWriteClient` с allowlist `crm.item.add` / `crm.activity.add` и
+  отдельным env credential;
+- `irrelevant` включён в read-only reconciliation;
+- authoritative write-back planner/executor с outcomes `create_lead` / `attach_existing`
+  / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`,
+  idempotent `crm.item.add` (`entityTypeId=1`) с bounded `ORIGINATOR_ID`/`ORIGIN_ID`,
+  recovery uncertain POST по idempotency lookup, bounded retry и fail-closed stage/
+  responsible/target обработкой;
+- прикрепление письма к созданному лиду через официальный `crm.activity.add` (email
+  activity, `TYPE_ID=4`) при `bitrix.writeback.attach_email: true`;
+- durable intent persistуется до mailbox checkpoint advancement;
+- CLI `rop writeback plan/execute`;
+- per-run операторская проекция `rop_writeback_summary.json` (artifact allowlist).
+
+Статус live-проверки: на портале подтверждены официальный метод email-привязки
+(`crm.activity.add`) и реальные stage IDs (`NEW`); write-back создал тестовые лиды
+(199263, 199264) со стадией `NEW`, ответственным из routing и прикреплённой
+email-активностью. Прикрепление к существующим сущностям (`attach_existing`) остаётся
+явно `deferred` (`email_binding_contract_unconfirmed`). Live-write DoD по attach-existing
+и production-включению закрывается отдельным PR.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

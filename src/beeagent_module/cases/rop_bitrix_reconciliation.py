@@ -21,7 +21,6 @@ SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
         "newsletter",
         "auto_reply",
         "out_of_office",
-        "irrelevant",
     }
 )
 

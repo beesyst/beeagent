@@ -918,3 +918,377 @@ def test_poll_source_id_and_all_sources_conflict(monkeypatch, tmp_path: Path):
             source_id="source_a",
             all_sources=True,
         )
+
+
+def _writeback_poll_settings(writeback_enabled: bool) -> dict:
+    settings = _poll_settings()
+    settings["bitrix"]["writeback"] = {
+        "enabled": writeback_enabled,
+        "webhook_env": "BITRIX_WRITEBACK_WEBHOOK_URL",
+        "timeout": 10,
+        "retry_attempts_max": 3,
+        "dry_run": False,
+        "stages": {"new_lead": "NEW", "irrelevant": "NEW"},
+    }
+    return settings
+
+
+def test_poll_persists_durable_writeback_intent_before_checkpoint_advance(
+    monkeypatch, tmp_path: Path
+):
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+    order: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
+        lambda **kwargs: order.append("plan"),
+    )
+    real_write_checkpoint = _write_checkpoint
+
+    def recording_write_checkpoint(target_path: Path, data: dict) -> None:
+        order.append("checkpoint")
+        real_write_checkpoint(target_path, data)
+
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._write_checkpoint",
+        recording_write_checkpoint,
+    )
+    handle_mailbox_poll(
+        _writeback_poll_settings(True),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+    )
+    assert order == ["plan", "checkpoint"]
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 103
+    )
+
+
+def test_poll_writeback_enabled_failure_blocks_checkpoint_advance(
+    monkeypatch, tmp_path: Path
+):
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("plan failed")),
+    )
+    with pytest.raises(RuntimeError, match="plan failed"):
+        handle_mailbox_poll(
+            _writeback_poll_settings(True),
+            tmp_path,
+            tmp_path,
+            logging.getLogger("test"),
+        )
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 100
+    )
+
+
+def test_poll_writeback_disabled_failure_does_not_block_checkpoint(
+    monkeypatch, tmp_path: Path
+):
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("plan failed")),
+    )
+    handle_mailbox_poll(
+        _writeback_poll_settings(False),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+    )
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 103
+    )
+
+
+def test_poll_writeback_enabled_executes_after_plan_before_checkpoint(
+    monkeypatch, tmp_path: Path
+):
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+    order: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
+        lambda **kwargs: order.append("plan"),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
+        lambda **kwargs: order.append("execute")
+        or {"status": "executed", "writes_performed": 2},
+    )
+    real_write_checkpoint = _write_checkpoint
+
+    def recording_write_checkpoint(target_path: Path, data: dict) -> None:
+        order.append("checkpoint")
+        real_write_checkpoint(target_path, data)
+
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._write_checkpoint",
+        recording_write_checkpoint,
+    )
+    handle_mailbox_poll(
+        _writeback_poll_settings(True),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+    )
+    assert order == ["plan", "execute", "checkpoint"]
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 103
+    )
+
+
+def test_poll_writeback_disabled_does_not_execute(
+    monkeypatch, tmp_path: Path
+):
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {"status": "ok", "module_status": "ok", "run_id": "run"},
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *_args, **_kwargs: "x",
+    )
+    order: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
+        lambda **kwargs: order.append("plan"),
+    )
+    execute_called: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
+        lambda **kwargs: execute_called.append("execute")
+        or {"status": "executed", "writes_performed": 0},
+    )
+    real_write_checkpoint = _write_checkpoint
+
+    def recording_write_checkpoint(target_path: Path, data: dict) -> None:
+        order.append("checkpoint")
+        real_write_checkpoint(target_path, data)
+
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._write_checkpoint",
+        recording_write_checkpoint,
+    )
+    handle_mailbox_poll(
+        _writeback_poll_settings(False),
+        tmp_path,
+        tmp_path,
+        logging.getLogger("test"),
+    )
+    assert order == ["plan", "checkpoint"]
+    assert execute_called == []
