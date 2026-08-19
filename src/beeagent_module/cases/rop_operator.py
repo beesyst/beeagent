@@ -88,6 +88,8 @@ _NORMALIZED_EVENT_CONTEXT_KEYS = (
     "original_message_date",
     "date_source",
     "x_email_id",
+    "in_reply_to",
+    "references",
 )
 _AI_ADJUDICATOR_CONTEXT_KEYS = (
     "sender",

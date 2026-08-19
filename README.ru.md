@@ -304,7 +304,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 
 Итерация 37 реализует (controlled Bitrix CRM write-back v0, disabled by default):
 
-- `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`irrelevant` и отдельный write credential env, который отличается от read credential и по env name, и по normalized URL; дополнительные `bitrix.writeback.email_attach` (email-activity binding) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»);
+- `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`irrelevant` и отдельный write credential env, который отличается от read credential и по env name, и по normalized URL; дополнительные `bitrix.writeback.email_attach` (email-activity binding) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»); `bitrix.writeback.email_attach_completed` (boolean, по умолчанию `true`) задаёт состояние `COMPLETED` создаваемой email-активности — `false` оставляет письмо незавершённым/заметнее в таймлайне;
 - отдельный bounded `BitrixWriteClient` (exact mutation allowlist `crm.item.add`, `crm.activity.add`, `entityTypeId=1`) с отдельным env credential `BITRIX_WRITEBACK_WEBHOOK_URL`; `BitrixReadonlyClient` остаётся строго read-only и использует `crm.activity.list` только для idempotency reconciliation;
 - `irrelevant` включён в read-only reconciliation и delivery planning; `should_rop_see` не является execution gate;
 - authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy; `rop_action_drafts.json` не является execution authority;
@@ -317,9 +317,19 @@ BeeAgent уже прошёл этап **module platform v0**:
   `identity_only_no_target` с `suitable_target_search=completed_no_target`; configured create
   разрешён только для `new_lead`/`irrelevant`;
 - durable intent persistуется до mailbox checkpoint advancement; normal poll ordering — durable intent → checkpoint → external execution → original per-run projection refresh. Temporary reconciliation outage остаётся recoverable deferred state для later poll/run без mailbox re-ingestion; при `bitrix.writeback.enabled: true` failure reconciliation/planning до persistence intent завершает `rop run` explicit failure и блокирует poll checkpoint, иначе не блокирует ingestion;
-- fail closed: unresolved/inactive/ambiguous/degraded responsible, ambiguous/unsafe/duplicate target, unresolved `existing_deal`/`duplicate` → `deferred` без спекулятивного create; только exact active routing match с positive `user_id` authorizes Lead creation, existing CRM entity никогда не reassign;
+- fail closed: unresolved/inactive/ambiguous/degraded responsible, ambiguous/unsafe/duplicate target, unresolved `existing_deal`/`duplicate` → `deferred` без спекулятивного create; exact active routing match с positive `user_id` authorizes Lead creation; optional `bitrix.writeback.fallback_responsible_user_id` назначает указанного пользователя, когда routing не нашёл активного (кроме degraded directory и при наличии exact matched); existing CRM entity никогда не reassign;
 - CLI `./start.sh rop writeback plan --run-id <id>` и `./start.sh rop writeback execute [--run-id <id>] [--dry-run]`; disabled/dry-run/planning = zero writes;
 - `attach_existing` выполняет idempotent email activity binding для безопасно найденного Lead/Deal; activity state и remote activity ID сохраняются в canonical write-back state; live existing-target smoke требуется перед production enablement;
+- без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
+
+Итерация 38 реализует (thread-aware Bitrix email write-back hardening v1):
+
+- customer identity отделён от CRM target authority: sender email/phone, Contact/Company и related historical CRM relation больше не являются automatic execution target — reconciliation никогда не выдаёт `safe_to_use_as_target=true` для identity-only Lead/Deal matches (остаются strong identity/candidate evidence с `needs_manual_review=true`);
+- automatic existing-target attach разрешён только при exact trusted thread evidence: normalized `Message-ID`, `In-Reply-To` (preferred) и bounded `References` резолвятся против canonical `storage/interfaces/rop_writeback_state.json`; все resolved exact referenced ancestors обязаны согласоваться на одном trusted Lead/Deal, иначе `ambiguous_thread_target` deferred с zero mutation; matching scope — same `client_id`, не обязательно same `source_id`;
+- bounded target provenance: confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) — authoritative thread root; thread-resolved attach (`target_provenance=thread_resolved`) распространяет target по цепочке; legacy records без trusted provenance не являются thread authority (fail closed);
+- exact reply прикрепляется к тому же Lead/Deal без нового `crm.item.add`; цепочка `A → B → C` сохраняет target; два независимых треда одного sender могут резолвиться в разные Leads; independent `new_lead` от известного sender может создать новый Lead; `existing_deal`/`duplicate` без safe exact target остаются deferred/manual-review;
+- run-local `thr_*` никогда не используется как durable CRM identity; classifier/AI/subject/`RE:`/`FWD:` markers alone не авторизуют attach; existing target responsible сохраняется (без reassignment); reply в том же batch к ещё не подтверждённому root получает recoverable `pending_thread_root` deferred;
+- bounded body preview: удаление `<!DOCTYPE ...>`/comments/script/style/HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
 - без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
 
 BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
@@ -1268,7 +1278,7 @@ rop:
 - допустимый диапазон: `200..10000`;
 - preview строится для `json_batch` и `mailbox_readonly`;
 - raw `.eml` и attachment content не сохраняются;
-- HTML предпочитает text/plain; character entities декодируются ровно один раз перед bounded preview processing, HTML text после decode strip-ится, а double-encoded markup рекурсивно не декодируется;
+- HTML предпочитает text/plain; character entities декодируются ровно один раз перед bounded preview processing; после decode удаляются `<!DOCTYPE ...>`, comments, script/style и HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) превращаются в читаемые line breaks, plain-text line breaks сохраняются, excessive whitespace bounded; double-encoded markup рекурсивно не декодируется;
 - результат фиксируется в `normalized_events.json`.
 
 ### ROP AI assist и OpenAI adjudicator

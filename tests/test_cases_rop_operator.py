@@ -557,6 +557,7 @@ def test_rop_batch_indexes_newest_first_source_events_in_canonical_order(
         reply_context["previous_case_type"]
         == classified_by_id["evt-original"]["case_type"]
     )
+    assert classified_by_id["evt-reply"]["in_reply_to"] == "<original@example.test>"
     normalized_by_id = {event["event_id"]: event for event in normalized}
     payload = build_public_thread_context(
         reply_context,

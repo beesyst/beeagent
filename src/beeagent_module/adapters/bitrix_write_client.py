@@ -128,6 +128,7 @@ class BitrixWriteClient:
         subject: str,
         description: str,
         sender_email: str,
+        completed: str = "Y",
     ) -> int:
         fields: dict[str, Any] = {
             "OWNER_TYPE_ID": owner_entity_type_id,
@@ -138,7 +139,7 @@ class BitrixWriteClient:
             "PROVIDER_TYPE_ID": origin_id[:_ACTIVITY_ORIGIN_MAX],
             "SUBJECT": (subject or "")[:_ACTIVITY_SUBJECT_MAX],
             "DESCRIPTION": (description or "")[:_ACTIVITY_DESCRIPTION_MAX],
-            "COMPLETED": "Y",
+            "COMPLETED": completed if completed in ("Y", "N") else "Y",
             "DIRECTION": 1,
             "COMMUNICATIONS": [
                 {

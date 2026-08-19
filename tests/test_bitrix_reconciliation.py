@@ -5,7 +5,7 @@ import logging
 import os
 from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -650,7 +650,7 @@ class TestBitrixReconciliation:
                 "sender": "ignore@example.com",
                 "subject": "Ignore me",
             },
-            client=None,
+            client=cast(BitrixReadonlyClient, None),
             entity_types=[1],
             candidate_limit=20,
             window_date=180,
@@ -686,7 +686,9 @@ class TestBitrixReconciliation:
         assert result["bitrix_match_status"] == "not_found"
         assert result["bitrix_match_reason"] == "no_candidate_found"
 
-    def test_exact_contact_email_with_one_linked_deal_is_strong_and_safe(self) -> None:
+    def test_exact_contact_email_with_one_linked_deal_is_strong_identity_evidence(
+        self,
+    ) -> None:
         class _RelatedDealClient:
             def search_candidates(
                 self, entity_type_id: int, query: str, **_kwargs: Any
@@ -722,7 +724,7 @@ class TestBitrixReconciliation:
                 "sender": "client@example.com",
                 "subject": "Request",
             },
-            client=_RelatedDealClient(),
+            client=cast(BitrixReadonlyClient, _RelatedDealClient()),
             entity_types=[1, 2, 3, 4],
             candidate_limit=20,
             window_date=180,
@@ -731,7 +733,8 @@ class TestBitrixReconciliation:
 
         assert result["bitrix_match_status"] == "matched_deal"
         assert result["bitrix_match_quality"] == "strong"
-        assert result["safe_to_use_as_target"] is True
+        assert result["safe_to_use_as_target"] is False
+        assert result["needs_manual_review"] is True
         assert result["bitrix_entity_id"] == 77
         assert result["bitrix_responsible_id"] == 901
         assert result["bitrix_match_reason"] == "related_contact_sender_email_exact"
@@ -776,7 +779,7 @@ class TestBitrixReconciliation:
                 "sender": "client@example.com",
                 "received_at": "2026-08-19T12:00:00+00:00",
             },
-            client=client,
+            client=cast(BitrixReadonlyClient, client),
             entity_types=[1, 2, 3, 4],
             candidate_limit=20,
             window_date=180,
@@ -820,7 +823,7 @@ class TestBitrixReconciliation:
                 "sender": "client@example.com",
                 "received_at": "2026-08-19T12:00:00+00:00",
             },
-            client=client,
+            client=cast(BitrixReadonlyClient, client),
             entity_types=[2, 3],
             candidate_limit=20,
             window_date=180,
@@ -857,7 +860,7 @@ class TestBitrixReconciliation:
                 "forwarded_wrapper": True,
                 "original_sender_email": "customer@example.com",
             },
-            client=client,
+            client=cast(BitrixReadonlyClient, client),
             entity_types=[1],
             candidate_limit=20,
             window_date=180,
@@ -886,7 +889,7 @@ class TestBitrixReconciliation:
                 "forwarded_wrapper": False,
                 "original_sender_email": "customer@example.com",
             },
-            client=client,
+            client=cast(BitrixReadonlyClient, client),
             entity_types=[1],
             candidate_limit=20,
             window_date=180,
@@ -914,7 +917,7 @@ class TestBitrixReconciliation:
 
         result = _reconcile_event(
             event={"event_id": "evt-none", "sender": "client@example.com"},
-            client=_RelatedDealClient(),
+            client=cast(BitrixReadonlyClient, _RelatedDealClient()),
             entity_types=[2, 3],
             candidate_limit=20,
             window_date=180,
@@ -945,7 +948,7 @@ class TestBitrixReconciliation:
 
         result = _reconcile_event(
             event={"event_id": "evt-identity", "sender": "client@example.com"},
-            client=_RelatedDealClient(),
+            client=cast(BitrixReadonlyClient, _RelatedDealClient()),
             entity_types=[1, 2, 3, 4],
             candidate_limit=20,
             window_date=180,
@@ -986,7 +989,7 @@ class TestBitrixReconciliation:
 
         result = _reconcile_event(
             event={"event_id": "evt-lead", "sender": "client@example.com"},
-            client=_RelatedDealClient(),
+            client=cast(BitrixReadonlyClient, _RelatedDealClient()),
             entity_types=[1, 2, 3, 4],
             candidate_limit=20,
             window_date=180,
@@ -995,7 +998,8 @@ class TestBitrixReconciliation:
 
         assert result["bitrix_match_status"] == "matched_lead"
         assert result["bitrix_entity_id"] == 253
-        assert result["safe_to_use_as_target"] is True
+        assert result["safe_to_use_as_target"] is False
+        assert result["needs_manual_review"] is True
 
     def test_related_deal_connector_failure_is_degraded(
         self,
@@ -1066,7 +1070,7 @@ class TestBitrixReconciliation:
 
         result = _reconcile_event(
             event={"event_id": "evt-title", "subject": "Exact request"},
-            client=_TitleDealClient(),
+            client=cast(BitrixReadonlyClient, _TitleDealClient()),
             entity_types=[2],
             candidate_limit=20,
             window_date=180,
@@ -1077,7 +1081,7 @@ class TestBitrixReconciliation:
         assert result["bitrix_entity_type"] == "deal"
         assert result["safe_to_use_as_target"] is False
 
-    def test_phone_exact_match_is_strong_and_safe(self) -> None:
+    def test_phone_exact_match_is_strong_identity_evidence(self) -> None:
         result = _classify_candidates(
             event={
                 "event_id": "evt-phone",
@@ -1100,8 +1104,8 @@ class TestBitrixReconciliation:
         assert result["bitrix_match_status"] == "matched_lead"
         assert result["bitrix_match_quality"] == "strong"
         assert result["bitrix_match_reason"] == "phone_exact"
-        assert result["safe_to_use_as_target"] is True
-        assert result["needs_manual_review"] is False
+        assert result["safe_to_use_as_target"] is False
+        assert result["needs_manual_review"] is True
 
     def test_matched_lead(self, tmp_path: Path, fake_bitrix_env: None) -> None:
         settings = _load_test_settings()
@@ -1181,7 +1185,7 @@ class TestBitrixReconciliation:
         assert item["bitrix_match_status"] == "matched_lead"
         assert item["bitrix_match_quality"] == "strong"
         assert item["bitrix_entity_id"] == 253
-        assert item["safe_to_use_as_target"] is True
+        assert item["safe_to_use_as_target"] is False
 
     def test_not_found(self, tmp_path: Path, fake_bitrix_env: None) -> None:
         settings = _load_test_settings()
