@@ -8569,6 +8569,141 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 изменения responsible target entity. Existing-target live smoke остаётся обязательным
 перед production enablement; до него Iteration 37 не считается DONE.
 
+### Итерация 38 — Thread-aware Bitrix email write-back hardening v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Сделать Bitrix write-back thread-aware: продолжение уже известной email-переписки должно прикрепляться к точному Lead/Deal предыдущего письма, а новый независимый запрос существующего клиента не должен автоматически прикрепляться к старой CRM entity только из-за совпадения sender email/phone.
+
+Одновременно улучшить bounded email body normalization для Bitrix email activity: убрать DOCTYPE/HTML markup и сохранить читаемые абзацы/переводы строк без raw HTML, raw `.eml` или attachment content.
+
+#### Scope
+
+- реализовать изменения только в `beeagent`;
+- сохранить `beeagent-rop` public contract неизменным;
+- использовать existing normalized `Message-ID`, `In-Reply-To` и `References` как exact thread evidence;
+- добавить BeeAgent-owned cross-run thread-to-CRM target resolution поверх existing durable write-back state;
+- не создавать отдельную thread database, если existing `storage/interfaces/rop_writeback_state.json` достаточен;
+- различать customer identity и CRM target authority:
+  - sender email/phone определяет identity/candidate evidence;
+  - identity evidence alone не разрешает `attach_existing`;
+- разрешать automatic existing-target attach только при exact trusted target evidence;
+- использовать confirmed previous BeeAgent-created Lead as authoritative thread root;
+- legacy `attach_existing` records без trusted target provenance не использовать как automatic thread authority;
+- если `In-Reply-To` / `References` однозначно resolve в один existing Lead/Deal — прикреплять письмо туда без создания нового Lead;
+- если thread references указывают на конфликтующие targets — fail closed to ambiguous/deferred;
+- если exact thread target отсутствует:
+  - `new_lead` / `irrelevant` используют normal configured create path;
+  - `existing_deal` / `duplicate` без другого safe target остаются deferred/manual-review;
+- same sender email/phone не должен блокировать создание нового independent `new_lead`;
+- сохранить existing responsible существующей CRM entity;
+- сохранить write-back idempotency, retry/recovery и durable-intent-before-checkpoint semantics;
+- добавить bounded target-resolution provenance в reconciliation/write-back artifacts/state;
+- улучшить body preview normalization:
+  - удалить `<!DOCTYPE ...>`, comments, script/style и HTML tags;
+  - преобразовать safe structural HTML boundaries (`br`, paragraph/block/list boundaries) в читаемые line breaks;
+  - сохранить line breaks plain-text письма;
+  - нормализовать excessive whitespace без схлопывания всего письма в одну строку;
+  - сохранить existing `rop.email_preview.body_chars_max`;
+  - не добавлять новую parsing dependency;
+- обновить tests и documentation.
+
+#### Excluded
+
+- изменения classification/taxonomy/duplicate logic в `beeagent-rop`;
+- использование `existing_deal`, AI output, `RE:`, `FWD:` или subject similarity как CRM mutation authority;
+- fuzzy automatic thread-to-CRM matching;
+- automatic attach к historical Lead/Deal только по sender email/phone;
+- arbitrary historical Bitrix email-thread backfill;
+- автоматическое восстановление thread binding для писем, которые BeeAgent никогда ранее не связывал с CRM target;
+- manual CRM target mapping UI;
+- CRM reassignment;
+- `crm.item.update` / `crm.item.delete`;
+- расширение Bitrix write-method allowlist;
+- raw `.eml` persistence;
+- raw MIME/HTML rendering;
+- attachment content rendering;
+- full browser-quality HTML rendering;
+- новая HTML/parser dependency;
+- изменения BeeUI;
+- version bump.
+
+#### Deliverable
+
+BeeAgent различает identity клиента и identity переписки. Для email thread, чей ancestor уже имеет trusted BeeAgent CRM binding, следующий exact reply автоматически прикрепляется к тому же Lead/Deal. Новый independent request от того же sender может создать новый Lead.
+
+Email activity description в Bitrix содержит bounded readable plain text без DOCTYPE/HTML tags и без потери нормальных абзацев/line breaks.
+
+#### Acceptance criteria
+
+- existing Lead с тем же sender email сам по себе не является safe CRM target;
+- existing Lead/Deal с exact phone/email identity alone не получает `safe_to_use_as_target=true`;
+- new independent `new_lead` от sender, уже присутствующего в старом Lead, может создать новый Lead;
+- first email `A` may create Lead `L1`;
+- later email `B` with exact `In-Reply-To`/`References` to `A` attaches to `L1`;
+- reply attachment does not call `crm.item.add`;
+- chained replies `A → B → C` preserve the same CRM target;
+- two independent threads from the same sender may resolve to two different Leads;
+- conflicting thread references never choose a target automatically;
+- missing/malformed thread headers degrade safely and never authorize mutation;
+- run-local `thr_*` IDs are not used as durable CRM target identity;
+- legacy write-back records without trusted target provenance are not silently promoted to automatic thread authority;
+- classifier `existing_deal`, AI output, subject similarity and `RE:`/`FWD:` markers alone cannot authorize CRM attachment;
+- existing target responsible is not reassigned;
+- replay does not create duplicate Lead or duplicate email activity;
+- durable intent remains persisted before mailbox checkpoint advancement;
+- HTML `DOCTYPE`, script/style and markup do not appear in Bitrix body preview;
+- safe HTML block boundaries become readable line breaks;
+- plain-text line breaks are preserved;
+- body preview remains bounded by existing configured limit;
+- no raw `.eml`, attachment content, credentials or webhook URLs appear in artifacts/logs;
+- `beeagent-rop` remains unchanged.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted `test_rop_input_source.py`;
+- targeted `test_bitrix_reconciliation.py`;
+- targeted `test_rop_writeback.py`;
+- targeted mailbox poll/checkpoint tests;
+- independent same-sender new-request regression;
+- exact cross-run reply-to-existing-Lead regression;
+- multi-reply chain regression;
+- same sender with two independent threads regression;
+- conflicting References regression;
+- malformed/missing thread-header regression;
+- replay/idempotency regression;
+- legacy state without target provenance regression;
+- HTML DOCTYPE removal regression;
+- HTML paragraph/`br` readability regression;
+- plain-text line-break preservation regression;
+- script/style/entity/bounded-preview security regressions;
+- `uv run python -B -m compileall -q src tests`;
+- `git diff --check`;
+- SAST required;
+- DAST-style controlled Bitrix test-portal smoke required;
+- SCA only if dependency files unexpectedly change;
+- IAST not required;
+- fuzzing optional; malformed/adversarial thread-header and HTML normalization tests are required.
+
+#### DoD
+
+- customer identity no longer doubles as CRM target authority;
+- exact cross-run RFC thread evidence can resolve a trusted CRM target;
+- continued correspondence attaches to the correct Lead/Deal;
+- an independent new request from a regular customer can create a new Lead;
+- ambiguous or untrusted target evidence fails closed;
+- write-back remains idempotent and auditable;
+- existing mailbox checkpoint/recovery semantics remain intact;
+- email activity body is readable bounded plain text;
+- no new parser dependency is added;
+- no Bitrix mutation method is added;
+- `beeagent-rop` remains unchanged;
+- `pyproject.toml.version` is not changed;
+- tests, security checks, live controlled Bitrix smoke and docs are ready for PR review.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
