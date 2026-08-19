@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.52.0...beeagent-v0.53.0) (2026-08-19)
+
+
+### Features
+
+* **it37:** add controlled bitrix CRM write-back ([#201](https://github.com/beesyst/beeagent/issues/201)) ([be47237](https://github.com/beesyst/beeagent/commit/be47237938abbaa1e47eb3f147c5aae05f62b517))
+
 ## [0.52.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.51.3...beeagent-v0.52.0) (2026-08-17)
 
 
