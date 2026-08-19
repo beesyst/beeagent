@@ -19,6 +19,7 @@ from beeagent_module.core.cli import (
     handle_rop_poll,
     handle_rop_run,
     handle_rop_summary,
+    handle_rop_writeback,
 )
 from beeagent_module.core.env_sync import ensure_bootstrap_env, sync_env_with_example
 from beeagent_module.core.log import get_logger, setup_logging
@@ -172,6 +173,8 @@ def _handle_rop_cli(
             handle_rop_evaluate_review(args, logger=logger)
         elif args.rop_command == "recommendations":
             handle_rop_recommendations(args, settings=settings, logger=logger)
+        elif args.rop_command == "writeback":
+            handle_rop_writeback(args, settings=settings, logger=logger)
         else:
             logger.error("Unknown ROP CLI command: %s", args.rop_command)
             sys.exit(1)

@@ -902,9 +902,13 @@ Browser route показывает bounded/redacted artifact preview через 
 | `rop_ai_assist_requests_json`     | `rop_ai_assist_requests.json`                         |
 | `rop_ai_assist_decisions_json`    | `rop_ai_assist_decisions.json`                        |
 | `rop_ai_assist_results_json`      | `rop_ai_assist_results.json`                          |
+| `rop_final_decisions_json`        | `rop_final_decisions.json`                            |
+| `rop_writeback_summary_json`      | `rop_writeback_summary.json`                          |
 
 UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
 It32 artifacts `rop_context_enrichment.json`, `rop_recommendations.json` и `rop_evaluation.json` в текущей реализации не входят в generic artifact allowlist. Recommendations tab и widget API читают `rop_recommendations.json` через read-model/widget code, а не через browser artifact viewer.
+
+`rop_writeback_summary.json` — read-only per-run projection операторского write-back state (Iteration 37): bounded outcome/status per event (`create_lead` / `attach_existing` / `deferred`), source of truth — `storage/interfaces/rop_writeback_state.json`. Проекция не содержит credentials, raw `.eml` и raw attachment content.
 
 ROP dashboard поддерживает period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
 
@@ -1290,7 +1294,8 @@ Sanitization rules:
 - DB-backed user management;
 - POST/write actions;
 - CRM/mailbox actions;
-- CRM/Bitrix write-back;
+- UI-triggered CRM/Bitrix write-back; controlled server-side `rop run` and `rop poll`
+  write-back remains outside Web/widget routes;
 - web-triggered ROP run;
 - widget-triggered execution;
 - save-human-decision UI flow;

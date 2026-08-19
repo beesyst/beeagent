@@ -516,6 +516,38 @@ def _extract_email_from_sender(sender_display: str) -> str:
     return ""
 
 
+def effective_rop_sender_email(event: dict[str, Any]) -> str:
+    sender = _bounded_email_value(event.get("sender"))
+    if event.get("forwarded_wrapper") is True:
+        original_sender = _bounded_email_value(event.get("original_sender_email"))
+        if original_sender:
+            return original_sender
+    return sender
+
+
+def _bounded_email_value(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        pairs = getaddresses([value])
+    except (TypeError, ValueError, IndexError):
+        return ""
+    if len(pairs) != 1:
+        return ""
+    address = pairs[0][1].strip()
+    if (
+        not address
+        or len(address) > 320
+        or address.count("@") != 1
+        or any(char.isspace() for char in address)
+    ):
+        return ""
+    local, domain = address.rsplit("@", 1)
+    if not local or not domain or "." not in domain:
+        return ""
+    return address
+
+
 def _extract_forwarded_wrapper_fields(
     body_text: str,
     logger: logging.Logger | None = None,
@@ -749,6 +781,7 @@ def _normalize_mailbox_message(
         "in_reply_to": _clean_thread_header(message.get("In-Reply-To")),
         "references": _clean_thread_header(message.get("References")),
         "sender": sender_list[0] if sender_list else "",
+        "from_name": _extract_sender_name(message),
         "to": to_list,
         "cc": cc_list,
         "subject": subject,
@@ -892,6 +925,22 @@ def _extract_addresses(message: Any, header_name: str) -> list[str]:
             continue
         addresses.extend(addr for _name, addr in pairs if addr)
     return addresses
+
+
+def _extract_sender_name(message: Any, header_name: str = "From") -> str:
+    for name, value in message.raw_items():
+        if name.lower() != header_name.lower():
+            continue
+        try:
+            header = message.policy.header_fetch_parse(name, value)
+            pairs = getaddresses([header])
+        except TypeError, ValueError, IndexError:
+            continue
+        for display_name, _addr in pairs:
+            display_name = (display_name or "").strip().strip('"')
+            if display_name:
+                return display_name
+    return ""
 
 
 def _normalize_message_date(value: Any) -> str:

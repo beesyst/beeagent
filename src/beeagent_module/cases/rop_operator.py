@@ -91,6 +91,7 @@ _NORMALIZED_EVENT_CONTEXT_KEYS = (
 )
 _AI_ADJUDICATOR_CONTEXT_KEYS = (
     "sender",
+    "from_name",
     "subject",
     "body_preview",
     "text_preview",

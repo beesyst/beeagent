@@ -197,6 +197,89 @@ def handle_rop_run(
                 exc,
             )
 
+        writeback_enabled = (
+            effective_settings.get("bitrix", {})
+            .get("writeback", {})
+            .get("enabled")
+            is True
+        )
+        if writeback_enabled:
+            if (
+                effective_settings.get("bitrix", {}).get("enabled") is not True
+                or effective_settings.get("bitrix", {})
+                .get("reconciliation", {})
+                .get("enabled")
+                is not True
+            ):
+                raise RopCliError(
+                    "ROP write-back requires enabled Bitrix reconciliation."
+                )
+
+            from beeagent_module.cases.rop_action_drafts import build_action_drafts
+            from beeagent_module.cases.rop_bitrix_reconciliation import (
+                run_reconciliation,
+            )
+            from beeagent_module.cases.rop_writeback import (
+                build_writeback_plan,
+                execute_writeback_pending,
+            )
+
+            try:
+                reconciliation = run_reconciliation(
+                    storage_dir, effective_run_id, effective_settings, logger
+                )
+                build_writeback_plan(
+                    storage_dir=storage_dir,
+                    run_id=effective_run_id,
+                    settings=effective_settings,
+                    logger=logger,
+                )
+            except Exception as exc:
+                logger.error(
+                    "ROP CLI: write-back durable preparation failed: run_id=%s "
+                    "reason=%s",
+                    effective_run_id,
+                    exc,
+                )
+                raise RopCliError(
+                    f"ROP write-back durable preparation failed: {exc}"
+                ) from exc
+
+            try:
+                build_action_drafts(
+                    storage_dir, effective_run_id, reconciliation, logger
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ROP CLI: write-back projection failed after durable plan: "
+                    "run_id=%s reason=%s",
+                    effective_run_id,
+                    exc,
+                )
+
+            try:
+                writeback_result = execute_writeback_pending(
+                    storage_dir=storage_dir,
+                    run_id=effective_run_id,
+                    settings=effective_settings,
+                    logger=logger,
+                )
+                logger.info(
+                    "ROP CLI: write-back execution after run: run_id=%s "
+                    "reconciliation_status=%s status=%s writes=%d",
+                    effective_run_id,
+                    reconciliation.get("status"),
+                    writeback_result.get("status"),
+                    writeback_result.get("writes_performed", 0),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ROP CLI: write-back execution failed after durable plan: "
+                    "run_id=%s reason=%s",
+                    effective_run_id,
+                    exc,
+                )
+
         logger.info(
             "ROP CLI: run completed successfully: run_id=%s status=%s",
             result.get("run_id"),
@@ -1175,6 +1258,70 @@ def handle_rop_action_drafts(
     )
 
 
+def handle_rop_writeback(
+    args: argparse.Namespace,
+    settings: dict,
+    logger: logging.Logger,
+) -> None:
+    storage_dir = get_storage_dir()
+    run_id = args.run_id
+    action = args.writeback_command
+
+    logger.info(
+        "ROP CLI: starting write-back %s for run_id=%s",
+        action,
+        run_id,
+    )
+
+    from beeagent_module.cases.rop_writeback import (
+        RopWritebackError,
+        build_writeback_plan,
+        execute_writeback_pending,
+    )
+
+    try:
+        if action == "plan":
+            result = build_writeback_plan(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                settings=settings,
+                logger=logger,
+            )
+        elif action == "execute":
+            result = execute_writeback_pending(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                settings=settings,
+                logger=logger,
+                dry_run_override=args.dry_run,
+                retry_failed=args.retry_failed,
+            )
+        else:
+            raise RopCliError(f"Unknown write-back action: {action}")
+    except RopWritebackError as exc:
+        raise RopCliError(str(exc)) from exc
+
+    aggregate = result.get("aggregate", {})
+    outcome_counts = aggregate.get("outcome_counts", {}) if isinstance(aggregate, dict) else {}
+    status_counts = aggregate.get("status_counts", {}) if isinstance(aggregate, dict) else {}
+    print(
+        f"\nROP write-back {action}: status={result.get('status')} "
+        f"writes={result.get('writes_performed', 0)}\n"
+        f"  events:            {aggregate.get('event_count', 0) if isinstance(aggregate, dict) else 0}\n"
+        f"  create_lead:       {outcome_counts.get('create_lead', 0)}\n"
+        f"  attach_existing:   {outcome_counts.get('attach_existing', 0)}\n"
+        f"  deferred:          {outcome_counts.get('deferred', 0)}\n"
+        f"  status_counts:     {status_counts}\n"
+    )
+
+    logger.info(
+        "ROP CLI: write-back %s finished: run_id=%s status=%s",
+        action,
+        run_id,
+        result.get("status"),
+    )
+
+
 def create_rop_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="start.py rop",
@@ -1352,6 +1499,46 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="run_id to build recommendations for",
+    )
+
+    writeback_parser = subparsers.add_parser(
+        "writeback",
+        help="Plan and execute controlled Bitrix CRM write-back",
+    )
+    writeback_subparsers = writeback_parser.add_subparsers(
+        dest="writeback_command", required=True
+    )
+    writeback_plan_parser = writeback_subparsers.add_parser(
+        "plan",
+        help="Build authoritative Bitrix write-back execution plan (zero writes)",
+    )
+    writeback_plan_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="run_id to build the write-back plan for",
+    )
+    writeback_execute_parser = writeback_subparsers.add_parser(
+        "execute",
+        help="Execute pending Bitrix write-back work per server-side policy",
+    )
+    writeback_execute_parser.add_argument(
+        "--run-id",
+        type=str,
+        default="manual-execute",
+        help="run_id label for the execution projection (optional)",
+    )
+    writeback_execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan-only execution with zero Bitrix writes",
+    )
+    writeback_execute_parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help=(
+            "Re-arm retry-exhausted create or attachment work with a fresh retry budget"
+        ),
     )
 
     return parser

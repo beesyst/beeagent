@@ -302,6 +302,26 @@ BeeAgent уже прошёл этап **module platform v0**:
 - секция Recipient routing на read-only Event Detail странице;
 - без CRM/mailbox write-back, `automation_allowed=false`, `bitrix_write_allowed=false`, `beeagent-rop` без изменений.
 
+Итерация 37 реализует (controlled Bitrix CRM write-back v0, disabled by default):
+
+- `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`irrelevant` и отдельный write credential env, который отличается от read credential и по env name, и по normalized URL; дополнительные `bitrix.writeback.email_attach` (email-activity binding) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»);
+- отдельный bounded `BitrixWriteClient` (exact mutation allowlist `crm.item.add`, `crm.activity.add`, `entityTypeId=1`) с отдельным env credential `BITRIX_WRITEBACK_WEBHOOK_URL`; `BitrixReadonlyClient` остаётся строго read-only и использует `crm.activity.list` только для idempotency reconciliation;
+- `irrelevant` включён в read-only reconciliation и delivery planning; `should_rop_see` не является execution gate;
+- authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy; `rop_action_drafts.json` не является execution authority;
+- canonical durable state `storage/interfaces/rop_writeback_state.json` + per-run read-only projection `storage/runs/<run_id>/rop_writeback_summary.json` (artifact allowlist); after external execution or recovery, every affected original run refreshes its summary and read-only action-draft projection from this canonical state;
+- idempotent create через stable cross-run identity `client_id + source_id + (message_id → x_email_id → event_id)` и bounded `ORIGINATOR_ID`/`ORIGIN_ID`; recovery uncertain POST по idempotency lookup перед повторным POST; bounded retry для transport/429/5xx; terminal 400/401/403/API errors не ретраятся;
+- прикрепление письма к созданному или безопасно найденному Lead/Deal через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.email_attach: true`; activity получает target owner и его существующего responsible без reassignment CRM entity, а повторный/uncertain результат сначала сверяется read-only `crm.activity.list` по stable identity;
+- safe existing Deal доступен только через exact sender email/phone → exact Contact/Company → bounded read-only `crm.item.list` (`entityTypeId=2`) relation lookup по официальным `contactId`/`companyId`: один linked Deal = strong/safe, multiple/none/malformed/connector result не становится automatic target, title/subject similarity остаётся unsafe;
+- exact Contact/Company остаётся только identity evidence, а не execution target: после успешно
+  завершённых exact Lead и related-Deal lookup без target reconciliation сохраняет
+  `identity_only_no_target` с `suitable_target_search=completed_no_target`; configured create
+  разрешён только для `new_lead`/`irrelevant`;
+- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering — durable intent → checkpoint → external execution → original per-run projection refresh. Temporary reconciliation outage остаётся recoverable deferred state для later poll/run без mailbox re-ingestion; при `bitrix.writeback.enabled: true` failure reconciliation/planning до persistence intent завершает `rop run` explicit failure и блокирует poll checkpoint, иначе не блокирует ingestion;
+- fail closed: unresolved/inactive/ambiguous/degraded responsible, ambiguous/unsafe/duplicate target, unresolved `existing_deal`/`duplicate` → `deferred` без спекулятивного create; только exact active routing match с positive `user_id` authorizes Lead creation, existing CRM entity никогда не reassign;
+- CLI `./start.sh rop writeback plan --run-id <id>` и `./start.sh rop writeback execute [--run-id <id>] [--dry-run]`; disabled/dry-run/planning = zero writes;
+- `attach_existing` выполняет idempotent email activity binding для безопасно найденного Lead/Deal; activity state и remote activity ID сохраняются в canonical write-back state; live existing-target smoke требуется перед production enablement;
+- без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
+
 BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
 
 Текущий фокус:
@@ -477,7 +497,7 @@ bitrix:
 - web-triggered `rop run`;
 - operator POST/write actions;
 - config editing;
-- CRM/Bitrix write-back;
+- UI-triggered CRM/Bitrix write-back;
 - production listener/stream;
 - full RBAC enforcement.
 
@@ -528,6 +548,7 @@ web:
 - `LMSTUDIO_API_KEY`
 - `CUSTOM_AI_API_KEY`
 - `BITRIX_WEBHOOK_URL`
+- `BITRIX_WRITEBACK_WEBHOOK_URL` (отдельный write credential для `bitrix.writeback`, обязателен только при `bitrix.writeback.enabled: true`)
 - `ROP_MAILBOX_USERNAME`
 - `ROP_MAILBOX_PASSWORD`
 
@@ -664,6 +685,10 @@ principal token rotation требует повторного входа; каж�
 
 # Собрать MVP handoff/readiness pack.
 ./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
+
+./start.sh rop writeback plan --run-id live-review-2026-05-15
+
+./start.sh rop writeback execute --run-id live-review-2026-05-15 [--dry-run]
 ```
 
 **ROP dashboard (`rop dashboard`):**
@@ -1001,7 +1026,7 @@ configured source(s)
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
 В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts.
-В scope всё ещё не входят production listener/stream, CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing.
+В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing. Controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default.
 
 ## Запуск
 
@@ -1024,6 +1049,7 @@ Internal secrets генерируются автоматически, если �
 - `LMSTUDIO_API_KEY` для включённого `ai.profiles.lmstudio`
 - `CUSTOM_AI_API_KEY` для включённого `ai.profiles.custom`
 - `BITRIX_WEBHOOK_URL`
+- `BITRIX_WRITEBACK_WEBHOOK_URL` при включённом `bitrix.writeback.enabled`
 - `ROP_MAILBOX_USERNAME`
 - `ROP_MAILBOX_PASSWORD`
 - credentials для Telegram / Bitrix / OpenAI и других внешних интеграций.
@@ -1724,7 +1750,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
 - controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts уже входят в scope;
-- production listener/stream, CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing всё ещё не входят в scope;
+- production listener/stream, UI/widget-triggered CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default;
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;

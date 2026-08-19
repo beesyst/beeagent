@@ -143,6 +143,24 @@ class TestRopCliArgumentParser:
         with pytest.raises(RopCliError, match="Invalid period"):
             handle_rop_dashboard(args, settings=settings, logger=_null_logger())
 
+    def test_rop_writeback_execute_parser_accepts_retry_failed(self) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(
+            ["writeback", "execute", "--run-id", "test-run-123", "--retry-failed"]
+        )
+        assert args.rop_command == "writeback"
+        assert args.writeback_command == "execute"
+        assert args.run_id == "test-run-123"
+        assert args.dry_run is False
+        assert args.retry_failed is True
+
+    def test_rop_writeback_execute_parser_retry_failed_defaults_false(
+        self,
+    ) -> None:
+        parser = create_rop_parser()
+        args = parser.parse_args(["writeback", "execute", "--run-id", "test-run-123"])
+        assert args.retry_failed is False
+
     def test_rop_mvp_pack_rejects_period_not_configured(self) -> None:
         import argparse
 
@@ -593,6 +611,205 @@ class TestRopCliRun:
         with pytest.raises(RopCliError) as exc_info:
             handle_rop_run(args, settings=settings, logger=logger)
         assert "Source not found" in str(exc_info.value)
+
+    def _rop_run_writeback_batch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_id: str,
+        writeback_enabled: bool,
+        reconciliation_status: str = "ok",
+        phase_failure: str | None = None,
+    ) -> dict:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = True
+        settings["bitrix"]["reconciliation"]["enabled"] = True
+        settings["bitrix"]["writeback"]["enabled"] = writeback_enabled
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-wb-001",
+                    "sender": "client@example.com",
+                    "subject": "Need welding quote",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "wb_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+        def reconciliation(*_args: object, **_kwargs: object) -> dict:
+            calls.append("reconciliation")
+            if phase_failure == "reconciliation":
+                raise RuntimeError("reconciliation failed")
+            return {"status": reconciliation_status}
+
+        def plan(**_kwargs: object) -> None:
+            calls.append("plan")
+            if phase_failure == "plan":
+                raise RuntimeError("plan persistence failed")
+
+        def drafts(*_args: object, **_kwargs: object) -> None:
+            calls.append("drafts")
+            if phase_failure == "drafts":
+                raise RuntimeError("projection failed")
+
+        def execute(**_kwargs: object) -> dict:
+            calls.append("execute")
+            if phase_failure == "execute":
+                raise RuntimeError("executor failed")
+            return {"status": "executed", "writes_performed": 1}
+
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
+            reconciliation,
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_action_drafts.build_action_drafts",
+            drafts,
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.build_writeback_plan", plan
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.execute_writeback_pending", execute
+        )
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id=run_id,
+        )
+        try:
+            handle_rop_run(args, settings=settings, logger=_null_logger())
+        except RopCliError as exc:
+            return {"settings": settings, "calls": calls, "error": str(exc)}
+        return {"settings": settings, "calls": calls, "error": None}
+
+    def test_rop_run_executes_writeback_when_enabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-enabled",
+            writeback_enabled=True,
+        )
+        assert result["calls"] == [
+            "reconciliation",
+            "plan",
+            "drafts",
+            "execute",
+        ]
+
+    def test_rop_run_skips_writeback_when_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-disabled",
+            writeback_enabled=False,
+        )
+        assert result["calls"] == []
+
+    def test_rop_run_persists_recoverable_plan_when_reconciliation_degraded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-degraded",
+            writeback_enabled=True,
+            reconciliation_status="degraded",
+        )
+        assert result["calls"] == [
+            "reconciliation",
+            "plan",
+            "drafts",
+            "execute",
+        ]
+
+    @pytest.mark.parametrize(
+        ("phase_failure", "expected_calls"),
+        [
+            ("reconciliation", ["reconciliation"]),
+            ("plan", ["reconciliation", "plan"]),
+        ],
+    )
+    def test_rop_run_fails_when_durable_preparation_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        phase_failure: str,
+        expected_calls: list[str],
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            f"test-cli-run-wb-{phase_failure}",
+            writeback_enabled=True,
+            phase_failure=phase_failure,
+        )
+        assert result["calls"] == expected_calls
+        assert "durable preparation failed" in str(result["error"])
+
+    def test_rop_run_projection_failure_keeps_execution_recoverable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-projection-failure",
+            writeback_enabled=True,
+            phase_failure="drafts",
+        )
+        assert result["error"] is None
+        assert result["calls"] == [
+            "reconciliation",
+            "plan",
+            "drafts",
+            "execute",
+        ]
+
+    def test_rop_run_executor_failure_after_plan_is_visible_and_recoverable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._rop_run_writeback_batch(
+            tmp_path,
+            monkeypatch,
+            "test-cli-run-wb-executor-failure",
+            writeback_enabled=True,
+            phase_failure="execute",
+        )
+        assert result["error"] is None
+        assert result["calls"] == [
+            "reconciliation",
+            "plan",
+            "drafts",
+            "execute",
+        ]
 
 
 class TestRopCliSummary:

@@ -47,6 +47,22 @@
 - observability/logging;
 - approvals и bounded execution semantics.
 
+## Bitrix write-back execution boundary (Iteration 37)
+
+BeeAgent владеет bounded execution-capable Bitrix write-back path для ROP-событий:
+
+- `BitrixReadonlyClient` остаётся строго read-only; `crm.activity.list` используется
+  только для idempotency reconciliation и не даёт mutation capability;
+- отдельный `BitrixWriteClient` — bounded execution boundary с собственным allowlist
+  точных mutation methods (`crm.item.add`, `crm.activity.add`) и отдельным env-backed
+  write credential;
+- authoritative write-back state живёт в `storage/interfaces/rop_writeback_state.json`
+  (durable, cross-run, idempotent), per-run операторская проекция —
+  `rop_writeback_summary.json`;
+- `beeagent-rop` остаётся источником классификационной семантики и не меняется;
+  write-back authority находится в BeeAgent server-side policy, а не в AI/final
+  decision/`should_rop_see`/action drafts.
+
 ## Что НЕ живёт в BeeAgent
 
 В `beeagent` не должна жить клиентская логика вида:

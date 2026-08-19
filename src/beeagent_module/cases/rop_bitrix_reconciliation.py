@@ -13,6 +13,7 @@ from beeagent_module.adapters.bitrix_client import (
     BitrixReadonlyClient,
     build_bitrix_client,
 )
+from beeagent_module.core.input_source import effective_rop_sender_email
 
 RECONCILIATION_ARTIFACT = "bitrix_reconciliation.json"
 SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
@@ -21,7 +22,6 @@ SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
         "newsletter",
         "auto_reply",
         "out_of_office",
-        "irrelevant",
     }
 )
 
@@ -76,6 +76,7 @@ def run_reconciliation(
         "not_found_count": 0,
         "duplicate_candidate_count": 0,
         "ambiguous_count": 0,
+        "identity_only_no_target_count": 0,
         "skipped_count": 0,
         "connector_degraded_count": 0,
         "error_count": 0,
@@ -124,6 +125,8 @@ def run_reconciliation(
             aggregate["duplicate_candidate_count"] += 1
         elif status == "ambiguous":
             aggregate["ambiguous_count"] += 1
+        elif status == "identity_only_no_target":
+            aggregate["identity_only_no_target_count"] += 1
         elif status == "skipped":
             aggregate["skipped_count"] += 1
         elif status == "connector_degraded":
@@ -279,16 +282,86 @@ def _reconcile_event(
     window_date: int,
     logger: logging.Logger,
 ) -> dict[str, Any]:
-    sender = event.get("sender", "")
+    reconciliation_event = dict(event)
+    sender = effective_rop_sender_email(event)
+    reconciliation_event["sender"] = sender
     subject = event.get("subject", "")
     bot_case_type = event.get("case_type", event.get("bot_case_type", ""))
     phone = event.get("phone", "")
 
     if bot_case_type in SKIPPED_CASE_TYPES:
-        return _make_skipped_item(event, "bot_case_type_not_actionable")
+        return _make_skipped_item(reconciliation_event, "bot_case_type_not_actionable")
 
     all_candidates: list[dict[str, Any]] = []
     date_from = _make_date_from_filter(event, window_date)
+
+    related_deal, identity_evidence = _resolve_related_deal(
+        event=reconciliation_event,
+        client=client,
+        entity_types=entity_types,
+        logger=logger,
+    )
+    if related_deal is not None:
+        if (
+            related_deal.get("bitrix_match_status") == "matched_deal"
+            and 1 in entity_types
+        ):
+            exact_leads = _search_exact_communication_entity(
+                client=client,
+                entity_type_id=1,
+                sender=sender,
+                phone=phone,
+                logger=logger,
+                date_from=date_from,
+            )
+            if exact_leads:
+                ambiguous_candidates = [
+                    (1, lead)
+                    for _entity_type_id, lead, _evidence in exact_leads
+                ]
+                ambiguous_candidates.append(
+                    (
+                        2,
+                        {
+                            "ID": related_deal.get("bitrix_entity_id"),
+                            "TITLE": related_deal.get("bitrix_title", ""),
+                        },
+                    )
+                )
+                return _make_ambiguous_item(
+                    reconciliation_event,
+                    ambiguous_candidates,
+                    "exact_lead_and_related_deal",
+                    len(ambiguous_candidates),
+                )
+        return related_deal
+
+    if identity_evidence is not None and 1 in entity_types:
+        exact_leads = _search_exact_communication_entity(
+            client=client,
+            entity_type_id=1,
+            sender=sender,
+            phone=phone,
+            logger=logger,
+            date_from=date_from,
+        )
+        if len(exact_leads) == 1:
+            _entity_type_id, lead, match_reason = exact_leads[0]
+            return _make_matched_item(
+                reconciliation_event,
+                1,
+                lead,
+                match_reason,
+                0.95,
+                "strong",
+            )
+        if len(exact_leads) > 1:
+            return _make_duplicate_item(
+                reconciliation_event,
+                [(1, lead) for _entity_type_id, lead, _reason in exact_leads],
+                "multiple_exact_matches",
+                len(exact_leads),
+            )
 
     for entity_type_id in entity_types:
         candidates = _search_entity(
@@ -305,13 +378,160 @@ def _reconcile_event(
         )
 
     if not all_candidates:
-        return _make_not_found_item(event, "no_candidate_found")
+        if identity_evidence is not None and 1 in entity_types:
+            return _make_identity_only_no_target_item(
+                reconciliation_event, identity_evidence
+            )
+        return _make_not_found_item(reconciliation_event, "no_candidate_found")
 
-    return _classify_candidates(
-        event=event,
+    classified = _classify_candidates(
+        event=reconciliation_event,
         candidates=all_candidates,
         candidate_limit=candidate_limit,
     )
+    if (
+        identity_evidence is not None
+        and 1 in entity_types
+        and classified.get("bitrix_match_status")
+        in {"matched_contact", "matched_company"}
+        and classified.get("bitrix_match_quality") == "strong"
+        and classified.get("candidate_count") == 1
+    ):
+        return _make_identity_only_no_target_item(
+            reconciliation_event, identity_evidence
+        )
+    return classified
+
+
+def _resolve_related_deal(
+    event: dict[str, Any],
+    client: BitrixReadonlyClient,
+    entity_types: list[int],
+    logger: logging.Logger,
+) -> tuple[dict[str, Any] | None, tuple[int, dict[str, Any], str] | None]:
+    if 2 not in entity_types:
+        return None, None
+
+    sender = event.get("sender", "")
+    phone = event.get("phone", "")
+    if not ((isinstance(sender, str) and "@" in sender) or phone):
+        return None, None
+
+    related_entities: list[tuple[int, dict[str, Any], str]] = []
+    for entity_type_id in (3, 4):
+        if entity_type_id not in entity_types:
+            continue
+        candidates = _search_exact_communication_entity(
+            client=client,
+            entity_type_id=entity_type_id,
+            sender=sender,
+            phone=phone,
+            logger=logger,
+        )
+        related_entities.extend(candidates)
+
+    if not related_entities:
+        return None, None
+
+    deals_by_id: dict[int, tuple[dict[str, Any], str]] = {}
+    for entity_type_id, entity, evidence in related_entities:
+        entity_id = _int_or_none(entity.get("ID"))
+        if entity_id is None:
+            raise BitrixConnectorError(
+                "Bitrix returned related entity without valid ID"
+            )
+        for deal in client.search_related_deals(entity_type_id, entity_id):
+            normalized_deal = _normalize_entity(deal)
+            deal_id = _int_or_none(normalized_deal.get("ID"))
+            if deal_id is None:
+                raise BitrixConnectorError(
+                    "Bitrix returned related deal without valid ID"
+                )
+            deals_by_id.setdefault(
+                deal_id,
+                (
+                    normalized_deal,
+                    f"related_{ENTITY_TYPE_NAMES[entity_type_id]}_{evidence}",
+                ),
+            )
+
+    deals = list(deals_by_id.values())
+    if not deals:
+        if len(related_entities) == 1:
+            return None, related_entities[0]
+        return None, None
+    if len(deals) == 1:
+        deal, match_reason = deals[0]
+        return (
+            _make_matched_item(
+                event,
+                2,
+                deal,
+                match_reason,
+                0.95,
+                "strong",
+            ),
+            None,
+        )
+    return (
+        _make_ambiguous_item(
+            event,
+            [(2, deal) for deal, _reason in deals],
+            "multiple_related_deals",
+        ),
+        None,
+    )
+
+
+def _search_exact_communication_entity(
+    client: BitrixReadonlyClient,
+    entity_type_id: int,
+    sender: str,
+    phone: str,
+    logger: logging.Logger,
+    date_from: str | None = None,
+) -> list[tuple[int, dict[str, Any], str]]:
+    results: list[tuple[int, dict[str, Any], str]] = []
+    seen_ids: set[int] = set()
+
+    def add_exact(items: list[dict[str, Any]], evidence: str) -> None:
+        for item in items:
+            normalized = _normalize_entity(item)
+            item_id = _int_or_none(normalized.get("ID"))
+            if item_id is None or item_id in seen_ids:
+                continue
+            if evidence == "sender_email_exact":
+                values = _extract_multifield_values(normalized, "EMAIL")
+                if sender.lower() not in {value.lower() for value in values if value}:
+                    continue
+            else:
+                values = _extract_multifield_values(normalized, "PHONE")
+                if _normalize_phone(phone) not in {
+                    _normalize_phone(value) for value in values if value
+                }:
+                    continue
+            seen_ids.add(item_id)
+            results.append((entity_type_id, normalized, evidence))
+
+    if isinstance(sender, str) and "@" in sender:
+        logger.debug(
+            "bitrix exact communication search for entity_type=%s",
+            entity_type_id,
+        )
+        add_exact(
+            client.search_candidates(entity_type_id, sender, date_from=date_from),
+            "sender_email_exact",
+        )
+    if phone and not results:
+        logger.debug(
+            "bitrix exact communication search for entity_type=%s",
+            entity_type_id,
+        )
+        add_exact(
+            client.search_candidates(entity_type_id, phone, date_from=date_from),
+            "phone_exact",
+        )
+    return results
 
 
 def _search_entity(
@@ -326,28 +546,9 @@ def _search_entity(
     candidates: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
-    def _normalize(item: dict[str, Any]) -> dict[str, Any]:
-        mapping = {
-            "id": "ID",
-            "title": "TITLE",
-            "stageId": "STAGE_ID",
-            "statusId": "STATUS_ID",
-            "assignedById": "ASSIGNED_BY_ID",
-            "contactId": "CONTACT_ID",
-            "companyId": "COMPANY_ID",
-            "createdTime": "DATE_CREATE",
-            "dateCreate": "DATE_CREATE",
-        }
-        normalized = dict(item)
-        for camel, upper in mapping.items():
-            if camel in item and upper not in item:
-                normalized[upper] = item[camel]
-                del normalized[camel]
-        return normalized
-
     def _add_candidates(results: list[dict[str, Any]]) -> None:
         for item in results:
-            norm = _normalize(item)
+            norm = _normalize_entity(item)
             item_id = str(norm.get("ID", ""))
             if item_id and item_id not in seen_ids:
                 seen_ids.add(item_id)
@@ -385,6 +586,26 @@ def _search_entity(
         _add_candidates(results)
 
     return candidates
+
+
+def _normalize_entity(item: dict[str, Any]) -> dict[str, Any]:
+    mapping = {
+        "id": "ID",
+        "title": "TITLE",
+        "stageId": "STAGE_ID",
+        "statusId": "STATUS_ID",
+        "assignedById": "ASSIGNED_BY_ID",
+        "contactId": "CONTACT_ID",
+        "companyId": "COMPANY_ID",
+        "createdTime": "DATE_CREATE",
+        "dateCreate": "DATE_CREATE",
+    }
+    normalized = dict(item)
+    for camel, upper in mapping.items():
+        if camel in item and upper not in item:
+            normalized[upper] = item[camel]
+            del normalized[camel]
+    return normalized
 
 
 def _make_date_from_filter(
@@ -525,7 +746,8 @@ def _make_matched_item(
 ) -> dict[str, Any]:
     entity_type_name = ENTITY_TYPE_NAMES.get(entity_type_id, "")
     quality_is_strong = match_quality == "strong"
-    needs_manual = not quality_is_strong or confidence < 0.8
+    safe_target = quality_is_strong and entity_type_id in {1, 2}
+    needs_manual = not safe_target or confidence < 0.8
 
     return {
         "event_id": event.get("event_id", ""),
@@ -546,7 +768,7 @@ def _make_matched_item(
         "bitrix_match_reason": match_reason,
         "bitrix_confidence": confidence,
         "needs_manual_review": needs_manual,
-        "safe_to_use_as_target": quality_is_strong,
+        "safe_to_use_as_target": safe_target,
         "candidate_count": candidate_count,
         "candidate_summary": (
             f"{candidate_count} candidate(s), quality={match_quality}, "
@@ -588,6 +810,43 @@ def _make_not_found_item(
         "candidate_summary": "No Bitrix candidate found; connector healthy.",
         "reconciliation_reason": (
             "No Bitrix candidate was found for this classified event."
+        ),
+    }
+
+
+def _make_identity_only_no_target_item(
+    event: dict[str, Any],
+    identity_evidence: tuple[int, dict[str, Any], str],
+) -> dict[str, Any]:
+    entity_type_id, entity, _match_reason = identity_evidence
+    return {
+        "event_id": event.get("event_id", ""),
+        "source_id": event.get("source_id", ""),
+        "sender": event.get("sender", ""),
+        "subject": event.get("subject", ""),
+        "bot_case_type": event.get("case_type", event.get("bot_case_type", "")),
+        "bitrix_match_status": "identity_only_no_target",
+        "bitrix_match_quality": "identity_only",
+        "bitrix_entity_type": "",
+        "bitrix_entity_type_id": None,
+        "bitrix_entity_id": None,
+        "bitrix_title": "",
+        "bitrix_stage": "",
+        "bitrix_responsible_id": None,
+        "bitrix_contact_id": None,
+        "bitrix_company_id": None,
+        "identity_entity_type": ENTITY_TYPE_NAMES.get(entity_type_id, ""),
+        "identity_entity_id": _int_or_none(entity.get("ID")),
+        "bitrix_match_reason": "exact_identity_no_executable_target",
+        "bitrix_confidence": 0.95,
+        "needs_manual_review": False,
+        "safe_to_use_as_target": False,
+        "suitable_target_search": "completed_no_target",
+        "candidate_count": 1,
+        "candidate_summary": "Exact Contact/Company identity found; no executable Lead/Deal target.",
+        "reconciliation_reason": (
+            "Exact Contact/Company identity found; Lead and related Deal searches "
+            "completed without an executable target."
         ),
     }
 
@@ -746,7 +1005,6 @@ def _make_connector_error_item(
     event: dict[str, Any],
     error: str,
 ) -> dict[str, Any]:
-    """Создать reconciliation item со статусом connector_degraded."""
     return {
         "event_id": event.get("event_id", ""),
         "source_id": event.get("source_id", ""),

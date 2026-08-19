@@ -8427,7 +8427,7 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 
 ### Итерация 37 — Controlled Bitrix CRM write-back v0
 
-**Статус:** PLANNED
+**Статус:** IN PROGRESS — existing-target live smoke pending
 
 #### Goal
 
@@ -8444,6 +8444,13 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 - хранить Bitrix `stageId` как изменяемый config, а не hardcoded business value;
 - включить `irrelevant` в read-only reconciliation и delivery planning;
 - использовать existing safe reconciliation result для выбора existing CRM target;
+- разрешать safe Deal target только после exact sender email/phone → Contact/Company →
+  bounded read-only `crm.item.list` relation lookup (`entityTypeId=2`, `contactId`/
+  `companyId`): один Deal strong/safe, multiple/none/error fail closed; title/subject never
+  authorizes Deal targeting;
+- считать Contact/Company только identity evidence: после успешного exact Lead и related-Deal
+  поиска без executable target `identity_only_no_target` допускает configured create только
+  для `new_lead`/`irrelevant`;
 - использовать existing `rop_recipient_routing.json` для exact responsible resolution;
 - `new_lead` и `irrelevant` без safe existing target создавать как Lead через `crm.item.add`, `entityTypeId=1`;
 - `existing_deal` / `duplicate` и любой safe existing target обрабатывать через attach-existing path без создания нового Lead;
@@ -8522,6 +8529,45 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 - dependencies and `uv.lock` remain unchanged unless separately approved;
 - `pyproject.toml.version` is not changed;
 - tests, smoke evidence, logs/artifacts and documentation are ready for PR review.
+
+#### Implemented (v0, Issue #199)
+
+- `bitrix.writeback` config (disabled by default) с fail-fast validation; `email_attach`
+  (email-activity binding на созданные лиды) и `source_id` (Lead SOURCE_ID);
+- отдельный `BitrixWriteClient` с exact mutation allowlist `crm.item.add` /
+  `crm.activity.add` и отдельным env credential; `BitrixReadonlyClient` остаётся
+  strictly read-only, а `crm.activity.list` используется только для idempotency lookup;
+- `irrelevant` включён в read-only reconciliation;
+- safe existing Deal становится reachable only through exact Contact/Company communication
+  evidence and bounded read-only generic Deal relation lookup; title/subject remains unsafe;
+- exact Contact/Company without an executable Lead/Deal remains identity-only evidence;
+  `identity_only_no_target` may enter configured create only for `new_lead`/`irrelevant`;
+- authoritative write-back planner/executor с outcomes `create_lead` / `attach_existing`
+  / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`,
+  idempotent `crm.item.add` (`entityTypeId=1`) с bounded `ORIGINATOR_ID`/`ORIGIN_ID`,
+  recovery uncertain POST по idempotency lookup, bounded retry и fail-closed stage/
+  responsible/target обработкой;
+- прикрепление письма к созданному или safe existing Lead/Deal через официальный
+  `crm.activity.add` (email activity, `TYPE_ID=4`) при
+  `bitrix.writeback.email_attach: true`; перед каждым activity POST, включая timeout или
+  malformed response, read-only `crm.activity.list` сверяет stable origin identity, а
+  returned activity ID сохраняется в canonical state;
+- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering —
+  durable intent → checkpoint → external execution → original per-run projection refresh, а temporary reconciliation outage
+  остаётся recoverable deferred state для later poll/run без mailbox re-ingestion;
+- CLI `rop writeback plan/execute`;
+- per-run операторская проекция `rop_writeback_summary.json` и read-only action drafts
+  refreshятся из canonical state для каждого original run после execution/recovery; `rop run`
+  не может сообщить успех, если reconciliation или durable plan persistence не создали intent.
+
+Официальный binding contract: Bitrix документирует email activity через
+[`crm.activity.add`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-add.html)
+с `TYPE_ID=4`, `OWNER_TYPE_ID`, `OWNER_ID`, `COMMUNICATIONS` и `RESPONSIBLE_ID`; его
+[`crm.activity.list`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-list.html)
+поддерживает field filters для remote idempotency reconciliation. Safe existing Lead/Deal
+получает exactly one activity на исходный stable email identity без `crm.item.add` и без
+изменения responsible target entity. Existing-target live smoke остаётся обязательным
+перед production enablement; до него Iteration 37 не считается DONE.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
