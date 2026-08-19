@@ -8427,7 +8427,7 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 
 ### Итерация 37 — Controlled Bitrix CRM write-back v0
 
-**Статус:** IN PROGRESS — existing-target live smoke pending
+**Статус:** DONE
 
 #### Goal
 
