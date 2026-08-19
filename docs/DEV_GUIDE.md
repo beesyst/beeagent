@@ -55,16 +55,16 @@ Per-source semantics:
 - a new source without a checkpoint receives its own baseline without resetting existing sources;
 - an explicit per-source rebaseline does not reset unrelated sources.
 
-When Bitrix reconciliation is enabled, the poll also persists durable ROP write-back
-intent (`storage/interfaces/rop_writeback_state.json` via `build_writeback_plan`) before
-the source checkpoint advances. With `bitrix.writeback.enabled: true` a write-back plan
-persistence failure blocks checkpoint advancement (fail closed); with write-back disabled
-the failure is logged and does not block ingestion. With `bitrix.writeback.enabled: true`
-both `rop poll` and `rop run` execute pending write-back work automatically after the plan
-is persisted. Bitrix unavailability never blocks ingestion: the durable intent survives in
-`rop_writeback_state.json`, and retryable/uncertain records are re-attempted on subsequent
-poll/run executions. `rop writeback plan/execute` remains available as a controlled manual
-path.
+When Bitrix reconciliation is enabled, the poll persists durable ROP write-back intent
+(`storage/interfaces/rop_writeback_state.json` via `build_writeback_plan`) before the source
+checkpoint advances. With `bitrix.writeback.enabled: true` plan persistence failure blocks
+checkpoint advancement; otherwise it is logged without blocking ingestion. The required
+ordering is durable intent → checkpoint → external execution → original per-run projection
+refresh. A temporary reconciliation
+outage persists a recoverable deferred record, advances the checkpoint after that persistence
+and is refreshed from retained run artifacts during a later poll/run without mailbox
+re-ingestion. A no-new-mail poll performs at most one bounded recovery pass. `rop writeback
+plan/execute` remains the controlled manual path.
 
 ## Controlled Bitrix write-back (Iteration 37)
 
@@ -73,7 +73,10 @@ writes until it is explicitly enabled with a dedicated env credential and config
 customer Lead `stageId` values.
 
 When enabled, pending write-back work is executed automatically as part of `rop poll` and
-`rop run` (after the durable plan is persisted), in addition to the explicit CLI commands:
+`rop run` (after the durable plan is persisted), in addition to the explicit CLI commands.
+When write-back is enabled, `rop run` fails explicitly if reconciliation or plan persistence
+cannot create canonical intent; action-draft projection and post-persistence executor failures
+remain visible and recoverable from that intent:
 
 - `./start.sh rop writeback plan --run-id <id>` — build the authoritative execution plan
   from final classification, read-only reconciliation and recipient routing; persists the
@@ -83,15 +86,30 @@ When enabled, pending write-back work is executed automatically as part of `rop 
   pending write-back work per server-side `bitrix.writeback` policy (bounded retry,
   idempotent create via `crm.item.add`, `entityTypeId=1`, fail-closed
   stage/responsible/target validation). `--dry-run` performs zero writes.
-  `--retry-failed` re-arms retry-exhausted create records with a fresh retry budget
-  (terminal permission/config failures are never retried).
+  `--retry-failed` re-arms retry-exhausted create or attachment work with a fresh retry
+  budget (terminal permission/config/invalid-field attachment failures are never retried).
 
 Per-event outcomes are `create_lead`, `attach_existing` or `deferred`. `rop_action_drafts.json`
 remains a read-only/draft-only artifact and is not execution authority.
 
-`bitrix.writeback.fallback_responsible_user_id` (optional int > 0) sets a default Lead
-`ASSIGNED_BY_ID` when recipient routing cannot resolve an active responsible user; without
-it, unresolved responsible fails closed to `deferred` (`responsible_unresolved`).
+`BitrixReadonlyClient` remains strictly read-only; `crm.activity.list` is used only for
+activity idempotency reconciliation. `BitrixWriteClient` permits only the required mutation
+methods `crm.item.add` and `crm.activity.add`; it does not permit `crm.item.update`,
+`crm.item.delete`, `crm.lead.add` or arbitrary method execution.
+
+For a safe existing Deal, reconciliation first requires exact sender email/phone evidence for
+Contact or Company, then performs bounded read-only `crm.item.list` with `entityTypeId=2` and
+the official `contactId`/`companyId` relation field. One related Deal is safe; zero/multiple,
+malformed or connector results are never safe, and title/subject similarity remains review-only.
+Contact/Company is never an activity owner or execution target. A completed exact Lead and
+related-Deal search with no target is persisted as `identity_only_no_target` with
+`suitable_target_search=completed_no_target`; only `new_lead` and `irrelevant` may then use
+the normal configured create path.
+
+`fallback_responsible_user_id` is unsupported. A Lead create is allowed only after
+`rop_recipient_routing.json` reports an exact active responsible match with a positive
+`user_id`; unresolved, inactive, ambiguous, degraded or malformed routing evidence fails
+closed to `deferred` (`responsible_unresolved`).
 
 ## Установка (dev)
 

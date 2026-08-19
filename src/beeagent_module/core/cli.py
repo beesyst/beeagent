@@ -197,69 +197,88 @@ def handle_rop_run(
                 exc,
             )
 
-        try:
-            writeback_enabled = (
-                effective_settings.get("bitrix", {})
-                .get("writeback", {})
-                .get("enabled")
-                is True
-            )
+        writeback_enabled = (
+            effective_settings.get("bitrix", {})
+            .get("writeback", {})
+            .get("enabled")
+            is True
+        )
+        if writeback_enabled:
             if (
-                effective_settings.get("bitrix", {}).get("enabled") is True
-                and effective_settings.get("bitrix", {})
+                effective_settings.get("bitrix", {}).get("enabled") is not True
+                or effective_settings.get("bitrix", {})
                 .get("reconciliation", {})
                 .get("enabled")
-                is True
-                and writeback_enabled
+                is not True
             ):
-                from beeagent_module.cases.rop_action_drafts import (
-                    build_action_drafts,
-                )
-                from beeagent_module.cases.rop_bitrix_reconciliation import (
-                    run_reconciliation,
-                )
-                from beeagent_module.cases.rop_writeback import (
-                    build_writeback_plan,
-                    execute_writeback_pending,
+                raise RopCliError(
+                    "ROP write-back requires enabled Bitrix reconciliation."
                 )
 
+            from beeagent_module.cases.rop_action_drafts import build_action_drafts
+            from beeagent_module.cases.rop_bitrix_reconciliation import (
+                run_reconciliation,
+            )
+            from beeagent_module.cases.rop_writeback import (
+                build_writeback_plan,
+                execute_writeback_pending,
+            )
+
+            try:
                 reconciliation = run_reconciliation(
                     storage_dir, effective_run_id, effective_settings, logger
                 )
-                if reconciliation.get("status") != "ok":
-                    logger.warning(
-                        "ROP CLI: write-back skipped, reconciliation degraded: "
-                        "run_id=%s",
-                        effective_run_id,
-                    )
-                else:
-                    build_action_drafts(
-                        storage_dir, effective_run_id, reconciliation, logger
-                    )
-                    build_writeback_plan(
-                        storage_dir=storage_dir,
-                        run_id=effective_run_id,
-                        settings=effective_settings,
-                        logger=logger,
-                    )
-                    result = execute_writeback_pending(
-                        storage_dir=storage_dir,
-                        run_id=effective_run_id,
-                        settings=effective_settings,
-                        logger=logger,
-                    )
-                    logger.info(
-                        "ROP CLI: write-back executed after run: run_id=%s "
-                        "status=%s writes=%d",
-                        effective_run_id,
-                        result.get("status"),
-                        result.get("writes_performed", 0),
-                    )
-        except Exception as exc:
-            logger.warning(
-                "ROP CLI: write-back execution failed after run: %s",
-                exc,
-            )
+                build_writeback_plan(
+                    storage_dir=storage_dir,
+                    run_id=effective_run_id,
+                    settings=effective_settings,
+                    logger=logger,
+                )
+            except Exception as exc:
+                logger.error(
+                    "ROP CLI: write-back durable preparation failed: run_id=%s "
+                    "reason=%s",
+                    effective_run_id,
+                    exc,
+                )
+                raise RopCliError(
+                    f"ROP write-back durable preparation failed: {exc}"
+                ) from exc
+
+            try:
+                build_action_drafts(
+                    storage_dir, effective_run_id, reconciliation, logger
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ROP CLI: write-back projection failed after durable plan: "
+                    "run_id=%s reason=%s",
+                    effective_run_id,
+                    exc,
+                )
+
+            try:
+                writeback_result = execute_writeback_pending(
+                    storage_dir=storage_dir,
+                    run_id=effective_run_id,
+                    settings=effective_settings,
+                    logger=logger,
+                )
+                logger.info(
+                    "ROP CLI: write-back execution after run: run_id=%s "
+                    "reconciliation_status=%s status=%s writes=%d",
+                    effective_run_id,
+                    reconciliation.get("status"),
+                    writeback_result.get("status"),
+                    writeback_result.get("writes_performed", 0),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ROP CLI: write-back execution failed after durable plan: "
+                    "run_id=%s reason=%s",
+                    effective_run_id,
+                    exc,
+                )
 
         logger.info(
             "ROP CLI: run completed successfully: run_id=%s status=%s",
@@ -1517,7 +1536,9 @@ def create_rop_parser() -> argparse.ArgumentParser:
     writeback_execute_parser.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Re-arm retry-exhausted failed create records with a fresh retry budget",
+        help=(
+            "Re-arm retry-exhausted create or attachment work with a fresh retry budget"
+        ),
     )
 
     return parser

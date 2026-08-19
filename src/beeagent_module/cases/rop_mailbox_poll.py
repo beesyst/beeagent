@@ -29,6 +29,7 @@ from beeagent_module.cases.rop_recommendations import (
 from beeagent_module.cases.rop_writeback import (
     build_writeback_plan,
     execute_writeback_pending,
+    refresh_recoverable_writeback_prerequisites,
 )
 from beeagent_module.core.rop_review_export import export_review_tsv_for_run
 
@@ -224,7 +225,7 @@ def handle_mailbox_poll(
     require_checkpoint_source = not (effective_all_sources or bool(source_id))
 
     if len(selected) == 1:
-        _poll_single_source(
+        processed = _poll_single_source(
             settings=settings,
             storage_dir=storage_dir,
             project_root=project_root,
@@ -233,14 +234,17 @@ def handle_mailbox_poll(
             rebaseline=rebaseline,
             require_checkpoint_source=require_checkpoint_source,
         )
+        if not processed and not rebaseline:
+            _resume_writeback_pending(settings, storage_dir, logger)
         return
 
     successes: list[str] = []
     failures: list[str] = []
+    processed_any = False
     for source in selected:
         source_key = str(source.get("source_id", "unknown"))
         try:
-            _poll_single_source(
+            processed_any = _poll_single_source(
                 settings=settings,
                 storage_dir=storage_dir,
                 project_root=project_root,
@@ -248,7 +252,7 @@ def handle_mailbox_poll(
                 source=source,
                 rebaseline=rebaseline,
                 require_checkpoint_source=False,
-            )
+            ) or processed_any
             successes.append(source_key)
         except Exception as exc:
             failures.append(source_key)
@@ -268,6 +272,31 @@ def handle_mailbox_poll(
             "mailbox poll completed with partial source failures: failed=%s",
             ",".join(failures),
         )
+    if not processed_any and not rebaseline:
+        _resume_writeback_pending(settings, storage_dir, logger)
+
+
+def _writeback_enabled(settings: dict[str, Any]) -> bool:
+    return settings.get("bitrix", {}).get("writeback", {}).get("enabled") is True
+
+
+def _resume_writeback_pending(
+    settings: dict[str, Any], storage_dir: Path, logger: logging.Logger
+) -> None:
+    if not _writeback_enabled(settings):
+        return
+    refresh_recoverable_writeback_prerequisites(storage_dir, settings, logger)
+    result = execute_writeback_pending(
+        storage_dir=storage_dir,
+        run_id="poll-recovery",
+        settings=settings,
+        logger=logger,
+    )
+    logger.info(
+        "ROP write-back recovery during poll: status=%s writes=%d",
+        result.get("status"),
+        result.get("writes_performed", 0),
+    )
 
 
 def _poll_single_source(
@@ -278,7 +307,7 @@ def _poll_single_source(
     source: dict[str, Any],
     rebaseline: bool = False,
     require_checkpoint_source: bool = True,
-) -> None:
+) -> bool:
     source_id = str(source["source_id"])
     mailbox = source["mailbox"]
     folder = (
@@ -329,7 +358,7 @@ def _poll_single_source(
             uidvalidity,
             highest,
         )
-        return
+        return False
     if data is None:
         _write_checkpoint(
             path,
@@ -345,7 +374,7 @@ def _poll_single_source(
             uidvalidity,
             highest,
         )
-        return
+        return False
     if source_id not in data["sources"]:
         data["sources"][source_id] = _entry(folder, uidvalidity, highest)
         _write_checkpoint(path, data)
@@ -356,7 +385,7 @@ def _poll_single_source(
             uidvalidity,
             highest,
         )
-        return
+        return False
     checkpoint = data["sources"][source_id]
     if checkpoint["uidvalidity"] != uidvalidity:
         raise MailboxPollError(
@@ -366,7 +395,7 @@ def _poll_single_source(
     selected = pending[: source["items_max"]]
     if not selected:
         logger.info("mailbox poll: no new messages: source_id=%s", source_id)
-        return
+        return False
     messages = client.fetch_uids(
         folder,
         selected,
@@ -399,22 +428,12 @@ def _poll_single_source(
         run_id=run_id,
         logger=logger,
     )
+    writeback_enabled = _writeback_enabled(settings)
     if (
         settings["bitrix"]["enabled"]
         and settings["bitrix"]["reconciliation"]["enabled"]
     ):
         reconciliation = run_reconciliation(storage_dir, run_id, settings, logger)
-        if reconciliation.get("status") != "ok":
-            raise MailboxPollError(
-                "Bitrix reconciliation did not complete successfully"
-            )
-        build_action_drafts(storage_dir, run_id, reconciliation, logger)
-        writeback_enabled = (
-            settings.get("bitrix", {})
-            .get("writeback", {})
-            .get("enabled")
-            is True
-        )
         try:
             build_writeback_plan(
                 storage_dir=storage_dir,
@@ -432,27 +451,7 @@ def _poll_single_source(
                 run_id,
                 exc,
             )
-        if writeback_enabled:
-            try:
-                execute_result = execute_writeback_pending(
-                    storage_dir=storage_dir,
-                    run_id=run_id,
-                    settings=settings,
-                    logger=logger,
-                )
-                logger.info(
-                    "ROP write-back executed during poll: run_id=%s status=%s "
-                    "writes=%d",
-                    run_id,
-                    execute_result.get("status"),
-                    execute_result.get("writes_performed", 0),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "ROP write-back execute skipped after poll: run_id=%s reason=%s",
-                    run_id,
-                    exc,
-                )
+        build_action_drafts(storage_dir, run_id, reconciliation, logger)
     enrichment = build_context_enrichment(
         storage_dir=storage_dir, run_id=run_id, logger=logger
     )
@@ -473,9 +472,30 @@ def _poll_single_source(
     write_rop_dashboard(storage_dir, dashboard, logger)
     data["sources"][source_id] = _entry(folder, uidvalidity, selected[-1])
     _write_checkpoint(path, data)
+    if writeback_enabled:
+        try:
+            execute_result = execute_writeback_pending(
+                storage_dir=storage_dir,
+                run_id=run_id,
+                settings=settings,
+                logger=logger,
+            )
+            logger.info(
+                "ROP write-back executed during poll: run_id=%s status=%s writes=%d",
+                run_id,
+                execute_result.get("status"),
+                execute_result.get("writes_performed", 0),
+            )
+        except Exception as exc:
+            logger.warning(
+                "ROP write-back execute skipped after poll: run_id=%s reason=%s",
+                run_id,
+                exc,
+            )
     logger.info(
         "mailbox poll completed: source_id=%s run_id=%s selected_count=%s",
         source_id,
         run_id,
         len(selected),
     )
+    return True

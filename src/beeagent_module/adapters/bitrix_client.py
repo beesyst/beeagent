@@ -11,6 +11,7 @@ ALLOWED_METHODS: frozenset[str] = frozenset(
     {
         "crm.item.list",
         "crm.item.fields",
+        "crm.activity.list",
         "crm.status.list",
         "crm.category.list",
         "crm.lead.list",
@@ -163,6 +164,17 @@ class BitrixReadonlyClient:
     def category_list(self, entity_type_id: int) -> dict[str, Any]:
         return self.call("crm.category.list", {"entityTypeId": entity_type_id})
 
+    def activity_list(
+        self,
+        filter_params: dict[str, Any],
+        select: list[str],
+        start: int = 0,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"filter": filter_params, "select": select}
+        if start:
+            params["start"] = start
+        return self.call("crm.activity.list", params)
+
     def list_users(
         self,
         select: list[str] | None = None,
@@ -220,6 +232,30 @@ class BitrixReadonlyClient:
             date_from=date_from,
         )
 
+    def search_related_deals(
+        self,
+        related_entity_type_id: int,
+        related_entity_id: int,
+    ) -> list[dict[str, Any]]:
+        relation_field = {
+            3: "contactId",
+            4: "companyId",
+        }.get(related_entity_type_id)
+        if relation_field is None or related_entity_id <= 0:
+            return []
+        return self._collect_item_pages(
+            entity_type_id=2,
+            filter_params={relation_field: related_entity_id},
+            select=[
+                "id",
+                "title",
+                "stageId",
+                "assignedById",
+                "contactId",
+                "companyId",
+            ],
+        )
+
     def _search_by_communication(
         self,
         entity_type_id: int,
@@ -261,17 +297,28 @@ class BitrixReadonlyClient:
         if date_from:
             filter_params[">=createdTime"] = date_from
 
+        return self._collect_item_pages(
+            entity_type_id=entity_type_id,
+            filter_params=filter_params,
+            select=camel_fields,
+        )
+
+    def _collect_item_pages(
+        self,
+        entity_type_id: int,
+        filter_params: dict[str, Any],
+        select: list[str],
+    ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         start = 0
         for _ in range(self._pages_max):
             result = self.item_list(
                 entity_type_id=entity_type_id,
                 filter_params=filter_params,
-                select=camel_fields,
+                select=select,
                 start=start,
                 limit=self._page_size,
             )
-
             result_payload = result.get("result")
             if not isinstance(result_payload, dict):
                 raise BitrixMalformedResponse(

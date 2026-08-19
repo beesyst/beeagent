@@ -993,34 +993,44 @@ def _validate_bitrix_settings(settings: dict) -> None:
             raise RuntimeError(
                 "Invalid bitrix.writeback.timeout, expected int > 0"
             )
-        retry_attempts_max = writeback_cfg.get("retry_attempts_max")
-        if not isinstance(retry_attempts_max, int) or retry_attempts_max <= 0:
+        if "retry_attempts_max" in writeback_cfg:
             raise RuntimeError(
-                "Invalid bitrix.writeback.retry_attempts_max, expected int > 0"
+                "Unsupported bitrix.writeback.retry_attempts_max; "
+                "use bitrix.writeback.attempts_retry_max"
+            )
+        attempts_retry_max = writeback_cfg.get("attempts_retry_max")
+        if not isinstance(attempts_retry_max, int) or attempts_retry_max <= 0:
+            raise RuntimeError(
+                "Invalid bitrix.writeback.attempts_retry_max, expected int > 0"
             )
         if not isinstance(writeback_cfg.get("dry_run"), bool):
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.dry_run, expected bool"
             )
-        attach_email = writeback_cfg.get("attach_email", False)
-        if not isinstance(attach_email, bool):
+        if "attach_email" in writeback_cfg:
             raise RuntimeError(
-                "Invalid type for bitrix.writeback.attach_email, expected bool"
+                "Unsupported bitrix.writeback.attach_email; "
+                "use bitrix.writeback.email_attach"
+            )
+        email_attach = writeback_cfg.get("email_attach")
+        if not isinstance(email_attach, bool):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.email_attach, expected bool"
             )
         source_id_value = writeback_cfg.get("source_id")
         if source_id_value is not None and not isinstance(source_id_value, str):
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.source_id, expected string or null"
             )
-        fallback_responsible = writeback_cfg.get("fallback_responsible_user_id")
-        if fallback_responsible is not None and (
-            not isinstance(fallback_responsible, int)
-            or isinstance(fallback_responsible, bool)
-            or fallback_responsible <= 0
-        ):
+        if "fallback_responsible_user_id" in writeback_cfg:
             raise RuntimeError(
-                "Invalid bitrix.writeback.fallback_responsible_user_id, "
-                "expected int > 0 or null"
+                "Unsupported bitrix.writeback.fallback_responsible_user_id; "
+                "responsible routing must resolve an exact active Bitrix user"
+            )
+        if "user_id_fallback" in writeback_cfg:
+            raise RuntimeError(
+                "Unsupported bitrix.writeback.user_id_fallback; "
+                "responsible routing must resolve an exact active Bitrix user"
             )
         stages_cfg = writeback_cfg.get("stages")
         if not isinstance(stages_cfg, dict):
@@ -1034,6 +1044,11 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 + ", ".join(unsupported_stage_keys)
             )
         if writeback_cfg.get("enabled"):
+            if writeback_env.strip() == webhook_env.strip():
+                raise RuntimeError(
+                    "bitrix.writeback.webhook_env must differ from "
+                    "bitrix.webhook_env when bitrix.writeback.enabled=true"
+                )
             if not bitrix_cfg.get("enabled"):
                 raise RuntimeError(
                     "Invalid bitrix config: bitrix.writeback.enabled requires "
@@ -1056,6 +1071,13 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 raise RuntimeError(
                     f"Missing required env var '{writeback_env}' for "
                     "bitrix.writeback.webhook_env when bitrix.writeback.enabled=true"
+                )
+            read_webhook_url = os.environ.get(webhook_env, "").rstrip("/")
+            write_webhook_url = os.environ.get(writeback_env, "").rstrip("/")
+            if read_webhook_url and read_webhook_url == write_webhook_url:
+                raise RuntimeError(
+                    "Bitrix read and write webhook credentials must be distinct "
+                    "when bitrix.writeback.enabled=true"
                 )
 
 

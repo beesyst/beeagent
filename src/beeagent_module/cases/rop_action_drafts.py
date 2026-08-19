@@ -7,8 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.cases.rop_writeback import delivery_completion_status
+
 ACTION_DRAFTS_ARTIFACT = "rop_action_drafts.json"
 RECIPIENT_ROUTING_ARTIFACT = "rop_recipient_routing.json"
+WRITEBACK_STATE_FILENAME = "rop_writeback_state.json"
 
 
 def _load_routing_items(run_dir: Path) -> list[dict[str, Any]]:
@@ -51,6 +54,33 @@ def _routing_evidence_for_event(
     return {}
 
 
+def _load_writeback_items(
+    storage_dir: Path,
+    run_id: str,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    path = storage_dir / "interfaces" / WRITEBACK_STATE_FILENAME
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    events = data.get("events", {}) if isinstance(data, dict) else {}
+    if not isinstance(events, dict):
+        return {}
+    return {
+        (
+            str(record.get("event_id") or ""),
+            str(record.get("event_instance_id") or ""),
+        ): record
+        for record in events.values()
+        if isinstance(record, dict)
+        and record.get("last_run_id") == run_id
+        and isinstance(record.get("event_id"), str)
+        and record.get("event_id")
+    }
+
+
 def build_action_drafts(
     storage_dir: Path,
     run_id: str,
@@ -71,6 +101,7 @@ def build_action_drafts(
         raise ValueError("reconciliation items must be a list")
 
     routing_items = _load_routing_items(run_dir)
+    writeback_items = _load_writeback_items(storage_dir, run_id)
 
     action_items: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -89,6 +120,9 @@ def build_action_drafts(
                 item,
                 run_id=run_id,
                 routing_evidence=routing_evidence,
+                writeback_record=writeback_items.get(
+                    (str(item.get("event_id") or ""), str(event_instance_id or ""))
+                ),
             )
             action_items.append(draft)
         except Exception as exc:
@@ -152,6 +186,7 @@ def _build_action_draft_item(
     item: dict[str, Any],
     run_id: str,
     routing_evidence: dict[str, Any] | None = None,
+    writeback_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_id = item.get("event_id", "")
     bot_case_type = item.get("bot_case_type", "")
@@ -160,9 +195,14 @@ def _build_action_draft_item(
     needs_manual = item.get("needs_manual_review", True)
     safe_target = item.get("safe_to_use_as_target", False)
 
-    queue, recommended_action, recommended_next_step, priority, reason_code = (
-        _map_action_v0(bot_case_type, match_status, match_quality)
-    )
+    if isinstance(writeback_record, dict):
+        queue, recommended_action, recommended_next_step, priority, reason_code = (
+            _map_writeback_projection(writeback_record)
+        )
+    else:
+        queue, recommended_action, recommended_next_step, priority, reason_code = (
+            _map_action_v0(bot_case_type, match_status, match_quality)
+        )
 
     if queue == "ignore":
         needs_manual = False
@@ -185,6 +225,16 @@ def _build_action_draft_item(
         "recommended_next_step": recommended_next_step,
         "priority": priority,
         "reason_code": reason_code,
+        "delivery_outcome": (
+            writeback_record.get("outcome")
+            if isinstance(writeback_record, dict)
+            else None
+        ),
+        "delivery_status": (
+            writeback_record.get("status")
+            if isinstance(writeback_record, dict)
+            else None
+        ),
         "needs_manual_review": needs_manual,
         "safe_to_use_as_target": safe_target,
         "target_entity_type": item.get("bitrix_entity_type", ""),
@@ -206,6 +256,65 @@ def _build_action_draft_item(
         ],
         "read_only": True,
     }
+
+
+def _map_writeback_projection(
+    record: dict[str, Any],
+) -> tuple[str, str, str, str, str]:
+    status = str(record.get("status") or "")
+    outcome = record.get("outcome")
+    delivery_status = delivery_completion_status(record)
+    if delivery_status == "completed":
+        return (
+            "delivered",
+            "delivery_completed",
+            "no_action_required",
+            "low",
+            "delivery_completed",
+        )
+    if delivery_status in ("failed", "unknown"):
+        return (
+            "deferred",
+            "review_delivery_failure",
+            "review_deferred_delivery",
+            "medium",
+            str(
+                record.get("last_attach_error_code")
+                or record.get("reason_code")
+                or "delivery_deferred"
+            ),
+        )
+    if outcome == "create_lead" and status in ("created", "recovered"):
+        return (
+            "delivery_planned",
+            "complete_email_attachment",
+            "controlled_writeback_pending",
+            "high",
+            str(record.get("last_attach_error_code") or "email_attachment_pending"),
+        )
+    if outcome == "create_lead":
+        return (
+            "delivery_planned",
+            "create_lead",
+            "controlled_writeback_pending",
+            "high",
+            "create_lead",
+        )
+    if outcome == "attach_existing":
+        return (
+            "delivery_planned",
+            "attach_existing",
+            "controlled_writeback_pending",
+            "medium",
+            "attach_existing",
+        )
+    return (
+        "deferred",
+        "deferred",
+        "review_deferred_delivery",
+        "medium",
+        str(record.get("reason_code") or "delivery_deferred"),
+    )
 
 
 def _map_action_v0(

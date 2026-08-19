@@ -516,6 +516,38 @@ def _extract_email_from_sender(sender_display: str) -> str:
     return ""
 
 
+def effective_rop_sender_email(event: dict[str, Any]) -> str:
+    sender = _bounded_email_value(event.get("sender"))
+    if event.get("forwarded_wrapper") is True:
+        original_sender = _bounded_email_value(event.get("original_sender_email"))
+        if original_sender:
+            return original_sender
+    return sender
+
+
+def _bounded_email_value(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        pairs = getaddresses([value])
+    except (TypeError, ValueError, IndexError):
+        return ""
+    if len(pairs) != 1:
+        return ""
+    address = pairs[0][1].strip()
+    if (
+        not address
+        or len(address) > 320
+        or address.count("@") != 1
+        or any(char.isspace() for char in address)
+    ):
+        return ""
+    local, domain = address.rsplit("@", 1)
+    if not local or not domain or "." not in domain:
+        return ""
+    return address
+
+
 def _extract_forwarded_wrapper_fields(
     body_text: str,
     logger: logging.Logger | None = None,

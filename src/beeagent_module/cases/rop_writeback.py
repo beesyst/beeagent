@@ -24,6 +24,7 @@ from beeagent_module.adapters.bitrix_write_client import (
     BitrixWriteClient,
     build_bitrix_write_client,
 )
+from beeagent_module.core.input_source import effective_rop_sender_email
 
 WRITEBACK_STATE_FILENAME = "rop_writeback_state.json"
 WRITEBACK_SUMMARY_FILENAME = "rop_writeback_summary.json"
@@ -31,13 +32,19 @@ WRITEBACK_STATE_VERSION = 1
 
 ORIGINATOR_ID = "beeagent-rop"
 CREATE_CASE_TYPES: frozenset[str] = frozenset({"new_lead", "irrelevant"})
-ATTACH_BINDING_CONTRACT_UNCONFIRMED = "email_binding_contract_unconfirmed"
 _MAX_IDENTITY_FIELD_LENGTH = 320
 _MAX_ORIGIN_ID_LENGTH = 200
 _MAX_LEAD_TITLE_LENGTH = 200
 _MAX_LEAD_NAME_LENGTH = 120
 _MAX_ACTIVITY_DESCRIPTION_LENGTH = 3000
 _TERMINAL_TRANSPORT_CODES: frozenset[int] = frozenset({400})
+_RECOVERABLE_PREREQUISITE_REASONS = frozenset(
+    {
+        "reconciliation_unavailable",
+        "reconciliation_connector_degraded",
+        "reconciliation_error",
+    }
+)
 
 
 class RopWritebackError(RuntimeError):
@@ -80,6 +87,14 @@ def _bounded_sender_name(value: Any, max_length: int = _MAX_LEAD_NAME_LENGTH) ->
         if display_name:
             return display_name[:max_length]
     return ""
+
+
+def _effective_sender_name(event: dict[str, Any]) -> str:
+    if event.get("forwarded_wrapper") is True:
+        return _bounded_sender_name(event.get("original_sender"))
+    return _bounded_sender_name(event.get("from_name")) or _bounded_sender_name(
+        event.get("sender")
+    )
 
 
 def _stable_remote_id(event: dict[str, Any]) -> str:
@@ -170,25 +185,15 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         if isinstance(key, str) and isinstance(value, str) and value.strip()
     }
     webhook_env = str(wb.get("webhook_env") or "BITRIX_WRITEBACK_WEBHOOK_URL")
-    fallback_responsible = wb.get("fallback_responsible_user_id")
-    if (
-        isinstance(fallback_responsible, int)
-        and not isinstance(fallback_responsible, bool)
-        and fallback_responsible > 0
-    ):
-        fallback_responsible_id: int | None = fallback_responsible
-    else:
-        fallback_responsible_id = None
     return {
         "enabled": wb.get("enabled") is True,
         "dry_run": wb.get("dry_run") is True,
         "webhook_env": webhook_env,
         "timeout": int(wb.get("timeout", 10)),
-        "retry_attempts_max": int(wb.get("retry_attempts_max", 3)),
+        "attempts_retry_max": int(wb.get("attempts_retry_max", 3)),
         "stages": stages,
-        "attach_email": wb.get("attach_email") is True,
+        "email_attach": wb.get("email_attach") is True,
         "source_id": str(wb.get("source_id") or ""),
-        "fallback_responsible_user_id": fallback_responsible_id,
         "credential_present": bool(os.environ.get(webhook_env)),
     }
 
@@ -336,38 +341,53 @@ def _decide_delivery(
     safe_target = recon_item.get("safe_to_use_as_target") is True
     target_entity_id = recon_item.get("bitrix_entity_id")
     target_entity_type = str(recon_item.get("bitrix_entity_type") or "")
+    target_entity_type_id = recon_item.get("bitrix_entity_type_id")
+    target_responsible_id = recon_item.get("bitrix_responsible_id")
 
-    if safe_target and target_entity_id:
+    if safe_target:
+        target_is_valid = (
+            target_entity_type in {"lead", "deal"}
+            and isinstance(target_entity_id, int)
+            and not isinstance(target_entity_id, bool)
+            and target_entity_id > 0
+            and isinstance(target_entity_type_id, int)
+            and target_entity_type_id in {LEAD_ENTITY_TYPE_ID, 2}
+        )
+        if not target_is_valid:
+            return {"outcome": "deferred", "reason_code": "unsafe_target"}
+        if (
+            not isinstance(target_responsible_id, int)
+            or isinstance(target_responsible_id, bool)
+            or target_responsible_id <= 0
+        ):
+            return {"outcome": "deferred", "reason_code": "responsible_unresolved"}
         return {
             "outcome": "attach_existing",
             "reason_code": None,
             "target_entity_type": target_entity_type,
+            "target_entity_type_id": target_entity_type_id,
             "target_entity_id": target_entity_id,
+            "target_responsible_user_id": target_responsible_id,
         }
-
     if recon_status in ("weak_match", "ambiguous"):
         return {"outcome": "deferred", "reason_code": "ambiguous_target"}
     if recon_status == "duplicate_candidate":
         return {"outcome": "deferred", "reason_code": "duplicate_target"}
 
-    if recon_status == "not_found":
+    target_absent = recon_status == "not_found" or (
+        recon_status == "identity_only_no_target"
+        and recon_item.get("suitable_target_search") == "completed_no_target"
+    )
+    if target_absent:
         if case_type in CREATE_CASE_TYPES:
             responsible = _responsible_from_routing(routing_item)
             if responsible["status"] != "matched":
-                fallback_id = policy.get("fallback_responsible_user_id")
-                if isinstance(fallback_id, int) and fallback_id > 0:
-                    responsible = {
-                        "status": "fallback",
-                        "user_id": fallback_id,
-                        "reason": "fallback_responsible_configured",
-                    }
-                else:
-                    return {
-                        "outcome": "deferred",
-                        "reason_code": "responsible_unresolved",
-                        "responsible_status": responsible["status"],
-                        "responsible_reason": responsible["reason"],
-                    }
+                return {
+                    "outcome": "deferred",
+                    "reason_code": "responsible_unresolved",
+                    "responsible_status": responsible["status"],
+                    "responsible_reason": responsible["reason"],
+                }
             stage_id = policy["stages"].get(case_type)
             if not stage_id:
                 return {
@@ -423,28 +443,42 @@ def _build_planned_record(
         "event_id": event_id,
         "event_instance_id": event_instance_id,
         "subject": _bounded_text(event.get("subject"), _MAX_LEAD_TITLE_LENGTH),
-        "sender_email": _bounded_email(event.get("sender")),
-        "sender_name": _bounded_sender_name(
-            event.get("from_name")
-        )
-        or _bounded_sender_name(event.get("sender")),
+        "sender_email": effective_rop_sender_email(event),
+        "sender_name": _effective_sender_name(event),
         "body_preview": _bounded_text(
             event.get("body_preview") or event.get("text_preview") or "",
             _MAX_ACTIVITY_DESCRIPTION_LENGTH,
         ),
         "email_activity_id": None,
+        "email_attachment_required": (
+            delivery["outcome"] in {"create_lead", "attach_existing"}
+            and policy["email_attach"] is True
+        ),
+        "email_attachment_status": (
+            "pending"
+            if delivery["outcome"] in {"create_lead", "attach_existing"}
+            and policy["email_attach"] is True
+            else "not_required"
+        ),
+        "attach_attempts": 0,
         "last_attach_error_code": None,
         "case_type": case_type,
         "should_rop_see": should_rop_see,
         "outcome": delivery["outcome"],
-        "status": "planned",
+        "status": (
+            "pending"
+            if delivery.get("reason_code") in _RECOVERABLE_PREREQUISITE_REASONS
+            else "planned"
+        ),
         "reason_code": delivery.get("reason_code"),
         "stage_id": delivery.get("stage_id"),
         "responsible_user_id": delivery.get("responsible_user_id"),
         "responsible_status": str(delivery.get("responsible_status") or ""),
         "responsible_reason": delivery.get("responsible_reason"),
         "target_entity_type": str(delivery.get("target_entity_type") or ""),
+        "target_entity_type_id": delivery.get("target_entity_type_id"),
         "target_entity_id": delivery.get("target_entity_id"),
+        "target_responsible_user_id": delivery.get("target_responsible_user_id"),
         "originator_id": ORIGINATOR_ID,
         "origin_id": _origin_id(identity),
         "remote_entity_type_id": None,
@@ -496,6 +530,15 @@ def _merge_planned_record(
     merged["created_at_utc"] = existing.get("created_at_utc", planned["created_at_utc"])
     merged["updated_at_utc"] = _utc_now()
     merged["email_activity_id"] = existing.get("email_activity_id")
+    if "email_attachment_required" in existing:
+        merged["email_attachment_required"] = existing["email_attachment_required"]
+        merged["email_attachment_status"] = existing.get(
+            "email_attachment_status", "unknown"
+        )
+    else:
+        merged["email_attachment_required"] = None
+        merged["email_attachment_status"] = "unknown"
+    merged["attach_attempts"] = existing.get("attach_attempts", 0)
     merged["last_attach_error_code"] = existing.get("last_attach_error_code")
     return merged
 
@@ -509,6 +552,7 @@ def _aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             "deferred": 0,
         },
         "status_counts": {},
+        "delivery_status_counts": {},
         "reason_counts": {},
     }
     for record in records:
@@ -519,11 +563,46 @@ def _aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         aggregate["status_counts"][status] = (
             aggregate["status_counts"].get(status, 0) + 1
         )
+        delivery_status = delivery_completion_status(record)
+        aggregate["delivery_status_counts"][delivery_status] = (
+            aggregate["delivery_status_counts"].get(delivery_status, 0) + 1
+        )
         reason = str(record.get("reason_code") or "none")
         aggregate["reason_counts"][reason] = (
             aggregate["reason_counts"].get(reason, 0) + 1
         )
     return aggregate
+
+
+def delivery_completion_status(record: dict[str, Any]) -> str:
+    status = str(record.get("status") or "")
+    if status in ("failed", "deferred"):
+        return "failed"
+    if record.get("outcome") == "attach_existing":
+        if _positive_int(record.get("email_activity_id")):
+            return "completed"
+        if status == "uncertain" or record.get("email_attachment_status") == "uncertain":
+            return "uncertain"
+        return "pending"
+    if record.get("outcome") != "create_lead":
+        return "failed"
+    if status not in ("created", "recovered"):
+        return "uncertain" if status == "uncertain" else "pending"
+    attachment_required = record.get("email_attachment_required")
+    if attachment_required is False:
+        return "completed"
+    if attachment_required is not True:
+        return "unknown"
+    if _positive_int(record.get("email_activity_id")):
+        return "completed"
+    attachment_status = str(record.get("email_attachment_status") or "pending")
+    if attachment_status in ("failed", "uncertain"):
+        return attachment_status
+    return "pending"
+
+
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _bounded_run_dir(storage_dir: Path, run_id: str) -> Path:
@@ -581,6 +660,47 @@ def _write_run_summary(
     return path
 
 
+def _refresh_changed_run_projections(
+    storage_dir: Path,
+    state: dict[str, Any],
+    previous_records: dict[str, str],
+    logger: logging.Logger,
+) -> list[str]:
+    changed_run_ids = sorted(
+        {
+            str(record.get("last_run_id"))
+            for identity, record in state.get("events", {}).items()
+            if isinstance(record, dict)
+            and isinstance(record.get("last_run_id"), str)
+            and record.get("last_run_id")
+            and previous_records.get(str(identity))
+            != json.dumps(record, sort_keys=True, ensure_ascii=False)
+        }
+    )
+    if not changed_run_ids:
+        return []
+
+    from beeagent_module.cases.rop_action_drafts import build_action_drafts
+
+    refreshed: list[str] = []
+    for original_run_id in changed_run_ids:
+        _write_run_summary(storage_dir, original_run_id, state, logger)
+        try:
+            run_dir = _bounded_run_dir(storage_dir, original_run_id)
+            reconciliation = _read_json_dict(
+                run_dir, "bitrix_reconciliation.json", required=True
+            )
+            build_action_drafts(storage_dir, original_run_id, reconciliation, logger)
+        except Exception as exc:
+            logger.warning(
+                "ROP write-back projection refresh failed: run_id=%s reason=%s",
+                original_run_id,
+                exc,
+            )
+        refreshed.append(original_run_id)
+    return refreshed
+
+
 def build_writeback_plan(
     storage_dir: Path,
     run_id: str,
@@ -609,11 +729,10 @@ def build_writeback_plan(
         "enabled": policy["enabled"],
         "dry_run": policy["dry_run"],
         "webhook_env": policy["webhook_env"],
-        "retry_attempts_max": policy["retry_attempts_max"],
+        "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
-        "attach_email": policy["attach_email"],
+        "email_attach": policy["email_attach"],
         "source_id": policy["source_id"],
-        "fallback_responsible_user_id": policy["fallback_responsible_user_id"],
     }
 
     planned_records: list[dict[str, Any]] = []
@@ -681,6 +800,45 @@ def build_writeback_plan(
         "aggregate": _aggregate_records(planned_records),
         "events": planned_records,
     }
+
+
+def refresh_recoverable_writeback_prerequisites(
+    storage_dir: Path,
+    settings: dict,
+    logger: logging.Logger,
+) -> list[str]:
+    state = _load_state(storage_dir)
+    run_ids = sorted(
+        {
+            record.get("last_run_id")
+            for record in state["events"].values()
+            if isinstance(record, dict)
+            and record.get("outcome") == "deferred"
+            and record.get("reason_code") in _RECOVERABLE_PREREQUISITE_REASONS
+            and isinstance(record.get("last_run_id"), str)
+            and record.get("last_run_id")
+        }
+    )
+    if not run_ids:
+        return []
+
+    from beeagent_module.cases.rop_action_drafts import build_action_drafts
+    from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
+
+    refreshed: list[str] = []
+    for run_id in run_ids:
+        try:
+            reconciliation = run_reconciliation(storage_dir, run_id, settings, logger)
+            build_writeback_plan(storage_dir, run_id, settings, logger)
+            build_action_drafts(storage_dir, run_id, reconciliation, logger)
+            refreshed.append(run_id)
+        except Exception as exc:
+            logger.warning(
+                "ROP write-back prerequisite refresh failed: run_id=%s reason=%s",
+                run_id,
+                exc,
+            )
+    return refreshed
 
 
 def _validate_stages_against_bitrix(
@@ -769,45 +927,185 @@ def _classify_write_failure(exc: Exception) -> tuple[str, bool, bool]:
     return "unexpected", True, False
 
 
-def _attach_email_activity(
+def _activity_owner(record: dict[str, Any]) -> tuple[int, int, int] | None:
+    if record.get("outcome") == "attach_existing":
+        entity_type_id = record.get("target_entity_type_id")
+        entity_id = record.get("target_entity_id")
+        responsible_id = record.get("target_responsible_user_id")
+    else:
+        entity_type_id = LEAD_ENTITY_TYPE_ID
+        entity_id = record.get("remote_entity_id")
+        responsible_id = record.get("responsible_user_id")
+    if all(
+        isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for value in (entity_type_id, entity_id, responsible_id)
+    ):
+        return entity_type_id, entity_id, responsible_id
+    return None
+
+
+def _lookup_activity_by_origin(
+    client: Any,
+    owner_entity_type_id: int,
+    owner_id: int,
+    origin_id: str,
+) -> int | None:
+    data = client.activity_list(
+        filter_params={
+            "OWNER_TYPE_ID": owner_entity_type_id,
+            "OWNER_ID": owner_id,
+            "TYPE_ID": 4,
+            "PROVIDER_ID": ORIGINATOR_ID,
+            "PROVIDER_TYPE_ID": origin_id,
+        },
+        select=["ID"],
+    )
+    result = data.get("result")
+    if not isinstance(result, list):
+        raise BitrixMalformedResponse(
+            "Bitrix returned malformed crm.activity.list result"
+        )
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        activity_id = item.get("ID")
+        if isinstance(activity_id, int) and not isinstance(activity_id, bool):
+            if activity_id > 0:
+                return activity_id
+        if isinstance(activity_id, str) and activity_id.strip().isdigit():
+            return int(activity_id)
+    return None
+
+
+def _execute_email_attachment(
     record: dict[str, Any],
     policy: dict[str, Any],
+    readonly_client: Any,
     write_client: BitrixWriteClient,
     logger: logging.Logger,
-) -> None:
-    if not policy["attach_email"]:
-        return
+) -> bool:
+    attachment_required = record.get("email_attachment_required") is True
+    if not attachment_required:
+        record["email_attachment_status"] = "not_required"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "deferred"
+            record["reason_code"] = "email_attachment_disabled"
+        return False
+    if not policy["email_attach"]:
+        record["email_attachment_status"] = "pending"
+        record["last_attach_error_code"] = "email_attachment_disabled"
+        return False
     if record.get("email_activity_id"):
-        return
+        record["email_attachment_status"] = "attached"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "attached"
+        return False
     sender_email = record.get("sender_email") or ""
     if not sender_email:
-        return
-    owner_id = record.get("remote_entity_id")
-    if not isinstance(owner_id, int) or isinstance(owner_id, bool) or owner_id <= 0:
-        return
+        record["email_attachment_status"] = "failed"
+        record["last_attach_error_code"] = "email_sender_unavailable"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "deferred"
+            record["reason_code"] = "email_sender_unavailable"
+        return False
+    owner = _activity_owner(record)
+    if owner is None:
+        record["email_attachment_status"] = "failed"
+        record["last_attach_error_code"] = "responsible_unresolved"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "deferred"
+            record["reason_code"] = "responsible_unresolved"
+        return False
+    owner_entity_type_id, owner_id, responsible_id = owner
+    attempts = int(record.get("attach_attempts", 0) or 0)
+    if attempts >= policy["attempts_retry_max"]:
+        record["email_attachment_status"] = "failed"
+        record["last_attach_error_code"] = "retry_exhausted"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "failed"
+            record["reason_code"] = "retry_exhausted"
+        return False
+    try:
+        existing_id = _lookup_activity_by_origin(
+            readonly_client,
+            owner_entity_type_id,
+            owner_id,
+            record["origin_id"],
+        )
+    except BitrixConnectorError as exc:
+        record["attach_attempts"] = attempts + 1
+        record["email_attachment_status"] = "uncertain"
+        record["last_attach_error_code"] = "activity_idempotency_lookup_failed"
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "pending"
+            record["uncertain"] = True
+        logger.warning(
+            "ROP write-back activity idempotency lookup failed: identity=%s reason=%s",
+            record["identity"],
+            exc,
+        )
+        return False
+    if existing_id is not None:
+        record["email_activity_id"] = existing_id
+        record["email_attachment_status"] = "attached"
+        record["last_attach_error_code"] = None
+        record["attach_attempts"] = attempts
+        record["uncertain"] = False
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "attached"
+        logger.info(
+            "ROP write-back recovered email activity: identity=%s activity_id=%s",
+            record["identity"],
+            existing_id,
+        )
+        return False
     try:
         activity_id = write_client.add_email_activity(
-            owner_entity_type_id=LEAD_ENTITY_TYPE_ID,
+            owner_entity_type_id=owner_entity_type_id,
             owner_id=owner_id,
+            responsible_id=responsible_id,
+            origin_id=record["origin_id"],
             subject=record.get("subject") or "",
             description=record.get("body_preview") or "",
             sender_email=sender_email,
         )
         record["email_activity_id"] = activity_id
+        record["email_attachment_status"] = "attached"
         record["last_attach_error_code"] = None
+        record["attach_attempts"] = attempts + 1
+        record["uncertain"] = False
+        if record.get("outcome") == "attach_existing":
+            record["status"] = "attached"
         logger.info(
             "ROP write-back email activity attached: identity=%s activity_id=%s",
             record["identity"],
             activity_id,
         )
+        return True
     except BitrixConnectorError as exc:
-        error_code, _retryable, _uncertain = _classify_write_failure(exc)
+        error_code, retryable, uncertain = _classify_write_failure(exc)
+        record["attach_attempts"] = attempts + 1
         record["last_attach_error_code"] = error_code
+        record["email_attachment_status"] = (
+            "uncertain" if uncertain else "pending" if retryable else "failed"
+        )
+        if record.get("outcome") == "attach_existing":
+            if uncertain:
+                record["status"] = "uncertain"
+                record["uncertain"] = True
+            elif retryable:
+                record["status"] = "pending"
+                record["uncertain"] = False
+            else:
+                record["status"] = "failed"
+                record["reason_code"] = error_code
+                record["uncertain"] = False
         logger.warning(
             "ROP write-back email activity attach failed: identity=%s error_code=%s",
             record["identity"],
             error_code,
         )
+        return False
 
 
 def _execute_create_lead(
@@ -824,7 +1122,7 @@ def _execute_create_lead(
         return
 
     attempts = int(record.get("attempts", 0) or 0)
-    if attempts >= policy["retry_attempts_max"]:
+    if attempts >= policy["attempts_retry_max"]:
         record["status"] = "failed"
         record["reason_code"] = "retry_exhausted"
         record["last_error_code"] = "retry_exhausted"
@@ -929,7 +1227,6 @@ def _execute_create_lead(
         record.get("stage_id"),
         record.get("responsible_user_id"),
     )
-    _attach_email_activity(record, policy, write_client, logger)
 
 
 def execute_writeback_pending(
@@ -949,9 +1246,9 @@ def execute_writeback_pending(
         "enabled": policy["enabled"],
         "dry_run": policy["dry_run"],
         "webhook_env": policy["webhook_env"],
-        "retry_attempts_max": policy["retry_attempts_max"],
+        "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
-        "attach_email": policy["attach_email"],
+        "email_attach": policy["email_attach"],
         "source_id": policy["source_id"],
     }
 
@@ -966,14 +1263,25 @@ def execute_writeback_pending(
             "aggregate": _aggregate_records([]),
         }
 
+    previous_records = {
+        str(identity): json.dumps(record, sort_keys=True, ensure_ascii=False)
+        for identity, record in events.items()
+        if isinstance(record, dict)
+    }
+
+    def persist_and_refresh() -> None:
+        _save_state(storage_dir, state)
+        _refresh_changed_run_projections(
+            storage_dir, state, previous_records, logger
+        )
+
     if not policy["enabled"]:
         for record in events.values():
             if record.get("status") in ("planned", "pending", "uncertain"):
                 record["status"] = "deferred"
                 record["reason_code"] = "writeback_disabled"
                 record["updated_at_utc"] = _utc_now()
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         logger.info("ROP write-back execute: disabled, zero writes: run_id=%s", run_id)
         return {
             "run_id": run_id,
@@ -984,8 +1292,7 @@ def execute_writeback_pending(
         }
 
     if effective_dry_run:
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         logger.info(
             "ROP write-back execute: dry-run, zero writes: run_id=%s", run_id
         )
@@ -1003,8 +1310,7 @@ def execute_writeback_pending(
                 record["status"] = "deferred"
                 record["reason_code"] = "write_credential_missing"
                 record["updated_at_utc"] = _utc_now()
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         logger.warning(
             "ROP write-back execute: write credential missing, zero writes: run_id=%s",
             run_id,
@@ -1031,9 +1337,31 @@ def execute_writeback_pending(
                 record["last_error_code"] = None
                 record["reason_code"] = None
                 rearmed += 1
+            elif (
+                record.get("outcome") == "attach_existing"
+                and record.get("status") == "failed"
+                and record.get("reason_code") == "retry_exhausted"
+                and record.get("last_attach_error_code") == "retry_exhausted"
+            ):
+                record["status"] = "pending"
+                record["attach_attempts"] = 0
+                record["uncertain"] = False
+                record["last_attach_error_code"] = None
+                record["reason_code"] = None
+                rearmed += 1
+            elif (
+                record.get("outcome") == "create_lead"
+                and record.get("status") in ("created", "recovered")
+                and not record.get("email_activity_id")
+                and record.get("last_attach_error_code") == "retry_exhausted"
+            ):
+                record["attach_attempts"] = 0
+                record["email_attachment_status"] = "pending"
+                record["last_attach_error_code"] = None
+                rearmed += 1
         if rearmed:
             logger.info(
-                "ROP write-back retry-failed: re-armed %d exhausted create records: "
+                "ROP write-back retry-failed: re-armed %d exhausted write-back records: "
                 "run_id=%s",
                 rearmed,
                 run_id,
@@ -1049,7 +1377,7 @@ def execute_writeback_pending(
         record
         for record in events.values()
         if record.get("outcome") == "attach_existing"
-        and record.get("status") in ("planned", "pending")
+        and record.get("status") in ("planned", "pending", "uncertain")
     ]
 
     for record in create_records:
@@ -1058,11 +1386,6 @@ def execute_writeback_pending(
             record["status"] = "deferred"
             record["reason_code"] = "stage_not_configured"
             record["updated_at_utc"] = _utc_now()
-
-    for record in attach_records:
-        record["status"] = "deferred"
-        record["reason_code"] = ATTACH_BINDING_CONTRACT_UNCONFIRMED
-        record["updated_at_utc"] = _utc_now()
 
     try:
         readonly_client = build_bitrix_client(settings, logger=logger)
@@ -1081,8 +1404,7 @@ def execute_writeback_pending(
             record["status"] = "deferred"
             record["reason_code"] = "stage_validation_failed"
             record["updated_at_utc"] = _utc_now()
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         logger.error(
             "ROP write-back stage validation failed, zero writes: run_id=%s "
             "invalid_stages=%s",
@@ -1103,8 +1425,7 @@ def execute_writeback_pending(
             record["uncertain"] = False
             record["last_error_code"] = "stage_validation_degraded"
             record["updated_at_utc"] = _utc_now()
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         return {
             "run_id": run_id,
             "status": "stage_validation_degraded",
@@ -1116,12 +1437,11 @@ def execute_writeback_pending(
     try:
         write_client = build_bitrix_write_client(settings, logger=logger)
     except BitrixConnectorError as exc:
-        for record in create_records:
+        for record in create_records + attach_records:
             record["status"] = "deferred"
             record["reason_code"] = "write_credential_invalid"
             record["updated_at_utc"] = _utc_now()
-        _save_state(storage_dir, state)
-        _write_run_summary(storage_dir, run_id, state, logger)
+        persist_and_refresh()
         logger.error(
             "ROP write-back write client unavailable, zero writes: run_id=%s reason=%s",
             run_id,
@@ -1156,23 +1476,30 @@ def execute_writeback_pending(
         record["updated_at_utc"] = _utc_now()
 
     for record in events.values():
-        if record.get("outcome") != "create_lead":
-            continue
-        if record.get("status") != "created":
-            continue
-        if not record.get("last_attach_error_code"):
-            continue
-        owner_id = record.get("remote_entity_id")
-        if (
-            not isinstance(owner_id, int)
-            or isinstance(owner_id, bool)
-            or owner_id <= 0
+        if record.get("outcome") == "attach_existing":
+            if record.get("status") not in ("planned", "pending", "uncertain"):
+                continue
+        elif (
+            record.get("outcome") == "create_lead"
+            and record.get("status") in ("created", "recovered")
+            and not record.get("email_activity_id")
+            and record.get("email_attachment_required") is True
+            and record.get("email_attachment_status") in ("pending", "uncertain")
         ):
+            pass
+        else:
             continue
-        _attach_email_activity(record, policy, write_client, logger)
+        if _execute_email_attachment(
+            record,
+            policy,
+            readonly_client,
+            write_client,
+            logger,
+        ):
+            writes_performed += 1
+        record["updated_at_utc"] = _utc_now()
 
-    _save_state(storage_dir, state)
-    _write_run_summary(storage_dir, run_id, state, logger)
+    persist_and_refresh()
 
     logger.info(
         "ROP write-back execute finished: run_id=%s writes=%d status_counts=%s",

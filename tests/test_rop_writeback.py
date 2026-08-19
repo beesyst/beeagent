@@ -30,7 +30,9 @@ from beeagent_module.cases.rop_writeback import (
     _stable_remote_id,
     build_writeback_plan,
     execute_writeback_pending,
+    refresh_recoverable_writeback_prerequisites,
 )
+from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
 from beeagent_module.core.cli import create_rop_parser
 from beeagent_module.core.settings import load_settings, validate_settings
 
@@ -58,11 +60,10 @@ def _writeback_settings(
     enabled: bool = True,
     stages: dict[str, str] | None = None,
     dry_run: bool = False,
-    retry_max: int = 3,
+    attempts_retry_max: int = 3,
     webhook_env: str = "BITRIX_WRITEBACK_WEBHOOK_URL",
-    attach_email: bool = False,
+    email_attach: bool = False,
     source_id: str = "",
-    fallback_responsible_user_id: int | None = None,
 ) -> dict:
     return {
         "bitrix": {
@@ -81,11 +82,10 @@ def _writeback_settings(
                 "enabled": enabled,
                 "webhook_env": webhook_env,
                 "timeout": 10,
-                "retry_attempts_max": retry_max,
+                "attempts_retry_max": attempts_retry_max,
                 "dry_run": dry_run,
-                "attach_email": attach_email,
+                "email_attach": email_attach,
                 "source_id": source_id,
-                "fallback_responsible_user_id": fallback_responsible_user_id,
                 "stages": stages or {"new_lead": "NEW", "irrelevant": "NEW"},
             },
         },
@@ -117,6 +117,9 @@ def _classified_event(
     sender: str = "",
     from_name: str = "",
     body_preview: str = "",
+    forwarded_wrapper: bool = False,
+    original_sender: str = "",
+    original_sender_email: str = "",
 ) -> dict[str, Any]:
     return {
         "event_id": event_id,
@@ -131,6 +134,9 @@ def _classified_event(
         "sender": sender,
         "from_name": from_name,
         "body_preview": body_preview,
+        "forwarded_wrapper": forwarded_wrapper,
+        "original_sender": original_sender,
+        "original_sender_email": original_sender_email,
     }
 
 
@@ -154,6 +160,7 @@ def _recon_item(
     safe: bool = False,
     entity_type: str = "",
     entity_id: int | None = None,
+    responsible_id: int | None = 42,
 ) -> dict[str, Any]:
     return {
         "event_id": event_id,
@@ -162,7 +169,9 @@ def _recon_item(
         "bitrix_match_quality": status,
         "safe_to_use_as_target": safe,
         "bitrix_entity_type": entity_type,
+        "bitrix_entity_type_id": {"lead": 1, "deal": 2}.get(entity_type),
         "bitrix_entity_id": entity_id,
+        "bitrix_responsible_id": responsible_id,
         "needs_manual_review": not safe,
     }
 
@@ -253,6 +262,8 @@ def _default_handler(call: dict[str, Any]) -> bytes:
         ).encode("utf-8")
     if method == "crm.item.list":
         return json.dumps({"result": {"items": []}}).encode("utf-8")
+    if method == "crm.activity.list":
+        return json.dumps({"result": []}).encode("utf-8")
     if method == "crm.item.add":
         return json.dumps({"result": {"item": {"id": 1001}}}).encode("utf-8")
     if method == "crm.activity.add":
@@ -286,22 +297,21 @@ class TestWritebackSettingsValidation:
         writeback = settings["bitrix"]["writeback"]
         assert writeback["enabled"] is False
         assert writeback["webhook_env"] == "BITRIX_WRITEBACK_WEBHOOK_URL"
+        assert writeback["attempts_retry_max"] == 3
+        assert writeback["email_attach"] is True
         validate_settings(settings)
 
-    def test_fallback_responsible_user_id_accepts_positive_int(self) -> None:
+    def test_env_example_declares_writeback_credential(self) -> None:
+        assert "BITRIX_WRITEBACK_WEBHOOK_URL=\n" in (
+            _PROJECT_ROOT / ".env.example"
+        ).read_text(encoding="utf-8")
+
+    def test_fallback_responsible_user_id_is_rejected(self) -> None:
         settings = self._load()
         settings["bitrix"]["writeback"]["fallback_responsible_user_id"] = 1563
-        validate_settings(settings)
-
-    def test_fallback_responsible_user_id_rejects_non_positive(self) -> None:
-        for bad_value in (0, -1, "1563", True, 3.5):
-            settings = self._load()
-            settings["bitrix"]["writeback"]["fallback_responsible_user_id"] = (
-                bad_value
-            )
-            with pytest.raises(RuntimeError) as exc_info:
-                validate_settings(settings)
-            assert "fallback_responsible_user_id" in str(exc_info.value)
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "fallback_responsible_user_id" in str(exc_info.value)
 
     def test_writeback_enabled_requires_bitrix_enabled(self) -> None:
         settings = self._load()
@@ -366,12 +376,33 @@ class TestWritebackSettingsValidation:
             validate_settings(settings)
         assert "deal" in str(exc_info.value)
 
-    def test_attach_email_must_be_bool(self) -> None:
+    def test_email_attach_must_be_bool(self) -> None:
         settings = self._load()
-        settings["bitrix"]["writeback"]["attach_email"] = "yes"
+        settings["bitrix"]["writeback"]["email_attach"] = "yes"
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "email_attach" in str(exc_info.value)
+
+    def test_retry_attempts_max_is_rejected(self) -> None:
+        settings = self._load()
+        settings["bitrix"]["writeback"]["retry_attempts_max"] = 3
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "retry_attempts_max" in str(exc_info.value)
+
+    def test_attach_email_is_rejected(self) -> None:
+        settings = self._load()
+        settings["bitrix"]["writeback"]["attach_email"] = True
         with pytest.raises(RuntimeError) as exc_info:
             validate_settings(settings)
         assert "attach_email" in str(exc_info.value)
+
+    def test_user_id_fallback_is_rejected(self) -> None:
+        settings = self._load()
+        settings["bitrix"]["writeback"]["user_id_fallback"] = 1563
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "user_id_fallback" in str(exc_info.value)
 
     def test_source_id_must_be_string_or_null(self) -> None:
         settings = self._load()
@@ -379,6 +410,43 @@ class TestWritebackSettingsValidation:
         with pytest.raises(RuntimeError) as exc_info:
             validate_settings(settings)
         assert "source_id" in str(exc_info.value)
+
+    def test_writeback_rejects_same_read_and_write_env_name(self) -> None:
+        settings = self._load()
+        settings["bitrix"]["writeback"]["enabled"] = True
+        settings["bitrix"]["writeback"]["webhook_env"] = "BITRIX_WEBHOOK_URL"
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+
+        assert "must differ" in str(exc_info.value)
+        assert "readonlytoken" not in str(exc_info.value)
+
+    def test_writeback_rejects_same_credential_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITRIX_WRITEBACK_WEBHOOK_URL", "https://same.test/rest/1/x/")
+        monkeypatch.setenv("BITRIX_WEBHOOK_URL", "https://same.test/rest/1/x")
+        settings = self._load()
+        settings["bitrix"]["writeback"]["enabled"] = True
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+
+        assert "credentials must be distinct" in str(exc_info.value)
+        assert "https://" not in str(exc_info.value)
+
+    def test_writeback_accepts_distinct_credential_urls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITRIX_WEBHOOK_URL", "https://read.test/rest/1/x/")
+        monkeypatch.setenv(
+            "BITRIX_WRITEBACK_WEBHOOK_URL", "https://write.test/rest/1/y/"
+        )
+        settings = self._load()
+        settings["bitrix"]["writeback"]["enabled"] = True
+
+        validate_settings(settings)
 
 
 class TestWriteClientBoundary:
@@ -468,6 +536,8 @@ class TestWriteClientBoundary:
             activity_id = client.add_email_activity(
                 owner_entity_type_id=1,
                 owner_id=199263,
+                responsible_id=42,
+                origin_id="welding|hotline_mailbox|msg-1",
                 subject="Subject",
                 description="Body",
                 sender_email="sender@example.com",
@@ -481,6 +551,9 @@ class TestWriteClientBoundary:
         assert fields["TYPE_ID"] == 4
         assert fields["OWNER_TYPE_ID"] == 1
         assert fields["OWNER_ID"] == 199263
+        assert fields["RESPONSIBLE_ID"] == 42
+        assert fields["PROVIDER_ID"] == "beeagent-rop"
+        assert fields["PROVIDER_TYPE_ID"] == "welding|hotline_mailbox|msg-1"
         assert fields["COMPLETED"] == "Y"
         assert fields["COMMUNICATIONS"][0]["VALUE"] == "sender@example.com"
         assert fields["COMMUNICATIONS"][0]["TYPE"] == "EMAIL"
@@ -602,6 +675,534 @@ class TestWritebackPlanner:
         assert record["target_entity_type"] == "deal"
         assert record["target_entity_id"] == 88
 
+    def test_reconciled_related_deal_attaches_once_without_reassigning(
+        self,
+        tmp_path: Path,
+        writeback_env: None,
+    ) -> None:
+        run_id = "run-related-deal"
+        run_dir = tmp_path / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        classified = [
+            _classified_event(
+                "evt-1",
+                "existing_deal",
+                message_id="msg-1",
+                sender="client@example.com",
+                instance="inst-old-contact",
+            )
+        ]
+        classified[0]["received_at"] = "2026-08-19T12:00:00+00:00"
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        (run_dir / "rop_final_decisions.json").write_text(
+            json.dumps({"events": [_decision("evt-1", "existing_deal")]}),
+            encoding="utf-8",
+        )
+        (run_dir / "rop_recipient_routing.json").write_text(
+            json.dumps({"items": [_routing_item("evt-1", "matched", user_id=42)]}),
+            encoding="utf-8",
+        )
+
+        class _RelatedDealClient:
+            def __init__(self) -> None:
+                self.searches: list[tuple[int, str, dict[str, Any]]] = []
+
+            def get_portal_url(self) -> str:
+                return "https://portal.test"
+
+            def search_candidates(
+                self, entity_type_id: int, query: str, **kwargs: Any
+            ) -> list[dict[str, Any]]:
+                self.searches.append((entity_type_id, query, kwargs))
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                            "DATE_CREATE": "2025-01-01T00:00:00+00:00",
+                        }
+                    ]
+                return []
+
+            def search_related_deals(
+                self, entity_type_id: int, entity_id: int
+            ) -> list[dict[str, Any]]:
+                assert (entity_type_id, entity_id) == (3, 42)
+                return [
+                    {
+                        "id": 88,
+                        "title": "Existing deal",
+                        "assignedById": 901,
+                        "contactId": 42,
+                    }
+                ]
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as recon_mod
+
+        settings = _writeback_settings(email_attach=True)
+        related_client = _RelatedDealClient()
+        with patch.object(
+            recon_mod,
+            "build_bitrix_client",
+            return_value=related_client,
+        ):
+            reconciliation = run_reconciliation(
+                tmp_path, run_id, settings, _null_logger()
+            )
+        assert reconciliation["items"][0]["bitrix_match_status"] == "matched_deal"
+        assert reconciliation["items"][0]["safe_to_use_as_target"] is True
+        relation_searches = [
+            kwargs
+            for entity_type_id, _query, kwargs in related_client.searches
+            if entity_type_id in (3, 4)
+        ]
+        assert relation_searches
+        assert all(kwargs.get("date_from") is None for kwargs in relation_searches)
+
+        plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        assert plan["events"][0]["outcome"] == "attach_existing"
+        assert plan["events"][0]["target_entity_id"] == 88
+
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            first = execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+            second = execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+        assert first["writes_performed"] == 1
+        assert second["writes_performed"] == 0
+        methods = [call["method"] for call in recorder.calls]
+        assert "crm.item.add" not in methods
+        assert methods.count("crm.activity.add") == 1
+        activity = next(call for call in recorder.calls if call["method"] == "crm.activity.add")
+        assert activity["payload"]["fields"]["OWNER_TYPE_ID"] == 2
+        assert activity["payload"]["fields"]["OWNER_ID"] == 88
+        assert activity["payload"]["fields"]["RESPONSIBLE_ID"] == 901
+
+    @pytest.mark.parametrize(
+        ("case_type", "identity_entity_type", "creates_lead"),
+        [
+            ("new_lead", 3, True),
+            ("irrelevant", 4, True),
+            ("existing_deal", 3, False),
+            ("duplicate", 4, False),
+        ],
+    )
+    def test_exact_identity_without_safe_target_only_creates_for_create_cases(
+        self,
+        tmp_path: Path,
+        writeback_env: None,
+        case_type: str,
+        identity_entity_type: int,
+        creates_lead: bool,
+    ) -> None:
+        run_id = f"run-identity-{case_type}-{identity_entity_type}"
+        run_dir = tmp_path / "runs" / run_id
+        event = _classified_event(
+            "evt-1",
+            case_type,
+            message_id="msg-1",
+            sender="client@example.com",
+        )
+        event["received_at"] = "2026-08-19T12:00:00+00:00"
+        _write_artifacts(
+            run_dir,
+            classified=[event],
+            decisions=[_decision("evt-1", case_type)],
+            reconciliation=[],
+            routing=[_routing_item("evt-1", "matched", user_id=42)],
+        )
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps([event]), encoding="utf-8"
+        )
+
+        class _IdentityClient:
+            def get_portal_url(self) -> str:
+                return "https://portal.test"
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == identity_entity_type:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return []
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as recon_mod
+
+        settings = _writeback_settings(email_attach=True)
+        with patch.object(
+            recon_mod,
+            "build_bitrix_client",
+            return_value=_IdentityClient(),
+        ):
+            reconciliation = run_reconciliation(
+                tmp_path, run_id, settings, _null_logger()
+            )
+        item = reconciliation["items"][0]
+        assert item["bitrix_match_status"] == "identity_only_no_target"
+        assert item["suitable_target_search"] == "completed_no_target"
+        assert item["safe_to_use_as_target"] is False
+        assert item["bitrix_entity_type"] == ""
+        assert item["bitrix_entity_id"] is None
+
+        plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        record = plan["events"][0]
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            first = execute_writeback_pending(
+                tmp_path, run_id, settings, _null_logger()
+            )
+            second = execute_writeback_pending(
+                tmp_path, run_id, settings, _null_logger()
+            )
+
+        mutations = [
+            call
+            for call in recorder.calls
+            if call["method"] in {"crm.item.add", "crm.activity.add"}
+        ]
+        if creates_lead:
+            assert record["outcome"] == "create_lead"
+            assert record["responsible_user_id"] == 42
+            assert record["stage_id"] == "NEW"
+            assert first["writes_performed"] == 2
+            assert second["writes_performed"] == 0
+            assert [call["method"] for call in mutations] == [
+                "crm.item.add",
+                "crm.activity.add",
+            ]
+            create = mutations[0]["payload"]["fields"]
+            assert create["ASSIGNED_BY_ID"] == 42
+            assert create["STAGE_ID"] == "NEW"
+            assert create["fm"][0]["value"] == "client@example.com"
+            activity = mutations[1]["payload"]["fields"]
+            assert activity["OWNER_TYPE_ID"] == 1
+            assert activity["OWNER_ID"] == 1001
+        else:
+            assert record["outcome"] == "deferred"
+            assert record["reason_code"] == "case_type_not_create_eligible"
+            assert first["writes_performed"] == 0
+            assert second["writes_performed"] == 0
+            assert mutations == []
+
+    def test_competing_exact_lead_and_related_deal_defer_without_mutation(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-competing-target"
+        run_dir = tmp_path / "runs" / run_id
+        event = _classified_event(
+            "evt-1",
+            "new_lead",
+            message_id="msg-1",
+            sender="client@example.com",
+        )
+        event["received_at"] = "2026-08-19T12:00:00+00:00"
+        _write_artifacts(
+            run_dir,
+            classified=[event],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps([event]), encoding="utf-8"
+        )
+
+        class _CompetingTargetClient:
+            def get_portal_url(self) -> str:
+                return "https://portal.test"
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 1:
+                    return [
+                        {
+                            "ID": "253",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return [{"id": 88, "title": "Existing deal"}]
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as recon_mod
+
+        settings = _writeback_settings(email_attach=True)
+        with patch.object(
+            recon_mod,
+            "build_bitrix_client",
+            return_value=_CompetingTargetClient(),
+        ):
+            reconciliation = run_reconciliation(
+                tmp_path, run_id, settings, _null_logger()
+            )
+        item = reconciliation["items"][0]
+        assert item["bitrix_match_status"] == "ambiguous"
+        assert item["safe_to_use_as_target"] is False
+
+        plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        assert plan["events"][0]["outcome"] == "deferred"
+        assert plan["events"][0]["reason_code"] == "ambiguous_target"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+        assert not [
+            call
+            for call in recorder.calls
+            if call["method"] in {"crm.item.add", "crm.activity.add"}
+        ]
+
+    def test_forwarded_existing_target_attaches_original_sender_once(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-forwarded-target"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "existing_deal",
+                    message_id="msg-1",
+                    sender="forwarder@internal.example",
+                    forwarded_wrapper=True,
+                    original_sender_email="customer@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "existing_deal")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_deal",
+                    safe=True,
+                    entity_type="deal",
+                    entity_id=88,
+                    responsible_id=901,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-forwarded-target", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-forwarded-target", settings, _null_logger()
+            )
+            execute_writeback_pending(
+                tmp_path, "run-forwarded-target", settings, _null_logger()
+            )
+
+        assert not [call for call in recorder.calls if call["method"] == "crm.item.add"]
+        activities = [
+            call for call in recorder.calls if call["method"] == "crm.activity.add"
+        ]
+        assert len(activities) == 1
+        assert activities[0]["payload"]["fields"]["COMMUNICATIONS"][0]["VALUE"] == "customer@example.com"
+
+    def test_old_contact_with_multiple_related_deals_defers_without_mutation(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-old-contact-multiple"
+        run_dir = tmp_path / "runs" / run_id
+        classified = [
+            _classified_event(
+                "evt-1",
+                "existing_deal",
+                message_id="msg-1",
+                sender="client@example.com",
+            )
+        ]
+        classified[0]["received_at"] = "2026-08-19T12:00:00+00:00"
+        _write_artifacts(
+            run_dir,
+            classified=classified,
+            decisions=[_decision("evt-1", "existing_deal")],
+            reconciliation=[],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+
+        class _RelatedDealClient:
+            def get_portal_url(self) -> str:
+                return "https://portal.test"
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **kwargs: Any
+            ) -> list[dict[str, Any]]:
+                assert kwargs.get("date_from") is None
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                            "DATE_CREATE": "2025-01-01T00:00:00+00:00",
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return [{"id": 88, "title": "First"}, {"id": 89, "title": "Second"}]
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as recon_mod
+
+        settings = _writeback_settings(email_attach=True)
+        with patch.object(
+            recon_mod,
+            "build_bitrix_client",
+            return_value=_RelatedDealClient(),
+        ):
+            reconciliation = run_reconciliation(
+                tmp_path, run_id, settings, _null_logger()
+            )
+        assert reconciliation["items"][0]["bitrix_match_status"] == "ambiguous"
+
+        plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        assert plan["events"][0]["outcome"] == "deferred"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+        assert not [
+            call
+            for call in recorder.calls
+            if call["method"] in {"crm.item.add", "crm.activity.add"}
+        ]
+
+    def test_forwarded_new_lead_uses_original_sender_identity(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-forwarded-lead"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="forwarder@internal.example",
+                    from_name="Internal Forwarder",
+                    forwarded_wrapper=True,
+                    original_sender=(
+                        "Усова Анна Николаевна <customer@example.com>"
+                    ),
+                    original_sender_email="customer@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-forwarded-lead", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-forwarded-lead", settings, _null_logger()
+            )
+            execute_writeback_pending(
+                tmp_path, "run-forwarded-lead", settings, _null_logger()
+            )
+
+        creates = [call for call in recorder.calls if call["method"] == "crm.item.add"]
+        assert len(creates) == 1
+        fields = creates[0]["payload"]["fields"]
+        assert fields["NAME"] == "Усова Анна Николаевна"
+        assert fields["fm"][0]["value"] == "customer@example.com"
+        activity = next(
+            call for call in recorder.calls if call["method"] == "crm.activity.add"
+        )
+        assert activity["payload"]["fields"]["COMMUNICATIONS"][0]["VALUE"] == (
+            "customer@example.com"
+        )
+
+    def test_forwarded_new_lead_without_display_name_omits_name(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-forwarded-no-name"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="internal-forwarder@welding.kz",
+                    from_name="Internal Forwarder",
+                    forwarded_wrapper=True,
+                    original_sender="customer@example.com",
+                    original_sender_email="customer@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings()
+        build_writeback_plan(
+            tmp_path, "run-forwarded-no-name", settings, _null_logger()
+        )
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-forwarded-no-name", settings, _null_logger()
+            )
+
+        fields = next(
+            call for call in recorder.calls if call["method"] == "crm.item.add"
+        )["payload"]["fields"]
+        assert fields["fm"][0]["value"] == "customer@example.com"
+        assert "NAME" not in fields
+
+    def test_safe_existing_target_without_responsible_defers(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event("evt-1", "new_lead", message_id="msg-1")
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_lead",
+                    safe=True,
+                    entity_type="lead",
+                    entity_id=253,
+                    responsible_id=None,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
+
     def test_existing_deal_without_target_defers(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
@@ -638,7 +1239,7 @@ class TestWritebackPlanner:
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "case_type_not_create_eligible"
 
-    def test_ambiguous_target_defers(self, tmp_path: Path) -> None:
+    def test_ambiguous_target_defers(self, tmp_path: Path, writeback_env: None) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -655,6 +1256,16 @@ class TestWritebackPlanner:
         record = plan["events"][0]
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "ambiguous_target"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-wb", _writeback_settings(), _null_logger()
+            )
+        assert not [
+            call
+            for call in recorder.calls
+            if call["method"] in {"crm.item.add", "crm.activity.add"}
+        ]
 
     def test_duplicate_candidate_defers(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
@@ -717,6 +1328,46 @@ class TestWritebackPlanner:
         record = plan["events"][0]
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "reconciliation_connector_degraded"
+        assert record["status"] == "pending"
+
+    def test_connector_degraded_plan_refreshes_without_reingestion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event("evt-1", "new_lead", message_id="msg-1")
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "connector_degraded")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings()
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+
+        def recovered_reconciliation(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            reconciliation = {
+                "status": "ok",
+                "aggregate": {"event_count": 1},
+                "items": [_recon_item("evt-1", "not_found")],
+            }
+            (run_dir / "bitrix_reconciliation.json").write_text(
+                json.dumps(reconciliation), encoding="utf-8"
+            )
+            return reconciliation
+
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
+            recovered_reconciliation,
+        )
+        assert refresh_recoverable_writeback_prerequisites(
+            tmp_path, settings, _null_logger()
+        ) == ["run-wb"]
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["outcome"] == "create_lead"
+        assert record["status"] == "pending"
 
     @pytest.mark.parametrize(
         "responsible_status",
@@ -749,7 +1400,7 @@ class TestWritebackPlanner:
         assert record["reason_code"] == "responsible_unresolved"
         assert record["responsible_status"] == responsible_status
 
-    def test_fallback_responsible_used_when_routing_unresolved(
+    def test_unresolved_responsible_defers_without_fallback(
         self, tmp_path: Path
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
@@ -765,16 +1416,12 @@ class TestWritebackPlanner:
         plan = build_writeback_plan(
             tmp_path,
             "run-wb",
-            _writeback_settings(fallback_responsible_user_id=1563),
+            _writeback_settings(),
             _null_logger(),
         )
         record = plan["events"][0]
-        assert record["outcome"] == "create_lead"
-        assert record["responsible_status"] == "fallback"
-        assert record["responsible_user_id"] == 1563
-        assert (
-            record["responsible_reason"] == "fallback_responsible_configured"
-        )
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
 
     def test_event_without_stable_identity_is_not_planned(
         self, tmp_path: Path
@@ -1217,14 +1864,14 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(attach_email=True, source_id="EMAIL")
+        settings = _writeback_settings(email_attach=True, source_id="EMAIL")
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             result = execute_writeback_pending(
                 tmp_path, "run-wb", settings, _null_logger()
             )
-        assert result["writes_performed"] == 1
+        assert result["writes_performed"] == 2
         methods = [call["method"] for call in recorder.calls]
         assert "crm.activity.add" in methods
         add_call = next(
@@ -1250,6 +1897,16 @@ class TestWritebackExecutor:
         state = _load_state(tmp_path)
         record = list(state["events"].values())[0]
         assert record["email_activity_id"] == 9001
+        assert record["email_attachment_required"] is True
+        assert record["email_attachment_status"] == "attached"
+        summary = json.loads(
+            (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
+        )
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert summary["aggregate"]["delivery_status_counts"] == {"completed": 1}
+        assert draft["recommended_action"] == "delivery_completed"
 
     def test_create_lead_attach_no_duplicate_activity_on_repeat(
         self, tmp_path: Path, writeback_env: None
@@ -1269,7 +1926,7 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(attach_email=True)
+        settings = _writeback_settings(email_attach=True)
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
@@ -1313,7 +1970,7 @@ class TestWritebackExecutor:
         record = list(state["events"].values())[0]
         assert record.get("email_activity_id") is None
 
-    def test_create_lead_retries_email_attach_after_failure(
+    def test_create_lead_does_not_retry_terminal_email_attach_failure(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
@@ -1331,7 +1988,7 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(attach_email=True)
+        settings = _writeback_settings(email_attach=True)
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
 
         attach_failures = {"remaining": 2}
@@ -1356,14 +2013,21 @@ class TestWritebackExecutor:
         assert record["status"] == "created"
         assert record["email_activity_id"] is None
         assert record["last_attach_error_code"] == "api_error"
+        assert record["email_attachment_status"] == "failed"
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert draft["recommended_action"] == "review_delivery_failure"
 
         recorder2 = _HttpRecorder(_default_handler)
         with _patch_http(recorder2)[0], _patch_http(recorder2)[1]:
-            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+            execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger(), retry_failed=True
+            )
         state = _load_state(tmp_path)
         record = list(state["events"].values())[0]
-        assert record["email_activity_id"] == 9001
-        assert record["last_attach_error_code"] is None
+        assert record["email_activity_id"] is None
+        assert record["last_attach_error_code"] == "api_error"
         item_adds = [
             call for call in recorder2.calls if call["method"] == "crm.item.add"
         ]
@@ -1371,7 +2035,123 @@ class TestWritebackExecutor:
         activity_calls = [
             call for call in recorder2.calls if call["method"] == "crm.activity.add"
         ]
-        assert len(activity_calls) == 1
+        assert activity_calls == []
+
+    def test_created_lead_with_retryable_attachment_failure_is_not_completed(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+
+        def transport_failure(call: dict[str, Any]) -> bytes:
+            if call["method"] == "crm.activity.add":
+                raise HTTPError(
+                    url="https://portal.test/rest/1/writetoken/crm.activity.add",
+                    code=502,
+                    msg="Bad Gateway",
+                    hdrs=Message(),
+                    fp=None,
+                )
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(transport_failure)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert record["remote_entity_id"] == 1001
+        assert record["email_attachment_status"] == "pending"
+        assert record["last_attach_error_code"] == "transport"
+        assert draft["recommended_action"] == "complete_email_attachment"
+
+    def test_created_lead_uncertain_attachment_requires_reconciliation(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        activity_adds = {"count": 0}
+
+        def malformed_then_reconciled(call: dict[str, Any]) -> bytes:
+            if call["method"] == "crm.activity.add":
+                activity_adds["count"] += 1
+                return b"{broken"
+            if call["method"] == "crm.activity.list" and activity_adds["count"]:
+                return json.dumps({"result": [{"ID": 9001}]}).encode("utf-8")
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(malformed_then_reconciled)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+            first_record = list(_load_state(tmp_path)["events"].values())[0]
+            assert first_record["email_attachment_status"] == "uncertain"
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert activity_adds["count"] == 1
+        assert record["remote_entity_id"] == 1001
+        assert record["email_activity_id"] == 9001
+        assert record["email_attachment_status"] == "attached"
+        assert draft["recommended_action"] == "delivery_completed"
+
+    def test_created_lead_with_missing_sender_is_not_completed(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="msg-1")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert record["remote_entity_id"] == 1001
+        assert record["email_attachment_status"] == "failed"
+        assert record["last_attach_error_code"] == "email_sender_unavailable"
+        assert draft["recommended_action"] == "review_delivery_failure"
+        assert not [call for call in recorder.calls if call["method"] == "crm.activity.add"]
 
     def test_create_lead_does_not_retry_attach_when_disabled(
         self, tmp_path: Path, writeback_env: None
@@ -1391,7 +2171,7 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(attach_email=True)
+        settings = _writeback_settings(email_attach=True)
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
 
         def fail_activity(call: dict[str, Any]) -> bytes:
@@ -1408,7 +2188,7 @@ class TestWritebackExecutor:
         record = list(state["events"].values())[0]
         assert record["last_attach_error_code"] == "api_error"
 
-        disabled_settings = _writeback_settings(attach_email=False)
+        disabled_settings = _writeback_settings(email_attach=False)
         recorder2 = _HttpRecorder(_default_handler)
         with _patch_http(recorder2)[0], _patch_http(recorder2)[1]:
             execute_writeback_pending(
@@ -1492,7 +2272,7 @@ class TestWritebackExecutor:
         )
         assert add_call["payload"]["fields"]["NAME"] == "Иван Петров"
 
-    def test_create_lead_uses_fallback_responsible_when_routing_unresolved(
+    def test_create_lead_does_not_use_fallback_responsible(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
@@ -1505,17 +2285,16 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
         )
-        settings = _writeback_settings(fallback_responsible_user_id=1563)
+        settings = _writeback_settings()
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(
                 tmp_path, "run-wb", settings, _null_logger()
             )
-        add_call = next(
+        assert not [
             call for call in recorder.calls if call["method"] == "crm.item.add"
-        )
-        assert add_call["payload"]["fields"]["ASSIGNED_BY_ID"] == 1563
+        ]
 
     def test_create_lead_parses_sender_name_from_display_string(
         self, tmp_path: Path, writeback_env: None
@@ -1678,7 +2457,7 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(retry_max=2)
+        settings = _writeback_settings(attempts_retry_max=2)
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
 
         def rate_limited(call: dict[str, Any]) -> bytes:
@@ -1735,7 +2514,7 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(retry_max=2)
+        settings = _writeback_settings(attempts_retry_max=2)
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
 
         def rate_limited(call: dict[str, Any]) -> bytes:
@@ -1832,6 +2611,130 @@ class TestWritebackExecutor:
         record = list(state["events"].values())[0]
         assert record["status"] == "failed"
         assert record["reason_code"] == "permission_denied"
+
+    def test_retry_failed_rearms_exhausted_existing_attach(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="msg-1", sender="sender@example.com"
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1", "matched_lead", safe=True, entity_type="lead", entity_id=253
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True, attempts_retry_max=1)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+
+        def unavailable_activity(call: dict[str, Any]) -> bytes:
+            if call["method"] == "crm.activity.add":
+                raise HTTPError(
+                    url="https://portal.test/rest/1/writetoken/crm.activity.add",
+                    code=502,
+                    msg="Bad Gateway",
+                    hdrs=Message(),
+                    fp=None,
+                )
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(unavailable_activity)
+        for _ in range(2):
+            with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+                execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["status"] == "failed"
+        assert record["reason_code"] == "retry_exhausted"
+        assert record["target_entity_id"] == 253
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert draft["recommended_action"] == "review_delivery_failure"
+
+        recovered = _HttpRecorder(_default_handler)
+        with _patch_http(recovered)[0], _patch_http(recovered)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger(), retry_failed=True
+            )
+        assert result["writes_performed"] == 1
+        assert not [call for call in recovered.calls if call["method"] == "crm.item.add"]
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["status"] == "attached"
+        assert record["email_activity_id"] == 9001
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert draft["recommended_action"] == "delivery_completed"
+
+    def test_retry_failed_rearms_exhausted_created_lead_attachment(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="msg-1", sender="sender@example.com"
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True, attempts_retry_max=1)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+
+        def unavailable_activity(call: dict[str, Any]) -> bytes:
+            if call["method"] == "crm.activity.add":
+                raise HTTPError(
+                    url="https://portal.test/rest/1/writetoken/crm.activity.add",
+                    code=502,
+                    msg="Bad Gateway",
+                    hdrs=Message(),
+                    fp=None,
+                )
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(unavailable_activity)
+        for _ in range(2):
+            with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+                execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["status"] == "created"
+        assert record["remote_entity_id"] == 1001
+        assert record["last_attach_error_code"] == "retry_exhausted"
+        assert record["email_attachment_status"] == "failed"
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert draft["recommended_action"] == "review_delivery_failure"
+
+        recovered = _HttpRecorder(_default_handler)
+        with _patch_http(recovered)[0], _patch_http(recovered)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger(), retry_failed=True
+            )
+        assert result["writes_performed"] == 1
+        assert not [call for call in recovered.calls if call["method"] == "crm.item.add"]
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["remote_entity_id"] == 1001
+        assert record["email_activity_id"] == 9001
+        assert record["email_attachment_status"] == "attached"
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert draft["recommended_action"] == "delivery_completed"
 
     def test_terminal_401_fails_and_is_not_retried(
         self, tmp_path: Path, writeback_env: None
@@ -2021,14 +2924,19 @@ class TestWritebackExecutor:
         assert record["status"] == "uncertain"
         assert record["last_error_code"] == "malformed_response"
 
-    def test_attach_existing_defers_pending_binding_contract(
+    def test_attach_existing_lead_creates_one_email_activity(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "new_lead", message_id="msg-1")
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
             ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[
@@ -2043,21 +2951,174 @@ class TestWritebackExecutor:
             routing=[_routing_item("evt-1", "matched")],
         )
         build_writeback_plan(
-            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+            tmp_path,
+            "run-wb",
+            _writeback_settings(email_attach=True),
+            _null_logger(),
         )
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             result = execute_writeback_pending(
-                tmp_path, "run-wb", _writeback_settings(), _null_logger()
+                tmp_path,
+                "run-wb",
+                _writeback_settings(email_attach=True),
+                _null_logger(),
             )
-        assert result["writes_performed"] == 0
+        assert result["writes_performed"] == 1
         methods = [call["method"] for call in recorder.calls]
         assert "crm.item.add" not in methods
+        assert methods.count("crm.activity.add") == 1
         state = _load_state(tmp_path)
         record = list(state["events"].values())[0]
         assert record["outcome"] == "attach_existing"
-        assert record["status"] == "deferred"
-        assert record["reason_code"] == "email_binding_contract_unconfirmed"
+        assert record["status"] == "attached"
+        assert record["email_activity_id"] == 9001
+
+    def test_existing_lead_attach_replay_has_no_second_activity(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_lead",
+                    safe=True,
+                    entity_type="lead",
+                    entity_id=253,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        first = _HttpRecorder(_default_handler)
+        with _patch_http(first)[0], _patch_http(first)[1]:
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        assert len(
+            [call for call in first.calls if call["method"] == "crm.activity.add"]
+        ) == 1
+
+        second = _HttpRecorder(_default_handler)
+        with _patch_http(second)[0], _patch_http(second)[1]:
+            execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
+        assert not [
+            call for call in second.calls if call["method"] == "crm.activity.add"
+        ]
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["status"] == "attached"
+        assert record["email_activity_id"] == 9001
+
+    @pytest.mark.parametrize("failure", ["timeout", "malformed"])
+    def test_uncertain_existing_attach_reconciles_before_retry(
+        self, tmp_path: Path, writeback_env: None, failure: str
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_lead",
+                    safe=True,
+                    entity_type="lead",
+                    entity_id=253,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        activity_adds = {"count": 0}
+
+        def uncertain_activity(call: dict[str, Any]) -> bytes:
+            if call["method"] == "crm.activity.add":
+                activity_adds["count"] += 1
+                if failure == "timeout":
+                    raise URLError("timed out")
+                return b"{broken"
+            if call["method"] == "crm.activity.list" and activity_adds["count"]:
+                return json.dumps({"result": [{"ID": 9001}]}).encode("utf-8")
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(uncertain_activity)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            first = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+            second = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert activity_adds["count"] == 1
+        assert first["writes_performed"] == 0
+        assert second["writes_performed"] == 0
+        methods = [call["method"] for call in recorder.calls]
+        assert methods.count("crm.activity.list") == 2
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["status"] == "attached"
+        assert record["email_activity_id"] == 9001
+
+    def test_existing_deal_attach_uses_deal_owner_without_create(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "existing_deal",
+                    message_id="msg-1",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "existing_deal")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_deal",
+                    safe=True,
+                    entity_type="deal",
+                    entity_id=88,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=True)
+        build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 1
+        activity = next(
+            call for call in recorder.calls if call["method"] == "crm.activity.add"
+        )
+        assert activity["payload"]["fields"]["OWNER_TYPE_ID"] == 2
+        assert activity["payload"]["fields"]["OWNER_ID"] == 88
+        assert not [call for call in recorder.calls if call["method"] == "crm.item.add"]
 
     def test_recovered_via_bitrix_lookup_no_post(
         self, tmp_path: Path, writeback_env: None
@@ -2155,6 +3216,130 @@ class TestWritebackExecutor:
         record = list(reloaded["events"].values())[0]
         assert record["status"] == "created"
         assert record["remote_entity_id"] == 1001
+
+    @pytest.mark.parametrize(
+        ("case_type", "match_status", "entity_type", "entity_id", "expected_status"),
+        [
+            ("new_lead", "not_found", "", None, "created"),
+            ("new_lead", "matched_lead", "lead", 253, "attached"),
+            ("existing_deal", "matched_deal", "deal", 88, "attached"),
+        ],
+    )
+    def test_execution_refreshes_original_run_projections(
+        self,
+        tmp_path: Path,
+        writeback_env: None,
+        case_type: str,
+        match_status: str,
+        entity_type: str,
+        entity_id: int | None,
+        expected_status: str,
+    ) -> None:
+        run_id = "run-original"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    case_type,
+                    message_id="msg-1",
+                    sender="sender@example.com" if entity_type else "",
+                )
+            ],
+            decisions=[_decision("evt-1", case_type)],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    match_status,
+                    safe=bool(entity_type),
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings(email_attach=bool(entity_type))
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+
+        summary = json.loads(
+            (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
+        )
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert summary["events"][0]["status"] == expected_status
+        assert draft["delivery_status"] == expected_status
+        assert draft["recommended_action"] == "delivery_completed"
+        assert draft["recommended_next_step"] == "no_action_required"
+
+    def test_manual_execution_refreshes_every_affected_original_run(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        settings = _writeback_settings()
+        for run_id, event_id in (("run-original-a", "evt-a"), ("run-original-b", "evt-b")):
+            run_dir = tmp_path / "runs" / run_id
+            _write_artifacts(
+                run_dir,
+                classified=[_classified_event(event_id, "new_lead", message_id=event_id)],
+                decisions=[_decision(event_id, "new_lead")],
+                reconciliation=[_recon_item(event_id, "not_found")],
+                routing=[_routing_item(event_id, "matched")],
+            )
+            build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+
+        first = _HttpRecorder(_default_handler)
+        with _patch_http(first)[0], _patch_http(first)[1]:
+            execute_writeback_pending(tmp_path, "manual-execute", settings, _null_logger())
+        assert [call["method"] for call in first.calls].count("crm.item.add") == 2
+        assert not (tmp_path / "runs" / "manual-execute").exists()
+
+        for run_id in ("run-original-a", "run-original-b"):
+            run_dir = tmp_path / "runs" / run_id
+            summary = json.loads(
+                (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
+            )
+            draft = json.loads(
+                (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+            )["items"][0]
+            assert summary["events"][0]["status"] == "created"
+            assert draft["recommended_action"] == "delivery_completed"
+
+        replay = _HttpRecorder(_default_handler)
+        with _patch_http(replay)[0], _patch_http(replay)[1]:
+            execute_writeback_pending(tmp_path, "manual-execute", settings, _null_logger())
+        assert not [call for call in replay.calls if call["method"] == "crm.item.add"]
+
+    def test_poll_recovery_refreshes_original_run_without_recovery_run(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-original"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="msg-1")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        settings = _writeback_settings()
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, "poll-recovery", settings, _null_logger())
+
+        summary = json.loads(
+            (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
+        )
+        draft = json.loads(
+            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
+        )["items"][0]
+        assert summary["events"][0]["status"] == "created"
+        assert draft["recommended_action"] == "delivery_completed"
+        assert not (tmp_path / "runs" / "poll-recovery").exists()
 
 
 class TestWritebackCli:

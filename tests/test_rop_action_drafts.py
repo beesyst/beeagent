@@ -256,6 +256,172 @@ class TestBuildActionDrafts:
         assert draft["recommended_action"] == "ignore"
         assert draft["needs_manual_review"] is False
 
+    @pytest.mark.parametrize(
+        ("match_status", "entity_type", "outcome", "action"),
+        [
+            ("not_found", "", "create_lead", "create_lead"),
+            ("matched_lead", "lead", "attach_existing", "attach_existing"),
+            ("matched_deal", "deal", "attach_existing", "attach_existing"),
+        ],
+    )
+    def test_irrelevant_writeback_projection_is_not_ignore(
+        self,
+        tmp_path: Path,
+        match_status: str,
+        entity_type: str,
+        outcome: str,
+        action: str,
+    ) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        interfaces = tmp_path / "interfaces"
+        interfaces.mkdir()
+        (interfaces / "rop_writeback_state.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "events": {
+                        "stable": {
+                            "event_id": "evt-001",
+                            "event_instance_id": "",
+                            "last_run_id": "test-action-drafts",
+                            "outcome": outcome,
+                            "status": "pending",
+                            "reason_code": None,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        item = _sample_item(
+            "evt-001",
+            match_status=match_status,
+            case_type="irrelevant",
+            quality="strong" if entity_type else "not_found",
+            needs_manual=False,
+            safe_target=bool(entity_type),
+        )
+        item["bitrix_entity_type"] = entity_type
+        item["should_rop_see"] = False
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            _make_reconciliation([item]),
+            _null_logger(),
+        )
+        draft = artifact["items"][0]
+        assert draft["queue"] == "delivery_planned"
+        assert draft["recommended_action"] == action
+        assert draft["delivery_outcome"] == outcome
+        assert draft["read_only"] is True
+        assert artifact["draft_only"] is True
+
+    @pytest.mark.parametrize(
+        (
+            "status",
+            "attachment_required",
+            "attachment_status",
+            "activity_id",
+            "queue",
+            "action",
+            "next_step",
+        ),
+        [
+            (
+                "pending", False, "not_required", None, "delivery_planned",
+                "create_lead", "controlled_writeback_pending",
+            ),
+            (
+                "uncertain", False, "not_required", None, "delivery_planned",
+                "create_lead", "controlled_writeback_pending",
+            ),
+            (
+                "created", False, "not_required", None, "delivered",
+                "delivery_completed", "no_action_required",
+            ),
+            (
+                "recovered", False, "not_required", None, "delivered",
+                "delivery_completed", "no_action_required",
+            ),
+            (
+                "created", True, "pending", None, "delivery_planned",
+                "complete_email_attachment", "controlled_writeback_pending",
+            ),
+            (
+                "created", True, "uncertain", None, "delivery_planned",
+                "complete_email_attachment", "controlled_writeback_pending",
+            ),
+            (
+                "created", True, "failed", None, "deferred",
+                "review_delivery_failure", "review_deferred_delivery",
+            ),
+            (
+                "attached", True, "attached", 9001, "delivered",
+                "delivery_completed", "no_action_required",
+            ),
+            (
+                "failed", False, "not_required", None, "deferred",
+                "review_delivery_failure", "review_deferred_delivery",
+            ),
+            (
+                "deferred", False, "not_required", None, "deferred",
+                "review_delivery_failure", "review_deferred_delivery",
+            ),
+        ],
+    )
+    def test_writeback_projection_reflects_delivery_status(
+        self,
+        tmp_path: Path,
+        status: str,
+        attachment_required: bool,
+        attachment_status: str,
+        activity_id: int | None,
+        queue: str,
+        action: str,
+        next_step: str,
+    ) -> None:
+        run_dir = tmp_path / "runs" / "test-action-drafts"
+        run_dir.mkdir(parents=True)
+        interfaces = tmp_path / "interfaces"
+        interfaces.mkdir()
+        (interfaces / "rop_writeback_state.json").write_text(
+            json.dumps(
+                {
+                    "events": {
+                        "stable": {
+                            "event_id": "evt-001",
+                            "event_instance_id": "",
+                            "last_run_id": "test-action-drafts",
+                            "outcome": (
+                                "attach_existing"
+                                if status == "attached"
+                                else "create_lead"
+                            ),
+                            "status": status,
+                            "email_attachment_required": attachment_required,
+                            "email_attachment_status": attachment_status,
+                            "email_activity_id": activity_id,
+                            "reason_code": "retry_exhausted" if status == "failed" else None,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        artifact = build_action_drafts(
+            tmp_path,
+            "test-action-drafts",
+            _make_reconciliation([_sample_item("evt-001", match_status="not_found")]),
+            _null_logger(),
+        )
+        draft = artifact["items"][0]
+        assert (draft["queue"], draft["recommended_action"], draft["recommended_next_step"]) == (
+            queue,
+            action,
+            next_step,
+        )
+
     def test_connector_degraded_creates_connector_check(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "test-action-drafts"
         run_dir.mkdir(parents=True)

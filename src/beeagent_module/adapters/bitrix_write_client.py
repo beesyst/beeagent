@@ -26,6 +26,7 @@ _ACTIVITY_TYPE_EMAIL = 4
 _ACTIVITY_SUBJECT_MAX = 255
 _ACTIVITY_DESCRIPTION_MAX = 3000
 _ACTIVITY_EMAIL_MAX = 320
+_ACTIVITY_ORIGIN_MAX = 200
 
 
 class BitrixWriteClient:
@@ -122,6 +123,8 @@ class BitrixWriteClient:
         self,
         owner_entity_type_id: int,
         owner_id: int,
+        responsible_id: int,
+        origin_id: str,
         subject: str,
         description: str,
         sender_email: str,
@@ -130,9 +133,13 @@ class BitrixWriteClient:
             "OWNER_TYPE_ID": owner_entity_type_id,
             "OWNER_ID": owner_id,
             "TYPE_ID": _ACTIVITY_TYPE_EMAIL,
+            "RESPONSIBLE_ID": responsible_id,
+            "PROVIDER_ID": "beeagent-rop",
+            "PROVIDER_TYPE_ID": origin_id[:_ACTIVITY_ORIGIN_MAX],
             "SUBJECT": (subject or "")[:_ACTIVITY_SUBJECT_MAX],
             "DESCRIPTION": (description or "")[:_ACTIVITY_DESCRIPTION_MAX],
             "COMPLETED": "Y",
+            "DIRECTION": 1,
             "COMMUNICATIONS": [
                 {
                     "ENTITY_TYPE_ID": owner_entity_type_id,

@@ -1294,7 +1294,8 @@ Sanitization rules:
 - DB-backed user management;
 - POST/write actions;
 - CRM/mailbox actions;
-- CRM/Bitrix write-back;
+- UI-triggered CRM/Bitrix write-back; controlled server-side `rop run` and `rop poll`
+  write-back remains outside Web/widget routes;
 - web-triggered ROP run;
 - widget-triggered execution;
 - save-human-decision UI flow;

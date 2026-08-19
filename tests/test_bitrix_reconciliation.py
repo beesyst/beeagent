@@ -520,7 +520,7 @@ class TestBitrixClient:
                 return {"result": {"items": [{"id": 1}]}, "next": 2}
             return {"result": {"items": [{"id": 2}]}, "next": 4}
 
-        client.call = fake_call  # type: ignore[method-assign]
+        client.call = fake_call
 
         items = client.search_candidates(1, "plain title")
 
@@ -538,9 +538,44 @@ class TestBitrixClient:
                 raise AssertionError("crm.deal.list must not be called")
             return {"result": []}
 
-        client.call = fake_call  # type: ignore[method-assign]
+        client.call = fake_call
 
         assert client.search_candidates(2, "client@example.com") == []
+
+    def test_related_deal_lookup_uses_bounded_generic_item_list(self) -> None:
+        client = BitrixReadonlyClient(
+            webhook_url="https://test.bitrix24.kz/rest/1/token/",
+            timeout=5,
+        )
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_call(
+            method: str, params: dict[str, Any] | None = None
+        ) -> dict[str, Any]:
+            calls.append((method, params or {}))
+            return {"result": {"items": []}}
+
+        client.call = fake_call
+
+        assert client.search_related_deals(3, 42) == []
+        assert calls == [
+            (
+                "crm.item.list",
+                {
+                    "entityTypeId": 2,
+                    "filter": {"contactId": 42},
+                    "select": [
+                        "id",
+                        "title",
+                        "stageId",
+                        "assignedById",
+                        "contactId",
+                        "companyId",
+                    ],
+                    "limit": 50,
+                },
+            )
+        ]
 
     def test_email_search_uses_exact_match_filter(self) -> None:
         client = BitrixReadonlyClient(
@@ -555,7 +590,7 @@ class TestBitrixClient:
             calls.append((method, params or {}))
             return {"result": []}
 
-        client.call = fake_call  # type: ignore[method-assign]
+        client.call = fake_call
 
         client.search_candidates(1, "client@example.com")
 
@@ -580,7 +615,7 @@ class TestBitrixClient:
             calls.append((method, params or {}))
             return {"result": {"items": []}}
 
-        client.call = fake_call  # type: ignore[method-assign]
+        client.call = fake_call
 
         result = client.search_candidates(3, "plain subject text")
 
@@ -615,7 +650,7 @@ class TestBitrixReconciliation:
                 "sender": "ignore@example.com",
                 "subject": "Ignore me",
             },
-            client=None,  # type: ignore[arg-type]
+            client=None,
             entity_types=[1],
             candidate_limit=20,
             window_date=180,
@@ -650,6 +685,397 @@ class TestBitrixReconciliation:
 
         assert result["bitrix_match_status"] == "not_found"
         assert result["bitrix_match_reason"] == "no_candidate_found"
+
+    def test_exact_contact_email_with_one_linked_deal_is_strong_and_safe(self) -> None:
+        class _RelatedDealClient:
+            def search_candidates(
+                self, entity_type_id: int, query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "TITLE": "Client",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(
+                self, entity_type_id: int, entity_id: int
+            ) -> list[dict[str, Any]]:
+                assert (entity_type_id, entity_id) == (3, 42)
+                return [
+                    {
+                        "id": 77,
+                        "title": "Existing deal",
+                        "stageId": "C1:NEW",
+                        "assignedById": 901,
+                        "contactId": 42,
+                    }
+                ]
+
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-related-deal",
+                "case_type": "new_lead",
+                "sender": "client@example.com",
+                "subject": "Request",
+            },
+            client=_RelatedDealClient(),
+            entity_types=[1, 2, 3, 4],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "matched_deal"
+        assert result["bitrix_match_quality"] == "strong"
+        assert result["safe_to_use_as_target"] is True
+        assert result["bitrix_entity_id"] == 77
+        assert result["bitrix_responsible_id"] == 901
+        assert result["bitrix_match_reason"] == "related_contact_sender_email_exact"
+
+    def test_exact_lead_and_unique_related_deal_are_ambiguous(self) -> None:
+        class _CompetingTargetClient:
+            def __init__(self) -> None:
+                self.searches: list[tuple[int, dict[str, Any]]] = []
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **kwargs: Any
+            ) -> list[dict[str, Any]]:
+                self.searches.append((entity_type_id, kwargs))
+                if entity_type_id == 1:
+                    return [
+                        {
+                            "ID": "253",
+                            "TITLE": "Existing lead",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "TITLE": "Client",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(
+                self, entity_type_id: int, entity_id: int
+            ) -> list[dict[str, Any]]:
+                assert (entity_type_id, entity_id) == (3, 42)
+                return [{"id": 88, "title": "Existing deal"}]
+
+        client = _CompetingTargetClient()
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-competing-target",
+                "sender": "client@example.com",
+                "received_at": "2026-08-19T12:00:00+00:00",
+            },
+            client=client,
+            entity_types=[1, 2, 3, 4],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "ambiguous"
+        assert result["bitrix_match_reason"] == "exact_lead_and_related_deal"
+        assert result["safe_to_use_as_target"] is False
+        lead_searches = [
+            kwargs for entity_type_id, kwargs in client.searches if entity_type_id == 1
+        ]
+        assert lead_searches == [{"date_from": "2026-02-20"}]
+
+    def test_multiple_linked_deals_are_ambiguous_and_unsafe(self) -> None:
+        class _RelatedDealClient:
+            def __init__(self) -> None:
+                self.searches: list[dict[str, Any]] = []
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **kwargs: Any
+            ) -> list[dict[str, Any]]:
+                self.searches.append(kwargs)
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                            "DATE_CREATE": "2025-01-01T00:00:00+00:00",
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return [{"id": 77, "title": "First"}, {"id": 78, "title": "Second"}]
+
+        client = _RelatedDealClient()
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-many",
+                "sender": "client@example.com",
+                "received_at": "2026-08-19T12:00:00+00:00",
+            },
+            client=client,
+            entity_types=[2, 3],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "ambiguous"
+        assert result["bitrix_match_reason"] == "multiple_related_deals"
+        assert result["safe_to_use_as_target"] is False
+        assert all(kwargs.get("date_from") is None for kwargs in client.searches)
+
+    def test_forwarded_wrapper_uses_original_sender_for_reconciliation(self) -> None:
+        class _SenderClient:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def search_candidates(
+                self, _entity_type_id: int, query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                self.queries.append(query)
+                return [
+                    {
+                        "ID": "253",
+                        "TITLE": "External customer",
+                        "EMAIL": [{"VALUE": "customer@example.com"}],
+                    }
+                ]
+
+        client = _SenderClient()
+        result = _reconcile_event(
+            event={
+                "event_id": "evt-forwarded",
+                "sender": "forwarder@internal.example",
+                "forwarded_wrapper": True,
+                "original_sender_email": "customer@example.com",
+            },
+            client=client,
+            entity_types=[1],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert client.queries == ["customer@example.com"]
+        assert result["bitrix_match_status"] == "matched_lead"
+
+    def test_untrusted_original_sender_does_not_override_sender(self) -> None:
+        class _SenderClient:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def search_candidates(
+                self, _entity_type_id: int, query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                self.queries.append(query)
+                return []
+
+        client = _SenderClient()
+        _reconcile_event(
+            event={
+                "event_id": "evt-untrusted",
+                "sender": "forwarder@internal.example",
+                "forwarded_wrapper": False,
+                "original_sender_email": "customer@example.com",
+            },
+            client=client,
+            entity_types=[1],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert client.queries == ["forwarder@internal.example"]
+
+    def test_exact_contact_without_complete_lead_lookup_is_not_target_absence(self) -> None:
+        class _RelatedDealClient:
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return []
+
+        result = _reconcile_event(
+            event={"event_id": "evt-none", "sender": "client@example.com"},
+            client=_RelatedDealClient(),
+            entity_types=[2, 3],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "matched_contact"
+        assert result["bitrix_entity_type"] == "contact"
+        assert result["bitrix_entity_type"] != "deal"
+        assert result["safe_to_use_as_target"] is False
+
+    def test_exact_contact_without_lead_or_related_deal_is_identity_only(self) -> None:
+        class _RelatedDealClient:
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return []
+
+        result = _reconcile_event(
+            event={"event_id": "evt-identity", "sender": "client@example.com"},
+            client=_RelatedDealClient(),
+            entity_types=[1, 2, 3, 4],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "identity_only_no_target"
+        assert result["identity_entity_type"] == "contact"
+        assert result["identity_entity_id"] == 42
+        assert result["suitable_target_search"] == "completed_no_target"
+        assert result["bitrix_entity_type"] == ""
+        assert result["bitrix_entity_id"] is None
+        assert result["safe_to_use_as_target"] is False
+
+    def test_exact_lead_precedes_identity_without_related_deal(self) -> None:
+        class _RelatedDealClient:
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 1:
+                    return [
+                        {
+                            "ID": "253",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return []
+
+        result = _reconcile_event(
+            event={"event_id": "evt-lead", "sender": "client@example.com"},
+            client=_RelatedDealClient(),
+            entity_types=[1, 2, 3, 4],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "matched_lead"
+        assert result["bitrix_entity_id"] == 253
+        assert result["safe_to_use_as_target"] is True
+
+    def test_related_deal_connector_failure_is_degraded(
+        self,
+        tmp_path: Path,
+        fake_bitrix_env: None,
+    ) -> None:
+        settings = _load_test_settings()
+        settings["bitrix"]["enabled"] = True
+        settings["bitrix"]["types_entity"] = [2, 3]
+        run_dir = tmp_path / "runs" / "test-related-deal-degraded"
+        run_dir.mkdir(parents=True)
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps([{"event_id": "evt-1", "sender": "client@example.com"}]),
+            encoding="utf-8",
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps([{"event_id": "evt-1", "case_type": "new_lead"}]),
+            encoding="utf-8",
+        )
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as br_mod
+
+        class _RelatedDealClient:
+            def get_portal_url(self) -> str:
+                return "https://test.bitrix24.kz"
+
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 3:
+                    return [
+                        {
+                            "ID": "42",
+                            "EMAIL": [{"VALUE": "client@example.com"}],
+                        }
+                    ]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                raise BitrixTransportError("network down")
+
+        with patch.object(
+            br_mod,
+            "build_bitrix_client",
+            return_value=_RelatedDealClient(),
+        ):
+            artifact = run_reconciliation(
+                storage_dir=tmp_path,
+                run_id="test-related-deal-degraded",
+                settings=settings,
+                logger=_null_logger(),
+            )
+
+        assert artifact["status"] == "degraded"
+        assert artifact["items"][0]["bitrix_match_status"] == "connector_degraded"
+
+    def test_title_only_deal_remains_unsafe(self) -> None:
+        class _TitleDealClient:
+            def search_candidates(
+                self, entity_type_id: int, _query: str, **_kwargs: Any
+            ) -> list[dict[str, Any]]:
+                if entity_type_id == 2:
+                    return [{"id": 77, "title": "Exact request"}]
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list[dict[str, Any]]:
+                return []
+
+        result = _reconcile_event(
+            event={"event_id": "evt-title", "subject": "Exact request"},
+            client=_TitleDealClient(),
+            entity_types=[2],
+            candidate_limit=20,
+            window_date=180,
+            logger=_null_logger(),
+        )
+
+        assert result["bitrix_match_status"] == "weak_match"
+        assert result["bitrix_entity_type"] == "deal"
+        assert result["safe_to_use_as_target"] is False
 
     def test_phone_exact_match_is_strong_and_safe(self) -> None:
         result = _classify_candidates(

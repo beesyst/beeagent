@@ -221,12 +221,32 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
   customer `stageId` и с exact matched active responsible из `rop_recipient_routing.json`;
   optional config-driven `source_id` задаёт Lead `SOURCE_ID` (например `EMAIL` =
   «Входящее письмо»);
-- при `bitrix.writeback.attach_email: true` к созданному лиду через официальный
-  `crm.activity.add` прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/
-  body/отправителем;
-- безопасно найденный существующий Lead/Deal обрабатывается через attach-existing path
-  без создания нового Lead; email/activity binding для существующих сущностей остаётся
-  явным `deferred` (`email_binding_contract_unconfirmed`);
+- при `bitrix.writeback.email_attach: true` через официальный `crm.activity.add`
+  прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/body/отправителем;
+  safe existing Lead/Deal получает activity с existing target owner/responsible без
+  reassignment CRM entity;
+- planned record snapshots whether email attachment is required. For `create_lead`, a
+  created/recovered CRM entity is delivery-complete only after the required activity has a
+  valid ID; pending, uncertain, exhausted, terminal or sender-unavailable attachment remains
+  an explicit incomplete delivery state;
+- safe existing Lead/Deal обрабатывается через idempotent attach-existing path без
+  создания нового Lead; before every activity POST executor uses read-only
+  `crm.activity.list` with the stable origin identity, including after timeout or malformed
+  response, and persists the returned activity ID;
+- exact sender email/phone may make an existing Deal safe only through an exact matched
+  Contact/Company and bounded read-only `crm.item.list` (`entityTypeId=2`) relation filter
+  on `contactId`/`companyId`; exactly one related Deal is strong, while zero/multiple or any
+  malformed/connector result stays non-safe or degraded, and title/subject similarity is
+  never automatic Deal authority;
+- an exact Contact/Company is identity evidence, not an executable target. Only after the
+  bounded exact Lead search and related-Deal lookup complete without a target does
+  `identity_only_no_target` with `suitable_target_search=completed_no_target` permit the
+  normal configured `new_lead`/`irrelevant` create path;
+- `BitrixReadonlyClient` не содержит mutation methods; `crm.activity.list` остаётся
+  read-only idempotency lookup, а `BitrixWriteClient` ограничен только
+  `crm.item.add` и `crm.activity.add`;
+- при enabled write-back dedicated write credential обязан отличаться от read credential
+  и по env name, и по normalized webhook URL;
 - unresolved `existing_deal`/`duplicate`, ambiguous/unsafe target и unresolved responsible
   fail closed в `deferred` без спекулятивного создания;
 - стабильная cross-run идентичность — `client_id + source_id +
@@ -234,12 +254,21 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
   identity;
 - `rop_action_drafts.json` — read-only/draft-only артефакт и не является execution
   authority;
-- authoritative write-back intent durable сохраняется до advancement mailbox checkpoint.
+- authoritative write-back intent durable сохраняется до mailbox checkpoint; ordering для
+  poll: durable intent → checkpoint → external execution → original per-run projection refresh.
+  Temporary reconciliation outage
+  сохраняется как recoverable deferred state и повторно сверяется из retained run artifacts
+  без mailbox re-ingestion.
 
 Артефакты:
 
 - `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
-- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection.
+- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed
+  together with `rop_action_drafts.json` for each original affected run after execution/recovery.
+
+With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it
+can report success. A projection or post-persistence executor failure never erases canonical
+intent and remains recoverable through later run, poll or controlled manual execution.
 
 ## 11. Стек
 
