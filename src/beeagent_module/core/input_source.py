@@ -840,9 +840,7 @@ def _extract_body_preview(
     if text_parts:
         decoded_text = html.unescape("\n".join(text_parts))
         return _build_body_preview_metadata(
-            text=_strip_html(decoded_text)
-            if _HTML_TAG_RE.search(decoded_text)
-            else decoded_text,
+            text=_strip_html(decoded_text),
             source="text_plain",
             email_preview_body_chars_max=email_preview_body_chars_max,
         )
@@ -871,7 +869,7 @@ def _build_body_preview_metadata(
     source: str,
     email_preview_body_chars_max: int,
 ) -> dict[str, Any]:
-    cleaned = _sanitize_text(text)
+    cleaned = _normalize_body_text(text)
     if not cleaned:
         return _empty_body_preview_metadata()
 
@@ -1381,7 +1379,7 @@ def _build_batch_body_preview(
     )
 
     return _build_body_preview_metadata(
-        text=_strip_html(decoded_body) if is_html else decoded_body,
+        text=_strip_html(decoded_body),
         source=preview_source,
         email_preview_body_chars_max=email_preview_body_chars_max,
     )
@@ -1390,16 +1388,37 @@ def _build_batch_body_preview(
 _HTML_TAG_RE = re.compile(
     r"<!--[^>]*-->|<\?[^>]*\?>|</?[a-zA-Z][a-zA-Z0-9:_-]*(?:\s[^>]*)?\s*/?>"
 )
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->|<!\[endif\]-->", re.DOTALL)
+_HTML_DOCTYPE_RE = re.compile(r"<!doctype[^>]*>", re.IGNORECASE)
+_HTML_BLOCK_BOUNDARY_RE = re.compile(
+    r"</?(?:p|div|br|li|ul|ol|tr|td|th|table|thead|tbody|tfoot|section|article|header|footer|blockquote|h[1-6]|pre|hr)[^>]*>",
+    re.IGNORECASE,
+)
 _SCRIPT_STYLE_RE = re.compile(
     r"<(script|style)[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL
 )
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_BODY_INVISIBLE_CHARS_RE = re.compile(r"[\u200b-\u200f\u2060-\u206f\ufeff]")
 
 
 def _strip_html(text: str) -> str:
     without_script = _SCRIPT_STYLE_RE.sub("", text)
-    without_tags = _HTML_TAG_RE.sub("", without_script)
+    without_comments = _HTML_COMMENT_RE.sub("", without_script)
+    without_doctype = _HTML_DOCTYPE_RE.sub("", without_comments)
+    with_breaks = _HTML_BLOCK_BOUNDARY_RE.sub("\n", without_doctype)
+    without_tags = _HTML_TAG_RE.sub("", with_breaks)
     return without_tags
+
+
+def _normalize_body_text(text: str) -> str:
+    without_control = _CONTROL_CHARS_RE.sub("", text)
+    without_invisible = _BODY_INVISIBLE_CHARS_RE.sub("", without_control)
+    lines: list[str] = []
+    for line in without_invisible.split("\n"):
+        collapsed = re.sub(r"\s+", " ", line).strip()
+        if collapsed:
+            lines.append(collapsed)
+    return "\n".join(lines)
 
 
 def _sanitize_text(text: str) -> str:

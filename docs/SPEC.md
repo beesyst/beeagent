@@ -219,29 +219,53 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
   `deferred`;
 - новые eligible Lead создаются через `crm.item.add` с `entityTypeId=1` в configured
   customer `stageId` и с exact matched active responsible из `rop_recipient_routing.json`;
+  optional `bitrix.writeback.user_id_fallback` (валидируемый положительный Bitrix user ID)
+  назначается ответственным только при `responsible.status=not_found`; matched, ambiguous,
+  `connector_degraded`, unresolved и not-attempted остаются deferred;
   optional config-driven `source_id` задаёт Lead `SOURCE_ID` (например `EMAIL` =
   «Входящее письмо»);
 - при `bitrix.writeback.email_attach: true` через официальный `crm.activity.add`
   прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/body/отправителем;
-  safe existing Lead/Deal получает activity с existing target owner/responsible без
-  reassignment CRM entity;
+  trusted exact thread target получает activity с existing target owner/responsible без
+  reassignment CRM entity; `bitrix.writeback.email_completed` (boolean,
+  валидируется fail-fast, по умолчанию `true`) задаёт, завершена ли создаваемая
+  email-активность (`false` создаёт её незавершённой — заметнее в таймлайне);
 - planned record snapshots whether email attachment is required. For `create_lead`, a
   created/recovered CRM entity is delivery-complete only after the required activity has a
   valid ID; pending, uncertain, exhausted, terminal or sender-unavailable attachment remains
   an explicit incomplete delivery state;
-- safe existing Lead/Deal обрабатывается через idempotent attach-existing path без
+- trusted exact thread target обрабатывается через idempotent attach-existing path без
   создания нового Lead; before every activity POST executor uses read-only
   `crm.activity.list` with the stable origin identity, including after timeout or malformed
   response, and persists the returned activity ID;
-- exact sender email/phone may make an existing Deal safe only through an exact matched
+- exact sender email/phone may identify an existing Deal only through an exact matched
   Contact/Company and bounded read-only `crm.item.list` (`entityTypeId=2`) relation filter
-  on `contactId`/`companyId`; exactly one related Deal is strong, while zero/multiple or any
-  malformed/connector result stays non-safe or degraded, and title/subject similarity is
-  never automatic Deal authority;
+  on `contactId`/`companyId`; identity evidence (sender email/phone, Contact/Company,
+  related historical CRM relation) is never an executable target — an exact matched
+  Lead/Deal, an exact Contact/Company and a related Deal stay identity/candidate evidence
+  with `safe_to_use_as_target=false`, and title/subject similarity is never automatic Deal
+  authority;
+- automatic existing-target attachment is allowed only for exact trusted thread evidence
+  (Iteration 38): normalized `Message-ID`, `In-Reply-To` (preferred) and bounded
+  `References` resolve against canonical write-back state; all resolved exact referenced
+  ancestors must agree on one trusted Lead/Deal; a confirmed BeeAgent-created Lead
+  (`target_provenance=beeagent_created`) is an authoritative thread root, a thread-resolved
+  attachment (`target_provenance=thread_resolved`) propagates the target, legacy records
+  without trusted provenance are never authority, and conflicting exact references fail
+  closed to `ambiguous_thread_target` deferred with zero mutation;
 - an exact Contact/Company is identity evidence, not an executable target. Only after the
   bounded exact Lead search and related-Deal lookup complete without a target does
   `identity_only_no_target` with `suitable_target_search=completed_no_target` permit the
-  normal configured `new_lead`/`irrelevant` create path;
+  normal configured `new_lead`/`irrelevant` create path. An independent `new_lead` from a
+  known sender (without exact thread evidence) can create a new Lead;
+  `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review;
+  run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers
+  never authorize attachment; existing target responsible is never reassigned;
+- email activity body preview является bounded readable plain text: `<!DOCTYPE ...>`,
+  comments, script/style и HTML tags удаляются, safe structural HTML boundaries
+  (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line
+  breaks сохраняются, excessive whitespace bounded, прежний
+  `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
 - `BitrixReadonlyClient` не содержит mutation methods; `crm.activity.list` остаётся
   read-only idempotency lookup, а `BitrixWriteClient` ограничен только
   `crm.item.add` и `crm.activity.add`;

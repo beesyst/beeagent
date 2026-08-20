@@ -436,14 +436,37 @@ Rules:
   some portals treat as returning all entities) and title search is applied only to entity
   types that have a `title` field (contacts are skipped), so connector errors are not
   produced by invalid filters and clean senders are detected reliably as `not_found`.
-  An exact matched Contact or Company may resolve a Deal only through bounded read-only
-  `crm.item.list` (`entityTypeId=2`) filters on the official `contactId`/`companyId` fields:
-  exactly one related Deal is strong and safe, while none, multiple, malformed or connector
-  failures remain non-safe/degraded. Title/subject similarity never authorizes a Deal target.
-  A Contact/Company is identity evidence only, never an executable target: after successful
-  bounded Lead and related-Deal searches find no target, reconciliation emits
-  `identity_only_no_target` with `suitable_target_search=completed_no_target`, which may
-  enter the configured Lead-create path only for `new_lead` or `irrelevant`.
+  Identity evidence (sender email/phone, Contact/Company and related historical CRM
+  relation) is never an executable target: an exact matched Lead/Deal, an exact
+  Contact/Company and a Deal resolved through the bounded read-only
+  `crm.item.list` (`entityTypeId=2`) `contactId`/`companyId` relation all remain
+  identity/candidate evidence with `safe_to_use_as_target=false` and
+  `needs_manual_review=true`. Title/subject similarity never authorizes a target.
+  After successful bounded Lead and related-Deal searches find no executable target,
+  reconciliation emits `identity_only_no_target` with
+  `suitable_target_search=completed_no_target`, which may enter the configured Lead-create
+  path only for `new_lead` or `irrelevant`.
+- Automatic existing-target attachment (Iteration 38) is allowed only for exact trusted
+  thread evidence resolved from canonical write-back state:
+  - normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` ancestry
+    are used as exact thread evidence;
+  - all resolved exact referenced ancestors must agree on a single trusted Lead/Deal;
+    conflicting references fail closed to `ambiguous_thread_target` deferred with zero
+    mutation;
+  - a confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is an
+    authoritative thread root; a thread-resolved attachment
+    (`target_provenance=thread_resolved`) propagates its target to later replies;
+  - legacy records without trusted target provenance are never promoted to thread
+    authority (fail closed);
+  - matching scope is the same `client_id` (not necessarily the same `source_id`);
+  - run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:`
+    markers never authorize attachment;
+  - an independent `new_lead` from a known sender (without exact thread evidence) can
+    create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain
+    deferred/manual-review;
+  - an exact reply in the same batch whose thread root is only planned (not yet
+    confirmed) is deferred as recoverable `pending_thread_root` and resolved after the
+    root is confirmed.
 - Write access lives in a separate `BitrixWriteClient` with the exact mutation allowlist
   (`crm.item.add`, `crm.activity.add`) and a dedicated env-backed write credential
   (`bitrix.writeback.webhook_env`, default `BITRIX_WRITEBACK_WEBHOOK_URL`). When enabled,
@@ -465,25 +488,32 @@ Rules:
   operator can reply to the original message. When the event carries a sender display
   name, it is written to the Lead `NAME` field.
 - Email/activity binding uses the official `crm.activity.add` method (email activity,
-  `TYPE_ID=4`) and is gated by `bitrix.writeback.email_attach`. For a safe
-  existing Lead or Deal, the activity uses that target and its recorded responsible without
-  changing the entity responsibility. Before every activity POST, including after timeout
-  or malformed response, read-only `crm.activity.list` checks the stable origin identity;
-  the resulting activity ID is persisted. Each planned record snapshots whether email
-  attachment is required and records its attachment status independently from Lead creation:
-  a created/recovered Lead is delivery-complete only when a required activity has a valid ID.
-  A missing sender, pending/uncertain result, retry exhaustion or terminal attach error stays
-  visibly incomplete according to the bounded retry policy.
+  `TYPE_ID=4`) and is gated by `bitrix.writeback.email_attach`. For a trusted exact thread
+  target, the activity uses that target and its
+  recorded responsible without changing the entity responsibility. Before every activity
+  POST, including after timeout or malformed response, read-only `crm.activity.list` checks
+  the stable origin identity; the resulting activity ID is persisted. Each planned record
+  snapshots whether email attachment is required and records its attachment status
+  independently from Lead creation: a created/recovered Lead is delivery-complete only when
+  a required activity has a valid ID. A missing sender, pending/uncertain result, retry
+  exhaustion or terminal attach error stays visibly incomplete according to the bounded
+  retry policy. `bitrix.writeback.email_completed` (boolean, validated fail-fast,
+  default `true`) sets whether the created email activity is completed (`false` creates it as
+  not completed, more visible in the timeline) without weakening the
+  idempotency/attachment control.
 - Before every create POST the executor reconciles by `ORIGINATOR_ID`/`ORIGIN_ID` lookup so
   an uncertain timeout outcome never produces a duplicate Lead.
 - `should_rop_see`, AI/final decisions and `rop_action_drafts.json` never grant execution
   authority. Delivery planning includes every classified event including `irrelevant`.
 - Unresolved/ambiguous/inactive/degraded or malformed responsible evidence,
-  unsafe/ambiguous/duplicate reconciliation targets and unresolved `existing_deal`/
-  `duplicate` fail closed to an explicit `deferred` outcome; no speculative Lead is created
-  and existing CRM entities are never reassigned. Only an exact active routing match with a
-  positive `user_id` can set a new Lead `ASSIGNED_BY_ID`; no default, caller or fallback
-  responsible is supported.
+  unsafe/ambiguous/duplicate reconciliation targets, conflicting thread references and
+  unresolved `existing_deal`/`duplicate` fail closed to an explicit `deferred` outcome; no
+  speculative Lead is created and existing CRM entities are never reassigned. An exact
+  active routing match with a positive `user_id` sets a new Lead `ASSIGNED_BY_ID`; when
+  configured, `bitrix.writeback.user_id_fallback` (a positive Bitrix user ID,
+  validated fail-fast) is used only for `not_found`. Matched, ambiguous,
+  `connector_degraded`, unresolved and not-attempted routing stay deferred and the fallback
+  never overrides an exact matched responsible.
 - Durable authoritative write-back intent is persisted to
   `storage/interfaces/rop_writeback_state.json` before the mailbox checkpoint advances.
   With write-back enabled, plan persistence failure blocks checkpoint advancement; with

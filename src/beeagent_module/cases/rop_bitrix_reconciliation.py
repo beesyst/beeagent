@@ -115,7 +115,7 @@ def run_reconciliation(
         status = item.get("bitrix_match_status", "error")
         if status.startswith("matched_"):
             aggregate["matched_count"] += 1
-            if item.get("bitrix_match_quality") == "strong":
+            if item.get("safe_to_use_as_target") is True:
                 aggregate["safe_matched_count"] += 1
         elif status == "weak_match":
             aggregate["weak_match_count"] += 1
@@ -745,9 +745,7 @@ def _make_matched_item(
     candidate_count: int = 1,
 ) -> dict[str, Any]:
     entity_type_name = ENTITY_TYPE_NAMES.get(entity_type_id, "")
-    quality_is_strong = match_quality == "strong"
-    safe_target = quality_is_strong and entity_type_id in {1, 2}
-    needs_manual = not safe_target or confidence < 0.8
+    needs_manual = True
 
     return {
         "event_id": event.get("event_id", ""),
@@ -768,7 +766,7 @@ def _make_matched_item(
         "bitrix_match_reason": match_reason,
         "bitrix_confidence": confidence,
         "needs_manual_review": needs_manual,
-        "safe_to_use_as_target": safe_target,
+        "safe_to_use_as_target": False,
         "candidate_count": candidate_count,
         "candidate_summary": (
             f"{candidate_count} candidate(s), quality={match_quality}, "

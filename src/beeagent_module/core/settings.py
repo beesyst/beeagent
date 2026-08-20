@@ -1017,6 +1017,24 @@ def _validate_bitrix_settings(settings: dict) -> None:
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.email_attach, expected bool"
             )
+        if "email_attach_completed" in writeback_cfg:
+            raise RuntimeError(
+                "Unsupported bitrix.writeback.email_attach_completed; "
+                "use bitrix.writeback.email_completed"
+            )
+        if "email_activity_completed" in writeback_cfg:
+            raise RuntimeError(
+                "Unsupported bitrix.writeback.email_activity_completed; "
+                "use bitrix.writeback.email_completed"
+            )
+        email_completed = writeback_cfg.get("email_completed")
+        if email_completed is not None and not isinstance(
+            email_completed, bool
+        ):
+            raise RuntimeError(
+                "Invalid bitrix.writeback.email_completed, "
+                "expected boolean"
+            )
         source_id_value = writeback_cfg.get("source_id")
         if source_id_value is not None and not isinstance(source_id_value, str):
             raise RuntimeError(
@@ -1025,13 +1043,19 @@ def _validate_bitrix_settings(settings: dict) -> None:
         if "fallback_responsible_user_id" in writeback_cfg:
             raise RuntimeError(
                 "Unsupported bitrix.writeback.fallback_responsible_user_id; "
-                "responsible routing must resolve an exact active Bitrix user"
+                "use bitrix.writeback.user_id_fallback"
             )
-        if "user_id_fallback" in writeback_cfg:
-            raise RuntimeError(
-                "Unsupported bitrix.writeback.user_id_fallback; "
-                "responsible routing must resolve an exact active Bitrix user"
-            )
+        fallback_id = writeback_cfg.get("user_id_fallback")
+        if fallback_id is not None:
+            if (
+                isinstance(fallback_id, bool)
+                or not isinstance(fallback_id, int)
+                or fallback_id <= 0
+            ):
+                raise RuntimeError(
+                    "Invalid bitrix.writeback.user_id_fallback, "
+                    "expected positive int or null"
+                )
         stages_cfg = writeback_cfg.get("stages")
         if not isinstance(stages_cfg, dict):
             raise RuntimeError(

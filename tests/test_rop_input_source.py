@@ -944,6 +944,305 @@ def test_mailbox_plaintext_entities_strip_decoded_markup_without_stripping_addre
     assert events[0]["body_preview_source"] == "text_plain"
 
 
+def test_mailbox_html_doctype_script_style_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "<!DOCTYPE html><html><head><style>p{color:red}</style>"
+        "<script>alert(1)</script></head><body>"
+        "<p>Visible paragraph</p></body></html>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: Doctype body\n"
+        "Message-ID: <mail-doctype@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "doctype" not in preview.lower()
+    assert "script" not in preview.lower()
+    assert "alert(1)" not in preview
+    assert "style" not in preview.lower()
+    assert "color" not in preview
+    assert "<p>" not in preview
+    assert "Visible paragraph" in preview
+
+
+def test_mailbox_html_block_boundaries_become_readable_line_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "<p>First paragraph</p><div>Second block</div>"
+        "<ul><li>Item one</li><li>Item two</li></ul>"
+        "<br>After break"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: Block boundaries\n"
+        "Message-ID: <mail-blocks@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert preview == (
+        "First paragraph\nSecond block\nItem one\nItem two\nAfter break"
+    )
+
+
+def test_mailbox_plain_text_line_breaks_are_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    raw_message = (
+        b"From: lead@example.com\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Plain body\n"
+        b"Message-ID: <mail-plain-lines@example.com>\n"
+        b"Content-Type: text/plain; charset=utf-8\n"
+        b"\n"
+        b"First line.\nSecond line.\n\nThird paragraph line."
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert preview == "First line.\nSecond line.\nThird paragraph line."
+    assert "\n" in preview
+    assert events[0]["body_preview_source"] == "text_plain"
+
+
+def test_mailbox_html_preview_remains_bounded_with_line_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = "<p>" + ("A" * 200) + "</p><p>" + ("B" * 200) + "</p>"
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: Bounded body\n"
+        "Message-ID: <mail-bounded@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=50,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert len(preview) <= 50
+    assert preview == "A" * 50
+    assert events[0]["body_preview_truncated"] is True
+
+
+def test_load_json_batch_doctype_and_markup_removed_with_line_breaks(
+    tmp_path: Path,
+) -> None:
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-html",
+                "body": (
+                    "<!DOCTYPE html><html><body>"
+                    "<p>Alpha</p><p>Beta</p>"
+                    "</body></html>"
+                ),
+            }
+        ],
+    }
+    batch_file = tmp_path / "doctype.json"
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+    )
+
+    preview = events[0]["body_preview"]
+    assert "doctype" not in preview.lower()
+    assert "<html" not in preview
+    assert preview == "Alpha\nBeta"
+
+
+def test_mailbox_html_mso_conditional_comments_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "<!--[if !mso]><!-->\n"
+        "<!--[if mso]>\n96\n<![endif]-->\n"
+        "<!--[if mso | IE]>\n<![endif]-->\n"
+        "<p>Visible text</p>\n"
+        "<!--[if mso | IE]>\n<![endif]-->\n"
+        "<p>Footer</p>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: MSO body\n"
+        "Message-ID: <mail-mso@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "<!--" not in preview
+    assert "[if" not in preview
+    assert "<![endif]" not in preview
+    assert "96" not in preview
+    assert "Visible text" in preview
+    assert "Footer" in preview
+    assert events[0]["body_preview_source"] == "html_text"
+
+
+def test_mailbox_plain_text_mso_conditional_comments_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    raw_message = (
+        b"From: lead@example.com\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Plain mso\n"
+        b"Message-ID: <mail-plain-mso@example.com>\n"
+        b"Content-Type: text/plain; charset=utf-8\n"
+        b"\n"
+        b"<!--[if mso]>\n96\n<![endif]-->\nHello text"
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "<!--" not in preview
+    assert "[if" not in preview
+    assert "96" not in preview
+    assert preview == "Hello text"
+    assert events[0]["body_preview_source"] == "text_plain"
+
+
+def test_mailbox_html_invisible_filler_characters_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+
+    html_body = (
+        "<p>Line one</p>"
+        "<p>\u200c\xa0\u200c\xa0\u200c\xa0</p>"
+        "<p>Line two</p>"
+    )
+    raw_message = (
+        "From: lead@example.com\n"
+        "To: hotline@example.com\n"
+        "Subject: Invisible filler\n"
+        "Message-ID: <mail-filler@example.com>\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        f"{html_body}"
+    ).encode()
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([raw_message]),
+    )
+
+    preview = events[0]["body_preview"]
+    assert "\u200c" not in preview
+    assert "\xa0" not in preview
+    assert preview == "Line one\nLine two"
+
+
+def test_load_json_batch_mso_conditional_comments_removed(tmp_path: Path) -> None:
+    batch = {
+        "period": "2026-05",
+        "items": [
+            {
+                "event_id": "e-mso",
+                "body": (
+                    "<!--[if mso]>\n96\n<![endif]-->\n"
+                    "<p>Batch text</p>\n<!--[if mso | IE]>\n<![endif]-->"
+                ),
+            }
+        ],
+    }
+    batch_file = tmp_path / "mso.json"
+    batch_file.write_text(json.dumps(batch), encoding="utf-8")
+
+    events, _metadata = load_json_batch(
+        source=_make_source(str(batch_file.relative_to(tmp_path))),
+        project_root=tmp_path,
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+    )
+
+    preview = events[0]["body_preview"]
+    assert "<!--" not in preview
+    assert "[if" not in preview
+    assert "96" not in preview
+    assert preview == "Batch text"
+
+
 def test_load_rop_source_dispatches_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
     monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")

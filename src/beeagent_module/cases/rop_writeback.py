@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import UTC, datetime
 from email.utils import getaddresses
@@ -43,8 +44,16 @@ _RECOVERABLE_PREREQUISITE_REASONS = frozenset(
         "reconciliation_unavailable",
         "reconciliation_connector_degraded",
         "reconciliation_error",
+        "pending_thread_root",
     }
 )
+_TRUSTED_TARGET_PROVENANCES: frozenset[str] = frozenset(
+    {"beeagent_created", "thread_resolved"}
+)
+_PENDING_THREAD_ROOT_REASON = "pending_thread_root"
+_MAX_THREAD_ID_LENGTH = 250
+_MAX_THREAD_REFERENCES = 50
+_MAX_THREAD_HEADER_LENGTH = 1000
 
 
 class RopWritebackError(RuntimeError):
@@ -185,6 +194,7 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         if isinstance(key, str) and isinstance(value, str) and value.strip()
     }
     webhook_env = str(wb.get("webhook_env") or "BITRIX_WRITEBACK_WEBHOOK_URL")
+    fallback_id = wb.get("user_id_fallback")
     return {
         "enabled": wb.get("enabled") is True,
         "dry_run": wb.get("dry_run") is True,
@@ -193,7 +203,17 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         "attempts_retry_max": int(wb.get("attempts_retry_max", 3)),
         "stages": stages,
         "email_attach": wb.get("email_attach") is True,
+        "email_completed": (
+            "N" if wb.get("email_completed") is False else "Y"
+        ),
         "source_id": str(wb.get("source_id") or ""),
+        "user_id_fallback": (
+            int(fallback_id)
+            if isinstance(fallback_id, int)
+            and not isinstance(fallback_id, bool)
+            and fallback_id > 0
+            else None
+        ),
         "credential_present": bool(os.environ.get(webhook_env)),
     }
 
@@ -319,11 +339,61 @@ def _responsible_from_routing(routing_item: dict[str, Any] | None) -> dict[str, 
     }
 
 
+def _create_lead_delivery(
+    case_type: str,
+    routing_item: dict[str, Any] | None,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    responsible = _responsible_from_routing(routing_item)
+    fallback_id = policy.get("user_id_fallback")
+    fallback_eligible = (
+        responsible["status"] == "not_found"
+        and isinstance(fallback_id, int)
+        and not isinstance(fallback_id, bool)
+        and fallback_id > 0
+    )
+    if responsible["status"] != "matched" and not fallback_eligible:
+        return {
+            "outcome": "deferred",
+            "reason_code": "responsible_unresolved",
+            "responsible_status": responsible["status"],
+            "responsible_reason": responsible["reason"],
+        }
+    stage_id = policy["stages"].get(case_type)
+    if not stage_id:
+        return {
+            "outcome": "deferred",
+            "reason_code": "stage_not_configured",
+            "responsible_status": responsible["status"],
+            "responsible_user_id": (
+                fallback_id if fallback_eligible else responsible.get("user_id")
+            ),
+        }
+    if fallback_eligible:
+        return {
+            "outcome": "create_lead",
+            "reason_code": None,
+            "stage_id": stage_id,
+            "responsible_status": "fallback",
+            "responsible_user_id": fallback_id,
+            "responsible_reason": "fallback_responsible_user",
+        }
+    return {
+        "outcome": "create_lead",
+        "reason_code": None,
+        "stage_id": stage_id,
+        "responsible_status": responsible["status"],
+        "responsible_user_id": responsible["user_id"],
+        "responsible_reason": responsible.get("reason"),
+    }
+
+
 def _decide_delivery(
     case_type: str,
     recon_item: dict[str, Any] | None,
     routing_item: dict[str, Any] | None,
     policy: dict[str, Any],
+    thread_target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if recon_item is None:
         return {"outcome": "deferred", "reason_code": "reconciliation_unavailable"}
@@ -338,37 +408,24 @@ def _decide_delivery(
     if recon_status == "skipped":
         return {"outcome": "deferred", "reason_code": "event_skipped"}
 
-    safe_target = recon_item.get("safe_to_use_as_target") is True
-    target_entity_id = recon_item.get("bitrix_entity_id")
-    target_entity_type = str(recon_item.get("bitrix_entity_type") or "")
-    target_entity_type_id = recon_item.get("bitrix_entity_type_id")
-    target_responsible_id = recon_item.get("bitrix_responsible_id")
-
-    if safe_target:
-        target_is_valid = (
-            target_entity_type in {"lead", "deal"}
-            and isinstance(target_entity_id, int)
-            and not isinstance(target_entity_id, bool)
-            and target_entity_id > 0
-            and isinstance(target_entity_type_id, int)
-            and target_entity_type_id in {LEAD_ENTITY_TYPE_ID, 2}
-        )
-        if not target_is_valid:
-            return {"outcome": "deferred", "reason_code": "unsafe_target"}
-        if (
-            not isinstance(target_responsible_id, int)
-            or isinstance(target_responsible_id, bool)
-            or target_responsible_id <= 0
-        ):
-            return {"outcome": "deferred", "reason_code": "responsible_unresolved"}
+    if thread_target is not None:
+        if thread_target.get("ambiguous"):
+            return {
+                "outcome": "deferred",
+                "reason_code": "ambiguous_thread_target",
+            }
         return {
             "outcome": "attach_existing",
             "reason_code": None,
-            "target_entity_type": target_entity_type,
-            "target_entity_type_id": target_entity_type_id,
-            "target_entity_id": target_entity_id,
-            "target_responsible_user_id": target_responsible_id,
+            "target_entity_type": thread_target["target_entity_type"],
+            "target_entity_type_id": thread_target["target_entity_type_id"],
+            "target_entity_id": thread_target["target_entity_id"],
+            "target_responsible_user_id": thread_target["target_responsible_user_id"],
+            "target_provenance": thread_target.get(
+                "target_provenance", "thread_resolved"
+            ),
         }
+
     if recon_status in ("weak_match", "ambiguous"):
         return {"outcome": "deferred", "reason_code": "ambiguous_target"}
     if recon_status == "duplicate_candidate":
@@ -380,33 +437,12 @@ def _decide_delivery(
     )
     if target_absent:
         if case_type in CREATE_CASE_TYPES:
-            responsible = _responsible_from_routing(routing_item)
-            if responsible["status"] != "matched":
-                return {
-                    "outcome": "deferred",
-                    "reason_code": "responsible_unresolved",
-                    "responsible_status": responsible["status"],
-                    "responsible_reason": responsible["reason"],
-                }
-            stage_id = policy["stages"].get(case_type)
-            if not stage_id:
-                return {
-                    "outcome": "deferred",
-                    "reason_code": "stage_not_configured",
-                    "responsible_status": responsible["status"],
-                    "responsible_user_id": responsible["user_id"],
-                }
-            return {
-                "outcome": "create_lead",
-                "reason_code": None,
-                "stage_id": stage_id,
-                "responsible_status": responsible["status"],
-                "responsible_user_id": responsible["user_id"],
-                "responsible_reason": responsible.get("reason"),
-            }
+            return _create_lead_delivery(case_type, routing_item, policy)
         return {"outcome": "deferred", "reason_code": "case_type_not_create_eligible"}
 
     if recon_status.startswith("matched_"):
+        if case_type in CREATE_CASE_TYPES:
+            return _create_lead_delivery(case_type, routing_item, policy)
         return {"outcome": "deferred", "reason_code": "unsafe_target"}
 
     return {"outcome": "deferred", "reason_code": "delivery_not_applicable"}
@@ -419,6 +455,7 @@ def _build_planned_record(
     routing_item: dict[str, Any] | None,
     policy: dict[str, Any],
     run_id: str,
+    thread_target: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     client_id = _bounded_text(event.get("client_id"))
     source_id = _bounded_text(event.get("source_id"))
@@ -431,14 +468,22 @@ def _build_planned_record(
     case_type = _final_case_type(event, decision)
     should_rop_see = event.get("should_rop_see") is True
 
-    delivery = _decide_delivery(case_type, recon_item, routing_item, policy)
+    delivery = _decide_delivery(case_type, recon_item, routing_item, policy, thread_target)
 
     record = {
         "identity": identity,
         "client_id": client_id,
         "source_id": source_id,
         "remote_id": remote_id,
-        "message_id": _bounded_text(event.get("message_id")),
+        "message_id": _bounded_text(
+            event.get("message_id"), _MAX_THREAD_HEADER_LENGTH
+        ),
+        "in_reply_to": _bounded_text(
+            event.get("in_reply_to"), _MAX_THREAD_HEADER_LENGTH
+        ),
+        "references": _bounded_text(
+            event.get("references"), _MAX_THREAD_HEADER_LENGTH
+        ),
         "x_email_id": _bounded_text(event.get("x_email_id")),
         "event_id": event_id,
         "event_instance_id": event_instance_id,
@@ -479,6 +524,7 @@ def _build_planned_record(
         "target_entity_type_id": delivery.get("target_entity_type_id"),
         "target_entity_id": delivery.get("target_entity_id"),
         "target_responsible_user_id": delivery.get("target_responsible_user_id"),
+        "target_provenance": delivery.get("target_provenance"),
         "originator_id": ORIGINATOR_ID,
         "origin_id": _origin_id(identity),
         "remote_entity_type_id": None,
@@ -520,6 +566,21 @@ def _merge_planned_record(
         merged["attempts"] = existing.get("attempts", 0)
         merged["last_error_code"] = existing.get("last_error_code")
         merged["uncertain"] = False
+        merged["target_entity_type"] = existing.get(
+            "target_entity_type", planned["target_entity_type"]
+        )
+        merged["target_entity_type_id"] = existing.get(
+            "target_entity_type_id", planned["target_entity_type_id"]
+        )
+        merged["target_entity_id"] = existing.get(
+            "target_entity_id", planned["target_entity_id"]
+        )
+        merged["target_responsible_user_id"] = existing.get(
+            "target_responsible_user_id", planned["target_responsible_user_id"]
+        )
+        merged["target_provenance"] = existing.get(
+            "target_provenance", planned.get("target_provenance")
+        )
     elif status in ("pending", "uncertain", "failed"):
         merged["status"] = status
         merged["attempts"] = existing.get("attempts", 0)
@@ -527,17 +588,27 @@ def _merge_planned_record(
         merged["uncertain"] = existing.get("uncertain", False) is True
         merged["remote_entity_type_id"] = existing.get("remote_entity_type_id")
         merged["remote_entity_id"] = existing.get("remote_entity_id")
+        merged["target_provenance"] = planned.get(
+            "target_provenance"
+        ) or existing.get("target_provenance")
     merged["created_at_utc"] = existing.get("created_at_utc", planned["created_at_utc"])
     merged["updated_at_utc"] = _utc_now()
     merged["email_activity_id"] = existing.get("email_activity_id")
-    if "email_attachment_required" in existing:
+    if (
+        "email_attachment_required" in existing
+        and existing.get("outcome") == planned["outcome"]
+    ):
         merged["email_attachment_required"] = existing["email_attachment_required"]
         merged["email_attachment_status"] = existing.get(
             "email_attachment_status", "unknown"
         )
     else:
-        merged["email_attachment_required"] = None
-        merged["email_attachment_status"] = "unknown"
+        merged["email_attachment_required"] = planned.get(
+            "email_attachment_required"
+        )
+        merged["email_attachment_status"] = planned.get(
+            "email_attachment_status", "not_required"
+        )
     merged["attach_attempts"] = existing.get("attach_attempts", 0)
     merged["last_attach_error_code"] = existing.get("last_attach_error_code")
     return merged
@@ -603,6 +674,138 @@ def delivery_completion_status(record: dict[str, Any]) -> str:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _normalize_message_id(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if len(value) > 2 and value.startswith("<") and value.endswith(">"):
+        value = value[1:-1].strip()
+    return value[:_MAX_THREAD_ID_LENGTH]
+
+
+def _extract_reference_ids(value: Any) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    tokens = re.findall(r"<([^<>]+)>", value)
+    if not tokens:
+        tokens = value.split()
+    result: list[str] = []
+    for token in tokens:
+        normalized = _normalize_message_id(token)
+        if normalized and normalized not in result:
+            result.append(normalized)
+        if len(result) >= _MAX_THREAD_REFERENCES:
+            break
+    return result
+
+
+def _build_message_id_index(
+    events: dict[str, Any],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    index: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for record in events.values():
+        if not isinstance(record, dict):
+            continue
+        client_id = _bounded_text(record.get("client_id"))
+        if not client_id:
+            continue
+        message_id = _normalize_message_id(record.get("message_id"))
+        if not message_id:
+            continue
+        index.setdefault(client_id, {}).setdefault(message_id, []).append(record)
+    return index
+
+
+def _record_thread_target(
+    record: dict[str, Any],
+) -> tuple[str, int, int, int] | None:
+    provenance = record.get("target_provenance")
+    if provenance not in _TRUSTED_TARGET_PROVENANCES:
+        return None
+    if record.get("outcome") == "create_lead":
+        if record.get("status") not in ("created", "recovered"):
+            return None
+        entity_type = "lead"
+        entity_type_id = record.get("remote_entity_type_id")
+        entity_id = record.get("remote_entity_id")
+        responsible_id = record.get("responsible_user_id")
+    else:
+        entity_type = record.get("target_entity_type")
+        entity_type_id = record.get("target_entity_type_id")
+        entity_id = record.get("target_entity_id")
+        responsible_id = record.get("target_responsible_user_id")
+    if (
+        entity_type in {"lead", "deal"}
+        and _positive_int(entity_type_id)
+        and _positive_int(entity_id)
+        and _positive_int(responsible_id)
+    ):
+        return (
+            str(entity_type),
+            int(entity_type_id),
+            int(entity_id),
+            int(responsible_id),
+        )
+    return None
+
+
+def _resolve_thread_target(
+    event: dict[str, Any],
+    index: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    referenced: list[str] = []
+    for header in ("in_reply_to", "references"):
+        for ref_id in _extract_reference_ids(event.get(header)):
+            if ref_id not in referenced:
+                referenced.append(ref_id)
+    if not referenced:
+        return None
+    targets: list[tuple[str, int, int, int]] = []
+    for ref_id in referenced:
+        for record in index.get(ref_id, []):
+            target = _record_thread_target(record)
+            if target is not None and target not in targets:
+                targets.append(target)
+    if not targets:
+        return None
+    unique = {
+        (entity_type, entity_id)
+        for entity_type, _entity_type_id, entity_id, _responsible_id in targets
+    }
+    if len(unique) != 1:
+        return {"ambiguous": True}
+    entity_type, entity_type_id, entity_id, responsible_id = targets[0]
+    return {
+        "target_entity_type": entity_type,
+        "target_entity_type_id": entity_type_id,
+        "target_entity_id": entity_id,
+        "target_responsible_user_id": responsible_id,
+        "target_provenance": "thread_resolved",
+    }
+
+
+def _thread_headers_for_event(
+    event: dict[str, Any],
+    normalized_by_identity: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    normalized = normalized_by_identity.get(
+        (event.get("event_id"), str(event.get("event_instance_id") or ""))
+    )
+    if normalized is None:
+        return {}
+    return {
+        "message_id": _bounded_text(
+            normalized.get("message_id"), _MAX_THREAD_HEADER_LENGTH
+        ),
+        "in_reply_to": _bounded_text(
+            normalized.get("in_reply_to"), _MAX_THREAD_HEADER_LENGTH
+        ),
+        "references": _bounded_text(
+            normalized.get("references"), _MAX_THREAD_HEADER_LENGTH
+        ),
+    }
 
 
 def _bounded_run_dir(storage_dir: Path, run_id: str) -> Path:
@@ -717,10 +920,14 @@ def build_writeback_plan(
         run_dir, "bitrix_reconciliation.json", required=True
     )
     routing = _read_json_dict(run_dir, "rop_recipient_routing.json", required=False)
+    normalized_events = _read_json_list(
+        run_dir, "normalized_events.json", required=False
+    )
 
     decision_by_id = _final_decisions_by_identity(decisions)
     recon_by_id = _items_by_identity(reconciliation.get("items", []))
     routing_by_id = _items_by_identity(routing.get("items", []))
+    normalized_by_identity = _items_by_identity(normalized_events)
 
     policy = _writeback_policy(settings)
 
@@ -732,8 +939,12 @@ def build_writeback_plan(
         "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
+        "email_completed": policy["email_completed"],
         "source_id": policy["source_id"],
+        "user_id_fallback": policy["user_id_fallback"],
     }
+
+    thread_index = _build_message_id_index(state["events"])
 
     planned_records: list[dict[str, Any]] = []
     planned_by_identity: dict[str, dict[str, Any]] = {}
@@ -743,13 +954,23 @@ def build_writeback_plan(
         if not isinstance(event_id, str) or not event_id:
             continue
         identity_key = (event_id, str(event_instance_id or ""))
+        planned_event = dict(event)
+        thread_headers = _thread_headers_for_event(event, normalized_by_identity)
+        for key in ("message_id", "in_reply_to", "references"):
+            if not planned_event.get(key) and thread_headers.get(key):
+                planned_event[key] = thread_headers[key]
+        client_id = _bounded_text(planned_event.get("client_id"))
+        thread_target = _resolve_thread_target(
+            planned_event, thread_index.get(client_id, {})
+        )
         planned = _build_planned_record(
-            event=event,
+            event=planned_event,
             decision=decision_by_id.get(identity_key),
             recon_item=recon_by_id.get(identity_key),
             routing_item=routing_by_id.get(identity_key),
             policy=policy,
             run_id=run_id,
+            thread_target=thread_target,
         )
         if planned is None:
             logger.warning(
@@ -765,6 +986,29 @@ def build_writeback_plan(
             planned, existing_planned
         ):
             planned_by_identity[identity] = planned
+
+    prospective_roots = {
+        _normalize_message_id(record.get("message_id"))
+        for record in planned_by_identity.values()
+        if isinstance(record, dict)
+        and record.get("outcome") == "create_lead"
+        and _normalize_message_id(record.get("message_id"))
+    }
+    if prospective_roots:
+        for record in planned_by_identity.values():
+            if not isinstance(record, dict) or record.get("outcome") == "attach_existing":
+                continue
+            referenced: list[str] = []
+            for header in ("in_reply_to", "references"):
+                for ref_id in _extract_reference_ids(record.get(header)):
+                    if ref_id not in referenced:
+                        referenced.append(ref_id)
+            if any(ref_id in prospective_roots for ref_id in referenced):
+                record["outcome"] = "deferred"
+                record["status"] = "pending"
+                record["reason_code"] = _PENDING_THREAD_ROOT_REASON
+                record["email_attachment_required"] = False
+                record["email_attachment_status"] = "not_required"
 
     for identity, planned in planned_by_identity.items():
         existing = state["events"].get(identity)
@@ -1068,6 +1312,7 @@ def _execute_email_attachment(
             subject=record.get("subject") or "",
             description=record.get("body_preview") or "",
             sender_email=sender_email,
+            completed=policy["email_completed"],
         )
         record["email_activity_id"] = activity_id
         record["email_attachment_status"] = "attached"
@@ -1152,6 +1397,7 @@ def _execute_create_lead(
         record["remote_entity_id"] = existing_id
         record["uncertain"] = False
         record["last_error_code"] = None
+        record["target_provenance"] = "beeagent_created"
         logger.info(
             "ROP write-back recovered existing lead: identity=%s remote_entity_id=%s",
             record["identity"],
@@ -1219,6 +1465,7 @@ def _execute_create_lead(
     record["remote_entity_id"] = item_id
     record["uncertain"] = False
     record["last_error_code"] = None
+    record["target_provenance"] = "beeagent_created"
     logger.info(
         "ROP write-back lead created: identity=%s remote_entity_id=%s stage_id=%s "
         "responsible_user_id=%s",
@@ -1249,7 +1496,9 @@ def execute_writeback_pending(
         "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
+        "email_completed": policy["email_completed"],
         "source_id": policy["source_id"],
+        "user_id_fallback": policy["user_id_fallback"],
     }
 
     events = state.get("events", {})
