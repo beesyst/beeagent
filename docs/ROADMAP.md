@@ -8747,6 +8747,107 @@ Live controlled Bitrix test-portal smoke (A создаёт L1 → reply B при
 independent C создаёт L2 → reply D прикрепляется к L2) остаётся обязательным перед
 production enablement; до него Iteration 38 не считается полностью DONE.
 
+### Итерация 39 — ROP conversation identity and AI decision hardening v2
+
+#### Goal
+
+Исправить системные причины reviewed classification mismatches и broken Bitrix email threads: BeeAgent должен использовать AI как второй semantic verification echelon для business-impacting решений, перестать рассчитывать на operator `manual_review` как normal classification path и строить cross-run/cross-mailbox conversation evidence без ослабления trusted CRM target boundary It38.
+
+#### Scope
+
+- consume hardened `beeagent-rop` reviewed classification behavior;
+- расширить AI adjudicator eligibility на business-impacting `new_lead` / `existing_deal`;
+- сохранить skip для confirmed duplicate и явно безопасных strong-noise cases;
+- передавать AI bounded body, attachment, thread and relevant Bitrix context;
+- сделать `ai_reason_code` обязательным для newly generated valid AI decisions;
+- сохранить compatibility rendering historical AI artifacts;
+- заменить single global confidence-only merge на bounded class/evidence-aware merge;
+- не использовать semantic `manual_review` как normal terminal operator queue;
+- provider/validation failure сохраняет deterministic semantic result с diagnostics;
+- сохранить fail-closed `deferred` для unsafe CRM target/execution;
+- ввести BeeAgent-owned conversation relation отдельно от domain `case_type`;
+- сохранить exact RFC It38 `Message-ID` / `In-Reply-To` / `References` authority;
+- поддерживать exact cross-source conversation binding внутри одного `client_id`;
+- выполнить controlled Bitrix outbound-correlation evidence check;
+- использовать Bitrix outbound bridge только при наличии exact stable correlation evidence;
+- weak sender/subject/time matching использовать только как candidate evidence;
+- расширить Event Detail полноценной cross-run conversation timeline;
+- явно показывать deterministic decision, AI proposal и final decision.
+
+#### Excluded
+
+- automatic `existing_deal` solely because a CRM target was found;
+- fuzzy sender/subject matching as CRM mutation authority;
+- weakening It38 trusted-target rules;
+- arbitrary historical Bitrix thread guessing;
+- new thread database unless existing artifacts/state prove insufficient;
+- new Bitrix mutation methods;
+- raw `.eml` or raw attachment persistence;
+- BeeUI domain logic;
+- claim of 100% accuracy on arbitrary future mail;
+- version bump.
+
+#### Deliverable
+
+ROP runtime получает двухуровневую semantic classification pipeline и separate conversation layer. Reviewed classifications проходят regression gate, Bitrix/RFC continuation сохраняет trusted CRM binding где есть exact evidence, а Event Detail показывает полноценную историю переписки.
+
+#### Acceptance criteria
+
+- all 8 reviewed integration scenarios reach expected final semantic type;
+- high-confidence deterministic `new_lead` is no longer automatically exempt from AI verification when business-impacting;
+- strong explicit irrelevant/noise may remain AI-free;
+- valid new AI artifacts always carry known `ai_reason_code`;
+- historical missing reason codes remain backward-compatible;
+- new artifacts do not silently report a missing reason as merely legacy;
+- normal semantic processing does not terminate in an unconsumed `manual_review` queue;
+- provider failure preserves a deterministic result and explicit diagnostics;
+- unsafe CRM targets still fail closed as deferred;
+- semantic `case_type` is not overwritten solely because a conversation/CRM target exists;
+- exact RFC replies across different mailbox sources resolve within the same client scope;
+- Bitrix-generated broken-thread replies auto-link only when exact outbound correlation evidence is proven;
+- weak subject/sender/time correlation never authorizes CRM mutation;
+- Event Detail shows all known messages in the conversation across runs/sources;
+- deterministic, AI proposal and final decision are visually distinguishable;
+- existing It38 security and idempotency guarantees remain green.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted AI eligibility and merge tests;
+- all 8 reviewed BeeAgent integration regressions;
+- provider timeout/error/invalid-output regressions;
+- missing/unknown `ai_reason_code` regressions;
+- RFC A -> B -> C thread regression;
+- cross-mailbox exact-reference regression;
+- two independent threads from the same sender regression;
+- Bitrix outbound correlation controlled smoke;
+- same conversation answered from a different employee mailbox smoke;
+- weak-candidate never-authorizes-writeback regression;
+- Event Detail conversation timeline tests;
+- artifact/log inspection;
+- secret/raw-mail leakage checks;
+- SAST;
+- DAST-style Bitrix/runtime checks;
+- SCA only if dependencies change;
+- malformed thread/reference tests.
+
+#### DoD
+
+- reviewed classification integration baseline is 8/8;
+- AI acts as a real second verification echelon for business-impacting decisions;
+- no dead operator semantic-review queue remains in the normal pipeline;
+- execution uncertainty remains fail-closed;
+- semantic classification and conversation membership are separate concepts;
+- RFC exact thread authority remains intact;
+- cross-mailbox exact continuation works;
+- Bitrix outbound bridge is used only with proven exact evidence;
+- no fuzzy CRM targeting is introduced;
+- conversation timeline is usable from Event Detail;
+- logs/artifacts remain bounded and secret-safe;
+- docs/security contracts are updated where behavior changes;
+- required checks are green;
+- `pyproject.toml.version` is not changed.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
