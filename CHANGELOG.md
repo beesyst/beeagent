@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.0...beeagent-v0.53.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **rop:** thread-aware Bitrix email write-back with trusted target provenance and readable body preview ([#204](https://github.com/beesyst/beeagent/issues/204)) ([69ee672](https://github.com/beesyst/beeagent/commit/69ee67234411cd70cf89afd76cf9205614bc71d7))
+
 ## [0.53.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.52.0...beeagent-v0.53.0) (2026-08-19)
 
 
