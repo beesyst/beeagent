@@ -122,13 +122,13 @@ only planned is deferred as recoverable `pending_thread_root` until the root is 
 A Lead create is allowed only after `rop_recipient_routing.json` reports an exact active
 responsible match with a positive `user_id`; unresolved, inactive, ambiguous, degraded or
 malformed routing evidence fails closed to `deferred` (`responsible_unresolved`). An optional
-`bitrix.writeback.fallback_responsible_user_id` (positive Bitrix user ID, validated fail-fast)
-can assign that user as the responsible when routing does not match an active user; the
-fallback is ignored when routing matched, and is never used while the Bitrix user directory
-itself is degraded (`connector_degraded` stays deferred).
+`bitrix.writeback.user_id_fallback` (positive Bitrix user ID, validated fail-fast)
+can assign that user as the responsible only when routing reports `not_found`; matched,
+ambiguous, degraded, unresolved and not-attempted routing stay explicit rather than using the
+fallback.
 
 Email activity binding (`crm.activity.add`) is controlled by `bitrix.writeback.email_attach`.
-`bitrix.writeback.email_attach_completed` (boolean, validated fail-fast, default `true`) sets
+`bitrix.writeback.email_completed` (boolean, validated fail-fast, default `true`) sets
 whether the created email activity is completed (`true` → `COMPLETED=Y`); `false` creates it as
 not completed, which makes new incoming emails more visible in the lead timeline.
 

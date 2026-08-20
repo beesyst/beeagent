@@ -181,10 +181,10 @@ bitrix:
     timeout: 10 # таймаут HTTP-запроса для write-back (сек)
     attempts_retry_max: 3 # максимум bounded попыток для retryable failures
     dry_run: false # true/false - планировать без реальных write-операций (zero writes)
-    email_attach: true # true/false - прикреплять email-активность (crm.activity.add) к созданному или safe existing CRM target
-    email_attach_completed: false # true/false - состояние COMPLETED создаваемой email-активности (false = письмо заметнее в таймлайне как незавершённое; true = завершённое)
+    email_attach: true # true/false - прикреплять email-активность (crm.activity.add) к созданному или trusted exact thread CRM target
+    email_completed: false # true/false - состояние COMPLETED создаваемой email-активности (false = письмо заметнее в таймлайне как незавершённое; true = завершённое)
     source_id: "EMAIL" # Bitrix lead SOURCE_ID для создаваемых лидов (например EMAIL = "Входящее письмо"); пусто = не задавать
-    fallback_responsible_user_id: 1563 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено)
+    user_id_fallback: 1563 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено)
     stages: # customer Lead stageId mapping (configurable, validated against Bitrix before POST when enabled)
       new_lead: "NEW" # Bitrix stageId for new_lead classification (required when enabled)
       irrelevant: "JUNK" # Bitrix stageId for irrelevant classification (required when enabled)

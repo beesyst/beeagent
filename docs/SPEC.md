@@ -219,23 +219,22 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
   `deferred`;
 - новые eligible Lead создаются через `crm.item.add` с `entityTypeId=1` в configured
   customer `stageId` и с exact matched active responsible из `rop_recipient_routing.json`;
-  optional `bitrix.writeback.fallback_responsible_user_id` (валидируемый положительный
-  Bitrix user ID) назначается ответственным, когда routing не нашёл активного
-  пользователя, и игнорируется при exact matched responsible и при
-  `connector_degraded` (остаётся deferred);
+  optional `bitrix.writeback.user_id_fallback` (валидируемый положительный Bitrix user ID)
+  назначается ответственным только при `responsible.status=not_found`; matched, ambiguous,
+  `connector_degraded`, unresolved и not-attempted остаются deferred;
   optional config-driven `source_id` задаёт Lead `SOURCE_ID` (например `EMAIL` =
   «Входящее письмо»);
 - при `bitrix.writeback.email_attach: true` через официальный `crm.activity.add`
   прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/body/отправителем;
-  safe existing Lead/Deal получает activity с existing target owner/responsible без
-  reassignment CRM entity; `bitrix.writeback.email_attach_completed` (boolean,
+  trusted exact thread target получает activity с existing target owner/responsible без
+  reassignment CRM entity; `bitrix.writeback.email_completed` (boolean,
   валидируется fail-fast, по умолчанию `true`) задаёт, завершена ли создаваемая
   email-активность (`false` создаёт её незавершённой — заметнее в таймлайне);
 - planned record snapshots whether email attachment is required. For `create_lead`, a
   created/recovered CRM entity is delivery-complete only after the required activity has a
   valid ID; pending, uncertain, exhausted, terminal or sender-unavailable attachment remains
   an explicit incomplete delivery state;
-- safe existing Lead/Deal обрабатывается через idempotent attach-existing path без
+- trusted exact thread target обрабатывается через idempotent attach-existing path без
   создания нового Lead; before every activity POST executor uses read-only
   `crm.activity.list` with the stable origin identity, including after timeout or malformed
   response, and persists the returned activity ID;

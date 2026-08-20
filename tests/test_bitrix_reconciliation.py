@@ -1860,9 +1860,13 @@ class TestBitrixArtifact:
 
         assert artifact["aggregate"]["event_count"] == 3
         assert artifact["aggregate"]["matched_count"] == 1
+        assert artifact["aggregate"]["safe_matched_count"] == 0
         assert artifact["aggregate"]["skipped_count"] == 1
         assert artifact["aggregate"]["not_found_count"] == 1
         assert artifact["aggregate"]["connector_degraded_count"] == 0
+        assert artifact["items"][0]["bitrix_match_status"] == "matched_lead"
+        assert artifact["items"][0]["bitrix_match_quality"] == "strong"
+        assert artifact["items"][0]["safe_to_use_as_target"] is False
 
     def test_window_date_is_passed_to_lookup(
         self,

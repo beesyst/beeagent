@@ -8736,9 +8736,9 @@ Email activity description в Bitrix содержит bounded readable plain tex
   прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
 - bounded thread headers (`in_reply_to`/`references`) и target-resolution provenance
   добавлены в classified events и write-back state/summaries;
-- optional `bitrix.writeback.fallback_responsible_user_id` назначает ответственного,
-  когда routing не нашёл активного пользователя (кроме degraded directory и при наличии
-  exact matched); optional `bitrix.writeback.email_attach_completed` (boolean, default `true`)
+- optional `bitrix.writeback.user_id_fallback` назначает ответственного только при
+  `responsible.status=not_found`; matched, ambiguous, degraded, unresolved и not-attempted
+  остаются deferred; optional `bitrix.writeback.email_completed` (boolean, default `true`)
   задаёт, завершена ли создаваемая email-активность (`false` = письмо незавершённое/заметнее
   в таймлайне);
 - `beeagent-rop` public contract не менялся; dependencies/`uv.lock` не менялись.

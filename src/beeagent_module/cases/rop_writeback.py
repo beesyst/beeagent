@@ -194,7 +194,7 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         if isinstance(key, str) and isinstance(value, str) and value.strip()
     }
     webhook_env = str(wb.get("webhook_env") or "BITRIX_WRITEBACK_WEBHOOK_URL")
-    fallback_id = wb.get("fallback_responsible_user_id")
+    fallback_id = wb.get("user_id_fallback")
     return {
         "enabled": wb.get("enabled") is True,
         "dry_run": wb.get("dry_run") is True,
@@ -203,11 +203,11 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         "attempts_retry_max": int(wb.get("attempts_retry_max", 3)),
         "stages": stages,
         "email_attach": wb.get("email_attach") is True,
-        "email_attach_completed": (
-            "N" if wb.get("email_attach_completed") is False else "Y"
+        "email_completed": (
+            "N" if wb.get("email_completed") is False else "Y"
         ),
         "source_id": str(wb.get("source_id") or ""),
-        "fallback_responsible_user_id": (
+        "user_id_fallback": (
             int(fallback_id)
             if isinstance(fallback_id, int)
             and not isinstance(fallback_id, bool)
@@ -345,10 +345,9 @@ def _create_lead_delivery(
     policy: dict[str, Any],
 ) -> dict[str, Any]:
     responsible = _responsible_from_routing(routing_item)
-    fallback_id = policy.get("fallback_responsible_user_id")
+    fallback_id = policy.get("user_id_fallback")
     fallback_eligible = (
-        responsible["status"] != "matched"
-        and responsible["status"] != "connector_degraded"
+        responsible["status"] == "not_found"
         and isinstance(fallback_id, int)
         and not isinstance(fallback_id, bool)
         and fallback_id > 0
@@ -427,37 +426,6 @@ def _decide_delivery(
             ),
         }
 
-    safe_target = recon_item.get("safe_to_use_as_target") is True
-    target_entity_id = recon_item.get("bitrix_entity_id")
-    target_entity_type = str(recon_item.get("bitrix_entity_type") or "")
-    target_entity_type_id = recon_item.get("bitrix_entity_type_id")
-    target_responsible_id = recon_item.get("bitrix_responsible_id")
-
-    if safe_target:
-        target_is_valid = (
-            target_entity_type in {"lead", "deal"}
-            and isinstance(target_entity_id, int)
-            and not isinstance(target_entity_id, bool)
-            and target_entity_id > 0
-            and isinstance(target_entity_type_id, int)
-            and target_entity_type_id in {LEAD_ENTITY_TYPE_ID, 2}
-        )
-        if not target_is_valid:
-            return {"outcome": "deferred", "reason_code": "unsafe_target"}
-        if (
-            not isinstance(target_responsible_id, int)
-            or isinstance(target_responsible_id, bool)
-            or target_responsible_id <= 0
-        ):
-            return {"outcome": "deferred", "reason_code": "responsible_unresolved"}
-        return {
-            "outcome": "attach_existing",
-            "reason_code": None,
-            "target_entity_type": target_entity_type,
-            "target_entity_type_id": target_entity_type_id,
-            "target_entity_id": target_entity_id,
-            "target_responsible_user_id": target_responsible_id,
-        }
     if recon_status in ("weak_match", "ambiguous"):
         return {"outcome": "deferred", "reason_code": "ambiguous_target"}
     if recon_status == "duplicate_candidate":
@@ -971,9 +939,9 @@ def build_writeback_plan(
         "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
-        "email_attach_completed": policy["email_attach_completed"],
+        "email_completed": policy["email_completed"],
         "source_id": policy["source_id"],
-        "fallback_responsible_user_id": policy["fallback_responsible_user_id"],
+        "user_id_fallback": policy["user_id_fallback"],
     }
 
     thread_index = _build_message_id_index(state["events"])
@@ -1344,7 +1312,7 @@ def _execute_email_attachment(
             subject=record.get("subject") or "",
             description=record.get("body_preview") or "",
             sender_email=sender_email,
-            completed=policy["email_attach_completed"],
+            completed=policy["email_completed"],
         )
         record["email_activity_id"] = activity_id
         record["email_attachment_status"] = "attached"
@@ -1528,9 +1496,9 @@ def execute_writeback_pending(
         "attempts_retry_max": policy["attempts_retry_max"],
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
-        "email_attach_completed": policy["email_attach_completed"],
+        "email_completed": policy["email_completed"],
         "source_id": policy["source_id"],
-        "fallback_responsible_user_id": policy["fallback_responsible_user_id"],
+        "user_id_fallback": policy["user_id_fallback"],
     }
 
     events = state.get("events", {})

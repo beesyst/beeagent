@@ -488,8 +488,8 @@ Rules:
   operator can reply to the original message. When the event carries a sender display
   name, it is written to the Lead `NAME` field.
 - Email/activity binding uses the official `crm.activity.add` method (email activity,
-  `TYPE_ID=4`) and is gated by `bitrix.writeback.email_attach`. For a trusted thread
-  target or a legacy safe existing Lead or Deal, the activity uses that target and its
+  `TYPE_ID=4`) and is gated by `bitrix.writeback.email_attach`. For a trusted exact thread
+  target, the activity uses that target and its
   recorded responsible without changing the entity responsibility. Before every activity
   POST, including after timeout or malformed response, read-only `crm.activity.list` checks
   the stable origin identity; the resulting activity ID is persisted. Each planned record
@@ -497,7 +497,7 @@ Rules:
   independently from Lead creation: a created/recovered Lead is delivery-complete only when
   a required activity has a valid ID. A missing sender, pending/uncertain result, retry
   exhaustion or terminal attach error stays visibly incomplete according to the bounded
-  retry policy. `bitrix.writeback.email_attach_completed` (boolean, validated fail-fast,
+  retry policy. `bitrix.writeback.email_completed` (boolean, validated fail-fast,
   default `true`) sets whether the created email activity is completed (`false` creates it as
   not completed, more visible in the timeline) without weakening the
   idempotency/attachment control.
@@ -510,10 +510,10 @@ Rules:
   unresolved `existing_deal`/`duplicate` fail closed to an explicit `deferred` outcome; no
   speculative Lead is created and existing CRM entities are never reassigned. An exact
   active routing match with a positive `user_id` sets a new Lead `ASSIGNED_BY_ID`; when
-  configured, `bitrix.writeback.fallback_responsible_user_id` (a positive Bitrix user ID,
-  validated fail-fast) is used instead only when routing did not match an active user. The
-  fallback is never applied while the Bitrix user directory itself is degraded
-  (`connector_degraded` remains deferred) and never overrides an exact matched responsible.
+  configured, `bitrix.writeback.user_id_fallback` (a positive Bitrix user ID,
+  validated fail-fast) is used only for `not_found`. Matched, ambiguous,
+  `connector_degraded`, unresolved and not-attempted routing stay deferred and the fallback
+  never overrides an exact matched responsible.
 - Durable authoritative write-back intent is persisted to
   `storage/interfaces/rop_writeback_state.json` before the mailbox checkpoint advances.
   With write-back enabled, plan persistence failure blocks checkpoint advancement; with

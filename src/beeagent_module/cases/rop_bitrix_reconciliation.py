@@ -115,7 +115,7 @@ def run_reconciliation(
         status = item.get("bitrix_match_status", "error")
         if status.startswith("matched_"):
             aggregate["matched_count"] += 1
-            if item.get("bitrix_match_quality") == "strong":
+            if item.get("safe_to_use_as_target") is True:
                 aggregate["safe_matched_count"] += 1
         elif status == "weak_match":
             aggregate["weak_match_count"] += 1
