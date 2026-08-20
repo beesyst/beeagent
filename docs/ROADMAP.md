@@ -8749,6 +8749,8 @@ production enablement; до него Iteration 38 не считается пол
 
 ### Итерация 39 — ROP conversation identity and AI decision hardening v2
 
+**Статус:** PLANNED
+
 #### Goal
 
 Исправить системные причины reviewed classification mismatches и broken Bitrix email threads: BeeAgent должен использовать AI как второй semantic verification echelon для business-impacting решений, перестать рассчитывать на operator `manual_review` как normal classification path и строить cross-run/cross-mailbox conversation evidence без ослабления trusted CRM target boundary It38.

@@ -77,7 +77,7 @@ dev = [
 
 [[package]]
 name = "beeagent-rop"
-version = "0.19.4"
+version = "0.19.5"
 source = { editable = "../beeagent-rop" }
 
 [package.metadata]
