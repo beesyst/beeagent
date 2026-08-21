@@ -382,6 +382,83 @@ class TestOutboundCorrelationCollect:
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
         assert evidence == []
 
+    def test_outbound_reply_resolved_by_activity_id_lookup(self) -> None:
+        class _IdLookupClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                if "ID" in filter_params:
+                    activity_id = filter_params["ID"]
+                    return {
+                        "result": [
+                            {
+                                "ID": activity_id,
+                                "OWNER_TYPE_ID": 1,
+                                "OWNER_ID": 199425,
+                                "RESPONSIBLE_ID": 1610,
+                                "DIRECTION": 2,
+                                "TYPE_ID": 4,
+                                "SETTINGS": {
+                                    "MESSAGE_HEADERS": {
+                                        "Message-Id": (
+                                            f"<crm.activity.{activity_id}"
+                                            "-0R9TBN@my.welding.kz>"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                return {"result": []}
+
+        client = _IdLookupClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.1617905-0R9TBN@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert len(evidence) == 1
+        assert evidence[0]["bridge_exact"] is True
+        assert evidence[0]["outbound_message_id"] == (
+            "crm.activity.1617905-0R9TBN@my.welding.kz"
+        )
+        assert evidence[0]["target_entity_id"] == 199425
+        assert evidence[0]["target_responsible_user_id"] == 1610
+        assert any(
+            call["filter_params"] == {"ID": 1617905} for call in client.calls
+        )
+
+    def test_non_crm_activity_references_skip_id_lookup(self) -> None:
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 11,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 1001,
+                    "RESPONSIBLE_ID": 42,
+                    "DIRECTION": 2,
+                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-b",
+                "event_instance_id": "event-b",
+                "in_reply_to": "<out-1@employee.test>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert len(evidence) == 1
+        assert all("ID" not in call["filter_params"] for call in client.calls)
+
 
 class TestActivityMessageId:
     def test_message_headers_message_id_camel(self) -> None:

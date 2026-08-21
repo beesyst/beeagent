@@ -19,6 +19,7 @@ _ACTIVITY_EMAIL_TYPE_ID = 4
 _ACTIVITY_DIRECTION_OUT = 2
 _MAX_IDENTIFIER_LENGTH = 320
 _MESSAGE_ID_SETTINGS_KEYS = ("MESSAGE_ID", "message_id", "EMAIL_MESSAGE_ID")
+_CRM_ACTIVITY_REF_RE = re.compile(r"crm\.activity\.(\d+)")
 
 
 def _bounded_text(value: Any, max_length: int = _MAX_IDENTIFIER_LENGTH) -> str:
@@ -82,6 +83,19 @@ def _event_reference_ids(event: dict[str, Any]) -> list[str]:
     return refs
 
 
+def _crm_activity_reference_ids(event: dict[str, Any]) -> list[int]:
+    activity_ids: list[int] = []
+    for header in ("in_reply_to", "references"):
+        for token in _extract_reference_ids(event.get(header)):
+            match = _CRM_ACTIVITY_REF_RE.search(token)
+            if match is None:
+                continue
+            activity_id = int(match.group(1))
+            if activity_id > 0 and activity_id not in activity_ids:
+                activity_ids.append(activity_id)
+    return activity_ids
+
+
 def _activity_message_id(activity: dict[str, Any]) -> str:
     settings = activity.get("SETTINGS")
     if isinstance(settings, dict):
@@ -139,6 +153,41 @@ def _is_outbound_activity(activity: dict[str, Any]) -> bool:
     return _positive_int_or_none(activity.get("DIRECTION")) == _ACTIVITY_DIRECTION_OUT
 
 
+def _index_outbound_activity(
+    outbound_by_message_id: dict[str, dict[str, Any]],
+    ambiguous_message_ids: set[str],
+    activity: dict[str, Any],
+    max_activities: int,
+) -> bool:
+    if not isinstance(activity, dict):
+        return False
+    if not _is_outbound_activity(activity):
+        return False
+    message_id = _activity_message_id(activity)
+    target = _activity_target(activity)
+    if not message_id or target is None:
+        return False
+    if len(outbound_by_message_id) >= max_activities:
+        return True
+    activity_responsible = target[3]
+    item = {
+        "outbound_message_id": message_id,
+        "target_entity_type": target[0],
+        "target_entity_type_id": target[1],
+        "target_entity_id": target[2],
+        "target_responsible_user_id": activity_responsible,
+        "outbound_activity_responsible_user_id": activity_responsible,
+    }
+    existing = outbound_by_message_id.get(message_id)
+    if existing is None:
+        if message_id not in ambiguous_message_ids:
+            outbound_by_message_id[message_id] = item
+    elif _owner_identity(existing) != _owner_identity(item):
+        ambiguous_message_ids.add(message_id)
+        outbound_by_message_id.pop(message_id, None)
+    return False
+
+
 def collect_outbound_correlation_evidence(
     client: Any,
     events: list[dict[str, Any]],
@@ -175,9 +224,44 @@ def collect_outbound_correlation_evidence(
 
     outbound_by_message_id: dict[str, dict[str, Any]] = {}
     ambiguous_message_ids: set[str] = set()
+
+    activity_ids: list[int] = []
+    for event in candidate_events:
+        for activity_id in _crm_activity_reference_ids(event):
+            if activity_id not in activity_ids:
+                activity_ids.append(activity_id)
+    for activity_id in activity_ids[:max_activities]:
+        try:
+            data = client.activity_list(
+                filter_params={"ID": activity_id},
+                select=select,
+                start=0,
+            )
+        except BitrixConnectorError as exc:
+            logger.warning(
+                "rop outbound correlation id lookup failed: activity_id=%s reason=%s",
+                activity_id,
+                exc,
+            )
+            continue
+        result = data.get("result")
+        if not isinstance(result, list):
+            logger.warning("rop outbound correlation malformed response")
+            continue
+        for activity in result:
+            if _index_outbound_activity(
+                outbound_by_message_id,
+                ambiguous_message_ids,
+                activity,
+                max_activities,
+            ):
+                break
+
     start = 0
     try:
         for _ in range(pages_max):
+            if len(outbound_by_message_id) >= max_activities:
+                break
             data = client.activity_list(
                 filter_params=filter_params,
                 select=select,
@@ -189,32 +273,13 @@ def collect_outbound_correlation_evidence(
                 return []
 
             for activity in result:
-                if not isinstance(activity, dict):
-                    continue
-                if not _is_outbound_activity(activity):
-                    continue
-                message_id = _activity_message_id(activity)
-                target = _activity_target(activity)
-                if not message_id or target is None:
-                    continue
-                if len(outbound_by_message_id) >= max_activities:
+                if _index_outbound_activity(
+                    outbound_by_message_id,
+                    ambiguous_message_ids,
+                    activity,
+                    max_activities,
+                ):
                     break
-                activity_responsible = target[3]
-                item = {
-                    "outbound_message_id": message_id,
-                    "target_entity_type": target[0],
-                    "target_entity_type_id": target[1],
-                    "target_entity_id": target[2],
-                    "target_responsible_user_id": activity_responsible,
-                    "outbound_activity_responsible_user_id": activity_responsible,
-                }
-                existing = outbound_by_message_id.get(message_id)
-                if existing is None:
-                    if message_id not in ambiguous_message_ids:
-                        outbound_by_message_id[message_id] = item
-                elif _owner_identity(existing) != _owner_identity(item):
-                    ambiguous_message_ids.add(message_id)
-                    outbound_by_message_id.pop(message_id, None)
 
             if len(outbound_by_message_id) >= max_activities:
                 break

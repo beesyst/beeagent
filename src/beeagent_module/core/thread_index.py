@@ -8,6 +8,8 @@ from typing import Any
 
 THREAD_ID_PREFIX = "thr"
 
+_CRM_ACTIVITY_REF_RE = re.compile(r"crm\.activity\.(\d+)")
+
 
 def _normalize_subject(subject: str) -> str:
     if not subject:
@@ -258,6 +260,8 @@ def build_thread_context(
     thread_index: dict[str, Any],
     classified_events: list[dict[str, Any]] | None,
     logger: logging.Logger,
+    prior_events: list[dict[str, Any]] | None = None,
+    prior_classified: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     threads = thread_index.get("threads", [])
     if not isinstance(threads, list):
@@ -276,6 +280,30 @@ def build_thread_context(
                 eid = ce.get("event_id") or ""
                 if eid:
                     classified_by_event[eid] = ce
+
+    prior_classified_by_event: dict[str, dict[str, Any]] = {}
+    if prior_classified:
+        for ce in prior_classified:
+            if isinstance(ce, dict):
+                eid = ce.get("event_id") or ""
+                if eid:
+                    prior_classified_by_event[eid] = ce
+
+    prior_message_to_case: dict[str, str] = {}
+    if prior_events:
+        for pe in prior_events:
+            if not isinstance(pe, dict):
+                continue
+            mid = pe.get("message_id") or pe.get("Message-ID") or ""
+            eid = pe.get("event_id") or ""
+            if not (isinstance(mid, str) and mid and isinstance(eid, str) and eid):
+                continue
+            prior_ce = prior_classified_by_event.get(eid)
+            if not isinstance(prior_ce, dict):
+                continue
+            prior_ct = prior_ce.get("case_type") or prior_ce.get("bot_case_type") or ""
+            if prior_ct:
+                prior_message_to_case[mid] = str(prior_ct)
 
     contexts: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -296,7 +324,30 @@ def build_thread_context(
             if prior_event_id != event_id
             and event_to_thread.get(prior_event_id) is thread
         ]
+
+        current_message_id, current_in_reply_to, current_references = (
+            _extract_message_ids(event)
+        )
+        current_reference_ids = {*current_in_reply_to, *current_references}
+
+        cross_prev_case_type = ""
+        cross_prev_event_id = ""
+        cross_reason_code = ""
         if not previous_ids:
+            for ref in current_reference_ids:
+                if ref in prior_message_to_case:
+                    cross_prev_case_type = prior_message_to_case[ref]
+                    cross_prev_event_id = ref
+                    cross_reason_code = "prior_run_reference"
+                    break
+            if not cross_prev_case_type:
+                for ref in current_reference_ids:
+                    if _CRM_ACTIVITY_REF_RE.search(ref):
+                        cross_prev_case_type = "existing_deal"
+                        cross_reason_code = "references_bitrix_activity"
+                        break
+
+        if not previous_ids and not cross_prev_case_type:
             prior_event_ids.append(event_id)
             continue
 
@@ -317,6 +368,8 @@ def build_thread_context(
         if previous_classified:
             prev_case_type = previous_classified.get("case_type", "")
             prev_case_subtype = previous_classified.get("case_subtype", "")
+        if not prev_case_type and cross_prev_case_type:
+            prev_case_type = cross_prev_case_type
 
         previous_events = [
             previous_event
@@ -344,17 +397,16 @@ def build_thread_context(
             prior_link_ids.update(previous_in_reply_to)
             prior_link_ids.update(previous_references)
 
-        current_message_id, current_in_reply_to, current_references = (
-            _extract_message_ids(event)
-        )
-        current_reference_ids = {*current_in_reply_to, *current_references}
         current_subject_key = _normalized_subject_key(event)
 
         local_evidence = {
             "message_id_link": bool(
                 current_message_id and current_message_id in prior_message_ids
             ),
-            "references_link": bool(current_reference_ids & prior_link_ids),
+            "references_link": bool(
+                current_reference_ids & prior_link_ids
+            )
+            or bool(cross_prev_case_type),
             "subject_fallback": bool(
                 _has_reply_prefix(event.get("subject") or "")
                 and current_subject_key
@@ -380,12 +432,18 @@ def build_thread_context(
             reason_codes.append(f"previous_{prev_case_type}")
         if prev_case_subtype:
             reason_codes.append(f"previous_{prev_case_subtype}")
+        if cross_reason_code:
+            reason_codes.append(cross_reason_code)
+
+        previous_event_ids = list(previous_ids)
+        if cross_prev_event_id and cross_prev_event_id not in previous_event_ids:
+            previous_event_ids.append(cross_prev_event_id)
 
         context_entry: dict[str, Any] = {
             "event_id": event_id,
             "thread_id": thread.get("thread_id", ""),
             "reply_or_forward": is_reply,
-            "previous_event_ids": previous_ids,
+            "previous_event_ids": previous_event_ids,
             "previous_case_type": prev_case_type,
             "previous_case_subtype": prev_case_subtype,
             "participant_overlap": participant_overlap,

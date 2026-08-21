@@ -616,7 +616,24 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
 def _register_rop_html_polish(app: FastAPI) -> None:
     @app.middleware("http")
     async def rop_html_polish(request: Request, call_next):
-        locale = resolve_locale(request.query_params.get("lang"))
+        locale = resolve_locale(
+            request.query_params.get("lang"),
+            cookie_param=request.cookies.get("beeui_lang"),
+        )
+        path = request.url.path
+        # /rop is rendered through the BeeUI product adapter, which receives
+        # only query params. Persist the cookie-derived locale into the request
+        # query string so the adapter localizes content on first load even when
+        # the URL carries no ?lang parameter.
+        if path == "/rop" and "lang" not in request.query_params:
+            from urllib.parse import quote
+
+            qs = request.scope.get("query_string", b"").decode("latin-1")
+            suffix = "lang=" + quote(locale, safe="")
+            request.scope["query_string"] = (
+                (qs + "&" + suffix) if qs else suffix
+            ).encode("latin-1")
+
         token = set_current_locale(locale)
         try:
             response = await call_next(request)
@@ -624,7 +641,6 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             reset_current_locale(token)
 
         content_type = response.headers.get("content-type", "")
-        path = request.url.path
         # /rop is rendered by BeeUI adapter — no localization pass needed
         if path == "/rop":
             return response
@@ -776,7 +792,10 @@ def _register_custom_routes(
                 data.get("rop_recommendations", []),
                 run_id=str(data.get("run_id", "")),
                 period=data.get("period"),
-                locale=resolve_locale(request.query_params.get("lang")),
+                locale=resolve_locale(
+                    request.query_params.get("lang"),
+                    cookie_param=request.cookies.get("beeui_lang"),
+                ),
             )
         return _ok_json(data)
 
@@ -817,7 +836,10 @@ def _register_custom_routes(
             run_id=run_id,
             event_id=event_id,
             event_instance_id=request.query_params.get("event_instance_id"),
-            lang=resolve_locale(request.query_params.get("lang")),
+            lang=resolve_locale(
+                request.query_params.get("lang"),
+                cookie_param=request.cookies.get("beeui_lang"),
+            ),
         )
         if not result.get("ok", True) and result.get("error") == "not_found":
             return _error_json(
@@ -856,7 +878,10 @@ def _register_custom_routes(
                 status_code=400,
             )
 
-        locale = resolve_locale(request.query_params.get("lang"))
+        locale = resolve_locale(
+            request.query_params.get("lang"),
+            cookie_param=request.cookies.get("beeui_lang"),
+        )
         token = set_current_locale(locale)
         try:
             query_params = dict(request.query_params)

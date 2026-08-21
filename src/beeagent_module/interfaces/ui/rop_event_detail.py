@@ -15,7 +15,12 @@ from beeagent_module.core.rop_reason_contract import (
     AI_EVIDENCE_CODES_MAX,
 )
 from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
-from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.locale import (
+    case_subtype_label,
+    case_type_label,
+    t,
+    writeback_outcome_label,
+)
 from beeagent_module.interfaces.ui.reason_catalog import (
     get_ai_evidence_display,
     get_ai_reason_display,
@@ -920,11 +925,14 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Case type", lang),
-                        classification.get("case_type"),
+                        case_type_label(classification.get("case_type"), lang),
                         variant="badge",
                         tone="default",
                     ),
-                    _kv(t("Subtype", lang), classification.get("case_subtype")),
+                    _kv(
+                        t("Subtype", lang),
+                        case_subtype_label(classification.get("case_subtype"), lang),
+                    ),
                     _kv(
                         t("Priority", lang),
                         classification.get("priority"),
@@ -970,7 +978,9 @@ def build_rop_event_detail_page_model(
                         [
                             _kv(
                                 t("Base case type", lang),
-                                classification.get("base_case_type"),
+                                case_type_label(
+                                    classification.get("base_case_type"), lang
+                                ),
                             ),
                             _kv(
                                 t("Duplicate candidate event", lang),
@@ -1011,13 +1021,13 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Deterministic case type", lang),
-                        deterministic.get("case_type"),
+                        case_type_label(deterministic.get("case_type"), lang),
                         variant="badge",
                         tone="default",
                     ),
                     _kv(
                         t("Deterministic subtype", lang),
-                        deterministic.get("case_subtype"),
+                        case_subtype_label(deterministic.get("case_subtype"), lang),
                     ),
                     _kv(
                         t("Deterministic queue", lang),
@@ -1086,7 +1096,10 @@ def build_rop_event_detail_page_model(
                         ai_assist.get("ai_assist_confidence"),
                         hint="confidence",
                     ),
-                    _kv(t("Final type", lang), ai_assist.get("final_case_type")),
+                    _kv(
+                        t("Final type", lang),
+                        case_type_label(ai_assist.get("final_case_type"), lang),
+                    ),
                     _kv(t("Final priority", lang), ai_assist.get("final_priority")),
                 ]
             ),
@@ -1132,7 +1145,7 @@ def build_rop_event_detail_page_model(
                     ),
                     _kv(
                         t("AI proposed case type", lang),
-                        ai_adjudicator.get("final_case_type"),
+                        case_type_label(ai_adjudicator.get("final_case_type"), lang),
                         variant="badge",
                         tone="default",
                     ),
@@ -1163,7 +1176,7 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Final case type", lang),
-                        final_decision.get("final_case_type"),
+                        case_type_label(final_decision.get("final_case_type"), lang),
                         variant="badge",
                         tone="default",
                     ),
@@ -1264,8 +1277,10 @@ def build_rop_event_detail_page_model(
                     "role": item.get("role"),
                     "sender": item.get("sender"),
                     "subject": item.get("subject"),
-                    "case_type": item.get("case_type"),
-                    "writeback": item.get("writeback", {}).get("outcome", ""),
+                    "case_type": case_type_label(item.get("case_type"), lang),
+                    "writeback": writeback_outcome_label(
+                        item.get("writeback", {}).get("outcome", ""), lang
+                    ),
                 }
                 for item in _safe_list(conversation.get("events"))
             ],
