@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.core.rop_conversation import build_conversation_timeline
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
@@ -422,6 +423,44 @@ def build_rop_event_detail_read_model(
     else:
         warnings.append("Event not found in classified_events.json")
 
+    deterministic_keys = (
+        "deterministic_case_type",
+        "deterministic_case_subtype",
+        "deterministic_recommended_queue",
+        "deterministic_correct_action",
+        "deterministic_confidence",
+        "deterministic_reason_code",
+    )
+
+    if class_event and any(key in class_event for key in deterministic_keys):
+        deterministic_section = {
+            "available": True,
+            "case_type": _bounded_str(
+                class_event.get("deterministic_case_type"),
+                _MAX_REASON_CODE_LENGTH,
+            ),
+            "case_subtype": _bounded_str(
+                class_event.get("deterministic_case_subtype"),
+                _MAX_REASON_CODE_LENGTH,
+            ),
+            "recommended_queue": _bounded_str(
+                class_event.get("deterministic_recommended_queue"),
+                _MAX_REASON_CODE_LENGTH,
+            ),
+            "correct_action": _bounded_str(
+                class_event.get("deterministic_correct_action"),
+                _MAX_REASON_CODE_LENGTH,
+            ),
+            "confidence": class_event.get("deterministic_confidence"),
+            "reason_code": _bounded_str(
+                class_event.get("deterministic_reason_code"),
+                _MAX_REASON_CODE_LENGTH,
+            ),
+            "is_fallback": bool(class_event.get("is_fallback")),
+        }
+    else:
+        deterministic_section = {"available": False}
+
     thread_section: dict[str, Any] = {}
     thread_available = False
     if isinstance(thread_context, dict):
@@ -622,18 +661,18 @@ def build_rop_event_detail_read_model(
         )
         if item:
             bitrix_section = {
-                    "available": True,
-                    "bitrix_status": _str(
-                        item.get("bitrix_match_status")
-                        or item.get("match_status")
-                        or item.get("bitrix_status")
-                        or item.get("status")
-                    ),
-                    "match_quality": item.get("match_quality"),
-                    "candidate_count": _int(item.get("candidate_count", 0)),
-                    "entity_type": _str(item.get("entity_type", "")),
-                    "entity_id": _int(item.get("entity_id", 0)),
-                    "entity_url": _str(item.get("entity_url", "")),
+                "available": True,
+                "bitrix_status": _str(
+                    item.get("bitrix_match_status")
+                    or item.get("match_status")
+                    or item.get("bitrix_status")
+                    or item.get("status")
+                ),
+                "match_quality": item.get("match_quality"),
+                "candidate_count": _int(item.get("candidate_count", 0)),
+                "entity_type": _str(item.get("entity_type", "")),
+                "entity_id": _int(item.get("entity_id", 0)),
+                "entity_url": _str(item.get("entity_url", "")),
             }
             bitrix_available = True
     if not bitrix_available:
@@ -645,11 +684,11 @@ def build_rop_event_detail_read_model(
         item = _match_by_event_id(action_drafts, event_id, event_instance_id)
         if item:
             action_draft_section = {
-                    "available": True,
-                    "action_type": _str(item.get("action_type", item.get("type", ""))),
-                    "summary": _str(item.get("summary", item.get("description", ""))),
-                    "draft_status": _str(item.get("status", "draft")),
-                    "read_only": True,
+                "available": True,
+                "action_type": _str(item.get("action_type", item.get("type", ""))),
+                "summary": _str(item.get("summary", item.get("description", ""))),
+                "draft_status": _str(item.get("status", "draft")),
+                "read_only": True,
             }
             draft_available = True
     if not draft_available:
@@ -737,6 +776,15 @@ def build_rop_event_detail_read_model(
     else:
         operator_text = ""
 
+    conversation_section = build_conversation_timeline(
+        storage_dir,
+        run_id,
+        event_id,
+        event_instance_id,
+    )
+    if not conversation_section.get("available"):
+        conversation_section = {"available": False}
+
     result = {
         "run_id": run_id,
         "event_id": event_id,
@@ -744,11 +792,13 @@ def build_rop_event_detail_read_model(
         "source": source_section,
         "message": message_section,
         "classification": classification_section,
+        "deterministic": deterministic_section,
         "thread": thread_section,
         "ai_assist": ai_section,
         "ai_adjudicator": adj_section,
         "final_decision": final_decision_section,
         "bitrix": bitrix_section,
+        "conversation": conversation_section,
         "action_draft": action_draft_section,
         "recipient_routing": recipient_routing_section,
         "attachments": attachments_section,
@@ -820,12 +870,14 @@ def build_rop_event_detail_page_model(
     source = _safe_dict(data.get("source"))
     message = _safe_dict(data.get("message"))
     classification = _safe_dict(data.get("classification"))
+    deterministic = _safe_dict(data.get("deterministic"))
     duplicate = _safe_dict(classification.get("duplicate"))
     thread = _safe_dict(data.get("thread"))
     ai_assist = _safe_dict(data.get("ai_assist"))
     ai_adjudicator = _safe_dict(data.get("ai_adjudicator"))
     final_decision = _safe_dict(data.get("final_decision"))
     bitrix = _safe_dict(data.get("bitrix"))
+    conversation = _safe_dict(data.get("conversation"))
     action_draft = _safe_dict(data.get("action_draft"))
     recipient_routing = _safe_dict(data.get("recipient_routing"))
     attachments = _safe_list(data.get("attachments"))
@@ -947,6 +999,55 @@ def build_rop_event_detail_page_model(
                         ]
                         if duplicate.get("is_duplicate") is True
                         else []
+                    ),
+                ]
+            ),
+        },
+        {
+            "kind": "key_value",
+            "title": t("Deterministic result", lang),
+            "no_data": not deterministic.get("available", False),
+            "items": _page_kv_items(
+                [
+                    _kv(
+                        t("Deterministic case type", lang),
+                        deterministic.get("case_type"),
+                        variant="badge",
+                        tone="default",
+                    ),
+                    _kv(
+                        t("Deterministic subtype", lang),
+                        deterministic.get("case_subtype"),
+                    ),
+                    _kv(
+                        t("Deterministic queue", lang),
+                        deterministic.get("recommended_queue"),
+                        variant="badge",
+                        tone=_queue_action_tone(
+                            deterministic.get("recommended_queue", "")
+                        ),
+                    ),
+                    _kv(
+                        t("Deterministic action", lang),
+                        deterministic.get("correct_action"),
+                        variant="badge",
+                        tone=_queue_action_tone(
+                            deterministic.get("correct_action", "")
+                        ),
+                    ),
+                    _kv(
+                        t("Deterministic confidence", lang),
+                        deterministic.get("confidence"),
+                        hint="confidence",
+                    ),
+                    _kv(
+                        t("Deterministic reason code", lang),
+                        deterministic.get("reason_code"),
+                    ),
+                    _kv(
+                        t("Deterministic fallback", lang),
+                        _bool_display(deterministic.get("is_fallback"), lang),
+                        variant="boolean",
                     ),
                 ]
             ),
@@ -1140,6 +1241,34 @@ def build_rop_event_detail_page_model(
                     _kv(t("Entity ID", lang), bitrix.get("entity_id")),
                 ]
             ),
+        },
+        {
+            "kind": "table",
+            "title": t("Conversation timeline", lang),
+            "no_data": not conversation.get("available", False),
+            "columns": [
+                {"key": "date", "label": t("Date", lang)},
+                {"key": "source_id", "label": t("Source", lang)},
+                {"key": "run_id", "label": t("Run", lang)},
+                {"key": "role", "label": t("Role", lang)},
+                {"key": "sender", "label": t("Sender", lang)},
+                {"key": "subject", "label": t("Subject", lang)},
+                {"key": "case_type", "label": t("Case type", lang)},
+                {"key": "writeback", "label": t("CRM outcome", lang)},
+            ],
+            "rows": [
+                {
+                    "date": _format_iso_datetime(item.get("date")),
+                    "source_id": item.get("source_id"),
+                    "run_id": item.get("run_id"),
+                    "role": item.get("role"),
+                    "sender": item.get("sender"),
+                    "subject": item.get("subject"),
+                    "case_type": item.get("case_type"),
+                    "writeback": item.get("writeback", {}).get("outcome", ""),
+                }
+                for item in _safe_list(conversation.get("events"))
+            ],
         },
         {
             "kind": "key_value",

@@ -108,12 +108,6 @@ def _attention_reason_code(adj: dict[str, Any]) -> str:
     return "ai_adjudicator_unexpected_status"
 
 
-def _bounded_attention_reason(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return value.strip()[:_MAX_ATTENTION_REASON_LENGTH]
-
-
 def _is_confidence(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -250,13 +244,6 @@ def _deterministic_value(event: dict[str, Any], key: str, fallback: Any) -> Any:
     return value
 
 
-def _is_deterministic_tender_candidate(
-    queue: str,
-    action: str,
-) -> bool:
-    return queue == "tender" or action == "review_tender"
-
-
 def _results_by_event_identity(
     adjudicator_results: list[dict[str, Any]] | dict[str, Any] | None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -272,6 +259,15 @@ def _results_by_event_identity(
         for result in adjudicator_results
         if isinstance(result, dict) and result.get("event_id")
     }
+
+
+def _normalize_terminal_routing(
+    queue: str,
+    action: str,
+) -> tuple[str, str, bool]:
+    if queue == "manual_review" or action == "manual_review":
+        return "unresolved", "no_action", True
+    return queue, action, False
 
 
 def build_final_decisions(
@@ -371,7 +367,13 @@ def build_final_decisions(
                 ):
                     final_confidence = candidate_confidence
                 final_decision_source = "ai_adjudicator"
-            elif ai_status == "low_confidence_preserve":
+            elif ai_status in {
+                "low_confidence_preserve",
+                "deterministic_preserved",
+                "duplicate_unresolved",
+                "degraded",
+                "invalid",
+            }:
                 needs_attention = True
                 attention_reason_code = _attention_reason_code(adj)
                 attention_reason = attention_reason_code
@@ -379,29 +381,8 @@ def build_final_decisions(
                     adj.get("ai_evidence_codes")
                 )
                 final_decision_source = "deterministic_preserved"
-            elif ai_status == "manual_review_degrade":
-                needs_attention = True
-                if _is_deterministic_tender_candidate(
-                    deterministic_queue,
-                    deterministic_action,
-                ):
-                    final_queue = "manual_review"
-                    final_action = "manual_review"
-                attention_reason_code = _attention_reason_code(adj)
-                ai_reason = _bounded_attention_reason(adj.get("ai_reason"))
-                attention_reason = ai_reason if ai_reason else attention_reason_code
-                attention_evidence_codes = _attention_evidence_codes(
-                    adj.get("ai_evidence_codes")
-                )
-                final_decision_source = "deterministic_preserved"
             else:
                 needs_attention = True
-                if _is_deterministic_tender_candidate(
-                    deterministic_queue,
-                    deterministic_action,
-                ):
-                    final_queue = "manual_review"
-                    final_action = "manual_review"
                 attention_reason_code = _attention_reason_code(adj)
                 attention_reason = attention_reason_code
                 attention_evidence_codes = _attention_evidence_codes(
@@ -416,12 +397,23 @@ def build_final_decisions(
             if isinstance(base, dict):
                 final_case_type = base.get("case_type", final_case_type)
                 final_case_subtype = base.get("case_subtype", final_case_subtype)
-            final_queue = "manual_review"
-            final_action = "manual_review"
+                final_queue = base.get("recommended_queue", final_queue)
+                final_action = base.get("correct_action", final_action)
             needs_attention = True
-            attention_reason_code = "possible_duplicate_manual_review"
+            attention_reason_code = "possible_duplicate_unresolved_base_preserved"
             attention_reason = attention_reason_code
             final_decision_source = "deterministic_preserved"
+
+        normalized_queue, normalized_action, normalized_attention = (
+            _normalize_terminal_routing(final_queue, final_action)
+        )
+        if normalized_attention:
+            final_queue = normalized_queue
+            final_action = normalized_action
+            needs_attention = True
+            if attention_reason_code is None:
+                attention_reason_code = "semantic_unresolved_no_operator_queue"
+                attention_reason = attention_reason_code
 
         if needs_attention:
             attention_count += 1

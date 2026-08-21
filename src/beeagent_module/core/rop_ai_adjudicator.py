@@ -182,7 +182,6 @@ _VALID_QUEUES = frozenset(
         "logistics",
         "finance",
         "procurement",
-        "manual_review",
         "ignore",
     }
 )
@@ -192,7 +191,6 @@ _VALID_ACTIONS = frozenset(
         "review_tender",
         "attach_to_deal",
         "check_bitrix",
-        "manual_review",
         "ignore",
     }
 )
@@ -465,6 +463,135 @@ def _extract_attachment_metadata(event: dict[str, Any]) -> tuple[list[str], list
     return filenames, mime_types
 
 
+def _attachment_preview_evidence(event: dict[str, Any]) -> dict[str, Any] | None:
+    result: dict[str, Any] = {}
+    extraction_status = _sanitize_prompt_text(
+        event.get("attachment_extraction_status"), 80
+    )
+    if extraction_status:
+        result["extraction_status"] = extraction_status
+    preview_available = event.get("attachment_preview_available")
+    if isinstance(preview_available, bool):
+        result["preview_available"] = preview_available
+    refusal_reasons = _sanitize_prompt_list(
+        event.get("attachment_refusal_reasons"),
+        max_items=8,
+        item_chars=160,
+    )
+    if refusal_reasons:
+        result["refusal_reasons"] = refusal_reasons
+    if preview_available is True:
+        text_preview = _sanitize_prompt_text(event.get("attachment_text_preview"), 800)
+        if text_preview:
+            result["text_preview"] = text_preview
+
+    attachments = event.get("attachments")
+    if isinstance(attachments, list):
+        bounded_attachments: list[dict[str, Any]] = []
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            entry: dict[str, Any] = {}
+            filename = _sanitize_prompt_text(attachment.get("filename"), 200)
+            if filename:
+                entry["filename"] = filename
+            content_type = _sanitize_prompt_text(attachment.get("content_type"), 120)
+            if content_type:
+                entry["content_type"] = content_type
+            if entry:
+                bounded_attachments.append(entry)
+            if len(bounded_attachments) >= 8:
+                break
+        if bounded_attachments:
+            result["attachments"] = bounded_attachments
+
+    if not result:
+        return None
+    return result
+
+
+def _bounded_thread_context_payload(
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    tc = event.get("thread_context")
+    if not isinstance(tc, dict):
+        return None
+    result: dict[str, Any] = {}
+    for key, limit in (
+        ("thread_id", 120),
+        ("previous_event_id", 120),
+        ("previous_case_type", 60),
+        ("previous_subject", 200),
+        ("previous_summary", 400),
+    ):
+        value = _sanitize_prompt_text(tc.get(key), limit)
+        if value:
+            result[key] = value
+    if isinstance(tc.get("reply_markers"), bool):
+        result["reply_markers"] = tc["reply_markers"]
+    if isinstance(tc.get("forward_markers"), bool):
+        result["forward_markers"] = tc["forward_markers"]
+    participant_hints = _sanitize_prompt_list(
+        tc.get("participant_hints"), max_items=8, item_chars=120
+    )
+    if participant_hints:
+        result["participant_hints"] = participant_hints
+    thread_confidence = tc.get("thread_confidence")
+    if isinstance(thread_confidence, (int, float)) and not isinstance(
+        thread_confidence, bool
+    ):
+        result["thread_confidence"] = min(max(float(thread_confidence), 0.0), 1.0)
+    reason_codes = _sanitize_prompt_list(
+        tc.get("reason_codes"), max_items=8, item_chars=80
+    )
+    if reason_codes:
+        result["reason_codes"] = reason_codes
+    return result or None
+
+
+def _bounded_conversation_context_payload(
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    cc = event.get("conversation_context")
+    if not isinstance(cc, dict):
+        return None
+    result: dict[str, Any] = {}
+    conversation_id = _sanitize_prompt_text(cc.get("conversation_id"), 120)
+    if conversation_id:
+        result["conversation_id"] = conversation_id
+    message_count = cc.get("message_count")
+    if isinstance(message_count, int) and not isinstance(message_count, bool):
+        result["message_count"] = message_count
+    other_events = cc.get("other_events")
+    if isinstance(other_events, list):
+        bounded_events: list[dict[str, Any]] = []
+        for other in other_events:
+            if not isinstance(other, dict):
+                continue
+            entry: dict[str, Any] = {}
+            for key, limit in (
+                ("event_id", 120),
+                ("role", 40),
+                ("case_type", 60),
+            ):
+                value = _sanitize_prompt_text(other.get(key), limit)
+                if value:
+                    entry[key] = value
+            subject = _sanitize_prompt_text(other.get("subject"), 120)
+            if subject:
+                entry["subject"] = subject
+            sender = _sanitize_prompt_text(other.get("sender"), 160)
+            if sender:
+                entry["sender"] = sender
+            if entry:
+                bounded_events.append(entry)
+            if len(bounded_events) >= 8:
+                break
+        if bounded_events:
+            result["other_events"] = bounded_events
+    return result or None
+
+
 def _event_signal_map(event: dict[str, Any]) -> dict[str, bool]:
     text = _event_text_for_marker_scan(event)
     return {
@@ -524,9 +651,7 @@ def _is_deterministic_tender_candidate(event: dict[str, Any]) -> bool:
     )
 
 
-def _degraded_final_routing(event: dict[str, Any]) -> tuple[Any, Any, Any]:
-    if _is_deterministic_tender_candidate(event):
-        return "manual_review", "manual_review", True
+def _deterministic_final_routing(event: dict[str, Any]) -> tuple[Any, Any, Any]:
     return (
         event.get("recommended_queue"),
         event.get("correct_action"),
@@ -669,12 +794,13 @@ def _bounded_duplicate_candidate(value: Any) -> dict[str, Any] | None:
 def _is_possible_duplicate(event: dict[str, Any]) -> bool:
     duplicate = event.get("duplicate")
     return (
-        isinstance(duplicate, dict)
-        and duplicate.get("resolution_status") == "possible"
+        isinstance(duplicate, dict) and duplicate.get("resolution_status") == "possible"
     )
 
 
-def _base_classification_fields(event: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
+def _base_classification_fields(
+    event: dict[str, Any],
+) -> tuple[Any, Any, Any, Any, Any]:
     base = event.get("base_classification")
     if not isinstance(base, dict):
         return (
@@ -693,7 +819,11 @@ def _base_classification_fields(event: dict[str, Any]) -> tuple[Any, Any, Any, A
     )
 
 
-def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
+def _build_prompt_event_payload(
+    event: dict[str, Any],
+    *,
+    body_chars_max: int = 1200,
+) -> dict[str, Any]:
     attachment_filenames, attachment_mime_types = _extract_attachment_metadata(event)
 
     payload = {
@@ -727,10 +857,13 @@ def _build_prompt_event_payload(event: dict[str, Any]) -> dict[str, Any]:
             or event.get("text_preview")
             or event.get("body")
             or "",
-            500,
+            body_chars_max,
         ),
         "attachment_filenames": attachment_filenames,
         "attachment_mime_types": attachment_mime_types,
+        "attachment_evidence": _attachment_preview_evidence(event),
+        "thread_context": _bounded_thread_context_payload(event),
+        "conversation_context": _bounded_conversation_context_payload(event),
         "deterministic_case_type": _deterministic_value(event, "case_type", "unknown"),
         "deterministic_case_subtype": _deterministic_value(event, "case_subtype", None),
         "deterministic_recommended_queue": _deterministic_value(
@@ -857,30 +990,8 @@ def _ai_output_conflicts_with_marker_signals(
     ai_case_type = validated.get("case_type")
     ai_queue = validated.get("recommended_queue")
     ai_correct_action = validated.get("correct_action")
-    safe_ignore = (
-        ai_case_type == "irrelevant"
-        and ai_queue == "ignore"
-        and ai_correct_action == "ignore"
-    )
-    if safe_ignore:
-        if _is_deterministic_tender_candidate(event):
-            return _has_non_tender_actionable_signal(event)
-        return _has_actionable_business_evidence(event)
-
-    risky_ai_continuation = (
-        ai_case_type in {"existing_deal", "new_lead"}
-        or ai_correct_action in _DANGEROUS_DETERMINISTIC_ACTIONS
-        or ai_queue in _RISKY_DETERMINISTIC_QUEUES
-    )
-    if not risky_ai_continuation:
-        return False
-
-    if _has_false_positive_markers(event):
-        return True
-
-    if _has_conflict_marker_combinations(event):
-        return True
-
+    if ai_case_type == "irrelevant":
+        return not (ai_queue == "ignore" and ai_correct_action == "ignore")
     return False
 
 
@@ -917,13 +1028,58 @@ def _is_high_confidence_false_positive_resolution(
     return _has_conflict_or_risky_deterministic_signal(event, min_confidence)
 
 
+def _minimal_event_json(event: dict[str, Any]) -> str:
+    minimal = {
+        "event_id": _sanitize_prompt_text(event.get("event_id"), 120),
+        "sender": _sanitize_prompt_text(event.get("sender") or "", 200),
+        "subject": _sanitize_prompt_text(event.get("subject") or "", 200),
+        "body_preview": _sanitize_prompt_text(
+            event.get("body_preview")
+            or event.get("body_short")
+            or event.get("text_preview")
+            or event.get("body")
+            or "",
+            160,
+        ),
+        "deterministic_case_type": _deterministic_value(event, "case_type", "unknown"),
+        "deterministic_confidence": _deterministic_value(event, "confidence", 0.0),
+    }
+    return json.dumps(minimal, ensure_ascii=False)
+
+
+def _build_event_json_within_budget(
+    event: dict[str, Any],
+    budget_chars: int,
+    body_chars_max: int = 1600,
+) -> str:
+    body_chars_max = min(body_chars_max, max(160, budget_chars // 3))
+    while body_chars_max >= 160:
+        payload = _build_prompt_event_payload(event, body_chars_max=body_chars_max)
+        event_json = json.dumps(payload, ensure_ascii=False)
+        if len(event_json) <= budget_chars:
+            return event_json
+        body_chars_max = int(body_chars_max * 0.7)
+    return _minimal_event_json(event)
+
+
 def _build_adjudicator_prompt(
     prompts_cfg: dict[str, Any],
     event: dict[str, Any],
     prompt_key: str,
     max_chars: int,
+    body_chars_max: int = 1600,
 ) -> str:
-    event_json = json.dumps(_build_prompt_event_payload(event), ensure_ascii=False)
+    system_prompt, user_template = _build_prompt_messages_by_key(
+        prompts_path=prompts_cfg["path"],
+        prompt_key=prompt_key,
+        template_vars={"event_json": ""},
+    )
+    base_len = len(f"System:\n{system_prompt}\n\nUser:\n{user_template}")
+    event_budget = max(400, max_chars - base_len - 200)
+    event_json = _build_event_json_within_budget(
+        event, event_budget, body_chars_max=body_chars_max
+    )
+
     system_prompt, user_prompt = _build_prompt_messages_by_key(
         prompts_path=prompts_cfg["path"],
         prompt_key=prompt_key,
@@ -931,7 +1087,15 @@ def _build_adjudicator_prompt(
     )
     prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}"
     if len(prompt) > max_chars:
-        return prompt[:max_chars]
+        minimal_json = _minimal_event_json(event)
+        system_prompt, user_prompt = _build_prompt_messages_by_key(
+            prompts_path=prompts_cfg["path"],
+            prompt_key=prompt_key,
+            template_vars={"event_json": minimal_json},
+        )
+        prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}"
+    if len(prompt) > max_chars:
+        raise ValueError("AI adjudicator prompt exceeds input_chars_max")
     return prompt
 
 
@@ -996,7 +1160,7 @@ def _validate_ai_output(
         validated["recommended_queue"] = queue
     else:
         errors.append(f"invalid recommended_queue: {queue}")
-        validated["recommended_queue"] = "manual_review"
+        validated["recommended_queue"] = ""
 
     should_see = data.get("should_rop_see")
     if isinstance(should_see, bool):
@@ -1010,7 +1174,7 @@ def _validate_ai_output(
         validated["correct_action"] = action
     else:
         errors.append(f"invalid correct_action: {action}")
-        validated["correct_action"] = "manual_review"
+        validated["correct_action"] = ""
 
     confidence = data.get("confidence", 0.0)
     if isinstance(confidence, (int, float)) and 0.0 <= confidence <= 1.0:
@@ -1105,54 +1269,23 @@ def _validate_ai_output(
     return validated
 
 
+def _is_business_impacting_deterministic(event: dict[str, Any]) -> bool:
+    action = _deterministic_value(event, "correct_action", "")
+    queue = _deterministic_value(event, "recommended_queue", "")
+    return (
+        action in _DANGEROUS_DETERMINISTIC_ACTIONS
+        or queue in _RISKY_DETERMINISTIC_QUEUES
+    )
+
+
+def _ai_output_is_semantic_unresolved(validated: dict[str, Any]) -> bool:
+    return not validated.get("recommended_queue") or not validated.get("correct_action")
+
+
 def _is_event_eligible_for_adjudicator(event: dict[str, Any]) -> bool:
     if _is_possible_duplicate(event):
         return True
-    case_type = event.get("case_type", "")
-    if case_type == "duplicate":
-        return False
-
-    if _is_deterministic_tender_candidate(event):
-        return True
-
-    is_fallback = event.get("is_fallback", False)
-    confidence = event.get("confidence", 1.0)
-    if isinstance(confidence, (int, float)):
-        confidence = float(confidence)
-    else:
-        confidence = 1.0
-
-    if is_fallback:
-        return True
-
-    if case_type == "unknown":
-        return True
-
-    if confidence < 0.60:
-        return True
-
-    eligible_low_conf_types = {"existing_deal", "follow_up"}
-    if case_type in eligible_low_conf_types and confidence < 0.80:
-        return True
-
-    ai_assist_eligible = event.get("ai_assist_eligible")
-    if ai_assist_eligible is True:
-        return True
-
-    high_risk_case_types = {"existing_deal", "new_lead"}
-    if (
-        case_type in high_risk_case_types
-        and event.get("spam_label_present", False)
-        and _has_supplier_or_product_outreach_signal(event)
-    ):
-        return True
-
-    if case_type in high_risk_case_types and _has_newsletter_hr_legal_training_signal(
-        event
-    ):
-        return True
-
-    return False
+    return event.get("case_type", "") != "duplicate"
 
 
 def call_openai_responses_api(
@@ -1338,6 +1471,7 @@ def run_adjudicator_for_event(
     profile_cfg: dict[str, Any],
     prompts_cfg: dict[str, Any],
     logger: logging.Logger,
+    body_chars_max: int = 1600,
 ) -> dict[str, Any]:
     eligible = _is_event_eligible_for_adjudicator(event)
     provider = profile_cfg["provider"]
@@ -1350,13 +1484,19 @@ def run_adjudicator_for_event(
     final_should_rop_see = event.get("should_rop_see")
 
     prompt: str | None = None
+    prompt_budget_error: str | None = None
     if eligible:
-        prompt = _build_adjudicator_prompt(
-            prompts_cfg=prompts_cfg,
-            event=event,
-            prompt_key=adj_cfg["prompt_key"],
-            max_chars=int(adj_cfg["input_chars_max"]),
-        )
+        try:
+            prompt = _build_adjudicator_prompt(
+                prompts_cfg=prompts_cfg,
+                event=event,
+                prompt_key=adj_cfg["prompt_key"],
+                max_chars=int(adj_cfg["input_chars_max"]),
+                body_chars_max=body_chars_max,
+            )
+        except ValueError as exc:
+            prompt_budget_error = str(exc)
+            prompt = None
 
     request_artifact = _build_request_artifact(
         event,
@@ -1402,12 +1542,50 @@ def run_adjudicator_for_event(
             ),
         }
 
+    if prompt_budget_error:
+        final_recommended_queue, final_correct_action, final_should_rop_see = (
+            _deterministic_final_routing(event)
+        )
+        return {
+            "request": request_artifact,
+            "decision": {
+                "event_id": event.get("event_id", ""),
+                "provider": provider,
+                "model": model,
+                "status": "degraded",
+                "reason_code": "prompt_budget_exceeded",
+                "error": prompt_budget_error,
+            },
+            "result": _build_result(
+                event,
+                ai_used=False,
+                ai_provider=provider,
+                ai_model=model,
+                ai_status="degraded",
+                ai_confidence=None,
+                ai_reason="",
+                ai_reason_code="",
+                ai_evidence_codes=[],
+                ai_risk_flags=[],
+                ai_error=prompt_budget_error,
+                final_case_type=final_case_type,
+                final_case_subtype=final_case_subtype,
+                final_recommended_queue=final_recommended_queue,
+                final_correct_action=final_correct_action,
+                final_should_rop_see=final_should_rop_see,
+                merge_reason="prompt_budget_exceeded_deterministic_result_preserved",
+                errors=[prompt_budget_error],
+                warnings=[],
+                dropped_risk_flags=[],
+            ),
+        }
+
     api_key_env = profile_cfg["api_key_env"]
     api_key = os.getenv(api_key_env, "").strip()
     if not api_key:
         error = "AI adjudicator API key not found; deterministic result preserved"
         final_recommended_queue, final_correct_action, final_should_rop_see = (
-            _degraded_final_routing(event)
+            _deterministic_final_routing(event)
         )
         return {
             "request": request_artifact,
@@ -1455,7 +1633,7 @@ def run_adjudicator_for_event(
     if raw_response is None:
         error = "AI provider call failed; deterministic result preserved"
         final_recommended_queue, final_correct_action, final_should_rop_see = (
-            _degraded_final_routing(event)
+            _deterministic_final_routing(event)
         )
         return {
             "request": request_artifact,
@@ -1495,7 +1673,7 @@ def run_adjudicator_for_event(
     if parsed is None:
         error = "AI output was unparseable; deterministic result preserved"
         final_recommended_queue, final_correct_action, final_should_rop_see = (
-            _degraded_final_routing(event)
+            _deterministic_final_routing(event)
         )
         return {
             "request": request_artifact,
@@ -1544,10 +1722,10 @@ def run_adjudicator_for_event(
         if ai_confidence >= min_confidence and not validation_errors:
             if validated.get("duplicate_decision") == "confirm_duplicate":
                 final_case_type = "duplicate"
-                final_case_subtype = "manual_review"
-                final_recommended_queue = "manual_review"
-                final_correct_action = "manual_review"
-                final_should_rop_see = True
+                final_case_subtype = None
+                final_recommended_queue = event.get("recommended_queue")
+                final_correct_action = event.get("correct_action")
+                final_should_rop_see = event.get("should_rop_see", True)
                 merge_reason = "possible_duplicate_confirmed"
             else:
                 (
@@ -1561,19 +1739,19 @@ def run_adjudicator_for_event(
             status = "ok"
             ai_error = ""
         else:
-            status = "manual_review_degrade"
+            status = "duplicate_unresolved"
             (
                 final_case_type,
                 final_case_subtype,
-                _base_queue,
-                _base_action,
-                _base_should_see,
+                final_recommended_queue,
+                final_correct_action,
+                final_should_rop_see,
             ) = _base_classification_fields(event)
-            final_recommended_queue = "manual_review"
-            final_correct_action = "manual_review"
-            final_should_rop_see = True
-            ai_error = "Possible duplicate AI result was not accepted; manual review required"
-            merge_reason = "possible_duplicate_manual_review"
+            ai_error = (
+                "Possible duplicate AI result was not accepted; "
+                "base classification preserved and deferred."
+            )
+            merge_reason = "possible_duplicate_unresolved_base_preserved"
 
         decision = {
             "event_id": event.get("event_id", ""),
@@ -1625,19 +1803,29 @@ def run_adjudicator_for_event(
     errors = validation_errors
     warnings = validation_warnings
     merge_reason = "validated_ai_adjudicator_output"
-    if ai_confidence >= min_confidence and not validation_errors:
-        if _ai_output_conflicts_with_marker_signals(event, validated):
-            status = "manual_review_degrade"
+    ai_decision_valid = not validation_errors and bool(validated.get("reason_code", ""))
+    if ai_decision_valid and ai_confidence >= min_confidence:
+        if _ai_output_is_semantic_unresolved(
+            validated
+        ) or _ai_output_conflicts_with_marker_signals(event, validated):
+            status = "deterministic_preserved"
             final_case_type = _deterministic_value(event, "case_type", "unknown")
-            final_case_subtype = None
-            final_recommended_queue = "manual_review"
-            final_correct_action = "manual_review"
-            final_should_rop_see = True
-            ai_error = (
-                "AI output conflicts with supplier/newsletter conflict signals; "
-                "routed to manual review."
+            final_case_subtype = _deterministic_value(event, "case_subtype", None)
+            final_recommended_queue, final_correct_action, final_should_rop_see = (
+                _deterministic_final_routing(event)
             )
-            merge_reason = "ai_output_conflict_manual_review"
+            if _ai_output_is_semantic_unresolved(validated):
+                ai_error = (
+                    "AI output did not resolve a semantic decision; "
+                    "deterministic result preserved."
+                )
+                merge_reason = "ai_output_unresolved_deterministic_result_preserved"
+            else:
+                ai_error = (
+                    "AI output conflicts with supplier/newsletter conflict signals; "
+                    "deterministic result preserved."
+                )
+                merge_reason = "ai_output_conflict_deterministic_result_preserved"
         else:
             final_case_type = validated.get("case_type") or final_case_type
             final_case_subtype = validated.get("case_subtype")
@@ -1654,26 +1842,7 @@ def run_adjudicator_for_event(
                 min_confidence,
             ):
                 merge_reason = "ai_resolved_risky_false_positive"
-    elif ai_confidence >= min_confidence and validation_errors:
-        if _has_conflict_or_risky_deterministic_signal(event, min_confidence):
-            status = "manual_review_degrade"
-            final_case_type = _deterministic_value(event, "case_type", "unknown")
-            final_case_subtype = None
-            final_recommended_queue = "manual_review"
-            final_correct_action = "manual_review"
-            final_should_rop_see = True
-            ai_error = (
-                "AI output had validation errors for ambiguous/conflict case; "
-                "routed to manual review."
-            )
-            merge_reason = "ai_validation_error_manual_review"
-        else:
-            status = "degraded"
-            ai_error = "; ".join(validation_errors)
-            merge_reason = (
-                "ai_output_with_validation_errors_deterministic_result_preserved"
-            )
-    else:
+    elif ai_decision_valid:
         errors = [*validation_errors, "ai_confidence_below_acceptance_threshold"]
         if _is_low_confidence_safe_ignore_preservation(event, validated):
             status = "low_confidence_preserve"
@@ -1682,24 +1851,34 @@ def run_adjudicator_for_event(
                 "preserved."
             )
             merge_reason = "ai_low_confidence_safe_ignore_preserved"
-        elif _has_conflict_or_risky_deterministic_signal(event, min_confidence):
-            status = "manual_review_degrade"
-            final_case_type = _deterministic_value(event, "case_type", "unknown")
-            final_case_subtype = None
-            final_recommended_queue = "manual_review"
-            final_correct_action = "manual_review"
-            final_should_rop_see = True
-            ai_error = (
-                "AI confidence below acceptance threshold for ambiguous/conflict case; "
-                "routed to manual review."
-            )
-            merge_reason = "ai_low_confidence_manual_review"
         else:
-            status = "low_confidence"
-            ai_error = "AI confidence below acceptance threshold; deterministic result preserved"
+            status = "low_confidence_preserve"
+            final_case_type = _deterministic_value(event, "case_type", "unknown")
+            final_case_subtype = _deterministic_value(event, "case_subtype", None)
+            final_recommended_queue, final_correct_action, final_should_rop_see = (
+                _deterministic_final_routing(event)
+            )
+            ai_error = (
+                "AI confidence below acceptance threshold; "
+                "deterministic result preserved."
+            )
             merge_reason = (
                 "ai_confidence_below_threshold_deterministic_result_preserved"
             )
+    else:
+        status = "deterministic_preserved"
+        errors = validation_errors
+        final_case_type = _deterministic_value(event, "case_type", "unknown")
+        final_case_subtype = _deterministic_value(event, "case_subtype", None)
+        final_recommended_queue, final_correct_action, final_should_rop_see = (
+            _deterministic_final_routing(event)
+        )
+        ai_error = (
+            "; ".join(validation_errors)
+            if validation_errors
+            else "AI output failed validation; deterministic result preserved."
+        )
+        merge_reason = "ai_output_invalid_deterministic_result_preserved"
 
     decision = {
         "event_id": event.get("event_id", ""),
@@ -1774,6 +1953,8 @@ def run_adjudicator_batch(
 
     _, profile_cfg = _resolve_active_ai_profile(settings)
     prompts_cfg = _resolve_ai_prompts_cfg(settings)
+    email_preview = settings.get("rop", {}).get("email_preview", {})
+    body_chars_max = int(email_preview.get("body_chars_max", 1600))
     max_events = int(adj_cfg["events_max"])
     eligible_events = [
         event for event in events if _is_event_eligible_for_adjudicator(event)
@@ -1791,6 +1972,7 @@ def run_adjudicator_batch(
             profile_cfg=profile_cfg,
             prompts_cfg=prompts_cfg,
             logger=logger,
+            body_chars_max=body_chars_max,
         )
         requests.append(adjudicator_result.get("request", {}))
         decisions.append(adjudicator_result.get("decision", {}))
@@ -1801,7 +1983,15 @@ def run_adjudicator_batch(
         1
         for result in results
         if result.get("ai_status")
-        in ("degraded", "invalid", "low_confidence", "manual_review_degrade")
+        in (
+            "degraded",
+            "invalid",
+            "low_confidence",
+            "low_confidence_preserve",
+            "deterministic_preserved",
+            "duplicate_unresolved",
+            "manual_review_degrade",
+        )
     )
 
     counters = {

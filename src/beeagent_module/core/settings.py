@@ -263,9 +263,7 @@ def validate_settings(settings: dict) -> None:
     if not isinstance(mailbox_poll.get("enabled"), bool):
         raise RuntimeError("Invalid type for rop.mailbox_poll.enabled, expected bool")
     if "all_sources" in mailbox_poll:
-        raise RuntimeError(
-            "Unsupported rop.mailbox_poll.all_sources; use sources_all"
-        )
+        raise RuntimeError("Unsupported rop.mailbox_poll.all_sources; use sources_all")
     poll_sources_all = mailbox_poll.get("sources_all", False)
     if not isinstance(poll_sources_all, bool):
         raise RuntimeError(
@@ -972,12 +970,29 @@ def _validate_bitrix_settings(settings: dict) -> None:
             "Invalid bitrix.reconciliation.window_date, expected int > 0"
         )
 
+    corr_cfg = recon_cfg.get("correlation")
+    if not isinstance(corr_cfg, dict):
+        raise RuntimeError(
+            "Invalid or missing bitrix.reconciliation.correlation, expected mapping"
+        )
+    if not isinstance(corr_cfg.get("enabled"), bool):
+        raise RuntimeError(
+            "Invalid type for bitrix.reconciliation.correlation.enabled, expected bool"
+        )
+    corr_window_days = corr_cfg.get("window_days")
+    if (
+        not isinstance(corr_window_days, int)
+        or isinstance(corr_window_days, bool)
+        or corr_window_days <= 0
+    ):
+        raise RuntimeError(
+            "Invalid bitrix.reconciliation.correlation.window_days, expected int > 0"
+        )
+
     writeback_cfg = bitrix_cfg.get("writeback")
     if writeback_cfg is not None:
         if not isinstance(writeback_cfg, dict):
-            raise RuntimeError(
-                "Invalid type for bitrix.writeback, expected mapping"
-            )
+            raise RuntimeError("Invalid type for bitrix.writeback, expected mapping")
         if not isinstance(writeback_cfg.get("enabled"), bool):
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.enabled, expected bool"
@@ -990,9 +1005,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
             )
         writeback_timeout = writeback_cfg.get("timeout")
         if not isinstance(writeback_timeout, int) or writeback_timeout <= 0:
-            raise RuntimeError(
-                "Invalid bitrix.writeback.timeout, expected int > 0"
-            )
+            raise RuntimeError("Invalid bitrix.writeback.timeout, expected int > 0")
         if "retry_attempts_max" in writeback_cfg:
             raise RuntimeError(
                 "Unsupported bitrix.writeback.retry_attempts_max; "
@@ -1028,12 +1041,9 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 "use bitrix.writeback.email_completed"
             )
         email_completed = writeback_cfg.get("email_completed")
-        if email_completed is not None and not isinstance(
-            email_completed, bool
-        ):
+        if email_completed is not None and not isinstance(email_completed, bool):
             raise RuntimeError(
-                "Invalid bitrix.writeback.email_completed, "
-                "expected boolean"
+                "Invalid bitrix.writeback.email_completed, expected boolean"
             )
         source_id_value = writeback_cfg.get("source_id")
         if source_id_value is not None and not isinstance(source_id_value, str):

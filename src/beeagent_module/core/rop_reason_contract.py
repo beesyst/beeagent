@@ -59,14 +59,18 @@ ATTENTION_REASON_CODES = frozenset(
         "ai_low_confidence_manual_review",
         "ai_output_conflict_manual_review",
         "ai_validation_error_manual_review",
+        "ai_output_conflict_deterministic_result_preserved",
+        "ai_output_unresolved_deterministic_result_preserved",
+        "ai_output_invalid_deterministic_result_preserved",
+        "possible_duplicate_unresolved_base_preserved",
         "ai_output_with_validation_errors_deterministic_result_preserved",
         "ai_confidence_below_threshold_deterministic_result_preserved",
         "missing_api_key_deterministic_result_preserved",
         "provider_call_failed_deterministic_result_preserved",
-        "ai_output_invalid_deterministic_result_preserved",
         "deterministic_result_preserved",
         "ai_adjudicator_unexpected_status",
         "possible_duplicate_manual_review",
+        "semantic_unresolved_no_operator_queue",
     }
 )
 AI_EVIDENCE_CODES_MAX = 5

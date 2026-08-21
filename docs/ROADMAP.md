@@ -8749,7 +8749,7 @@ production enablement; до него Iteration 38 не считается пол
 
 ### Итерация 39 — ROP conversation identity and AI decision hardening v2
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -8849,6 +8849,124 @@ ROP runtime получает двухуровневую semantic classification 
 - docs/security contracts are updated where behavior changes;
 - required checks are green;
 - `pyproject.toml.version` is not changed.
+
+#### Implemented (v2, Issue #206)
+
+- deterministic classifier остаётся первым semantic echelon; AI adjudicator расширен на
+  business-impacting deterministic `new_lead` / `existing_deal` (высокая уверенность больше
+  не exempt); confirmed duplicate (`case_type=duplicate`) защищён от AI reclassification;
+  AI = реальный второй semantic echelon: eligibility minimal — possible duplicate →
+  eligible, confirmed duplicate (`case_type=duplicate`) → skip, все остальные semantic
+  events AI-eligible; transport labels (SPAM/FWD/RE, включая `spam_label_present`) — weak
+  transport evidence и никогда не gate semantic verifier (mail-server spam label не
+  позволяет ошибочному deterministic irrelevant обойти AI); marker signals остаются
+  bounded evidence в prompt/audit, но не являются вторым semantic classifier с veto
+  authority после AI (valid high-confidence AI semantic decision становится final, кроме
+  структурно невозможных комбинаций); body контекст в prompt ограничен config
+  (`rop.email_preview.body_chars_max`) внутри absolute `input_chars_max`;
+- `ai_reason_code` обязателен для нового valid AI decision: missing/unknown reason code —
+  validation diagnostic с сохранением deterministic result (не `legacy`); historical
+  artifacts без `ai_reason_code` остаются backward-compatible readable;
+- class/evidence-aware merge policy вместо confidence-only: valid + high confidence + no
+  conflict → AI applied; conflict / unresolved (`manual_review` queue) / invalid / low
+  confidence / provider failure → deterministic result preserved с explicit diagnostics;
+  `manual_review` не является normal terminal semantic queue; provider timeout/error/
+  invalid output сохраняет deterministic classification + diagnostics;
+- unsafe/ambiguous CRM target остаётся `deferred` и fail-closed; weak sender/subject/time
+  evidence никогда не авторизует `attach_existing`;
+- BeeAgent-owned conversation relation отдельно от domain `case_type`:
+  `rop_conversation.json` (per-run conversations, roles root/reply/continuation, exact RFC
+  authority, same `client_id` across sources); exact continuation через `source_id`
+  работает в пределах одного `client_id`; два независимых треда одного sender остаются
+  раздельными; semantic `case_type` не выводится из conversation/CRM membership;
+- controlled read-only Bitrix outbound-correlation evidence check
+  (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID
+  из outbound activity) + последующий inbound RFC ancestry → exact conversation bridge;
+  bridge авторизует `attach_existing` (`target_provenance=bitrix_outbound_exact`) только
+  когда полный target (entity type/type-id/entity-id/recorded responsible) совпадает с
+  canonical trusted CRM target из write-back state (provenances
+  `beeagent_created`/`thread_resolved`); без exact identifier, без совпадения RFC ancestry
+  или без trusted-target совпадения — candidate-only/deferred
+  (`outbound_candidate_untrusted`) без mutation authority; проверенный
+  `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop;
+  outbound evidence collection bounded/paginated: `crm.activity.list` paginates через
+  cursor `next` в пределах `bitrix.pages_max`, same Message-ID conflict обнаруживается по
+  всей bounded result set (включая cross-page), malformed top-level response / malformed
+  cursor / malformed result → fail-closed (`BitrixMalformedResponse`, без bridge, без
+  mutation), `call()` требует object top-level JSON (list/null/string →
+  `BitrixMalformedResponse`), read-only method allowlist не содержит mutation methods;
+- Event Detail: `deterministic` section (deterministic case_type/queue/action/confidence/
+  reason), `conversation` section (cross-run/cross-source timeline всех известных сообщений
+  conversation с write-back CRM outcome), отдельные AI proposal (`ai_adjudicator`) и final
+  semantic result (`final_decision`); deterministic/AI/final/conversation визуально
+  различимы;
+- It38 exact `Message-ID`/`In-Reply-To`/bounded `References` authority и trusted-target/
+  idempotency гарантии сохранены.
+
+#### Verification (Issue #206)
+
+- reviewed classification integration gate: 8/8 reviewed scenarios достигают ожидаемого
+  final semantic type (`run-9cd9d1ae99e9`, `run-844530c057e6`, `run-ce974a9b8582` →
+  `irrelevant`; `run-41d2bcf42389`, `run-d96b18d8fc70` → `new_lead`;
+  `run-a7c20bc709ba`, `run-0036f2c6d9ee`, `run-8bf12d19f51e` → `irrelevant`);
+- targeted AI eligibility, validation/reason-code, class/evidence-aware merge, provider
+  failure, strong-noise skip, confirmed-duplicate skip, possible-duplicate unresolved
+  base-preserved, low-confidence conflict, RFC A→B→C, cross-source exact reply, two
+  independent threads same sender, subject-similarity never-authorizes, conflicting/malformed
+  RFC, outbound exact bridge, candidate-only fail-closed, untrusted outbound candidate →
+  deferred/zero mutation, trusted-target+responsible-matching outbound bridge → attach,
+  responsible mismatch → deferred, numeric-string Bitrix IDs/DIRECTION, DIRECTION
+  inbound/missing/malformed rejected, duplicate outbound Message-ID conflict → no bridge,
+  stale bridge without current RFC ancestry → no bridge, proven bridge next-hop C
+  continuation, conversation timeline, Event Detail deterministic/AI/final/conversation
+  distinction;
+- correction run (final review blockers): trusted-target+responsible authority для
+  `bitrix_outbound_exact` (authorize `attach_existing` только при полном совпадении
+  entity type/type-id/entity-id/recorded responsible с canonical trusted CRM target из
+  write-back state; Bitrix activity не может заменить trusted responsible; иначе
+  `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound
+  proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence не является
+  proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated
+  против текущего RFC ancestry; proven `bitrix_outbound_exact` становится trusted thread
+  root для следующего RFC hop; bounded AI context только из canonical attachment
+  extraction evidence (nested `attachments[].text_preview` не является authority);
+  `input_chars_max` — абсолютная граница (иначе degraded `prompt_budget_exceeded`, без
+  provider call); `manual_review` удалён из схемы новых AI-решений и нормализуется в
+  final routing как `unresolved`/`no_action`/attention (`semantic_unresolved_no_operator_queue`);
+  exact RFC trusted-target ambiguity использует полный trusted identity
+  (entity_type/type-id/entity-id/responsible); confirmed: format-only churn в diff against
+  main отсутствует (нет except-syntax churn и reflows; все hunks Issue-required);
+- final-review echelon hardening (Pass 6): AI = реальный второй semantic echelon —
+  eligibility упрощён (possible-duplicate → eligible; confirmed duplicate → skip;
+  все остальные semantic events eligible), marker-veto удалён из
+  `_ai_output_conflicts_with_marker_signals` (только структурно невозможные комбинации
+  veto), body context budget из `rop.email_preview.body_chars_max` внутри absolute
+  `input_chars_max`; Bitrix outbound correlation hardened: top-level non-object JSON →
+  `BitrixMalformedResponse`, bounded pagination (`bitrix.pages_max`) с cross-page
+  same-Message-ID ambiguity, malformed cursor/result → fail-closed без bridge;
+- final-review AI-echelon correction (Pass 7): удалён structured spam-label gate —
+  `_is_strong_explicit_irrelevant` полностью убран; `_is_event_eligible_for_adjudicator`
+  минимален (possible duplicate → eligible; иначе `case_type != "duplicate"`);
+  транспортные SPAM/FWD/RE labels (включая `spam_label_present`) — weak transport evidence
+  и никогда не bypass AI semantic verifier;
+- new regression coverage (Pass 6+7): late-RFQ (за пределами первых 500 символов)
+  deterministic high-confidence ignore остаётся AI-eligible и valid high-confidence AI
+  `new_lead` может стать final, в т.ч. при `spam_label_present=true`; valid
+  high-confidence AI semantic correction не vetoed generic marker lists; configured
+  `body_chars_max` honored (content >1600 символов достигает AI при достаточном
+  `input_chars_max`); reviewed buyer-RFQ gate и spam-labelled RFQ gate упражняют второй
+  semantic echelon (valid AI decision → `final_decision_source=ai_adjudicator`);
+  confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact
+  Message-ID на page 2, cross-page conflict → no bridge, malformed `next`/result →
+  fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
+- `uv run pytest -q` → 1650 passed (exit 0); runtime smoke через ROP batch entrypoint
+  (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и
+  secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix
+  outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/
+  вебхука в текущем окружении); эквивалентные positive/negative сценарии покрыты
+  mock-level integration тестами (pagination/bridge/authority, deferred/zero mutation);
+- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены;
+  `beeagent-rop` не изменялся (public contract consumption only).
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

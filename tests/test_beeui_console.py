@@ -788,7 +788,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "&lt;script&gt;provider_reason()&lt;/script&gt;" in ru_html.text
     data = ru_api.json()["data"]
     assert data["ai_adjudicator"]["ai_adjudicator_reason"] == raw_reason
-    assert data["final_decision"]["attention_reason"] == raw_reason
+    assert (
+        data["final_decision"]["attention_reason"] == "ai_output_conflict_manual_review"
+    )
     assert data["final_decision"]["attention_reason_code"] == (
         "ai_output_conflict_manual_review"
     )
@@ -817,7 +819,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         "Показано совместимое объяснение; данные не изменялись."
     ) in legacy_api.json()["data"]["warnings"]
     legacy_data = legacy_api.json()["data"]
-    assert legacy_data["final_decision"]["attention_reason"] == "legacy raw reason"
+    assert legacy_data["final_decision"]["attention_reason"] == (
+        "ai_output_conflict_manual_review"
+    )
     assert legacy_data["final_decision"]["attention_reason_display"] == (
         "Результат ИИ противоречит сигналам; требуется ручная проверка"
     )
@@ -3089,7 +3093,7 @@ def test_rop_dashboard_includes_ai_adjudicator_summary(tmp_path: Path) -> None:
     assert "final_decision_summary" in data
     fds = data["final_decisions"]["summary"]
     assert fds["total_events"] > 0
-    assert fds["attention_count"] == 1
+    assert fds["attention_count"] == 4
 
 
 def test_rop_dashboard_final_decisions_computed_projection(tmp_path: Path) -> None:
@@ -3132,7 +3136,7 @@ def test_rop_dashboard_final_decisions_computed_projection(tmp_path: Path) -> No
     data = response.json()["data"]
     fds = data["final_decisions"]["summary"]
     assert fds["total_events"] == 5
-    assert fds["attention_count"] == 1
+    assert fds["attention_count"] == 4
     decisions = data["final_decisions"]["events"]
     evt1 = next((d for d in decisions if d["event_id"] == "evt-001"), None)
     assert evt1 is not None
@@ -3144,6 +3148,14 @@ def test_rop_dashboard_final_decisions_computed_projection(tmp_path: Path) -> No
     assert evt2["needs_attention"] is True
     assert evt2["automation_allowed"] is False
     assert evt2["bitrix_write_allowed"] is False
+    for evt in decisions:
+        if evt["event_id"] == "evt-001":
+            continue
+        assert evt["final_queue"] == "unresolved"
+        assert evt["final_action"] == "no_action"
+        assert evt["needs_attention"] is True
+        assert evt["automation_allowed"] is False
+        assert evt["bitrix_write_allowed"] is False
 
 
 def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
@@ -3189,9 +3201,9 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
         },
         {
             "event_id": "e2",
-            "ai_status": "manual_review_degrade",
+            "ai_status": "deterministic_preserved",
             "ai_reason": "conflict_signals_detected",
-            "merge_reason": "ai_output_conflict_manual_review",
+            "merge_reason": "ai_output_conflict_deterministic_result_preserved",
             "ai_evidence_codes": [
                 "low_signal",
                 "marketing_conflict",
@@ -3202,8 +3214,8 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
             ],
             "ai_confidence": 0.35,
             "final_case_type": "existing_deal",
-            "final_recommended_queue": "manual_review",
-            "final_correct_action": "manual_review",
+            "final_recommended_queue": "procurement",
+            "final_correct_action": "check_bitrix",
         },
     ]
 
@@ -3229,8 +3241,10 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
     e2 = decisions["e2"]
     assert e2["final_decision_source"] == "deterministic_preserved"
     assert e2["needs_attention"] is True
-    assert e2["attention_reason"] == "conflict_signals_detected"
-    assert e2["attention_reason_code"] == "ai_output_conflict_manual_review"
+    assert e2["attention_reason"] == "ai_output_conflict_deterministic_result_preserved"
+    assert e2["attention_reason_code"] == (
+        "ai_output_conflict_deterministic_result_preserved"
+    )
     assert e2["attention_evidence_codes"] == [
         "low_signal",
         "marketing_conflict",
@@ -3250,7 +3264,7 @@ def test_build_final_decisions_artifact_policy(tmp_path: Path) -> None:
     assert e3["bitrix_write_allowed"] is False
 
 
-def test_build_final_decisions_bounds_manual_review_attention_reason() -> None:
+def test_build_final_decisions_uses_safe_attention_reason_code() -> None:
     from beeagent_module.core.rop_final_decision import build_final_decisions
 
     raw_reason = "<script>oversized-attention</script>" + "x" * 700
@@ -3267,17 +3281,21 @@ def test_build_final_decisions_bounds_manual_review_attention_reason() -> None:
         [
             {
                 "event_id": "e1",
-                "ai_status": "manual_review_degrade",
+                "ai_status": "deterministic_preserved",
                 "ai_reason": raw_reason,
-                "merge_reason": "ai_output_conflict_manual_review",
+                "merge_reason": "ai_output_conflict_deterministic_result_preserved",
             }
         ],
     )
 
     decision = artifact["events"][0]
-    assert decision["attention_reason"] == raw_reason[:600]
-    assert len(decision["attention_reason"]) == 600
-    assert decision["attention_reason_code"] == "ai_output_conflict_manual_review"
+    assert decision["attention_reason"] == (
+        "ai_output_conflict_deterministic_result_preserved"
+    )
+    assert decision["attention_reason_code"] == (
+        "ai_output_conflict_deterministic_result_preserved"
+    )
+    assert raw_reason not in decision["attention_reason"]
 
 
 def test_dashboard_prefers_final_decisions_artifact(tmp_path: Path) -> None:
@@ -3800,6 +3818,225 @@ def test_rop_event_detail_builds_deterministic_final_decision_and_evidence(
     assert availability["rop_final_decisions_json"] is True
 
 
+def test_rop_event_detail_exposes_deterministic_and_conversation_sections(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-conv")
+    classified_path = run_dir / "classified_events.json"
+    classified = json.loads(classified_path.read_text(encoding="utf-8"))
+    classified[0].update(
+        {
+            "deterministic_case_type": "new_lead",
+            "deterministic_case_subtype": "new_lead_rfq",
+            "deterministic_recommended_queue": "sales",
+            "deterministic_correct_action": "review_new_lead",
+            "deterministic_confidence": 0.88,
+            "deterministic_reason_code": "new_lead_request_signal",
+        }
+    )
+    classified_path.write_text(json.dumps(classified), encoding="utf-8")
+
+    state = {
+        "events": {
+            "welding|hotline_mailbox|msg-a|": {
+                "event_id": "evt-1",
+                "event_instance_id": "event-000001",
+                "client_id": "welding",
+                "source_id": "hotline_mailbox",
+                "message_id": "msg-a",
+                "in_reply_to": "",
+                "references": "",
+                "sender_email": "client@example.com",
+                "subject": "Need welding quote",
+                "case_type": "new_lead",
+                "outcome": "create_lead",
+                "status": "created",
+                "target_entity_type": "lead",
+                "target_entity_id": 1001,
+                "target_provenance": "beeagent_created",
+                "last_run_id": "run-detail-conv",
+                "created_at_utc": "2026-08-01T10:00:00Z",
+            },
+            "welding|other_mailbox|msg-b|": {
+                "event_id": "evt-2",
+                "event_instance_id": "event-000001",
+                "client_id": "welding",
+                "source_id": "other_mailbox",
+                "message_id": "msg-b",
+                "in_reply_to": "msg-a",
+                "references": "msg-a",
+                "sender_email": "client@example.com",
+                "subject": "Re: Need welding quote",
+                "case_type": "existing_deal",
+                "outcome": "attach_existing",
+                "status": "attached",
+                "target_entity_type": "lead",
+                "target_entity_id": 1001,
+                "target_provenance": "thread_resolved",
+                "last_run_id": "run-other",
+                "created_at_utc": "2026-08-02T10:00:00Z",
+            },
+        }
+    }
+    (storage_dir / "interfaces").mkdir(parents=True, exist_ok=True)
+    (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-conv", "evt-1", event_instance_id="event-000001"
+    )
+
+    deterministic = data["deterministic"]
+    assert deterministic["available"] is True
+    assert deterministic["case_type"] == "new_lead"
+    assert deterministic["recommended_queue"] == "sales"
+    assert deterministic["correct_action"] == "review_new_lead"
+    assert deterministic["confidence"] == 0.88
+    assert deterministic["reason_code"] == "new_lead_request_signal"
+
+    conversation = data["conversation"]
+    assert conversation["available"] is True
+    assert conversation["client_id"] == "welding"
+    events = {item["event_id"]: item for item in conversation["events"]}
+    assert events["evt-1"]["source_id"] == "hotline_mailbox"
+    assert events["evt-2"]["source_id"] == "other_mailbox"
+    assert events["evt-2"]["role"] == "reply"
+    assert events["evt-2"]["writeback"]["outcome"] == "attach_existing"
+
+
+def test_rop_event_detail_deterministic_shows_original_not_current(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-det-split")
+    classified_path = run_dir / "classified_events.json"
+    classified = json.loads(classified_path.read_text(encoding="utf-8"))
+    classified[0]["case_type"] = "existing_deal"
+    classified[0]["recommended_queue"] = "procurement"
+    classified[0]["correct_action"] = "check_bitrix"
+    classified[0]["reason_code"] = "post_ai_reason"
+    classified[0].update(
+        {
+            "deterministic_case_type": "new_lead",
+            "deterministic_case_subtype": "new_lead_rfq",
+            "deterministic_recommended_queue": "sales",
+            "deterministic_correct_action": "review_new_lead",
+            "deterministic_confidence": 0.9,
+            "deterministic_reason_code": "new_lead_request_signal",
+        }
+    )
+    classified_path.write_text(json.dumps(classified), encoding="utf-8")
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-det-split", "evt-1"
+    )
+    deterministic = data["deterministic"]
+    assert deterministic["available"] is True
+    assert deterministic["case_type"] == "new_lead"
+    assert deterministic["recommended_queue"] == "sales"
+    assert deterministic["correct_action"] == "review_new_lead"
+    assert deterministic["reason_code"] == "new_lead_request_signal"
+    assert deterministic["case_type"] != "existing_deal"
+    assert deterministic["recommended_queue"] != "procurement"
+    assert deterministic["correct_action"] != "check_bitrix"
+
+
+def test_rop_event_detail_without_deterministic_evidence_is_not_available(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-no-det")
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-no-det", "evt-1")
+    deterministic = data["deterministic"]
+    assert deterministic == {"available": False}
+    assert "case_type" not in deterministic
+    assert "recommended_queue" not in deterministic
+    assert "correct_action" not in deterministic
+    assert "reason_code" not in deterministic
+
+
+def test_rop_event_detail_deterministic_ai_and_final_are_separate(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-det-ai-final")
+    classified_path = run_dir / "classified_events.json"
+    classified = json.loads(classified_path.read_text(encoding="utf-8"))
+    classified[0]["event_instance_id"] = "event-000001"
+    classified[0].update(
+        {
+            "deterministic_case_type": "new_lead",
+            "deterministic_case_subtype": "new_lead_rfq",
+            "deterministic_recommended_queue": "sales",
+            "deterministic_correct_action": "review_new_lead",
+            "deterministic_confidence": 0.7,
+            "deterministic_reason_code": "new_lead_request_signal",
+        }
+    )
+    classified_path.write_text(json.dumps(classified), encoding="utf-8")
+
+    adjudicator = {
+        "results": [
+            {
+                "event_id": "evt-1",
+                "event_instance_id": "event-000001",
+                "ai_used": True,
+                "ai_status": "ok",
+                "ai_confidence": 0.92,
+                "ai_reason": "AI proposal reason",
+                "ai_reason_code": "customer_request_detected",
+                "ai_evidence_codes": ["low_signal"],
+                "merge_reason": "validated_ai_adjudicator_output",
+                "final_case_type": "new_lead",
+                "final_recommended_queue": "sales",
+                "final_correct_action": "review_new_lead",
+            }
+        ]
+    }
+    (run_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(adjudicator), encoding="utf-8"
+    )
+    final_decisions = build_final_decisions(classified, adjudicator)
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(final_decisions), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-det-ai-final",
+        "evt-1",
+        event_instance_id="event-000001",
+    )
+    deterministic = data["deterministic"]
+    ai_adjudicator = data["ai_adjudicator"]
+    final_decision = data["final_decision"]
+    assert deterministic["available"] is True
+    assert deterministic["case_type"] == "new_lead"
+    assert ai_adjudicator["ai_adjudicator_used"] is True
+    assert ai_adjudicator["ai_adjudicator_status"] == "ok"
+    assert final_decision["final_case_type"] == "new_lead"
+    assert final_decision["final_decision_source"] == "ai_adjudicator"
+
+
 def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,
@@ -3839,9 +4076,7 @@ def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    data = build_rop_event_detail_read_model(
-        storage_dir, "run-detail-routing", "evt-1"
-    )
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-routing", "evt-1")
     routing = data["recipient_routing"]
     assert routing["available"] is True
     assert routing["recipient"] == "boss@welding.kz"
@@ -3855,9 +4090,7 @@ def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> N
     }
     assert availability["rop_recipient_routing_json"] is True
 
-    page = build_rop_event_detail_page_model(
-        storage_dir, "run-detail-routing", "evt-1"
-    )
+    page = build_rop_event_detail_page_model(storage_dir, "run-detail-routing", "evt-1")
     section_titles = [section.get("title") for section in page["sections"]]
     assert "Recipient routing" in section_titles
 
@@ -6678,6 +6911,10 @@ def _build_full_settings() -> dict:
                 "enabled": False,
                 "candidate_limit": 20,
                 "window_date": 180,
+                "correlation": {
+                    "enabled": True,
+                    "window_days": 180,
+                },
             },
             "widget": {
                 "enabled": False,

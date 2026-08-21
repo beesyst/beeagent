@@ -472,8 +472,9 @@ def test_rop_batch_case_success_with_installed_module(tmp_path: Path) -> None:
     artifact = json.loads(final_decisions_path.read_text(encoding="utf-8"))
     assert artifact["summary"]["total_events"] == 2
     for event in artifact["events"]:
-        assert event["final_queue"] == "manual_review"
-        assert event["final_action"] == "manual_review"
+        assert event["final_queue"] == "unresolved"
+        assert event["final_action"] == "no_action"
+        assert event["needs_attention"] is True
         assert event["automation_allowed"] is False
         assert event["bitrix_write_allowed"] is False
 
@@ -2424,6 +2425,400 @@ def test_rop_batch_preserves_reviewed_it20_classification_outcomes(
         assert result["case_subtype"] == expected["case_subtype"]
 
 
+@pytest.mark.parametrize(
+    ("source_ref", "event", "expected_type"),
+    [
+        (
+            "run-9cd9d1ae99e9",
+            {
+                "event_id": "reviewed-0008",
+                "source": "mailbox_readonly",
+                "sender": "supplier-ad@example.test",
+                "subject": "Коммерческое предложение на электроды",
+                "body": "Мы производим сварочные электроды АНО-21. Направляем коммерческое предложение на нашу продукцию. Предлагаем сотрудничество.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            "irrelevant",
+        ),
+        (
+            "run-844530c057e6",
+            {
+                "event_id": "reviewed-0009",
+                "source": "mailbox_readonly",
+                "sender": "partner-program@example.test",
+                "subject": "Коммерческое предложение по партнерской программе",
+                "body": "Партнерская программа. Коммерческое предложение для партнеров на продукцию бренда. Приглашаем стать партнером.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            "irrelevant",
+        ),
+        (
+            "run-ce974a9b8582",
+            {
+                "event_id": "reviewed-0010",
+                "source": "mailbox_readonly",
+                "sender": "service-center@example.test",
+                "subject": "Сервисное обслуживание сварочных аппаратов",
+                "body": "Предлагаем сервисное обслуживание и ремонт сварочных аппаратов. Коммерческое предложение прилагаем.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            "irrelevant",
+        ),
+        (
+            "run-41d2bcf42389",
+            {
+                "event_id": "reviewed-0011",
+                "source": "mailbox_readonly",
+                "sender": "contractor-buyer@example.test",
+                "subject": "Запрос коммерческого предложения",
+                "body": "Просим направить коммерческое предложение на электроды. Мы производитель сварочных работ и хотим заказать материалы из вашего каталога.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            "new_lead",
+        ),
+        (
+            "run-a7c20bc709ba",
+            {
+                "event_id": "reviewed-0012",
+                "source": "mailbox_readonly",
+                "sender": "supplier-offer@example.test",
+                "subject": "Запрос на продукцию",
+                "body": "Мы поставщик сварочного оборудования. Запрос на нашу продукцию во вложении.",
+                "raw_metadata": {"client_profile": "welding"},
+                "attachments": [
+                    {
+                        "attachment_id": "att-reviewed-0012-a",
+                        "filename": "request.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 12000,
+                        "is_inline": False,
+                    }
+                ],
+            },
+            "irrelevant",
+        ),
+        (
+            "run-0036f2c6d9ee",
+            {
+                "event_id": "reviewed-0013",
+                "source": "mailbox_readonly",
+                "sender": "partner-ops@example.test",
+                "subject": "Запрос по партнерской программе",
+                "body": "Коллеги, во вложении запрос по партнерской программе. Просим заполнить.",
+                "raw_metadata": {"client_profile": "welding"},
+                "attachments": [
+                    {
+                        "attachment_id": "att-reviewed-0013-a",
+                        "filename": "request.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 9000,
+                        "is_inline": False,
+                    }
+                ],
+            },
+            "irrelevant",
+        ),
+        (
+            "run-8bf12d19f51e",
+            {
+                "event_id": "reviewed-0014",
+                "source": "mailbox_readonly",
+                "sender": "manufacturer-promo@example.test",
+                "subject": "Заявка на продукцию",
+                "body": "Мы производим промышленные сварочные аппараты. Заявка на нашу продукцию во вложении.",
+                "raw_metadata": {"client_profile": "welding"},
+                "attachments": [
+                    {
+                        "attachment_id": "att-reviewed-0014-a",
+                        "filename": "заявка_на_поставку.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 15000,
+                        "is_inline": False,
+                    }
+                ],
+            },
+            "irrelevant",
+        ),
+        (
+            "run-d96b18d8fc70",
+            {
+                "event_id": "reviewed-0015",
+                "source": "mailbox_readonly",
+                "sender": "procurement-buyer@example.test",
+                "subject": "Запрос прайс-листа",
+                "body": "Здравствуйте! Просим предоставить прайс-лист на сварочные материалы и уточнить условия поставки.",
+                "raw_metadata": {"client_profile": "welding"},
+            },
+            "new_lead",
+        ),
+    ],
+    ids=(
+        "run-9cd9d1ae99e9_supplier_product_ad",
+        "run-844530c057e6_partner_correspondence",
+        "run-ce974a9b8582_service_promo",
+        "run-41d2bcf42389_buyer_rfq_contractor",
+        "run-a7c20bc709ba_supplier_ad_generic_attachment",
+        "run-0036f2c6d9ee_partner_generic_attachment",
+        "run-8bf12d19f51e_supplier_ad_strong_attachment",
+        "run-d96b18d8fc70_buyer_price_list_request",
+    ),
+)
+def test_rop_batch_final_classification_reviewed_it21_gate(
+    tmp_path: Path,
+    source_ref: str,
+    event: dict,
+    expected_type: str,
+) -> None:
+    run_id = f"run-it39-gate-{event['event_id']}"
+    _classify_raw_batch(
+        tmp_path,
+        [dict(event, received_at="2026-08-01T10:00:00Z")],
+        run_id,
+    )
+    final = json.loads(
+        (tmp_path / "runs" / run_id / "rop_final_decisions.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    decision = final["events"][0]
+    assert decision["final_case_type"] == expected_type
+    assert decision["final_decision_source"] in {
+        "deterministic",
+        "deterministic_preserved",
+    }
+
+
+def test_rop_batch_reviewed_buyer_rfq_exercises_ai_adjudicator_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider_calls: list[None] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(None)
+        return json.dumps(
+            {
+                "case_type": "irrelevant",
+                "case_subtype": "bulk",
+                "recommended_queue": "ignore",
+                "should_rop_see": False,
+                "correct_action": "ignore",
+                "confidence": 0.93,
+                "reason": "Promotional broadcast without a buyer request.",
+                "risk_flags": [],
+                "reason_code": "non_actionable_bulk_or_newsletter",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = _adjudicator_enabled_settings()
+    settings["rop"]["sources"] = [
+        _write_adjudicator_batch_source(
+            tmp_path,
+            "test-adj-buyer-rfq",
+            "batch_buyer_rfq.json",
+            [
+                {
+                    "event_id": "reviewed-ai-buyer",
+                    "source": "mailbox_readonly",
+                    "sender": "procurement-buyer@example.test",
+                    "subject": "Запрос прайс-листа",
+                    "body": (
+                        "Здравствуйте! Просим предоставить прайс-лист на "
+                        "сварочные материалы и уточнить условия поставки."
+                    ),
+                    "raw_metadata": {"client_profile": "welding"},
+                }
+            ],
+        )
+    ]
+
+    stub_class = _make_deterministic_adjudicator_stub(
+        case_type="new_lead",
+        case_subtype="rfq",
+        recommended_queue="sales",
+        correct_action="review_new_lead",
+        confidence=0.95,
+        reason_code="customer_request_detected",
+    )
+    _make_fake_package("test_stub_adj_buyer_rfq", "RopModule", stub_class)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_buyer_rfq",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adj-buyer-rfq",
+            session_id="session-adj-buyer-rfq",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adj-buyer-rfq"
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["ai_adjudicator_eligible_count"] == 1
+        assert operator_summary["classification"]["ai_adjudicator_used_count"] == 1
+
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event = classified_events[0]
+        assert event["deterministic_case_type"] == "new_lead"
+        assert event["ai_adjudicator_status"] == "ok"
+        assert event["case_type"] == "irrelevant"
+        assert event["recommended_queue"] == "ignore"
+        assert event["correct_action"] == "ignore"
+
+        final_decisions = json.loads(
+            (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+        )
+        final_decision = final_decisions["events"][0]
+        assert final_decision["final_decision_source"] == "ai_adjudicator"
+        assert final_decision["final_case_type"] == "irrelevant"
+        assert final_decision["final_queue"] == "ignore"
+        assert final_decision["final_action"] == "ignore"
+        assert provider_calls == [None]
+    finally:
+        _remove_fake_package("test_stub_adj_buyer_rfq")
+
+
+def test_rop_batch_spam_labelled_rfq_exercises_ai_adjudicator_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider_calls: list[None] = []
+
+    def _provider_response(**kwargs) -> str:
+        provider_calls.append(None)
+        return json.dumps(
+            {
+                "case_type": "new_lead",
+                "case_subtype": "rfq",
+                "recommended_queue": "sales",
+                "should_rop_see": True,
+                "correct_action": "review_new_lead",
+                "confidence": 0.93,
+                "reason": "RFQ later in the message body.",
+                "risk_flags": [],
+                "reason_code": "customer_request_detected",
+                "evidence_codes": ["low_signal"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        _provider_response,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = _adjudicator_enabled_settings()
+    body = (
+        "Промо-рассылка. Отписаться. " * 30
+        + "Нужен прайс-лист на сварочные материалы и условия поставки."
+    )
+    assert len(body) > 500
+    settings["rop"]["sources"] = [
+        _write_adjudicator_batch_source(
+            tmp_path,
+            "test-adj-spam-rfq",
+            "batch_spam_rfq.json",
+            [
+                {
+                    "event_id": "reviewed-ai-spam-rfq",
+                    "source": "mailbox_readonly",
+                    "sender": "updates@example.test",
+                    "subject": "Ежемесячная рассылка",
+                    "body": body,
+                    "transport_labels": ["spam"],
+                    "spam_label_present": True,
+                    "raw_metadata": {"client_profile": "welding"},
+                }
+            ],
+        )
+    ]
+
+    stub_class = _make_deterministic_adjudicator_stub(
+        case_type="irrelevant",
+        case_subtype="newsletter_bulk",
+        recommended_queue="ignore",
+        correct_action="ignore",
+        confidence=0.95,
+        reason_code="bulk_newsletter_ignore",
+    )
+    _make_fake_package("test_stub_adj_spam_rfq", "RopModule", stub_class)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_adj_spam_rfq",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        run_rop_batch_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            project_root=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            run_id="run-adj-spam-rfq",
+            session_id="session-adj-spam-rfq",
+        )
+
+        run_dir = tmp_path / "runs" / "run-adj-spam-rfq"
+        operator_summary = json.loads(
+            (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+        )
+        assert operator_summary["classification"]["ai_adjudicator_eligible_count"] == 1
+        assert operator_summary["classification"]["ai_adjudicator_used_count"] == 1
+
+        classified_events = json.loads(
+            (run_dir / "classified_events.json").read_text(encoding="utf-8")
+        )
+        event = classified_events[0]
+        assert event["deterministic_case_type"] == "irrelevant"
+        assert event["spam_label_present"] is True
+        assert event["ai_adjudicator_status"] == "ok"
+        assert event["case_type"] == "new_lead"
+        assert event["recommended_queue"] == "sales"
+        assert event["correct_action"] == "review_new_lead"
+
+        final_decisions = json.loads(
+            (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
+        )
+        final_decision = final_decisions["events"][0]
+        assert final_decision["final_decision_source"] == "ai_adjudicator"
+        assert final_decision["final_case_type"] == "new_lead"
+        assert final_decision["final_queue"] == "sales"
+        assert final_decision["final_action"] == "review_new_lead"
+        assert provider_calls == [None]
+    finally:
+        _remove_fake_package("test_stub_adj_spam_rfq")
+
+
 def test_build_duplicate_candidates_deterministic_order_and_self_exclusion() -> None:
     from beeagent_module.cases.rop_operator import _build_duplicate_candidates
 
@@ -2731,7 +3126,7 @@ def test_final_decision_preserves_deterministic_duplicate() -> None:
 
 
 @pytest.mark.parametrize("ai_status", ["degraded", "invalid", "manual_review_degrade"])
-def test_final_decision_routes_unavailable_possible_duplicate_to_manual_review(
+def test_final_decision_routes_unavailable_possible_duplicate_to_base_preserved(
     ai_status: str,
 ) -> None:
     from beeagent_module.core.rop_final_decision import build_final_decisions
@@ -2779,12 +3174,59 @@ def test_final_decision_routes_unavailable_possible_duplicate_to_manual_review(
 
     event = decisions["events"][0]
     assert event["final_case_type"] == "new_lead"
-    assert event["final_queue"] == "manual_review"
+    assert event["final_queue"] == "sales"
+    assert event["final_action"] == "review_new_lead"
     assert event["needs_attention"] is True
+    assert (
+        event["attention_reason_code"] == "possible_duplicate_unresolved_base_preserved"
+    )
     assert event["duplicate"]["resolution_status"] == "possible"
 
 
-def test_final_decisions_route_degraded_tender_to_manual_review() -> None:
+def test_final_decision_possible_duplicate_missing_base_is_safe() -> None:
+    from beeagent_module.core.rop_final_decision import build_final_decisions
+
+    duplicate = {
+        "is_duplicate": False,
+        "resolution_status": "possible",
+        "confidence": 0.8,
+        "reason_code": "near_duplicate_subject_body",
+        "reason_path": ["subject_similarity"],
+        "reasoning": "bounded duplicate evidence",
+        "candidate": None,
+        "candidates": [],
+        "is_fallback": False,
+    }
+    decisions = build_final_decisions(
+        [
+            {
+                "event_id": "possible-final",
+                "case_type": "new_lead",
+                "recommended_queue": "sales",
+                "correct_action": "review_new_lead",
+                "confidence": 0.8,
+                "duplicate": duplicate,
+            }
+        ],
+        [
+            {
+                "event_id": "possible-final",
+                "ai_status": "degraded",
+                "merge_reason": "provider_call_failed_deterministic_result_preserved",
+            }
+        ],
+    )
+
+    event = decisions["events"][0]
+    assert event["final_case_type"] == "new_lead"
+    assert event["final_queue"] == "sales"
+    assert event["needs_attention"] is True
+    assert (
+        event["attention_reason_code"] == "possible_duplicate_unresolved_base_preserved"
+    )
+
+
+def test_final_decisions_route_degraded_tender_to_deterministic_preserved() -> None:
     from beeagent_module.core.rop_final_decision import build_final_decisions
 
     event = {
@@ -2811,8 +3253,8 @@ def test_final_decisions_route_degraded_tender_to_manual_review() -> None:
         decision = decisions["events"][0]
         assert decision["deterministic_queue"] == "tender"
         assert decision["deterministic_action"] == "review_tender"
-        assert decision["final_queue"] == "manual_review"
-        assert decision["final_action"] == "manual_review"
+        assert decision["final_queue"] == "tender"
+        assert decision["final_action"] == "review_tender"
         assert decision["needs_attention"] is True
 
     for case_type, queue, action in (
@@ -2923,14 +3365,19 @@ def test_entity_encoded_rfq_reaches_public_module_and_ai_qualification(
     ai_results = json.loads(
         (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
     )
-    assert ai_results["results"][0]["ai_status"] == "manual_review_degrade"
+    assert ai_results["results"][0]["ai_status"] == "low_confidence_preserve"
     assert provider_calls
     final = json.loads(
         (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
     )["events"][0]
-    assert final["final_queue"] == "manual_review"
-    assert final["final_action"] == "manual_review"
+    assert final["final_case_type"] == "unknown"
+    assert final["final_queue"] == "unresolved"
+    assert final["final_action"] == "no_action"
     assert final["needs_attention"] is True
+    assert (
+        final["attention_reason_code"]
+        == "ai_confidence_below_threshold_deterministic_result_preserved"
+    )
 
 
 def test_filter_event_for_module_normalizes_empty_received_at_to_none() -> None:
@@ -4589,16 +5036,16 @@ def test_tender_adjudicator_provider_failure_routes_projection_and_final(
         assert result["ai_status"] == "degraded"
         assert result["deterministic_recommended_queue"] == "tender"
         assert result["deterministic_correct_action"] == "review_tender"
-        assert result["final_recommended_queue"] == "manual_review"
-        assert result["final_correct_action"] == "manual_review"
+        assert result["final_recommended_queue"] == "tender"
+        assert result["final_correct_action"] == "review_tender"
         assert classified["deterministic_recommended_queue"] == "tender"
         assert classified["deterministic_correct_action"] == "review_tender"
-        assert classified["recommended_queue"] == "manual_review"
-        assert classified["correct_action"] == "manual_review"
+        assert classified["recommended_queue"] == "tender"
+        assert classified["correct_action"] == "review_tender"
         assert final["deterministic_queue"] == "tender"
         assert final["deterministic_action"] == "review_tender"
-        assert final["final_queue"] == "manual_review"
-        assert final["final_action"] == "manual_review"
+        assert final["final_queue"] == "tender"
+        assert final["final_action"] == "review_tender"
         assert final["needs_attention"] is True
     finally:
         _remove_fake_package("test_stub_adj_tender_failure")
@@ -4904,7 +5351,7 @@ def test_adjudicator_env_kill_switch_skips_all_ai_paths(
         _remove_fake_package("test_stub_adj_env_off")
 
 
-def test_ai_adjudicator_low_confidence_routes_to_manual_review_result(
+def test_ai_adjudicator_low_confidence_preserves_deterministic_result(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -5043,14 +5490,17 @@ def test_ai_adjudicator_low_confidence_routes_to_manual_review_result(
         assert event["case_type"] == "unknown"
         assert event["recommended_queue"] == "manual_review"
         assert event["deterministic_case_type"] == "unknown"
-        assert event["ai_adjudicator_status"] == "manual_review_degrade"
+        assert event["ai_adjudicator_status"] == "deterministic_preserved"
         assert event["reason_code"] == "deterministic_fallback"
-        assert event["ai_adjudicator_merge_reason"] == "ai_low_confidence_manual_review"
+        assert (
+            event["ai_adjudicator_merge_reason"]
+            == "ai_output_invalid_deterministic_result_preserved"
+        )
 
         ai_results = json.loads(
             (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
         )
-        assert ai_results["results"][0]["ai_status"] == "manual_review_degrade"
+        assert ai_results["results"][0]["ai_status"] == "deterministic_preserved"
     finally:
         _remove_fake_package("test_stub_adj_low")
 
@@ -5102,12 +5552,12 @@ def test_ai_adjudicator_ok_result_can_clear_optional_case_subtype() -> None:
     assert events[0]["reasoning"] == "AI accepted no subtype"
 
 
-def test_ai_adjudicator_manual_review_degrade_preserves_classified_events() -> None:
+def test_ai_adjudicator_deterministic_preserved_keeps_classified_events() -> None:
     from beeagent_module.cases.rop_operator import _apply_ai_adjudicator_results
 
     events = [
         {
-            "event_id": "evt-manual-review",
+            "event_id": "evt-deterministic-preserved",
             "case_type": "existing_deal",
             "case_subtype": "existing_deal_procurement",
             "recommended_queue": "procurement",
@@ -5125,17 +5575,17 @@ def test_ai_adjudicator_manual_review_degrade_preserves_classified_events() -> N
     ]
     results = [
         {
-            "event_id": "evt-manual-review",
+            "event_id": "evt-deterministic-preserved",
             "ai_used": True,
-            "ai_status": "manual_review_degrade",
+            "ai_status": "deterministic_preserved",
             "ai_confidence": 0.35,
             "ai_reason": "Looks risky",
             "ai_risk_flags": ["low_signal"],
-            "merge_reason": "ai_low_confidence_manual_review",
+            "merge_reason": "ai_output_conflict_deterministic_result_preserved",
             "final_case_type": "existing_deal",
-            "final_case_subtype": None,
-            "final_recommended_queue": "manual_review",
-            "final_correct_action": "manual_review",
+            "final_case_subtype": "existing_deal_procurement",
+            "final_recommended_queue": "procurement",
+            "final_correct_action": "check_bitrix",
             "final_should_rop_see": True,
         }
     ]
@@ -5146,11 +5596,12 @@ def test_ai_adjudicator_manual_review_degrade_preserves_classified_events() -> N
     assert events[0]["case_subtype"] == "existing_deal_procurement"
     assert events[0]["recommended_queue"] == "procurement"
     assert events[0]["correct_action"] == "check_bitrix"
-    assert events[0]["should_rop_see"] is True
     assert events[0]["confidence"] == 0.91
-    assert events[0]["ai_adjudicator_status"] == "manual_review_degrade"
     assert events[0]["reason_code"] == "existing_deal_reference_signal"
-    assert "reasoning" not in events[0]
+    assert events[0]["ai_adjudicator_status"] == "deterministic_preserved"
+    assert events[0]["ai_adjudicator_merge_reason"] == (
+        "ai_output_conflict_deterministic_result_preserved"
+    )
 
 
 def test_ai_adjudicator_low_confidence_preserve_keeps_deterministic_result() -> None:

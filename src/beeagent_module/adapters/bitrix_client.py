@@ -122,11 +122,14 @@ class BitrixReadonlyClient:
             raise BitrixTransportError(f"Bitrix connection error: {exc}") from exc
 
         try:
-            data: dict[str, Any] = json.loads(raw.decode("utf-8"))
+            data: Any = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise BitrixMalformedResponse(
                 f"Bitrix returned malformed JSON: {exc}"
             ) from exc
+
+        if not isinstance(data, dict):
+            raise BitrixMalformedResponse("Bitrix returned malformed JSON response")
 
         if "error" in data:
             error_desc = data.get("error_description", data.get("error", "unknown"))

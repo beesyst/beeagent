@@ -162,6 +162,10 @@ def _valid_settings() -> dict:
                 "enabled": False,
                 "candidate_limit": 20,
                 "window_date": 180,
+                "correlation": {
+                    "enabled": True,
+                    "window_days": 180,
+                },
             },
             "widget": {
                 "enabled": False,
