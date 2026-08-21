@@ -11,6 +11,7 @@ from beeagent_module.core.rop_conversation import (
     write_conversation_artifacts,
 )
 from beeagent_module.core.rop_outbound_correlation import (
+    _activity_message_id,
     _activity_target,
     _is_outbound_activity,
     collect_outbound_correlation_evidence,
@@ -299,6 +300,41 @@ class TestOutboundCorrelationCollect:
         assert evidence[0]["target_responsible_user_id"] == 42
         assert client.calls[0]["filter_params"]["TYPE_ID"] == 4
 
+    def test_exact_bridge_via_message_headers_location(self) -> None:
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 1617905,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 199425,
+                    "RESPONSIBLE_ID": 1610,
+                    "DIRECTION": 2,
+                    "SETTINGS": {
+                        "MESSAGE_HEADERS": {
+                            "Message-Id": (
+                                "<crm.activity.1617905-0R9TBN@my.welding.kz>"
+                            )
+                        }
+                    },
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.1617905-0R9TBN@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert len(evidence) == 1
+        assert evidence[0]["bridge_exact"] is True
+        assert evidence[0]["outbound_message_id"] == (
+            "crm.activity.1617905-0R9TBN@my.welding.kz"
+        )
+        assert evidence[0]["target_entity_id"] == 199425
+        assert evidence[0]["outbound_activity_responsible_user_id"] == 1610
+
     def test_no_reply_headers_skips_check(self) -> None:
         client = _FakeBitrixClient()
         events = [{"event_id": "evt-a", "message_id": "<a@test>"}]
@@ -347,6 +383,64 @@ class TestOutboundCorrelationCollect:
         assert evidence == []
 
 
+class TestActivityMessageId:
+    def test_message_headers_message_id_camel(self) -> None:
+        activity = {
+            "SETTINGS": {
+                "MESSAGE_HEADERS": {"Message-Id": "<crm.activity.1-ABC@welding.kz>"}
+            }
+        }
+        assert _activity_message_id(activity) == "crm.activity.1-ABC@welding.kz"
+
+    def test_message_headers_message_id_upper(self) -> None:
+        activity = {
+            "SETTINGS": {
+                "MESSAGE_HEADERS": {"Message-ID": "<crm.activity.2-DEF@welding.kz>"}
+            }
+        }
+        assert _activity_message_id(activity) == "crm.activity.2-DEF@welding.kz"
+
+    def test_message_headers_message_id_lower(self) -> None:
+        activity = {
+            "SETTINGS": {
+                "MESSAGE_HEADERS": {"message-id": "<crm.activity.3-GHI@welding.kz>"}
+            }
+        }
+        assert _activity_message_id(activity) == "crm.activity.3-GHI@welding.kz"
+
+    def test_message_headers_message_id_arbitrary_case(self) -> None:
+        activity = {
+            "SETTINGS": {
+                "MESSAGE_HEADERS": {"mEsSaGe-iD": "<crm.activity.4-JKL@welding.kz>"}
+            }
+        }
+        assert _activity_message_id(activity) == "crm.activity.4-JKL@welding.kz"
+
+    def test_legacy_settings_message_id_still_supported(self) -> None:
+        activity = {"SETTINGS": {"MESSAGE_ID": "<out-legacy-1@welding.kz>"}}
+        assert _activity_message_id(activity) == "out-legacy-1@welding.kz"
+
+    def test_legacy_settings_email_message_id_still_supported(self) -> None:
+        activity = {"SETTINGS": {"EMAIL_MESSAGE_ID": "<out-legacy-2@welding.kz>"}}
+        assert _activity_message_id(activity) == "out-legacy-2@welding.kz"
+
+    def test_top_level_message_id_still_supported(self) -> None:
+        activity = {"MESSAGE_ID": "<out-top-3@welding.kz>"}
+        assert _activity_message_id(activity) == "out-top-3@welding.kz"
+
+    def test_message_headers_malformed_no_crash(self) -> None:
+        activity = {"SETTINGS": {"MESSAGE_HEADERS": ["not-a-mapping"]}}
+        assert _activity_message_id(activity) == ""
+
+    def test_message_headers_value_not_string_ignored(self) -> None:
+        activity = {"SETTINGS": {"MESSAGE_HEADERS": {"Message-Id": 12345}}}
+        assert _activity_message_id(activity) == ""
+
+    def test_missing_message_id_returns_empty(self) -> None:
+        assert _activity_message_id({"SETTINGS": {"OTHER": "x"}}) == ""
+        assert _activity_message_id({}) == ""
+
+
 class TestResolveOutboundBridge:
     def _event(self, refs: str = "<out-1@employee.test>") -> dict[str, Any]:
         return {
@@ -359,8 +453,10 @@ class TestResolveOutboundBridge:
     def _evidence(
         self,
         *,
+        target_entity_type: str = "lead",
+        target_entity_type_id: int = 1,
         target_entity_id: int = 1001,
-        target_responsible_user_id: int = 42,
+        target_responsible_user_id: int | None = 42,
         bridge_exact: bool = True,
         outbound_message_id: str = "out-1@employee.test",
     ) -> list[dict[str, Any]]:
@@ -370,10 +466,11 @@ class TestResolveOutboundBridge:
                 "event_instance_id": "event-b",
                 "bridge_exact": bridge_exact,
                 "outbound_message_id": outbound_message_id,
-                "target_entity_type": "lead",
-                "target_entity_type_id": 1,
+                "target_entity_type": target_entity_type,
+                "target_entity_type_id": target_entity_type_id,
                 "target_entity_id": target_entity_id,
                 "target_responsible_user_id": target_responsible_user_id,
+                "outbound_activity_responsible_user_id": target_responsible_user_id,
             }
         ]
 
@@ -399,8 +496,48 @@ class TestResolveOutboundBridge:
         assert bridge["authorized"] is False
         assert bridge["reason_code"] == "outbound_candidate_untrusted"
 
-    def test_responsible_mismatch_is_candidate_only(self) -> None:
-        trusted = {("lead", 1, 1001, 77)}
+    def test_responsible_mismatch_does_not_block_authorized_bridge(self) -> None:
+        trusted = {("lead", 1, 1001, 42)}
+        bridge = resolve_outbound_bridge(
+            self._event(), self._evidence(target_responsible_user_id=77), trusted
+        )
+        assert bridge is not None
+        assert bridge["authorized"] is True
+        assert bridge["target"]["target_entity_id"] == 1001
+        assert bridge["target"]["target_responsible_user_id"] == 42
+        assert bridge["target"]["target_provenance"] == "bitrix_outbound_exact"
+        assert bridge["target"]["outbound_activity_responsible_user_id"] == 77
+        assert bridge["target"]["responsible_mismatch"] is True
+
+    def test_activity_responsible_never_replaces_canonical(self) -> None:
+        trusted = {("lead", 1, 1001, 1563)}
+        bridge = resolve_outbound_bridge(
+            self._event(), self._evidence(target_responsible_user_id=1610), trusted
+        )
+        assert bridge is not None
+        assert bridge["authorized"] is True
+        assert bridge["target"]["target_responsible_user_id"] == 1563
+        assert bridge["target"]["trusted_target_responsible_user_id"] == 1563
+        assert bridge["target"]["outbound_activity_responsible_user_id"] == 1610
+
+    def test_activity_without_responsible_still_authorized(self) -> None:
+        trusted = {("lead", 1, 1001, 42)}
+        bridge = resolve_outbound_bridge(
+            self._event(), self._evidence(target_responsible_user_id=None), trusted
+        )
+        assert bridge is not None
+        assert bridge["authorized"] is True
+        assert bridge["target"]["target_responsible_user_id"] == 42
+
+    def test_trusted_responsible_ambiguous_fails_closed(self) -> None:
+        trusted = {("lead", 1, 1001, 42), ("lead", 1, 1001, 77)}
+        bridge = resolve_outbound_bridge(self._event(), self._evidence(), trusted)
+        assert bridge is not None
+        assert bridge["authorized"] is False
+        assert bridge["reason_code"] == "outbound_candidate_untrusted"
+
+    def test_owner_mismatch_not_authorized(self) -> None:
+        trusted = {("lead", 1, 2002, 42)}
         bridge = resolve_outbound_bridge(self._event(), self._evidence(), trusted)
         assert bridge is not None
         assert bridge["authorized"] is False

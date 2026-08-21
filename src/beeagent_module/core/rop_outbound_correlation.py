@@ -85,6 +85,16 @@ def _event_reference_ids(event: dict[str, Any]) -> list[str]:
 def _activity_message_id(activity: dict[str, Any]) -> str:
     settings = activity.get("SETTINGS")
     if isinstance(settings, dict):
+        message_headers = settings.get("MESSAGE_HEADERS")
+        if isinstance(message_headers, dict):
+            for header_name, header_value in message_headers.items():
+                if (
+                    isinstance(header_name, str)
+                    and header_name.lower() == "message-id"
+                    and isinstance(header_value, str)
+                    and header_value.strip()
+                ):
+                    return _normalize_message_id(header_value)
         for key in _MESSAGE_ID_SETTINGS_KEYS:
             value = settings.get(key)
             if isinstance(value, str) and value.strip():
@@ -95,23 +105,33 @@ def _activity_message_id(activity: dict[str, Any]) -> str:
     return ""
 
 
-def _activity_target(activity: dict[str, Any]) -> tuple[str, int, int, int] | None:
+def _activity_target(
+    activity: dict[str, Any],
+) -> tuple[str, int, int, int | None] | None:
     owner_type_id = _positive_int_or_none(activity.get("OWNER_TYPE_ID"))
     owner_id = _positive_int_or_none(activity.get("OWNER_ID"))
     responsible_id = _positive_int_or_none(activity.get("RESPONSIBLE_ID"))
     owner_type = "lead" if owner_type_id == 1 else "deal" if owner_type_id == 2 else ""
-    if (
-        owner_type
-        and owner_type_id is not None
-        and owner_id is not None
-        and responsible_id is not None
-    ):
+    if owner_type and owner_type_id is not None and owner_id is not None:
         return (
             owner_type,
             owner_type_id,
             owner_id,
             responsible_id,
         )
+    return None
+
+
+def _owner_identity(item: dict[str, Any]) -> tuple[str, int, int] | None:
+    entity_type = item.get("target_entity_type")
+    entity_type_id = item.get("target_entity_type_id")
+    entity_id = item.get("target_entity_id")
+    if (
+        isinstance(entity_type, str)
+        and _positive_int(entity_type_id)
+        and _positive_int(entity_id)
+    ):
+        return (entity_type, int(entity_type_id), int(entity_id))
     return None
 
 
@@ -179,18 +199,20 @@ def collect_outbound_correlation_evidence(
                     continue
                 if len(outbound_by_message_id) >= max_activities:
                     break
+                activity_responsible = target[3]
                 item = {
                     "outbound_message_id": message_id,
                     "target_entity_type": target[0],
                     "target_entity_type_id": target[1],
                     "target_entity_id": target[2],
-                    "target_responsible_user_id": target[3],
+                    "target_responsible_user_id": activity_responsible,
+                    "outbound_activity_responsible_user_id": activity_responsible,
                 }
                 existing = outbound_by_message_id.get(message_id)
                 if existing is None:
                     if message_id not in ambiguous_message_ids:
                         outbound_by_message_id[message_id] = item
-                elif existing != item:
+                elif _owner_identity(existing) != _owner_identity(item):
                     ambiguous_message_ids.add(message_id)
                     outbound_by_message_id.pop(message_id, None)
 
@@ -268,27 +290,54 @@ def resolve_outbound_bridge(
     entity_type = _bounded_text(candidate.get("target_entity_type"), 80)
     entity_type_id = candidate.get("target_entity_type_id")
     entity_id = candidate.get("target_entity_id")
-    responsible_id = candidate.get("target_responsible_user_id")
-    if (
-        isinstance(trusted_targets, set)
-        and (entity_type, entity_type_id, entity_id, responsible_id) in trusted_targets
-        and _positive_int(entity_type_id)
-        and _positive_int(entity_id)
-        and _positive_int(responsible_id)
-    ):
+    if not _positive_int(entity_type_id) or not _positive_int(entity_id):
         return {
-            "authorized": True,
-            "target": {
-                "target_entity_type": entity_type,
-                "target_entity_type_id": entity_type_id,
-                "target_entity_id": entity_id,
-                "target_responsible_user_id": responsible_id,
-                "target_provenance": "bitrix_outbound_exact",
-            },
+            "authorized": False,
+            "reason_code": "outbound_candidate_untrusted",
         }
+    activity_responsible = candidate.get("target_responsible_user_id")
+    if not isinstance(activity_responsible, int) or isinstance(
+        activity_responsible, bool
+    ):
+        activity_responsible = None
+
+    matched_responsibles: set[int] = set()
+    if isinstance(trusted_targets, set):
+        for (
+            trusted_type,
+            trusted_type_id,
+            trusted_entity_id,
+            trusted_responsible,
+        ) in trusted_targets:
+            if (
+                trusted_type == entity_type
+                and trusted_type_id == entity_type_id
+                and trusted_entity_id == entity_id
+                and isinstance(trusted_responsible, int)
+                and not isinstance(trusted_responsible, bool)
+            ):
+                matched_responsibles.add(trusted_responsible)
+    if len(matched_responsibles) != 1:
+        return {
+            "authorized": False,
+            "reason_code": "outbound_candidate_untrusted",
+        }
+    canonical_responsible = next(iter(matched_responsibles))
     return {
-        "authorized": False,
-        "reason_code": "outbound_candidate_untrusted",
+        "authorized": True,
+        "target": {
+            "target_entity_type": entity_type,
+            "target_entity_type_id": entity_type_id,
+            "target_entity_id": entity_id,
+            "target_responsible_user_id": canonical_responsible,
+            "target_provenance": "bitrix_outbound_exact",
+            "trusted_target_responsible_user_id": canonical_responsible,
+            "outbound_activity_responsible_user_id": activity_responsible,
+            "responsible_mismatch": (
+                activity_responsible is not None
+                and activity_responsible != canonical_responsible
+            ),
+        },
     }
 
 

@@ -1443,7 +1443,7 @@ Write-back в этом path не выполняется.
 - `storage/runs/<run_id>/rop_mvp_report.md`
 - `storage/runs/<run_id>/rop_conversation.json` — BeeAgent-owned conversation relation (exact RFC authority, client/source scope)
 - `storage/runs/<run_id>/rop_final_decisions.json` — artifact-first read-model финальных решений
-- `storage/runs/<run_id>/bitrix_outbound_correlation.json` — read-only outbound Bitrix correlation evidence (exact Message-ID bridge, trusted-target + responsible cross-check)
+- `storage/runs/<run_id>/bitrix_outbound_correlation.json` — read-only outbound Bitrix correlation evidence (exact Message-ID bridge из `SETTINGS.MESSAGE_HEADERS.Message-Id` + legacy locations; trusted-target cross-check по canonical CRM entity identity; outbound activity responsible — diagnostic only)
 
 Интерфейсные ROP artifacts:
 

@@ -8883,12 +8883,16 @@ ROP runtime получает двухуровневую semantic classification 
   (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID
   из outbound activity) + последующий inbound RFC ancestry → exact conversation bridge;
   bridge авторизует `attach_existing` (`target_provenance=bitrix_outbound_exact`) только
-  когда полный target (entity type/type-id/entity-id/recorded responsible) совпадает с
+  когда canonical CRM entity identity (entity type/type-id/entity-id) совпадает с
   canonical trusted CRM target из write-back state (provenances
-  `beeagent_created`/`thread_resolved`); без exact identifier, без совпадения RFC ancestry
-  или без trusted-target совпадения — candidate-only/deferred
-  (`outbound_candidate_untrusted`) без mutation authority; проверенный
-  `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop;
+  `beeagent_created`/`thread_resolved`); outbound activity `RESPONSIBLE_ID` — diagnostic
+  evidence, не часть trusted identity и не может заменить trusted responsible; без exact
+  identifier, без совпадения RFC ancestry или без trusted-target совпадения —
+  candidate-only/deferred (`outbound_candidate_untrusted`) без mutation authority;
+  проверенный `bitrix_outbound_exact` становится trusted thread root для следующего RFC
+  hop; реальный Bitrix Message-ID читается из `SETTINGS.MESSAGE_HEADERS.<Message-Id>`
+  (case-insensitive header name) и legacy locations (`SETTINGS.MESSAGE_ID`,
+  `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`);
   outbound evidence collection bounded/paginated: `crm.activity.list` paginates через
   cursor `next` в пределах `bitrix.pages_max`, same Message-ID conflict обнаруживается по
   всей bounded result set (включая cross-page), malformed top-level response / malformed
@@ -8914,17 +8918,17 @@ ROP runtime получает двухуровневую semantic classification 
   base-preserved, low-confidence conflict, RFC A→B→C, cross-source exact reply, two
   independent threads same sender, subject-similarity never-authorizes, conflicting/malformed
   RFC, outbound exact bridge, candidate-only fail-closed, untrusted outbound candidate →
-  deferred/zero mutation, trusted-target+responsible-matching outbound bridge → attach,
-  responsible mismatch → deferred, numeric-string Bitrix IDs/DIRECTION, DIRECTION
+  deferred/zero mutation, trusted-entity outbound bridge → attach (activity responsible
+  mismatch diagnostic only), numeric-string Bitrix IDs/DIRECTION, DIRECTION
   inbound/missing/malformed rejected, duplicate outbound Message-ID conflict → no bridge,
   stale bridge without current RFC ancestry → no bridge, proven bridge next-hop C
   continuation, conversation timeline, Event Detail deterministic/AI/final/conversation
   distinction;
-- correction run (final review blockers): trusted-target+responsible authority для
-  `bitrix_outbound_exact` (authorize `attach_existing` только при полном совпадении
-  entity type/type-id/entity-id/recorded responsible с canonical trusted CRM target из
-  write-back state; Bitrix activity не может заменить trusted responsible; иначе
-  `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound
+- correction run (final review blockers): trusted-canonical-entity authority для
+  `bitrix_outbound_exact` (authorize `attach_existing` при совпадении canonical CRM
+  entity identity entity type/type-id/entity-id с trusted CRM target из write-back state;
+  outbound activity responsible — diagnostic only и не может заменить trusted responsible;
+  иначе `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound
   proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence не является
   proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated
   против текущего RFC ancestry; proven `bitrix_outbound_exact` становится trusted thread
@@ -8982,7 +8986,17 @@ ROP runtime получает двухуровневую semantic classification 
   `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead
   + candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix
   `duplicate_candidate` — separate fields;
-- `uv run pytest -q` → 1656 passed (exit 0); runtime smoke через ROP batch entrypoint
+- live Bitrix outbound-correlation regression fix: реальный outbound Message-ID из
+  `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy
+  `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID`
+  сохранены); outbound bridge authorization — по canonical CRM entity identity
+  (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` — diagnostic only
+  (сотрудник, отправивший письмо, может отличаться от responsible самого Lead) и не
+  может заменить trusted responsible; exact bridge → `attach_existing` с
+  `target_provenance=bitrix_outbound_exact` и canonical trusted responsible; trusted
+  responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong
+  direction / no RFC ancestry — fail-closed;
+- `uv run pytest -q` → 1674 passed (exit 0); runtime smoke через ROP batch entrypoint
   (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и
   secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix
   outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/
