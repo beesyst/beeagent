@@ -129,6 +129,63 @@ _DUPLICATE_CANDIDATE_RAW_METADATA_KEYS = (
 )
 
 
+_PRIOR_RUN_MAX = 10
+_PRIOR_EVENT_MAX = 300
+
+
+def _read_run_artifact_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _load_prior_rop_context(
+    storage_dir: Path,
+    current_run_id: str,
+    logger: logging.Logger,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    runs_dir = storage_dir / "runs"
+    if not runs_dir.is_dir():
+        return [], []
+    candidates: list[tuple[float, Path]] = []
+    for child in runs_dir.iterdir():
+        if not child.is_dir() or child.name == current_run_id:
+            continue
+        if not (child / "normalized_events.json").is_file():
+            continue
+        if not (child / "classified_events.json").is_file():
+            continue
+        try:
+            mtime = child.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        candidates.append((mtime, child))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    prior_events: list[dict[str, Any]] = []
+    prior_classified: list[dict[str, Any]] = []
+    for _, run_dir in candidates[:_PRIOR_RUN_MAX]:
+        events = _read_run_artifact_json(run_dir / "normalized_events.json")
+        classified = _read_run_artifact_json(run_dir / "classified_events.json")
+        if not isinstance(events, list):
+            events = []
+        if not isinstance(classified, list):
+            classified = []
+        prior_events.extend(events)
+        prior_classified.extend(classified)
+        if len(prior_events) >= _PRIOR_EVENT_MAX:
+            break
+    if prior_events:
+        logger.debug(
+            "prior ROP thread context loaded: runs=%d events=%d classified=%d",
+            len(candidates),
+            len(prior_events),
+            len(prior_classified),
+        )
+    return prior_events, prior_classified
+
+
 def run_rop_operator_case(
     settings: dict,
     storage_dir: Path,
@@ -413,6 +470,8 @@ def _classify_normalized_events(
     session_id: str,
     source_id: str | None,
     thread_index: dict[str, Any] | None = None,
+    prior_events: list[dict[str, Any]] | None = None,
+    prior_classified: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     classified_events: list[dict[str, Any]] = []
     classified_count = 0
@@ -467,6 +526,8 @@ def _classify_normalized_events(
                 thread_index=thread_index or {},
                 classified_events=classified_events,
                 logger=logger,
+                prior_events=prior_events,
+                prior_classified=prior_classified,
             )
             context_map = {
                 item.get("event_id", ""): item
@@ -1175,6 +1236,11 @@ def run_rop_batch_case(
                 key=lambda item: (*_event_source_sort_key(item[1]), item[0]),
             )
         ]
+        prior_events, prior_classified = _load_prior_rop_context(
+            storage_dir=storage_dir,
+            current_run_id=effective_run_id,
+            logger=logger,
+        )
         thread_index = build_thread_index(
             events=ordered_events,
             logger=logger,
@@ -1190,6 +1256,8 @@ def run_rop_batch_case(
             session_id=effective_session_id,
             source_id=None,
             thread_index=thread_index,
+            prior_events=prior_events,
+            prior_classified=prior_classified,
         )
 
         thread_context = build_thread_context(
@@ -1197,6 +1265,8 @@ def run_rop_batch_case(
             thread_index=thread_index,
             classified_events=classified_events,
             logger=logger,
+            prior_events=prior_events,
+            prior_classified=prior_classified,
         )
         thread_refs = write_thread_artifacts(
             storage_dir=storage_dir,

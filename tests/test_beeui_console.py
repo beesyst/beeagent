@@ -1407,7 +1407,7 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
         "Classification",
         "Bitrix status",
     ]
-    assert layout[0]["rows"][0]["classification"] == "new_lead"
+    assert layout[0]["rows"][0]["classification"] == "New lead"
     assert layout[0]["rows"][0]["priority"]["label"] == "high"
 
 
@@ -4328,7 +4328,7 @@ def test_rop_event_detail_exposes_duplicate_evidence(tmp_path: Path) -> None:
 
     page = build_rop_event_detail_page_model(storage_dir, "run-detail-dup", "evt-1")
     items = _find_section_items(page, "Classification")
-    assert _item_by_label(items, "Base case type")["value"] == "new_lead"
+    assert _item_by_label(items, "Base case type")["value"] == "New lead"
     assert _item_by_label(items, "Duplicate candidate event")["value"] == "evt-original"
     assert _item_by_label(items, "Duplicate confidence")["value"] == 0.99
     assert _item_by_label(items, "Duplicate reason code")["value"] == (
@@ -4653,6 +4653,16 @@ def test_locale_fallback_on_invalid(tmp_path: Path) -> None:
     cfg = get_locale_config()
     assert resolve_locale("de", cfg) == "en"
     assert resolve_locale("bad", cfg) == "en"
+
+
+def test_locale_cookie_fallback(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.locale import get_locale_config, resolve_locale
+
+    cfg = get_locale_config()
+    assert resolve_locale(None, cfg, cookie_param="ru") == "ru"
+    assert resolve_locale("en", cfg, cookie_param="ru") == "en"
+    assert resolve_locale(None, cfg, cookie_param="de") == "en"
+    assert resolve_locale("ru", cfg, cookie_param="en") == "ru"
 
 
 def test_locale_t_function(tmp_path: Path) -> None:
@@ -6026,6 +6036,62 @@ class TestAuthEnabled:
         assert login_resp.status_code in (302, 200)
         response = client.get("/rop", follow_redirects=False)
         assert response.status_code == 200
+
+    def test_rop_queue_uses_cookie_locale_on_first_load(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = _write_run_artifacts(storage_dir, "run-auth-cookie")
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "hotline_mailbox",
+                        "case_type": "existing_deal",
+                        "priority": "high",
+                        "sender": "client@example.com",
+                        "subject": "Follow-up on quote",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        client = _auth_client(storage_dir)
+        self._login(client, "admin", "admin-test-token")
+        client.cookies.set("beeui_lang", "ru")
+        response = client.get("/rop?tab=queue")
+
+        assert response.status_code == 200
+        assert "Существующая сделка" in response.text
+        assert "Existing deal" not in response.text
+        client.close()
+
+    def test_rop_queue_lang_query_overrides_cookie(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        run_dir = _write_run_artifacts(storage_dir, "run-auth-cookie-en")
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "hotline_mailbox",
+                        "case_type": "existing_deal",
+                        "priority": "high",
+                        "sender": "client@example.com",
+                        "subject": "Follow-up on quote",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        client = _auth_client(storage_dir)
+        self._login(client, "admin", "admin-test-token")
+        client.cookies.set("beeui_lang", "ru")
+        response = client.get("/rop?tab=queue&lang=en")
+
+        assert response.status_code == 200
+        assert "Existing deal" in response.text
+        assert "Существующая сделка" not in response.text
+        client.close()
 
     def test_admin_can_access_api(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -9233,14 +9299,17 @@ def test_event_detail_route_badges_classification_only(tmp_path: Path) -> None:
     _write_rop_event_detail_artifacts(storage_dir, "run-route-cls-only")
     client = _client(storage_dir)
 
-    for lang, expected_yes in [("en", "Yes"), ("ru", "Да")]:
+    for lang, expected_yes, expected_case in [
+        ("en", "Yes", "New lead"),
+        ("ru", "Да", "Новый лид"),
+    ]:
         response = client.get(
             f"/rop/events/evt-1?run_id=run-route-cls-only&lang={lang}"
         )
         assert response.status_code == 200
         html = response.text
 
-        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
+        _assert_badge_in(html, "bg-secondary-lt", expected_case)
         _assert_badge_in(html, "bg-danger-lt", "high")
         _assert_badge_in(html, "bg-warning-lt", expected_yes)
 
@@ -9296,15 +9365,15 @@ def test_event_detail_route_badges_full_data(tmp_path: Path) -> None:
     )
     client = _client(storage_dir)
 
-    for lang, expected_yes, expected_no in [
-        ("en", "Yes", "No"),
-        ("ru", "Да", "Нет"),
+    for lang, expected_yes, expected_no, expected_case in [
+        ("en", "Yes", "No", "New lead"),
+        ("ru", "Да", "Нет", "Новый лид"),
     ]:
         response = client.get(f"/rop/events/evt-1?run_id=run-route-full&lang={lang}")
         assert response.status_code == 200
         html = response.text
 
-        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
+        _assert_badge_in(html, "bg-secondary-lt", expected_case)
         _assert_badge_in(html, "bg-danger-lt", "high")
         _assert_badge_in(html, "bg-warning-lt", expected_yes)
 
@@ -9324,9 +9393,9 @@ def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
     )
     client = _client(storage_dir)
 
-    for lang, expected_yes, expected_no, fd_title in [
-        ("en", "Yes", "No", "Final decision"),
-        ("ru", "Да", "Нет", "Итоговое решение"),
+    for lang, expected_yes, expected_no, fd_title, expected_case in [
+        ("en", "Yes", "No", "Final decision", "New lead"),
+        ("ru", "Да", "Нет", "Итоговое решение", "Новый лид"),
     ]:
         response = client.get(f"/rop/events/evt-1?run_id=run-route-no-adj&lang={lang}")
         assert response.status_code == 200
@@ -9334,8 +9403,8 @@ def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
 
         assert fd_title in html
 
-        _assert_badge_in(html, "bg-secondary-lt", "new_lead")
-        badge_new_lead = 'class="badge bg-secondary-lt">new_lead<'
+        _assert_badge_in(html, "bg-secondary-lt", expected_case)
+        badge_new_lead = f'class="badge bg-secondary-lt">{expected_case}<'
         assert html.count(badge_new_lead) >= 2
 
         _assert_badge_in(html, "bg-danger-lt", "high")

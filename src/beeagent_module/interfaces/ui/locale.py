@@ -780,11 +780,17 @@ def _load_beeui_config_locale(project_root: Path | None = None) -> dict[str, Any
         return {"default": "en", "available": ["en"]}
 
 
-def resolve_locale(lang_param: str | None, config: dict[str, Any] | None = None) -> str:
+def resolve_locale(
+    lang_param: str | None,
+    config: dict[str, Any] | None = None,
+    cookie_param: str | None = None,
+) -> str:
     if config is None:
         config = _load_beeui_config_locale()
-    if lang_param and lang_param in config.get("available", ["en"]):
-        return lang_param
+    available = config.get("available", ["en"])
+    for candidate in (lang_param, cookie_param):
+        if candidate and candidate in available:
+            return candidate
     return config.get("default", "en")
 
 
@@ -808,6 +814,85 @@ def t(label: str, locale: str = "en") -> str:
     if locale == "ru":
         return _LABELS_RU.get(label, label)
     return _LABELS_EN.get(label, label)
+
+
+_CASE_TYPE_LABELS: dict[str, dict[str, str]] = {
+    "new_lead": {"en": "New lead", "ru": "Новый лид"},
+    "existing_deal": {"en": "Existing deal", "ru": "Существующая сделка"},
+    "irrelevant": {"en": "Irrelevant", "ru": "Нерелевантно"},
+    "duplicate": {"en": "Duplicate", "ru": "Дубликат"},
+    "unknown": {"en": "Unknown", "ru": "Неизвестно"},
+}
+
+_CASE_SUBTYPE_LABELS: dict[str, dict[str, str]] = {
+    "new_lead_rfq": {"en": "New lead: RFQ", "ru": "Новый лид: запрос КП"},
+    "new_lead_tender": {"en": "New lead: tender", "ru": "Новый лид: тендер"},
+    "existing_deal_logistics": {
+        "en": "Existing deal: logistics",
+        "ru": "Сделка: логистика",
+    },
+    "existing_deal_procurement": {
+        "en": "Existing deal: procurement",
+        "ru": "Сделка: закупка",
+    },
+    "existing_deal_invoice": {
+        "en": "Existing deal: invoice",
+        "ru": "Сделка: счёт/оплата",
+    },
+    "existing_deal_document": {
+        "en": "Existing deal: document",
+        "ru": "Сделка: документ",
+    },
+    "existing_deal_request_update": {
+        "en": "Existing deal: request update",
+        "ru": "Сделка: запрос обновлений",
+    },
+    "supplier_offer": {"en": "Supplier offer", "ru": "Предложение поставщика"},
+    "service_notification": {
+        "en": "Service notification",
+        "ru": "Служебное уведомление",
+    },
+    "finance_document": {"en": "Finance document", "ru": "Финансовый документ"},
+    "spam_or_bulk": {"en": "Spam / bulk", "ru": "Спам / рассылка"},
+    "internal_employee_correspondence": {
+        "en": "Internal correspondence",
+        "ru": "Внутренняя переписка",
+    },
+    "manual_review": {"en": "Manual review", "ru": "Ручная проверка"},
+    "unknown": {"en": "Unknown", "ru": "Неизвестно"},
+}
+
+
+def case_type_label(value: str, locale: str = "en") -> str:
+    entry = _CASE_TYPE_LABELS.get(value or "")
+    if entry:
+        return entry.get(locale, entry["en"])
+    return value or ""
+
+
+def case_subtype_label(value: str, locale: str = "en") -> str:
+    entry = _CASE_SUBTYPE_LABELS.get(value or "")
+    if entry:
+        return entry.get(locale, entry["en"])
+    return value or ""
+
+
+_WRITEBACK_OUTCOME_LABELS: dict[str, dict[str, str]] = {
+    "create_lead": {"en": "Create lead", "ru": "Создать лид"},
+    "attach_existing": {"en": "Attach to lead", "ru": "Прикрепить к лиду"},
+    "deferred": {"en": "Deferred", "ru": "Отложено"},
+    "pending": {"en": "Pending", "ru": "В ожидании"},
+    "uncertain": {"en": "Uncertain", "ru": "Неопределённо"},
+    "recovered": {"en": "Recovered", "ru": "Восстановлено"},
+    "attached": {"en": "Attached", "ru": "Прикреплено"},
+}
+
+
+def writeback_outcome_label(value: str, locale: str = "en") -> str:
+    entry = _WRITEBACK_OUTCOME_LABELS.get(value or "")
+    if entry:
+        return entry.get(locale, entry["en"])
+    return value or ""
 
 
 def translate_labels(locale: str) -> dict[str, str]:

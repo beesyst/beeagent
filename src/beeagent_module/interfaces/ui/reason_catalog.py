@@ -25,6 +25,10 @@ _CLASSIFICATION_REASON_DISPLAY = {
         "en": "Existing deal: metadata-based signal detected",
         "ru": "Существующая сделка: обнаружен сигнал метаданных",
     },
+    "existing_deal_conversation_continuation": {
+        "en": "Existing deal: reply continues an existing lead conversation",
+        "ru": "Существующая сделка: ответ продолжает переписку по лиду",
+    },
     "duplicate_repeat_signal": {
         "en": "Duplicate: repeat message detected",
         "ru": "Дубликат: обнаружено повторное сообщение",

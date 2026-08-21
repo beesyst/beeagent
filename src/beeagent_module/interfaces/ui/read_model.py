@@ -19,7 +19,7 @@ from beeagent_module.cases.rop_dashboard import (
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
-from beeagent_module.interfaces.ui.locale import t
+from beeagent_module.interfaces.ui.locale import case_type_label, t
 from beeagent_module.interfaces.ui.url_builder import build_rop_event_url, build_rop_url
 
 ATTENTION_EVENTS_MAX = 500
@@ -3586,9 +3586,7 @@ def _build_queue_toolbar(
 ) -> dict[str, Any]:
     case_type_options: list[dict[str, str]] = []
     for ct in filter_options.get("case_types", []):
-        case_type_options.append(
-            {"value": ct, "label": t(ct.replace("_", " ").title(), locale)}
-        )
+        case_type_options.append({"value": ct, "label": case_type_label(ct, locale)})
 
     priority_options: list[dict[str, str]] = []
     for pr in filter_options.get("priorities", []):
@@ -3871,8 +3869,10 @@ def _queue_table(
                 },
                 "subject": item.get("subject", ""),
                 "date": date_display,
-                "classification": item.get("bot_case_type")
-                or item.get("case_type", ""),
+                "classification": case_type_label(
+                    item.get("bot_case_type") or item.get("case_type", ""),
+                    locale,
+                ),
                 "bitrix_status": {
                     "label": bitrix_status,
                     "status": _bitrix_status_tone(bitrix_status),

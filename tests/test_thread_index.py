@@ -464,3 +464,69 @@ def test_has_reply_prefix() -> None:
     assert _has_reply_prefix("FW: Hello") is True
     assert _has_reply_prefix("Hello") is False
     assert _has_reply_prefix("") is False
+
+
+def test_thread_context_cross_run_prior_message_reference() -> None:
+    prior_events = [
+        {
+            "event_id": "<root@yandex.test>",
+            "message_id": "<root@yandex.test>",
+            "subject": "Запрос КП",
+            "sender": "buyer@yandex.test",
+        }
+    ]
+    prior_classified = [
+        {
+            "event_id": "<root@yandex.test>",
+            "case_type": "new_lead",
+        }
+    ]
+    events = [
+        {
+            "event_id": "<reply@yandex.test>",
+            "message_id": "<reply@yandex.test>",
+            "in_reply_to": "<root@yandex.test>",
+            "references": "<root@yandex.test>",
+            "subject": "Re: Запрос КП",
+            "sender": "buyer@yandex.test",
+        }
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[],
+        logger=_null_logger(),
+        prior_events=prior_events,
+        prior_classified=prior_classified,
+    )
+
+    assert len(context["contexts"]) == 1
+    entry = context["contexts"][0]
+    assert entry["previous_case_type"] == "new_lead"
+    assert "prior_run_reference" in entry["reason_codes"]
+
+
+def test_thread_context_crm_activity_reference_is_existing_deal() -> None:
+    events = [
+        {
+            "event_id": "<reply@yandex.test>",
+            "message_id": "<reply@yandex.test>",
+            "in_reply_to": "<crm.activity.1617969-ZP2J9I@my.welding.kz>",
+            "references": "<crm.activity.1617969-ZP2J9I@my.welding.kz>",
+            "subject": "Re: Запрос КП",
+            "sender": "buyer@yandex.test",
+        }
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=None,
+        logger=_null_logger(),
+    )
+
+    assert len(context["contexts"]) == 1
+    entry = context["contexts"][0]
+    assert entry["previous_case_type"] == "existing_deal"
+    assert "references_bitrix_activity" in entry["reason_codes"]

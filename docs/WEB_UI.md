@@ -85,7 +85,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 - recommendations tab является частью ROP dashboard;
 - recommendations tab читает delivery recommendations из `rop_recommendations.json`;
 - recommendations tab отделён от legacy deterministic dashboard recommendations;
-- локализация UI: en по умолчанию, ru через `?lang=ru`, конфигурация в `config/beeui.yml`;
+- локализация UI: en по умолчанию, ru через `?lang=ru` или persistent cookie `beeui_lang` (query параметр имеет приоритет), конфигурация в `config/beeui.yml`;
 - product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
 - `/rop` рендерится как BeeUI generic adapter custom page;
 - browser artifact routes и shell принадлежат BeeUI;
@@ -135,7 +135,7 @@ Query parameters:
 
 - `run_id` (required): run identifier
 - `event_instance_id` (optional): additive run-local selector for a distinct processing occurrence when several items share the same public `event_id`; omitted for old runs and unique event ids.
-- `lang` (optional, `en`/`ru`): locale override
+- `lang` (optional, `en`/`ru`): locale override; при отсутствии параметра используется значение cookie `beeui_lang` (сохраняется BeeUI при выборе языка через `?lang=`), иначе default из `config/beeui.yml`
 
 ## JSON API routes
 
