@@ -165,7 +165,7 @@ class TestBuildActionDrafts:
         assert draft["queue"] == "matched"
         assert draft["recommended_action"] == "review_deal"
 
-    def test_weak_match_creates_choose_correct_entity(self, tmp_path: Path) -> None:
+    def test_weak_match_new_lead_creates_independent_lead(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "test-action-drafts"
         run_dir.mkdir(parents=True)
         item = _sample_item(
@@ -184,12 +184,13 @@ class TestBuildActionDrafts:
             _null_logger(),
         )
         draft = artifact["items"][0]
-        assert draft["queue"] == "ambiguous"
-        assert draft["recommended_action"] == "choose_correct_entity"
-        assert draft["needs_manual_review"] is True
+        assert draft["queue"] == "create_lead"
+        assert draft["recommended_action"] == "create_lead"
+        assert draft["reason_code"] == "new_lead_crm_weak_match"
+        assert draft["bitrix_match_status"] == "weak_match"
         assert draft["safe_to_use_as_target"] is False
 
-    def test_ambiguous_creates_choose_correct_entity(self, tmp_path: Path) -> None:
+    def test_ambiguous_new_lead_creates_independent_lead(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "test-action-drafts"
         run_dir.mkdir(parents=True)
         item = _sample_item(
@@ -208,10 +209,14 @@ class TestBuildActionDrafts:
             _null_logger(),
         )
         draft = artifact["items"][0]
-        assert draft["queue"] == "ambiguous"
-        assert draft["recommended_action"] == "choose_correct_entity"
+        assert draft["queue"] == "create_lead"
+        assert draft["recommended_action"] == "create_lead"
+        assert draft["reason_code"] == "new_lead_crm_ambiguous"
+        assert draft["bitrix_match_status"] == "ambiguous"
 
-    def test_duplicate_candidate_creates_resolve_action(self, tmp_path: Path) -> None:
+    def test_duplicate_candidate_new_lead_creates_independent_lead(
+        self, tmp_path: Path
+    ) -> None:
         run_dir = tmp_path / "runs" / "test-action-drafts"
         run_dir.mkdir(parents=True)
         item = _sample_item(
@@ -230,8 +235,10 @@ class TestBuildActionDrafts:
             _null_logger(),
         )
         draft = artifact["items"][0]
-        assert draft["queue"] == "ambiguous"
-        assert draft["recommended_action"] == "resolve_duplicate_candidate"
+        assert draft["queue"] == "create_lead"
+        assert draft["recommended_action"] == "create_lead"
+        assert draft["reason_code"] == "new_lead_crm_duplicate_candidate"
+        assert draft["bitrix_match_status"] == "duplicate_candidate"
 
     def test_irrelevant_creates_ignore(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "test-action-drafts"
@@ -329,44 +336,94 @@ class TestBuildActionDrafts:
         ),
         [
             (
-                "pending", False, "not_required", None, "delivery_planned",
-                "create_lead", "controlled_writeback_pending",
+                "pending",
+                False,
+                "not_required",
+                None,
+                "delivery_planned",
+                "create_lead",
+                "controlled_writeback_pending",
             ),
             (
-                "uncertain", False, "not_required", None, "delivery_planned",
-                "create_lead", "controlled_writeback_pending",
+                "uncertain",
+                False,
+                "not_required",
+                None,
+                "delivery_planned",
+                "create_lead",
+                "controlled_writeback_pending",
             ),
             (
-                "created", False, "not_required", None, "delivered",
-                "delivery_completed", "no_action_required",
+                "created",
+                False,
+                "not_required",
+                None,
+                "delivered",
+                "delivery_completed",
+                "no_action_required",
             ),
             (
-                "recovered", False, "not_required", None, "delivered",
-                "delivery_completed", "no_action_required",
+                "recovered",
+                False,
+                "not_required",
+                None,
+                "delivered",
+                "delivery_completed",
+                "no_action_required",
             ),
             (
-                "created", True, "pending", None, "delivery_planned",
-                "complete_email_attachment", "controlled_writeback_pending",
+                "created",
+                True,
+                "pending",
+                None,
+                "delivery_planned",
+                "complete_email_attachment",
+                "controlled_writeback_pending",
             ),
             (
-                "created", True, "uncertain", None, "delivery_planned",
-                "complete_email_attachment", "controlled_writeback_pending",
+                "created",
+                True,
+                "uncertain",
+                None,
+                "delivery_planned",
+                "complete_email_attachment",
+                "controlled_writeback_pending",
             ),
             (
-                "created", True, "failed", None, "deferred",
-                "review_delivery_failure", "review_deferred_delivery",
+                "created",
+                True,
+                "failed",
+                None,
+                "deferred",
+                "review_delivery_failure",
+                "review_deferred_delivery",
             ),
             (
-                "attached", True, "attached", 9001, "delivered",
-                "delivery_completed", "no_action_required",
+                "attached",
+                True,
+                "attached",
+                9001,
+                "delivered",
+                "delivery_completed",
+                "no_action_required",
             ),
             (
-                "failed", False, "not_required", None, "deferred",
-                "review_delivery_failure", "review_deferred_delivery",
+                "failed",
+                False,
+                "not_required",
+                None,
+                "deferred",
+                "review_delivery_failure",
+                "review_deferred_delivery",
             ),
             (
-                "deferred", False, "not_required", None, "deferred",
-                "review_delivery_failure", "review_deferred_delivery",
+                "deferred",
+                False,
+                "not_required",
+                None,
+                "deferred",
+                "review_delivery_failure",
+                "review_deferred_delivery",
             ),
         ],
     )
@@ -402,7 +459,9 @@ class TestBuildActionDrafts:
                             "email_attachment_required": attachment_required,
                             "email_attachment_status": attachment_status,
                             "email_activity_id": activity_id,
-                            "reason_code": "retry_exhausted" if status == "failed" else None,
+                            "reason_code": "retry_exhausted"
+                            if status == "failed"
+                            else None,
                         }
                     }
                 }
@@ -416,7 +475,11 @@ class TestBuildActionDrafts:
             _null_logger(),
         )
         draft = artifact["items"][0]
-        assert (draft["queue"], draft["recommended_action"], draft["recommended_next_step"]) == (
+        assert (
+            draft["queue"],
+            draft["recommended_action"],
+            draft["recommended_next_step"],
+        ) == (
             queue,
             action,
             next_step,
@@ -691,19 +754,29 @@ class TestMapActionV0:
         assert ra == "review_deal"
         assert rc == "deal_exists_in_crm"
 
-    def test_weak_match_maps_to_ambiguous(self) -> None:
+    def test_weak_match_new_lead_maps_to_create(self) -> None:
         q, ra, rns, p, rc = _map_action_v0("new_lead", "weak_match", "weak")
-        assert q == "ambiguous"
-        assert ra == "choose_correct_entity"
+        assert q == "create_lead"
+        assert ra == "create_lead"
+        assert rc == "new_lead_crm_weak_match"
 
-    def test_ambiguous_maps_to_ambiguous(self) -> None:
+    def test_ambiguous_new_lead_maps_to_create(self) -> None:
         q, ra, rns, p, rc = _map_action_v0("new_lead", "ambiguous", "ambiguous")
-        assert q == "ambiguous"
-        assert ra == "choose_correct_entity"
+        assert q == "create_lead"
+        assert ra == "create_lead"
+        assert rc == "new_lead_crm_ambiguous"
 
-    def test_duplicate_maps_to_ambiguous(self) -> None:
+    def test_duplicate_candidate_new_lead_maps_to_create(self) -> None:
         q, ra, rns, p, rc = _map_action_v0(
             "new_lead", "duplicate_candidate", "duplicate"
+        )
+        assert q == "create_lead"
+        assert ra == "create_lead"
+        assert rc == "new_lead_crm_duplicate_candidate"
+
+    def test_duplicate_candidate_existing_deal_maps_to_ambiguous(self) -> None:
+        q, ra, rns, p, rc = _map_action_v0(
+            "existing_deal", "duplicate_candidate", "duplicate"
         )
         assert q == "ambiguous"
         assert ra == "resolve_duplicate_candidate"

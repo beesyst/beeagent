@@ -8959,7 +8959,30 @@ ROP runtime получает двухуровневую semantic classification 
   confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact
   Message-ID на page 2, cross-page conflict → no bridge, malformed `next`/result →
   fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
-- `uv run pytest -q` → 1650 passed (exit 0); runtime smoke через ROP batch entrypoint
+- CRM-identity/write-back boundary correction (Pass 8): non-authoritative Bitrix
+  identity/candidate evidence (`safe_to_use_as_target=false`: `weak_match`, `ambiguous`,
+  `duplicate_candidate`, `matched_*`) не может veto независимый final `new_lead`;
+  `_decide_delivery` использует normal configured create path для CREATE_CASE_TYPES
+  (`new_lead`, `irrelevant`) при candidate-only CRM evidence без trusted exact RFC
+  target; `bitrix_match_status=duplicate_candidate` остаётся CRM reconciliation evidence,
+  а не semantic `case_type=duplicate`; exact trusted RFC/outbound target по-прежнему
+  авторизует `attach_existing` (первым приоритетом), conflicting exact RFC targets /
+  unresolved responsible / connector errors / malformed prerequisites — fail-closed;
+  semantic `existing_deal` / `duplicate` без trusted target — non-creating/deferred;
+  replay/origin idempotency и `pending_thread_root` сохранены; action-draft projection
+  (`_map_action_v0`) для final `new_lead` + candidate evidence показывает independent
+  `create_lead` (reason `new_lead_crm_duplicate_candidate`/`new_lead_crm_weak_match`/
+  `new_lead_crm_ambiguous`), не «resolve_duplicate_candidate»; Event Detail/read-model
+  раздельно показывают semantic final, conversation, Bitrix evidence и delivery outcome;
+- new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/
+  `duplicate_candidate` → `create_lead` (без attach, без выбора candidate, c реальным
+  `crm.item.add` при execute); new_lead + existing Bitrix `matched_lead`
+  (`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal +
+  `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` +
+  `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead
+  + candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix
+  `duplicate_candidate` — separate fields;
+- `uv run pytest -q` → 1656 passed (exit 0); runtime smoke через ROP batch entrypoint
   (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и
   secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix
   outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/

@@ -439,8 +439,12 @@ def _decide_delivery(
         }
 
     if recon_status in ("weak_match", "ambiguous"):
+        if case_type in CREATE_CASE_TYPES:
+            return _create_lead_delivery(case_type, routing_item, policy)
         return {"outcome": "deferred", "reason_code": "ambiguous_target"}
     if recon_status == "duplicate_candidate":
+        if case_type in CREATE_CASE_TYPES:
+            return _create_lead_delivery(case_type, routing_item, policy)
         return {"outcome": "deferred", "reason_code": "duplicate_target"}
 
     target_absent = recon_status == "not_found" or (
