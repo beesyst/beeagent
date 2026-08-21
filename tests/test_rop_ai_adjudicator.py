@@ -260,6 +260,44 @@ def _sample_tender_candidate_event() -> dict:
     }
 
 
+def _sample_spam_labelled_noise_event() -> dict:
+    return {
+        "event_id": "evt-noise-eligible",
+        "case_type": "irrelevant",
+        "case_subtype": "newsletter_bulk",
+        "recommended_queue": "ignore",
+        "correct_action": "ignore",
+        "should_rop_see": False,
+        "confidence": 0.95,
+        "is_fallback": False,
+        "reason_code": "bulk_newsletter_ignore",
+        "sender": "updates@example.com",
+        "subject": "Monthly newsletter",
+        "body_preview": "View in browser. Unsubscribe. Webinar schedule.",
+        "clean_subject": "Monthly newsletter",
+        "transport_labels": ["spam"],
+        "spam_label_present": True,
+        "reply_label_present": False,
+        "forwarded_wrapper": False,
+        "attachments": [],
+    }
+
+
+def _sample_confirmed_duplicate_event() -> dict:
+    return {
+        "event_id": "evt-dup-confirmed",
+        "case_type": "duplicate",
+        "case_subtype": "",
+        "recommended_queue": "ignore",
+        "correct_action": "ignore",
+        "should_rop_see": False,
+        "confidence": 0.99,
+        "is_fallback": False,
+        "reason_code": "duplicate_resolved",
+        "duplicate": {"resolution_status": "confirmed"},
+    }
+
+
 def _sample_possible_duplicate_event() -> dict:
     event = _sample_ineligible_event()
     event.update(
@@ -291,8 +329,20 @@ class TestEligibility:
     def test_fallback_is_eligible(self) -> None:
         assert _is_event_eligible_for_adjudicator(_sample_eligible_event()) is True
 
-    def test_high_confidence_new_lead_not_eligible(self) -> None:
-        assert _is_event_eligible_for_adjudicator(_sample_ineligible_event()) is False
+    def test_high_confidence_new_lead_is_eligible(self) -> None:
+        assert _is_event_eligible_for_adjudicator(_sample_ineligible_event()) is True
+
+    def test_spam_labelled_noise_is_still_ai_eligible(self) -> None:
+        assert (
+            _is_event_eligible_for_adjudicator(_sample_spam_labelled_noise_event())
+            is True
+        )
+
+    def test_confirmed_duplicate_is_not_eligible(self) -> None:
+        assert (
+            _is_event_eligible_for_adjudicator(_sample_confirmed_duplicate_event())
+            is False
+        )
 
     def test_supplier_spam_false_positive_is_eligible(self) -> None:
         assert (
@@ -321,6 +371,33 @@ class TestEligibility:
         event["recommended_queue"] = "sales"
         event["deterministic_correct_action"] = "review_tender"
         event["correct_action"] = "review_tender"
+        assert _is_event_eligible_for_adjudicator(event) is True
+
+    def test_high_confidence_ignore_with_late_rfq_is_eligible(self) -> None:
+        event = {
+            "event_id": "evt-late-rfq",
+            "case_type": "irrelevant",
+            "case_subtype": "newsletter_bulk",
+            "recommended_queue": "ignore",
+            "correct_action": "ignore",
+            "should_rop_see": False,
+            "confidence": 0.95,
+            "is_fallback": False,
+            "reason_code": "bulk_newsletter_ignore",
+            "sender": "updates@example.com",
+            "subject": "Monthly newsletter",
+            "clean_subject": "Monthly newsletter",
+            "body_preview": (
+                "View in browser. Unsubscribe. " * 30
+                + "Need a quote for 100 welding units with delivery date 2026-09-01."
+            ),
+            "transport_labels": ["spam"],
+            "spam_label_present": True,
+            "reply_label_present": False,
+            "forwarded_wrapper": False,
+            "attachments": [],
+        }
+        assert len(event["body_preview"]) > 500
         assert _is_event_eligible_for_adjudicator(event) is True
 
     def test_duplicate_with_tender_queue_is_not_eligible(self) -> None:
@@ -462,9 +539,245 @@ rop:
             prompts_cfg=_minimal_prompts_cfg(),
             event=_sample_eligible_event(),
             prompt_key="rop.ai_adjudicator",
-            max_chars=100,
+            max_chars=8000,
         )
-        assert len(prompt) <= 100
+        assert len(prompt) <= 8000
+        assert '"event_id": "evt-002"' in prompt
+
+    def test_prompt_embedded_event_json_is_valid(self) -> None:
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=_sample_eligible_event(),
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        user_part = prompt.split("User:", 1)[1]
+        start = user_part.find("{")
+        end = user_part.rfind("}")
+        assert start != -1 and end != -1 and end > start
+        payload = json.loads(user_part[start : end + 1])
+        assert payload["event_id"] == "evt-002"
+        assert "deterministic_case_type" in payload
+        assert "body_preview" in payload
+
+    def test_prompt_bounded_by_input_chars_max(self, tmp_path: Path) -> None:
+        prompts_path = tmp_path / "prompts.yml"
+        prompts_path.write_text(
+            """
+rop:
+  ai_adjudicator:
+    system: "System prompt"
+    user: "Event JSON:\\n{event_json}"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        event = _sample_eligible_event()
+        event["body_preview"] = "A" * 5000
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg={"path": str(prompts_path), "store": False},
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=3000,
+        )
+        assert len(prompt) <= 3000
+        user_part = prompt.split("User:", 1)[1]
+        start = user_part.find("{")
+        end = user_part.rfind("}")
+        assert start != -1 and end != -1 and end > start
+        payload = json.loads(user_part[start : end + 1])
+        assert payload["event_id"] == "evt-002"
+        assert len(payload["body_preview"]) <= 1600
+
+    def test_prompt_preserves_semantic_body_beyond_500_chars(self) -> None:
+        event = _sample_eligible_event()
+        event["body_preview"] = (
+            "Need quote for 100 units. " * 25
+            + "Tail semantic detail: requested delivery date 2026-09-01."
+        )
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "requested delivery date 2026-09-01" in prompt
+
+    def test_configured_body_chars_max_is_honored(self, tmp_path: Path) -> None:
+        prompts_path = tmp_path / "prompts.yml"
+        prompts_path.write_text(
+            """
+rop:
+  ai_adjudicator:
+    system: "S"
+    user: "U:{event_json}"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        prompts_cfg = {"path": str(prompts_path), "store": False}
+        tail = "DISTINCTIVE-CONFIG-TAIL"
+        event = _sample_eligible_event()
+        event["body_preview"] = ("Lorem ipsum dolor sit amet. " * 80) + tail
+        assert len(event["body_preview"]) > 2000
+        full_prompt = _build_adjudicator_prompt(
+            prompts_cfg=prompts_cfg,
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+            body_chars_max=4000,
+        )
+        assert tail in full_prompt
+        limited_prompt = _build_adjudicator_prompt(
+            prompts_cfg=prompts_cfg,
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+            body_chars_max=1600,
+        )
+        assert tail not in limited_prompt
+
+    def test_attachment_canonical_evidence_reaches_ai(self) -> None:
+        event = _sample_eligible_event()
+        event["attachment_extraction_status"] = "extracted"
+        event["attachment_preview_available"] = True
+        event["attachment_text_preview"] = "Canonical safe preview line"
+        event["attachment_refusal_reasons"] = ["unsupported_archive"]
+        event["attachments"] = [
+            {
+                "filename": "spec.pdf",
+                "content_type": "application/pdf",
+                "extraction_status": "refused",
+                "preview_available": False,
+                "refusal_reason": "password_protected",
+                "text_preview": "RAW-UNAPPROVED nested preview",
+            }
+        ]
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "Canonical safe preview line" in prompt
+        assert "unsupported_archive" in prompt
+        assert "spec.pdf" in prompt
+        assert "RAW-UNAPPROVED nested preview" not in prompt
+        assert "password_protected" not in prompt
+
+    def test_nested_attachment_text_never_reaches_ai_without_canonical_preview(
+        self,
+    ) -> None:
+        event = _sample_eligible_event()
+        event["attachment_preview_available"] = False
+        event["attachment_text_preview"] = "UNTRUSTED-RAW-TEXT"
+        event["attachments"] = [
+            {
+                "filename": "spec.pdf",
+                "content_type": "application/pdf",
+                "text_preview": "RAW-UNAPPROVED",
+            }
+        ]
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "RAW-UNAPPROVED" not in prompt
+        assert "UNTRUSTED-RAW-TEXT" not in prompt
+        assert "spec.pdf" in prompt
+
+    def test_nested_attachment_metadata_only_is_safe(self) -> None:
+        event = _sample_eligible_event()
+        event["attachment_preview_available"] = True
+        event["attachment_text_preview"] = "CANONICAL-SAFE-PREVIEW"
+        event["attachments"] = [
+            {
+                "filename": "arch.pdf",
+                "content_type": "application/pdf",
+                "text_preview": "nested raw body here",
+            }
+        ]
+        artifact = _build_request_artifact(
+            event,
+            eligible=True,
+            profile_cfg=_minimal_profile_cfg(),
+            adj_cfg=_minimal_adj_cfg(),
+            prompts_cfg=_minimal_prompts_cfg(),
+            prompt=None,
+        )
+        serialized = json.dumps(artifact, ensure_ascii=False)
+        assert "CANONICAL-SAFE-PREVIEW" in serialized
+        assert "nested raw body here" not in serialized
+        assert "arch.pdf" in serialized
+
+    def test_thread_context_reaches_ai(self) -> None:
+        event = _sample_eligible_event()
+        event["thread_context"] = {
+            "thread_id": "thr-1",
+            "previous_event_id": "evt-prev",
+            "reply_markers": True,
+            "forward_markers": False,
+            "previous_case_type": "existing_deal",
+            "participant_hints": ["participant_overlap"],
+            "previous_subject": "Welding order #123",
+            "previous_summary": "Customer confirmed order details",
+            "thread_confidence": 0.8,
+            "reason_codes": ["reply_chain"],
+        }
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "thr-1" in prompt
+        assert "Welding order #123" in prompt
+        assert "Customer confirmed order details" in prompt
+        assert "reply_chain" in prompt
+
+    def test_conversation_context_reaches_ai(self) -> None:
+        event = _sample_eligible_event()
+        event["conversation_context"] = {
+            "conversation_id": "conv_001",
+            "message_count": 3,
+            "other_events": [
+                {
+                    "event_id": "evt-001",
+                    "role": "root",
+                    "case_type": "new_lead",
+                    "subject": "RFQ details",
+                    "sender": "buyer@example.com",
+                }
+            ],
+        }
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "conv_001" in prompt
+        assert "evt-001" in prompt
+        assert "buyer@example.com" in prompt
+
+    def test_raw_mail_base64_and_secrets_do_not_reach_ai(self) -> None:
+        event = _sample_eligible_event()
+        event["body_preview"] = (
+            "attachment token data:application/pdf;base64,"
+            + "JVBERi0xLjQKJcOkw7zDtsOfCg==" * 3
+            + " END"
+        )
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+        )
+        assert "JVBERi0xLjQKJcOkw7zDtsOfCg==" not in prompt
+        assert "data:application/pdf;base64" not in prompt
+        assert "attachment token" in prompt
 
 
 class TestResponseParsing:
@@ -789,7 +1102,6 @@ class TestSchemaContract:
             "finance",
             "ignore",
             "logistics",
-            "manual_review",
             "procurement",
             "sales",
             "tender",
@@ -798,7 +1110,6 @@ class TestSchemaContract:
             "attach_to_deal",
             "check_bitrix",
             "ignore",
-            "manual_review",
             "review_new_lead",
             "review_tender",
         ]
@@ -883,7 +1194,7 @@ class TestAdjudicatorForEvent:
 
         assert result["result"]["ai_status"] in {"degraded", "invalid"}
 
-    def test_possible_duplicate_low_confidence_or_missing_key_requires_manual_review(
+    def test_possible_duplicate_low_confidence_or_missing_key_preserves_base(
         self,
     ) -> None:
         response = json.dumps(
@@ -922,13 +1233,18 @@ class TestAdjudicatorForEvent:
                 _null_logger(),
             )
 
-        assert low_confidence["result"]["ai_status"] == "manual_review_degrade"
-        assert low_confidence["result"]["final_recommended_queue"] == "manual_review"
+        assert low_confidence["result"]["ai_status"] == "duplicate_unresolved"
+        assert low_confidence["result"]["final_case_type"] == "new_lead"
+        assert low_confidence["result"]["final_recommended_queue"] == "sales"
+        assert (
+            low_confidence["result"]["merge_reason"]
+            == "possible_duplicate_unresolved_base_preserved"
+        )
         assert missing_key["result"]["ai_status"] == "degraded"
 
     def test_not_eligible_skips_provider(self) -> None:
         result = run_adjudicator_for_event(
-            event=_sample_ineligible_event(),
+            event=_sample_confirmed_duplicate_event(),
             adj_cfg=_minimal_adj_cfg(),
             profile_cfg=_minimal_profile_cfg(),
             prompts_cfg=_minimal_prompts_cfg(),
@@ -950,6 +1266,38 @@ class TestAdjudicatorForEvent:
         assert result["decision"]["status"] == "degraded"
         assert result["decision"]["reason_code"] == "missing_api_key"
         assert result["result"]["ai_error"]
+
+    def test_prompt_tiny_budget_raises_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            _build_adjudicator_prompt(
+                prompts_cfg=_minimal_prompts_cfg(),
+                event=_sample_eligible_event(),
+                prompt_key="rop.ai_adjudicator",
+                max_chars=50,
+            )
+
+    def test_run_adjudicator_tiny_budget_degrades_without_provider_call(self) -> None:
+        adj_cfg = dict(_minimal_adj_cfg())
+        adj_cfg["input_chars_max"] = 50
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api"
+            ) as provider:
+                result = run_adjudicator_for_event(
+                    event=_sample_eligible_event(),
+                    adj_cfg=adj_cfg,
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        provider.assert_not_called()
+        assert result["decision"]["status"] == "degraded"
+        assert result["decision"]["reason_code"] == "prompt_budget_exceeded"
+        assert result["result"]["ai_status"] == "degraded"
+        assert result["result"]["ai_used"] is False
+        assert result["result"]["final_case_type"] == "unknown"
+        assert result["result"]["final_correct_action"] == "manual_review"
+        assert "input_chars_max" in result["result"]["ai_error"]
 
     def test_provider_failure_preserves_deterministic(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
@@ -1110,7 +1458,7 @@ class TestAdjudicatorForEvent:
         assert result["result"]["ai_status"] == "ok"
         assert result["result"]["final_case_type"] == "existing_deal"
 
-    def test_tender_candidate_low_confidence_ai_routes_manual_review(self) -> None:
+    def test_tender_candidate_low_confidence_ai_preserves_deterministic(self) -> None:
         def _return_low_conf(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1139,15 +1487,18 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["decision"]["status"] == "manual_review_degrade"
-        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["decision"]["status"] == "low_confidence_preserve"
+        assert result["result"]["ai_status"] == "low_confidence_preserve"
         assert result["result"]["final_case_type"] == "new_lead"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
         assert result["result"]["final_should_rop_see"] is True
-        assert result["result"]["merge_reason"] == "ai_low_confidence_manual_review"
+        assert (
+            result["result"]["merge_reason"]
+            == "ai_confidence_below_threshold_deterministic_result_preserved"
+        )
 
-    def test_tender_candidate_invalid_ai_routes_manual_review(self) -> None:
+    def test_tender_candidate_invalid_ai_preserves_deterministic(self) -> None:
         def _return_invalid_taxonomy(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1175,12 +1526,13 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "manual_review_degrade"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
         assert result["result"]["errors"]
 
-    def test_tender_candidate_provider_failure_routes_manual_review(self) -> None:
+    def test_tender_candidate_provider_failure_preserves_deterministic(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
             with patch(
                 "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
@@ -1196,12 +1548,12 @@ class TestAdjudicatorForEvent:
         assert result["decision"]["status"] == "degraded"
         assert result["result"]["ai_status"] == "degraded"
         assert result["result"]["final_case_type"] == "new_lead"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
         assert result["result"]["final_should_rop_see"] is True
         assert result["result"]["ai_error"]
 
-    def test_tender_candidate_missing_api_key_routes_manual_review(self) -> None:
+    def test_tender_candidate_missing_api_key_preserves_deterministic(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             result = run_adjudicator_for_event(
                 event=_sample_tender_candidate_event(),
@@ -1211,10 +1563,10 @@ class TestAdjudicatorForEvent:
                 logger=_null_logger(),
             )
         assert result["result"]["ai_status"] == "degraded"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
 
-    def test_tender_candidate_unparseable_ai_routes_manual_review(self) -> None:
+    def test_tender_candidate_unparseable_ai_preserves_deterministic(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
             with patch(
                 "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
@@ -1228,10 +1580,10 @@ class TestAdjudicatorForEvent:
                     logger=_null_logger(),
                 )
         assert result["result"]["ai_status"] == "invalid"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
 
-    def test_conflicting_high_confidence_ai_output_routes_to_manual_review(
+    def test_valid_high_confidence_ai_semantic_correction_becomes_final(
         self,
     ) -> None:
         def _return_conflicting(**kwargs: object) -> str:
@@ -1262,13 +1614,72 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["ai_status"] == "ok"
         assert result["result"]["final_case_type"] == "existing_deal"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
-        assert result["result"]["merge_reason"] == "ai_output_conflict_manual_review"
+        assert result["result"]["final_recommended_queue"] == "procurement"
+        assert result["result"]["final_correct_action"] == "check_bitrix"
+        assert result["result"]["merge_reason"] == "validated_ai_adjudicator_output"
 
-    def test_low_confidence_conflict_routes_to_manual_review(self) -> None:
+    def test_late_rfq_ai_new_lead_becomes_final(self) -> None:
+        def _return_new_lead(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "rfq",
+                    "recommended_queue": "sales",
+                    "should_rop_see": True,
+                    "correct_action": "review_new_lead",
+                    "confidence": 0.91,
+                    "reason": "RFQ later in body",
+                    "risk_flags": [],
+                    "reason_code": "customer_request_detected",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        event = {
+            "event_id": "evt-late-rfq",
+            "case_type": "irrelevant",
+            "case_subtype": "newsletter_bulk",
+            "recommended_queue": "ignore",
+            "correct_action": "ignore",
+            "should_rop_see": False,
+            "confidence": 0.95,
+            "is_fallback": False,
+            "reason_code": "bulk_newsletter_ignore",
+            "sender": "updates@example.com",
+            "subject": "Monthly newsletter",
+            "clean_subject": "Monthly newsletter",
+            "body_preview": (
+                "View in browser. Unsubscribe. " * 30
+                + "Need a quote for 100 welding units with delivery date 2026-09-01."
+            ),
+            "transport_labels": ["spam"],
+            "spam_label_present": True,
+            "reply_label_present": False,
+            "forwarded_wrapper": False,
+            "attachments": [],
+        }
+        assert len(event["body_preview"]) > 500
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_new_lead,
+            ):
+                result = run_adjudicator_for_event(
+                    event=event,
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["ai_used"] is True
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "sales"
+        assert result["result"]["final_correct_action"] == "review_new_lead"
+
+    def test_low_confidence_conflict_preserves_deterministic(self) -> None:
         def _return_low_conf(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1300,13 +1711,16 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["decision"]["status"] == "manual_review_degrade"
-        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["decision"]["status"] == "low_confidence_preserve"
+        assert result["result"]["ai_status"] == "low_confidence_preserve"
         assert result["result"]["final_case_type"] == "existing_deal"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "procurement"
+        assert result["result"]["final_correct_action"] == "check_bitrix"
         assert result["result"]["final_should_rop_see"] is True
-        assert result["result"]["merge_reason"] == "ai_low_confidence_manual_review"
+        assert (
+            result["result"]["merge_reason"]
+            == "ai_confidence_below_threshold_deterministic_result_preserved"
+        )
         assert result["result"]["ai_error"]
 
     def test_low_confidence_safe_ignore_is_preserved(self) -> None:
@@ -1396,12 +1810,12 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["ai_status"] == "deterministic_preserved"
         assert result["result"]["final_case_type"] == "existing_deal"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
+        assert result["result"]["final_recommended_queue"] == "procurement"
         assert result["result"]["errors"]
 
-    def test_validation_error_conflict_routes_to_manual_review(self) -> None:
+    def test_validation_error_conflict_preserves_deterministic(self) -> None:
         def _return_invalid_taxonomy(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1428,11 +1842,14 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "manual_review_degrade"
+        assert result["result"]["ai_status"] == "deterministic_preserved"
         assert result["result"]["final_case_type"] == "existing_deal"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
-        assert result["result"]["merge_reason"] == "ai_validation_error_manual_review"
+        assert result["result"]["final_recommended_queue"] == "procurement"
+        assert result["result"]["final_correct_action"] == "check_bitrix"
+        assert (
+            result["result"]["merge_reason"]
+            == "ai_output_invalid_deterministic_result_preserved"
+        )
 
     def test_unknown_risk_flags_do_not_force_manual_review_degrade(self) -> None:
         def _return_valid_with_unknown_flags(**kwargs: object) -> str:
@@ -1541,7 +1958,7 @@ class TestAdjudicatorForEvent:
         assert result["result"]["final_recommended_queue"] == "ignore"
         assert result["result"]["final_correct_action"] == "ignore"
 
-    def test_clear_logistics_evidence_is_not_ignored(self) -> None:
+    def test_valid_high_confidence_ai_noise_decision_becomes_final(self) -> None:
         def _return_ignore(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1570,9 +1987,11 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "manual_review_degrade"
-        assert result["result"]["final_recommended_queue"] == "manual_review"
-        assert result["result"]["final_correct_action"] == "manual_review"
+        assert result["result"]["ai_status"] == "ok"
+        assert result["result"]["final_case_type"] == "irrelevant"
+        assert result["result"]["final_recommended_queue"] == "ignore"
+        assert result["result"]["final_correct_action"] == "ignore"
+        assert result["result"]["merge_reason"] == "validated_ai_adjudicator_output"
 
 
 class TestAdjudicatorBatch:
@@ -1639,7 +2058,10 @@ class TestAdjudicatorBatch:
                 _fake_call,
             ):
                 _, _, results, counters = run_adjudicator_batch(
-                    events=[_sample_ineligible_event(), _sample_eligible_event()],
+                    events=[
+                        _sample_confirmed_duplicate_event(),
+                        _sample_eligible_event(),
+                    ],
                     settings=settings,
                     logger=_null_logger(),
                 )

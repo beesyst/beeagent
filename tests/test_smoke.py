@@ -164,6 +164,9 @@ bitrix:
     enabled: false
     candidate_limit: 20
     window_date: 180
+    correlation:
+      enabled: true
+      window_days: 180
   widget:
     enabled: false
     token_env: BITRIX_ROP_WIDGET_TOKEN
@@ -390,6 +393,9 @@ bitrix:
     enabled: false
     candidate_limit: 20
     window_date: 180
+    correlation:
+      enabled: true
+      window_days: 180
   widget:
     enabled: false
     token_env: BITRIX_ROP_WIDGET_TOKEN

@@ -74,13 +74,14 @@
 - писать `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
 - применять AI result только через public module case `ai_assist_merge`;
 - сохранять deterministic result при `module_contract_unavailable`, invalid/low-confidence/blocked/provider-failed AI path;
-- выполнять BeeAgent-owned ROP OpenAI adjudicator для eligible ambiguous/conflict events;
+- выполнять BeeAgent-owned ROP OpenAI adjudicator для eligible ambiguous/conflict, tender и business-impacting `new_lead`/`existing_deal` events;
 - использовать strict Responses API `json_schema` для adjudicator output;
 - валидировать AI output по allowed ROP taxonomy;
 - tolerantly drop unknown `risk_flags`, не инвалидируя valid core decision;
-- безопасно сохранять deterministic result или переводить кейс в manual review при provider/parse/validation failure adjudicator path;
-- отправлять risky/conflicting low-confidence AI cases в `manual_review_degrade`;
+- безопасно сохранять deterministic результат с explicit diagnostics при provider/parse/validation failure adjudicator path;
+- сохранять class/evidence-aware merge policy: valid + high-confidence + no conflict AI применяется как final; conflict/unresolved/invalid/low-confidence/provider-failure сохраняет deterministic результат (без `manual_review` как normal terminal semantic queue);
 - сохранять safe deterministic `irrelevant/ignore` как `low_confidence_preserve`, если conflict evidence нет;
+- требовать known `ai_reason_code` для нового valid AI decision; missing/unknown reason code — validation diagnostic с сохранением deterministic результата (не `legacy`);
 - писать `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
 - показывать AI/deterministic/final traceability в TSV через stage-dependent AI fields;
 - передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
@@ -253,7 +254,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - prompt/schema hardening;
 - tolerant unknown `risk_flags` handling;
 - low-confidence safe-ignore preservation;
-- `manual_review_degrade` только для risky/conflict cases;
+- class/evidence-aware merge policy; `manual_review` не является normal terminal semantic queue (deterministic результат сохраняется с explicit diagnostics);
 - high-confidence safe resolution supplier/newsletter false positives в `irrelevant/ignore`;
 - improved payload completeness для `body_preview` и attachment metadata.
 
@@ -268,7 +269,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `/api/rop/dashboard` — `ai_adjudicator_summary`, вложенный `final_decisions` и compatibility alias `final_decision_summary`;
 - Event Detail — `final_decision` из того же read-model;
 - Bitrix widget API — bounded `final_decisions` с summary, пересчитанным по возвращённым events;
-- политика финального решения v1 (AI ok / low_confidence_preserve / manual_review_degrade / deterministic / fallback_policy);
+- политика финального решения v1 (AI ok / low_confidence_preserve / deterministic_preserved / deterministic / fallback_policy);
 - `bitrix_write_allowed=false` для MVP.
 
 Итерация 35 реализует:
@@ -890,7 +891,7 @@ BeeAgent может выполнять bounded provider calls и свой strict
 Доменная классификация остаётся за `beeagent-rop`.
 Transport labels и AI outputs не считаются direct business truth.
 AI не может выполнять write-back.
-Dangerous или uncertain outputs должны уходить в manual review или deterministic fallback.
+Dangerous или uncertain semantic AI outputs сохраняют deterministic semantic result с bounded diagnostics/attention; новые normal-flow semantic решения не используют `manual_review`. CRM execution uncertainty отдельно остаётся fail-closed `deferred` с zero mutation authority. Historical `manual_review` artifacts остаются readable.
 
 ## Технологический стек
 
@@ -1352,7 +1353,7 @@ ROP OpenAI adjudicator контролируется через `rop.ai_assist.ad
 Сейчас поддерживается `openai_responses`.
 При active OpenAI profile требуется `OPENAI_API_KEY`.
 Adjudicator использует strict `json_schema`.
-Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence. Module-returned `duplicate.resolution_status=confirmed` остаётся terminal и AI provider не вызывает; только explicit `possible` проходит bounded duplicate-vs-not-duplicate adjudication. Rejection сохраняет module `base_classification`, а unavailable/invalid/low-confidence AI направляет событие в manual review.
+Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence, и business-impacting deterministic `new_lead`/`existing_deal` больше не exempt от AI verification. Module-returned `duplicate.resolution_status=confirmed` остаётся terminal и AI provider не вызывает; только explicit `possible` проходит bounded duplicate-vs-not-duplicate adjudication. Rejection сохраняет module `base_classification`, а unavailable/invalid/low-confidence AI сохраняет base classification с explicit diagnostic (без `manual_review` terminal queue). Explicit strong `irrelevant`/noise (safe ignore без business evidence) безопасно skip AI.
 
 Allowed `case_type`:
 
@@ -1367,7 +1368,6 @@ Allowed `recommended_queue`:
 - `logistics`
 - `finance`
 - `procurement`
-- `manual_review`
 - `ignore`
 
 Allowed `correct_action`:
@@ -1376,13 +1376,11 @@ Allowed `correct_action`:
 - `review_tender`
 - `attach_to_deal`
 - `check_bitrix`
-- `manual_review`
 - `ignore`
 
 Unknown `risk_flags` отбрасываются как bounded diagnostics.
-Для tender candidate provider/parse/validation/low-confidence failures сохраняют deterministic audit fields, но final queue/action переводятся в `manual_review`. Для non-tender событий provider failure, invalid JSON и invalid taxonomy сохраняют deterministic result или переводят кейс в manual review в зависимости от risk/conflict context.
+Class/evidence-aware merge policy: valid + high-confidence + acceptable-evidence AI может стать final; semantic unresolved, invalid, missing/unknown `ai_reason_code`, low-confidence или provider failure сохраняют deterministic результат с explicit diagnostics/attention. Новые AI-решения не используют `manual_review` как semantic queue/action. Historical legacy artifacts, содержащие `manual_review`, остаются readable.
 Safe deterministic ignore может быть сохранён как `low_confidence_preserve`.
-Risky/conflict cases могут перейти в `manual_review_degrade`.
 Write-back в этом path не выполняется.
 
 `mailbox_readonly` используется для controlled read-only ingestion:
@@ -1443,6 +1441,9 @@ Write-back в этом path не выполняется.
 - `storage/runs/<run_id>/rop_action_drafts.json`
 - `storage/runs/<run_id>/rop_mvp_pack.json`
 - `storage/runs/<run_id>/rop_mvp_report.md`
+- `storage/runs/<run_id>/rop_conversation.json` — BeeAgent-owned conversation relation (exact RFC authority, client/source scope)
+- `storage/runs/<run_id>/rop_final_decisions.json` — artifact-first read-model финальных решений
+- `storage/runs/<run_id>/bitrix_outbound_correlation.json` — read-only outbound Bitrix correlation evidence (exact Message-ID bridge, trusted-target + responsible cross-check)
 
 Интерфейсные ROP artifacts:
 
@@ -1526,6 +1527,8 @@ BeeAgent не принимает business-решений на основе trans
 - `ok`
 - `manual_review_degrade`
 - `low_confidence_preserve`
+- `deterministic_preserved`
+- `duplicate_unresolved`
 - `degraded`
 - `invalid`
 - `low_confidence`
@@ -1663,7 +1666,7 @@ BeeAgent не принимает business-решений на основе trans
 - AI output не должен напрямую выполнять CRM/mailbox/Bitrix actions;
 - AI output не может триггерить CRM/Bitrix/mailbox actions;
 - write-back/action instructions from AI output must be rejected or preserved as non-executed evidence;
-- `manual_review_degrade` — safety route, а не write-back action;
+- deterministic-preserved/`low_confidence_preserve` — safety route, а не write-back action; `manual_review` не используется как normal terminal semantic queue;
 - recommendations должны оставаться read-only/draft-only;
 - `safe_to_execute=false` в текущем scope;
 - для non-ignore recommendations требуется human confirmation.
@@ -1742,8 +1745,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
 - OpenAI adjudicator может быть включён для eligible grey-zone events и deterministic tender candidates независимо от confidence;
 - OpenAI adjudicator пишет `rop_ai_adjudicator_*` artifacts;
-- unsafe provider/parse/validation failures сохраняют deterministic decisions; для tender candidates final queue/action безопасно переводятся в manual review;
-- risky/conflicting uncertain adjudicator results уходят в manual review;
+- unsafe provider/parse/validation failures сохраняют deterministic semantic результат с explicit diagnostics; новые решения не используют `manual_review` как normal terminal semantic queue;
+- low-confidence/conflicting uncertain adjudicator результаты сохраняют bounded deterministic семантику с diagnostics/attention (`final_queue=unresolved`, `final_action=no_action`, `needs_attention=true`), а не направляются в human semantic queue;
+- CRM execution uncertainty отдельно остаётся fail-closed `deferred` с zero mutation authority;
 - safe ignore может сохраняться, а safe supplier/newsletter false positives могут резолвиться в ignore;
 - write-back в adjudicator path не добавляется;
 - multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;

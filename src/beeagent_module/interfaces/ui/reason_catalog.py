@@ -153,6 +153,18 @@ _ATTENTION_REASON_DISPLAY = {
         "en": "Possible duplicate requires manual review",
         "ru": "Возможный дубликат требует ручной проверки",
     },
+    "ai_output_conflict_deterministic_result_preserved": {
+        "en": "AI output conflicted with signals; deterministic result preserved",
+        "ru": "Результат ИИ противоречит сигналам; детерминированный результат сохранён",
+    },
+    "ai_output_unresolved_deterministic_result_preserved": {
+        "en": "AI did not resolve a semantic decision; deterministic result preserved",
+        "ru": "ИИ не принял семантическое решение; детерминированный результат сохранён",
+    },
+    "possible_duplicate_unresolved_base_preserved": {
+        "en": "Possible duplicate could not be resolved; base classification preserved",
+        "ru": "Возможный дубликат не разрешён; базовая классификация сохранена",
+    },
     "ai_output_with_validation_errors_deterministic_result_preserved": {
         "en": "AI output had validation errors; deterministic result preserved",
         "ru": "Результат ИИ содержит ошибки проверки; детерминированный результат сохранён",
@@ -180,6 +192,10 @@ _ATTENTION_REASON_DISPLAY = {
     "ai_adjudicator_unexpected_status": {
         "en": "AI adjudicator returned an unexpected status",
         "ru": "ИИ-арбитр вернул неожиданный статус",
+    },
+    "semantic_unresolved_no_operator_queue": {
+        "en": "Semantic decision unresolved without an operator queue",
+        "ru": "Семантическое решение не разрешено без операторской очереди",
     },
 }
 _AI_EVIDENCE_DISPLAY = {

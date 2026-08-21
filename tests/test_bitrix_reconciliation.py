@@ -246,6 +246,62 @@ class TestBitrixConfigValidation:
         assert isinstance(bitrix["reconciliation"]["window_date"], int)
         validate_settings(settings)
 
+    def test_correlation_block_is_validated(self) -> None:
+        from beeagent_module.core.settings import validate_settings
+
+        settings = _load_test_settings()
+        corr_cfg = settings["bitrix"]["reconciliation"]["correlation"]
+        assert isinstance(corr_cfg, dict)
+        assert isinstance(corr_cfg["enabled"], bool)
+        assert isinstance(corr_cfg["window_days"], int)
+        validate_settings(settings)
+
+    def test_correlation_block_missing_fails_fast(self) -> None:
+        from beeagent_module.core.settings import validate_settings
+
+        settings = _load_test_settings()
+        del settings["bitrix"]["reconciliation"]["correlation"]
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "correlation" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "enabled_value",
+        [None, "yes", 1, 0],
+    )
+    def test_correlation_enabled_must_be_bool(
+        self,
+        enabled_value: object,
+    ) -> None:
+        from beeagent_module.core.settings import validate_settings
+
+        settings = _load_test_settings()
+        settings["bitrix"]["reconciliation"]["correlation"]["enabled"] = enabled_value
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "correlation.enabled" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "window_days_value",
+        [0, -1, 1.5, True, "180", None],
+    )
+    def test_correlation_window_days_must_be_positive_int(
+        self,
+        window_days_value: object,
+    ) -> None:
+        from beeagent_module.core.settings import validate_settings
+
+        settings = _load_test_settings()
+        settings["bitrix"]["reconciliation"]["correlation"]["window_days"] = (
+            window_days_value
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "correlation.window_days" in str(exc_info.value)
+
     @pytest.mark.parametrize(
         ("old_key", "old_value"),
         [
@@ -504,6 +560,28 @@ class TestBitrixClient:
         ):
             client.call("crm.item.list", {})
 
+    @pytest.mark.parametrize(
+        "body",
+        [b"[]", b"null", b'"plain string"', b"42"],
+    )
+    def test_non_object_top_level_response_raises_malformed(
+        self,
+        fake_bitrix_env: None,
+        body: bytes,
+    ) -> None:
+        client = BitrixReadonlyClient(
+            webhook_url="https://test.bitrix24.kz/rest/1/token/",
+            timeout=5,
+        )
+        with (
+            patch(
+                "beeagent_module.adapters.bitrix_client.urlopen",
+                return_value=_FakeHttpResponse(body),
+            ),
+            pytest.raises(BitrixMalformedResponse),
+        ):
+            client.call("crm.activity.list", {})
+
     def test_pagination_uses_next_and_pages_max(self) -> None:
         client = BitrixReadonlyClient(
             webhook_url="https://test.bitrix24.kz/rest/1/token/",
@@ -584,9 +662,7 @@ class TestBitrixClient:
         )
         calls: list[tuple[str, dict[str, Any]]] = []
 
-        def fake_call(
-            method: str, params: dict[str, Any] | None = None
-        ) -> dict:
+        def fake_call(method: str, params: dict[str, Any] | None = None) -> dict:
             calls.append((method, params or {}))
             return {"result": []}
 
@@ -609,9 +685,7 @@ class TestBitrixClient:
         )
         calls: list[tuple[str, dict[str, Any]]] = []
 
-        def fake_call(
-            method: str, params: dict[str, Any] | None = None
-        ) -> dict:
+        def fake_call(method: str, params: dict[str, Any] | None = None) -> dict:
             calls.append((method, params or {}))
             return {"result": {"items": []}}
 
@@ -898,7 +972,9 @@ class TestBitrixReconciliation:
 
         assert client.queries == ["forwarder@internal.example"]
 
-    def test_exact_contact_without_complete_lead_lookup_is_not_target_absence(self) -> None:
+    def test_exact_contact_without_complete_lead_lookup_is_not_target_absence(
+        self,
+    ) -> None:
         class _RelatedDealClient:
             def search_candidates(
                 self, entity_type_id: int, _query: str, **_kwargs: Any

@@ -14,6 +14,10 @@ from beeagent_module.adapters.bitrix_client import (
     build_bitrix_client,
 )
 from beeagent_module.core.input_source import effective_rop_sender_email
+from beeagent_module.core.rop_outbound_correlation import (
+    collect_outbound_correlation_evidence,
+    write_outbound_correlation_artifact,
+)
 
 RECONCILIATION_ARTIFACT = "bitrix_reconciliation.json"
 SKIPPED_CASE_TYPES: frozenset[str] = frozenset(
@@ -137,6 +141,23 @@ def run_reconciliation(
         if item.get("needs_manual_review"):
             aggregate["manual_review_count"] += 1
 
+    outbound_items: list[dict[str, Any]] = []
+    corr_cfg = recon_cfg.get("correlation", {})
+    if corr_cfg.get("enabled") is not False:
+        outbound_items = collect_outbound_correlation_evidence(
+            client=client,
+            events=events_to_reconcile,
+            logger=logger,
+            window_days=int(corr_cfg["window_days"]),
+            pages_max=int(bitrix_cfg.get("pages_max", 3)),
+        )
+    outbound_refs = write_outbound_correlation_artifact(
+        storage_dir=storage_dir,
+        run_id=run_id,
+        items=outbound_items,
+        logger=logger,
+    )
+
     artifact = {
         "run_id": run_id,
         "status": "ok"
@@ -154,6 +175,11 @@ def run_reconciliation(
         "aggregate": aggregate,
         "items": items,
         "warnings": warnings,
+        "outbound_correlation": {
+            "enabled": corr_cfg.get("enabled") is not False,
+            "evidence_count": len(outbound_items),
+            "artifact": outbound_refs,
+        },
     }
 
     artifact_path = run_dir / RECONCILIATION_ARTIFACT
@@ -243,10 +269,7 @@ def _merge_events(
             used_normalized.add(index)
             merged.append({**normalized_event, **classified_event})
             continue
-        if (
-            len(candidates) == 1
-            and len(classified_by_id.get(event_id, [])) == 1
-        ):
+        if len(candidates) == 1 and len(classified_by_id.get(event_id, [])) == 1:
             index, normalized_event = candidates[0]
             used_normalized.add(index)
             merged.append({**normalized_event, **classified_event})
@@ -316,8 +339,7 @@ def _reconcile_event(
             )
             if exact_leads:
                 ambiguous_candidates = [
-                    (1, lead)
-                    for _entity_type_id, lead, _evidence in exact_leads
+                    (1, lead) for _entity_type_id, lead, _evidence in exact_leads
                 ]
                 ambiguous_candidates.append(
                     (

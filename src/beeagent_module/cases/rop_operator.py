@@ -27,6 +27,11 @@ from beeagent_module.core.rop_ai_assist import (
     run_ai_assist_for_event,
     write_ai_assist_artifacts,
 )
+from beeagent_module.core.rop_conversation import (
+    build_conversation_relation,
+    build_event_conversation_context,
+    write_conversation_artifacts,
+)
 from beeagent_module.core.rop_final_decision import build_final_decisions
 from beeagent_module.core.rop_thread_context import build_public_thread_context
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
@@ -1202,9 +1207,23 @@ def run_rop_batch_case(
         )
         artifact_refs.extend(thread_refs)
 
+        conversation_relation = build_conversation_relation(
+            events=ordered_events,
+            thread_index=thread_index,
+            classified_events=classified_events,
+        )
+        conversation_refs = write_conversation_artifacts(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            relation=conversation_relation,
+            logger=logger,
+        )
+        artifact_refs.extend(conversation_refs)
+
         enriched_classified = _enrich_classified_events(
             classified_events=classified_events,
             thread_context=thread_context,
+            conversation_relation=conversation_relation,
         )
 
         ai_cfg = settings.get("rop", {}).get("ai_assist", {})
@@ -1612,6 +1631,7 @@ def run_rop_batch_case(
 def _enrich_classified_events(
     classified_events: list[dict[str, Any]],
     thread_context: dict[str, Any] | None,
+    conversation_relation: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     context_map: dict[str, dict[str, Any]] = {}
@@ -1644,6 +1664,16 @@ def _enrich_classified_events(
         eid = event.get("event_id", "")
         tc = context_map.get(eid)
         enriched_event["thread_context_ref"] = tc.get("thread_id") if tc else None
+        if tc:
+            public_tc = build_public_thread_context(tc, event)
+            if public_tc:
+                enriched_event["thread_context"] = public_tc
+        if conversation_relation is not None:
+            conversation_context = build_event_conversation_context(
+                conversation_relation, eid
+            )
+            if conversation_context:
+                enriched_event["conversation_context"] = conversation_context
 
         enriched.append(enriched_event)
 
@@ -1809,29 +1839,18 @@ def _apply_ai_adjudicator_results(
         event["ai_adjudicator_risk_flags"] = list(result.get("ai_risk_flags", []))
         event["ai_adjudicator_merge_reason"] = result.get("merge_reason", "")
         ai_status = result.get("ai_status")
-        is_tender = (
-            result.get("deterministic_recommended_queue") == "tender"
-            or result.get("deterministic_correct_action") == "review_tender"
-        )
-        possible_duplicate = (
-            isinstance(event.get("duplicate"), dict)
-            and event["duplicate"].get("resolution_status") == "possible"
-        )
-        if (
-            ai_status == "ok"
-            or (is_tender and ai_status != "not_eligible")
-            or (possible_duplicate and ai_status == "manual_review_degrade")
-        ):
-            for key in _AI_ADJUDICATOR_FINAL_KEYS:
-                deterministic_key = f"deterministic_{key}"
-                if deterministic_key in result:
-                    event.setdefault(deterministic_key, result[deterministic_key])
-            for key in _AI_ADJUDICATOR_FINAL_KEYS:
-                final_key = f"final_{key}"
-                if final_key in result:
-                    event[key] = result[final_key]
+        if ai_status == "not_eligible":
+            continue
+        for key in _AI_ADJUDICATOR_FINAL_KEYS:
+            deterministic_key = f"deterministic_{key}"
+            if deterministic_key in result:
+                event.setdefault(deterministic_key, result[deterministic_key])
+        for key in _AI_ADJUDICATOR_FINAL_KEYS:
+            final_key = f"final_{key}"
+            if final_key in result:
+                event[key] = result[final_key]
 
-            if ai_status == "ok" and result.get("ai_confidence") is not None:
-                event["confidence"] = result["ai_confidence"]
-            if ai_status == "ok" and result.get("ai_reason"):
-                event["reasoning"] = result["ai_reason"]
+        if ai_status == "ok" and result.get("ai_confidence") is not None:
+            event["confidence"] = result["ai_confidence"]
+        if ai_status == "ok" and result.get("ai_reason"):
+            event["reasoning"] = result["ai_reason"]

@@ -270,7 +270,7 @@ Policy v1:
 
 - AI adjudicator `ok` → AI fields, `automation_allowed=false`
 - `low_confidence_preserve` → deterministic preserved, `needs_attention=true`, `automation_allowed=false`
-- `manual_review_degrade` → deterministic preserved, `needs_attention=true`, fallback manual_review queue/action
+- `deterministic_preserved` / `duplicate_unresolved` / `degraded` / `invalid` → deterministic preserved, `needs_attention=true`, `automation_allowed=false`
 - No AI result → deterministic fields, `final_decision_source=deterministic`
 - Invalid/unusable → `final_decision_source=fallback_policy`, `needs_attention=true`
 
@@ -305,7 +305,7 @@ Event Detail classification (additive, backward-compatible):
     - `matched_fields` — string array
     - (candidate reason fields `reason_code` / `reason_path` / `reasoning` are preserved in the raw module block)
 - `classification` fields `case_type`/`reason_code`/`confidence` etc. remain unchanged for non-duplicate events.
-- `confirmed` remains terminal; `possible` is adjudicated only through the bounded AI duplicate decision, where rejection preserves `base_classification` and unavailable/invalid/low-confidence output routes to manual review.
+- `confirmed` remains terminal; `possible` is adjudicated only through the bounded AI duplicate decision, where rejection preserves `base_classification` and unavailable/invalid/low-confidence output preserves the base classification with an explicit `duplicate_unresolved` diagnostic (no manual-review terminal queue).
 - Queue detail links retain `/rop/events/{event_id}` and add `event_instance_id` only when present, so repeated transport Message-ID occurrences open their own artifact-backed detail while old links remain valid.
 
 Behavior / safety:
@@ -353,6 +353,26 @@ The read-model also exposes `recipient_routing` and adds `rop_recipient_routing_
 New allowlisted artifact:
 
 - `rop_recipient_routing.json` — bounded per-event recipient attribution and proposed Bitrix responsible evidence (`event_id`, `event_instance_id`, source provenance, recipient/responsible statuses); `read_only=true`, `draft_only=true`; no body/raw attachment content.
+
+### Event detail deterministic and conversation sections (It39)
+
+`/rop/events/{event_id}?run_id=<run_id>` now also shows two new additive sections:
+
+- **Deterministic result** — deterministic semantic echelon separate from the final decision:
+  - `deterministic.case_type` / `case_subtype` / `recommended_queue` / `correct_action`
+  - `deterministic.confidence` / `reason_code` / `is_fallback`
+  - derived from the `deterministic_*` fields of `classified_events.json`; absent → `available=false`
+- **Conversation timeline** — full known conversation across runs/sources:
+  - `conversation.events[]` — bounded cross-run/cross-source timeline (date, source_id, run_id, role, sender, subject, case_type, CRM outcome)
+  - roles `root` / `reply` / `continuation`; built from exact RFC `Message-ID` / `In-Reply-To` / `References` ancestry within the same `client_id` using `storage/interfaces/rop_writeback_state.json` and current-run thread context; no fuzzy sender/subject/time matching; no CRM mutation authority
+  - absent write-back state → `available=false`
+
+The read-model exposes the new `deterministic` and `conversation` objects, so the JSON API distinguishes deterministic result, AI proposal (`ai_adjudicator`), final semantic result (`final_decision`) and conversation/CRM evidence (`conversation` + `bitrix`).
+
+New allowlisted artifacts:
+
+- `rop_conversation.json` — per-run BeeAgent-owned conversation relation (conversation_id, roles, exact RFC message-id evidence, client/source scope)
+- `bitrix_outbound_correlation.json` — read-only outbound-correlation evidence (exact outbound email Message-ID bridge; `bridge_exact=true` only when the inbound RFC ancestry references a proven outbound identifier; the bridge authorizes `attach_existing` only when the full target — entity type/type-id/entity-id and recorded responsible — matches a canonical trusted CRM target from write-back state with provenances `beeagent_created`/`thread_resolved`; a previously proven `target_provenance=bitrix_outbound_exact` target may also serve as the trusted root for the next exact RFC hop; otherwise candidate-only/deferred with zero mutation authority)
 
 ### Locale-aware reason display (UI-8.4)
 

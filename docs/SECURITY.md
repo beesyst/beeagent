@@ -467,6 +467,25 @@ Rules:
   - an exact reply in the same batch whose thread root is only planned (not yet
     confirmed) is deferred as recoverable `pending_thread_root` and resolved after the
     root is confirmed.
+- Outbound Bitrix correlation (Iteration 39) is strictly READ ONLY
+  (`bitrix_outbound_correlation.json`):
+  - outbound Bitrix activity (`crm.activity.list`, `TYPE_ID=4`) is used only to observe
+    email Message-IDs of outbound activities; no mutation is performed;
+  - inbound `In-Reply-To` / bounded `References` must contain the exact outbound
+    Message-ID for a candidate bridge; restored bridge evidence is revalidated against
+    the current RFC ancestry;
+  - outbound Bitrix activity OWNER alone is NOT authority;
+  - a candidate target must match an ALREADY TRUSTED canonical CRM target in the same
+    `client_id` scope, where equality includes entity type, entity type ID, entity ID
+    and the recorded responsible user; Bitrix cannot replace the trusted responsible;
+  - `DIRECTION` must prove outbound (2); numeric-string IDs are bounded-normalized;
+    the same outbound Message-ID observed with conflicting target/responsible tuples is
+    ambiguous and never becomes bridge evidence;
+  - missing, stale, conflicting or untrusted evidence is deferred with zero mutation
+    (`outbound_candidate_untrusted`); sender, subject, time, `RE:`/`FWD:` and AI output
+    never create target authority;
+  - a proven `target_provenance=bitrix_outbound_exact` target may propagate the same
+    trusted target to the next exact RFC hop.
 - Write access lives in a separate `BitrixWriteClient` with the exact mutation allowlist
   (`crm.item.add`, `crm.activity.add`) and a dedicated env-backed write credential
   (`bitrix.writeback.webhook_env`, default `BITRIX_WRITEBACK_WEBHOOK_URL`). When enabled,
