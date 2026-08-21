@@ -4037,6 +4037,47 @@ def test_rop_event_detail_deterministic_ai_and_final_are_separate(
     assert final_decision["final_decision_source"] == "ai_adjudicator"
 
 
+def test_rop_event_detail_new_lead_and_bitrix_candidate_are_distinct(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-dup-cand")
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "bitrix_match_status": "duplicate_candidate",
+                        "bitrix_match_quality": "duplicate",
+                        "candidate_count": 2,
+                        "safe_to_use_as_target": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-detail-dup-cand",
+        "evt-1",
+        event_instance_id="",
+    )
+    final_decision = data["final_decision"]
+    bitrix = data["bitrix"]
+    assert final_decision["final_case_type"] == "new_lead"
+    assert bitrix["available"] is True
+    assert bitrix["bitrix_status"] == "duplicate_candidate"
+    assert bitrix["candidate_count"] == 2
+    assert bitrix["bitrix_status"] != final_decision["final_case_type"]
+
+
 def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,

@@ -446,6 +446,15 @@ Rules:
   reconciliation emits `identity_only_no_target` with
   `suitable_target_search=completed_no_target`, which may enter the configured Lead-create
   path only for `new_lead` or `irrelevant`.
+- Non-authoritative Bitrix candidate/identity evidence never vetoes an independent final
+  `new_lead`: with no trusted exact RFC/outbound target, `weak_match`, `ambiguous`,
+  `duplicate_candidate` and `matched_*` (`safe_to_use_as_target=false`) use the normal
+  configured create path for create-eligible case types; `bitrix_match_status=
+duplicate_candidate` stays CRM reconciliation evidence and never becomes semantic
+  `case_type=duplicate`; candidate/identity evidence alone never authorizes
+  `attach_existing` (attachment requires exact trusted thread authority); connector
+  errors, malformed prerequisites, conflicting exact RFC targets and unresolved
+  responsible remain fail-closed.
 - Automatic existing-target attachment (Iteration 38) is allowed only for exact trusted
   thread evidence resolved from canonical write-back state:
   - normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` ancestry

@@ -1052,7 +1052,7 @@ class TestWritebackPlanner:
             assert second["writes_performed"] == 0
             assert mutations == []
 
-    def test_competing_exact_lead_and_related_deal_defer_without_mutation(
+    def test_competing_exact_lead_and_related_deal_new_lead_creates_independently(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         run_id = "run-competing-target"
@@ -1117,16 +1117,18 @@ class TestWritebackPlanner:
         assert item["safe_to_use_as_target"] is False
 
         plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
-        assert plan["events"][0]["outcome"] == "deferred"
-        assert plan["events"][0]["reason_code"] == "ambiguous_target"
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["target_entity_id"] is None
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
-        assert not [
-            call
-            for call in recorder.calls
-            if call["method"] in {"crm.item.add", "crm.activity.add"}
-        ]
+        methods = [call["method"] for call in recorder.calls]
+        assert "crm.item.add" in methods
+        create = next(
+            call for call in recorder.calls if call["method"] == "crm.item.add"
+        )
+        assert create["payload"]["entityTypeId"] == 1
 
     def test_forwarded_existing_target_attaches_original_sender_once(
         self, tmp_path: Path, writeback_env: None
@@ -1362,6 +1364,34 @@ class TestWritebackPlanner:
         assert record["outcome"] == "create_lead"
         assert record["target_entity_id"] is None
 
+    def test_new_lead_with_existing_crm_lead_creates_not_attaches(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="msg-1")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[
+                _recon_item(
+                    "evt-1",
+                    "matched_lead",
+                    safe=False,
+                    entity_type="lead",
+                    entity_id=253,
+                    responsible_id=None,
+                )
+            ],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["target_entity_id"] is None
+        assert record["reason_code"] is None
+
     def test_existing_deal_without_target_defers(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
@@ -1396,7 +1426,9 @@ class TestWritebackPlanner:
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "case_type_not_create_eligible"
 
-    def test_ambiguous_target_defers(self, tmp_path: Path, writeback_env: None) -> None:
+    def test_ambiguous_crm_evidence_new_lead_creates(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -1409,25 +1441,78 @@ class TestWritebackPlanner:
             tmp_path, "run-wb", _writeback_settings(), _null_logger()
         )
         record = plan["events"][0]
-        assert record["outcome"] == "deferred"
-        assert record["reason_code"] == "ambiguous_target"
+        assert record["outcome"] == "create_lead"
+        assert record["target_entity_id"] is None
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(
                 tmp_path, "run-wb", _writeback_settings(), _null_logger()
             )
-        assert not [
-            call
+        assert [
+            call["method"]
             for call in recorder.calls
-            if call["method"] in {"crm.item.add", "crm.activity.add"}
+            if call["method"] == "crm.item.add"
         ]
 
-    def test_duplicate_candidate_defers(self, tmp_path: Path) -> None:
+    def test_duplicate_candidate_new_lead_creates(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
             classified=[_classified_event("evt-1", "new_lead", message_id="msg-1")],
             decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["reason_code"] is None
+        assert record["target_entity_id"] is None
+
+    def test_weak_match_new_lead_creates(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="msg-1")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "weak_match")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["target_entity_id"] is None
+
+    def test_existing_deal_duplicate_candidate_defers(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event("evt-1", "existing_deal", message_id="msg-1")
+            ],
+            decisions=[_decision("evt-1", "existing_deal")],
+            reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-wb", _writeback_settings(), _null_logger()
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "duplicate_target"
+
+    def test_semantic_duplicate_duplicate_candidate_defers(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "duplicate", message_id="msg-1")],
+            decisions=[_decision("evt-1", "duplicate")],
             reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
             routing=[_routing_item("evt-1", "matched")],
         )

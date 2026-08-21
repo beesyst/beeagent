@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,7 @@ def _load_routing_items(run_dir: Path) -> list[dict[str, Any]]:
         return []
     try:
         data = json.loads(routing_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return []
     items = data.get("items", []) if isinstance(data, dict) else []
     if not isinstance(items, list):
@@ -63,7 +63,7 @@ def _load_writeback_items(
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return {}
     events = data.get("events", {}) if isinstance(data, dict) else {}
     if not isinstance(events, dict):
@@ -140,7 +140,7 @@ def build_action_drafts(
         "status": reconciliation.get("status", "unknown"),
         "read_only": True,
         "draft_only": True,
-        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "aggregate": {
             "event_count": aggregate.get("event_count", 0),
             "matched_actionable": sum(
@@ -240,9 +240,7 @@ def _build_action_draft_item(
         "target_entity_type": item.get("bitrix_entity_type", ""),
         "target_entity_id": item.get("bitrix_entity_id"),
         "recipient": str(routing.get("recipient", "")),
-        "recipient_evidence_source": str(
-            routing.get("recipient_evidence_source", "")
-        ),
+        "recipient_evidence_source": str(routing.get("recipient_evidence_source", "")),
         "recipient_status": str(routing.get("recipient_status", "")),
         "proposed_responsible_user_id": responsible.get("user_id"),
         "proposed_responsible_name": str(responsible.get("name", "")),
@@ -397,6 +395,22 @@ def _map_action_v0(
             "medium",
             "entity_exists_in_crm",
         )
+
+    if case_type == "new_lead":
+        if match_status in ("duplicate_candidate", "weak_match", "ambiguous"):
+            if match_status == "duplicate_candidate":
+                reason = "new_lead_crm_duplicate_candidate"
+            elif match_quality == "weak":
+                reason = "new_lead_crm_weak_match"
+            else:
+                reason = "new_lead_crm_ambiguous"
+            return (
+                "create_lead",
+                "create_lead",
+                "controlled_writeback_pending",
+                "high",
+                reason,
+            )
 
     if match_status in ("weak_match", "ambiguous"):
         if match_quality == "weak":
