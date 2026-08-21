@@ -484,12 +484,17 @@ duplicate_candidate` stays CRM reconciliation evidence and never becomes semanti
     Message-ID for a candidate bridge; restored bridge evidence is revalidated against
     the current RFC ancestry;
   - outbound Bitrix activity OWNER alone is NOT authority;
+  - the outbound Message-ID is read from the real Bitrix location
+    `SETTINGS.MESSAGE_HEADERS.Message-Id` (header name matched case-insensitively) and
+    from the previously supported legacy locations (`SETTINGS.MESSAGE_ID`,
+    `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`);
   - a candidate target must match an ALREADY TRUSTED canonical CRM target in the same
-    `client_id` scope, where equality includes entity type, entity type ID, entity ID
-    and the recorded responsible user; Bitrix cannot replace the trusted responsible;
+    `client_id` scope, where trusted identity is the canonical CRM entity identity
+    (entity type, entity type ID, entity ID); the outbound activity `RESPONSIBLE_ID` is
+    diagnostic evidence only and can never replace the trusted responsible;
   - `DIRECTION` must prove outbound (2); numeric-string IDs are bounded-normalized;
-    the same outbound Message-ID observed with conflicting target/responsible tuples is
-    ambiguous and never becomes bridge evidence;
+    the same outbound Message-ID observed with conflicting OWNER entities is ambiguous
+    and never becomes bridge evidence;
   - missing, stale, conflicting or untrusted evidence is deferred with zero mutation
     (`outbound_candidate_untrusted`); sender, subject, time, `RE:`/`FWD:` and AI output
     never create target authority;

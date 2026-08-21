@@ -1859,7 +1859,7 @@ class TestWritebackPlanner:
         assert record["target_responsible_user_id"] == 42
         assert record["target_provenance"] == "bitrix_outbound_exact"
 
-    def test_exact_outbound_bridge_responsible_mismatch_is_deferred(
+    def test_exact_outbound_bridge_responsible_mismatch_attaches_canonical(
         self, tmp_path: Path
     ) -> None:
         _seed_state(tmp_path, [_attached_thread_record("msg-a", target_entity_id=3001)])
@@ -1894,6 +1894,7 @@ class TestWritebackPlanner:
                             "target_entity_type_id": 1,
                             "target_entity_id": 3001,
                             "target_responsible_user_id": 77,
+                            "outbound_activity_responsible_user_id": 77,
                         }
                     ],
                 }
@@ -1907,9 +1908,235 @@ class TestWritebackPlanner:
             _null_logger(),
         )
         record = plan["events"][0]
+        assert record["outcome"] == "attach_existing"
+        assert record["target_entity_id"] == 3001
+        assert record["target_responsible_user_id"] == 42
+        assert record["target_provenance"] == "bitrix_outbound_exact"
+
+    def test_live_outbound_bridge_end_to_end_attaches_trusted_lead(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-wb-live-outbound"
+        run_dir = tmp_path / "runs" / run_id
+        _seed_state(
+            tmp_path,
+            [
+                _attached_thread_record(
+                    "msg-root",
+                    target_entity_type="lead",
+                    target_entity_type_id=1,
+                    target_entity_id=199425,
+                    responsible=1563,
+                )
+            ],
+        )
+        event = _classified_event(
+            "evt-reply",
+            "new_lead",
+            message_id="msg-reply",
+            sender="client@example.com",
+            in_reply_to="<crm.activity.1617905-0R9TBN@my.welding.kz>",
+            references="<crm.activity.1617905-0R9TBN@my.welding.kz>",
+        )
+        _write_artifacts(
+            run_dir,
+            classified=[event],
+            decisions=[_decision("evt-reply", "new_lead")],
+            reconciliation=[],
+            routing=[_routing_item("evt-reply", "matched")],
+        )
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps([event]), encoding="utf-8"
+        )
+
+        class _OutboundClient:
+            def get_portal_url(self) -> str:
+                return "https://portal.test"
+
+            def search_candidates(self, *_args: Any, **_kwargs: Any) -> list:
+                return []
+
+            def search_related_deals(self, *_args: Any) -> list:
+                return []
+
+            def activity_list(
+                self,
+                filter_params: dict,
+                select: list[str],
+                start: int = 0,
+            ) -> dict:
+                return {
+                    "result": [
+                        {
+                            "ID": 1617905,
+                            "OWNER_TYPE_ID": 1,
+                            "OWNER_ID": 199425,
+                            "RESPONSIBLE_ID": 1610,
+                            "DIRECTION": 2,
+                            "COMPLETED": "Y",
+                            "SETTINGS": {
+                                "MESSAGE_HEADERS": {
+                                    "Message-Id": (
+                                        "<crm.activity.1617905-0R9TBN@my.welding.kz>"
+                                    )
+                                }
+                            },
+                        }
+                    ]
+                }
+
+        import beeagent_module.cases.rop_bitrix_reconciliation as recon_mod
+
+        settings = _writeback_settings(email_attach=True)
+        with patch.object(
+            recon_mod, "build_bitrix_client", return_value=_OutboundClient()
+        ):
+            reconciliation = run_reconciliation(
+                tmp_path, run_id, settings, _null_logger()
+            )
+        correlation = json.loads(
+            (run_dir / "bitrix_outbound_correlation.json").read_text(encoding="utf-8")
+        )
+        assert len(correlation["evidence"]) == 1
+        assert correlation["evidence"][0]["bridge_exact"] is True
+        assert correlation["evidence"][0]["target_entity_id"] == 199425
+        assert correlation["evidence"][0]["outbound_activity_responsible_user_id"] == (
+            1610
+        )
+
+        plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        record = plan["events"][0]
+        assert record["outcome"] == "attach_existing"
+        assert record["target_entity_id"] == 199425
+        assert record["target_responsible_user_id"] == 1563
+        assert record["target_provenance"] == "bitrix_outbound_exact"
+        assert plan["aggregate"]["outcome_counts"]["create_lead"] == 0
+
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+        assert not [call for call in recorder.calls if call["method"] == "crm.item.add"]
+
+    def test_outbound_bridge_cross_client_not_authorized(self, tmp_path: Path) -> None:
+        _seed_state(
+            tmp_path,
+            [
+                _attached_thread_record(
+                    "msg-a", target_entity_id=3001, client_id="client-x"
+                )
+            ],
+        )
+        run_dir = tmp_path / "runs" / "run-wb-outbound-cross-client"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-b",
+                    "new_lead",
+                    message_id="msg-b",
+                    client_id="welding",
+                    in_reply_to="out-1@employee.test",
+                    references="out-1@employee.test",
+                )
+            ],
+            decisions=[_decision("evt-b", "new_lead")],
+            reconciliation=[_recon_item("evt-b", "not_found")],
+            routing=[_routing_item("evt-b", "matched")],
+        )
+        (run_dir / "bitrix_outbound_correlation.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-wb-outbound-cross-client",
+                    "evidence": [
+                        {
+                            "event_id": "evt-b",
+                            "event_instance_id": "inst-1",
+                            "bridge_exact": True,
+                            "outbound_message_id": "out-1@employee.test",
+                            "target_entity_type": "lead",
+                            "target_entity_type_id": 1,
+                            "target_entity_id": 3001,
+                            "target_responsible_user_id": 77,
+                            "outbound_activity_responsible_user_id": 77,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb-outbound-cross-client",
+            _writeback_settings(),
+            _null_logger(),
+        )
+        record = plan["events"][0]
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "outbound_candidate_untrusted"
         assert record["target_entity_id"] is None
+
+    def test_outbound_bridge_cross_source_same_client_attaches(
+        self, tmp_path: Path
+    ) -> None:
+        _seed_state(
+            tmp_path,
+            [
+                _attached_thread_record(
+                    "msg-a",
+                    target_entity_id=3001,
+                    source_id="hotline_mailbox",
+                )
+            ],
+        )
+        run_dir = tmp_path / "runs" / "run-wb-outbound-cross-source"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-b",
+                    "new_lead",
+                    message_id="msg-b",
+                    source_id="sales_mailbox",
+                    in_reply_to="out-1@employee.test",
+                    references="out-1@employee.test",
+                )
+            ],
+            decisions=[_decision("evt-b", "new_lead")],
+            reconciliation=[_recon_item("evt-b", "not_found")],
+            routing=[_routing_item("evt-b", "matched")],
+        )
+        (run_dir / "bitrix_outbound_correlation.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-wb-outbound-cross-source",
+                    "evidence": [
+                        {
+                            "event_id": "evt-b",
+                            "event_instance_id": "inst-1",
+                            "bridge_exact": True,
+                            "outbound_message_id": "out-1@employee.test",
+                            "target_entity_type": "lead",
+                            "target_entity_type_id": 1,
+                            "target_entity_id": 3001,
+                            "target_responsible_user_id": 42,
+                            "outbound_activity_responsible_user_id": 42,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb-outbound-cross-source",
+            _writeback_settings(),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "attach_existing"
+        assert record["target_entity_id"] == 3001
+        assert record["target_responsible_user_id"] == 42
+        assert record["target_provenance"] == "bitrix_outbound_exact"
 
     def test_proven_outbound_bridge_propagates_to_next_hop(
         self, tmp_path: Path
