@@ -76,6 +76,48 @@ EVIDENCE_LABELS: dict[str, str] = {
     "rop_final_decisions_json": "ROP final decisions",
 }
 
+_TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
+
+
+def _trusted_attach_operational_case_types(
+    storage_dir: Path,
+) -> dict[tuple[str, str, str, str], str]:
+    result: dict[tuple[str, str, str, str], str] = {}
+    path = storage_dir / "interfaces" / "rop_writeback_state.json"
+    if not path.exists():
+        return result
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return result
+    if not isinstance(data, dict):
+        return result
+    events = data.get("events")
+    if not isinstance(events, dict):
+        return result
+    for record in events.values():
+        if not isinstance(record, dict):
+            continue
+        if record.get("outcome") != "attach_existing":
+            continue
+        provenance = record.get("target_provenance")
+        if (
+            not isinstance(provenance, str)
+            or provenance not in _TRUSTED_ATTACH_PROVENANCES
+        ):
+            continue
+        event_id = record.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            continue
+        key = (
+            str(record.get("last_run_id") or ""),
+            str(record.get("source_id") or ""),
+            event_id,
+            str(record.get("event_instance_id") or ""),
+        )
+        result[key] = "existing_deal"
+    return result
+
 
 def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
     try:
@@ -2222,6 +2264,29 @@ def build_rop_dashboard_read_model(
     queues = dashboard_payload.get("queues", {})
     if not isinstance(queues, dict):
         queues = {}
+    attach_overrides = _trusted_attach_operational_case_types(storage_dir)
+    if attach_overrides:
+        for _queue_items in queues.values():
+            if not isinstance(_queue_items, list):
+                continue
+            for item in _queue_items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("semantic_case_type"):
+                    continue
+                key = (
+                    str(item.get("run_id") or ""),
+                    str(item.get("source_id") or ""),
+                    str(item.get("event_id") or ""),
+                    str(item.get("event_instance_id") or ""),
+                )
+                operational = attach_overrides.get(key)
+                if operational:
+                    item["semantic_case_type"] = str(
+                        item.get("bot_case_type") or item.get("case_type") or ""
+                    )
+                    item["case_type"] = operational
+                    item["bot_case_type"] = operational
     rop_recommendations = dashboard_payload.get("rop_recommendations", [])
     if not isinstance(rop_recommendations, list):
         rop_recommendations = []

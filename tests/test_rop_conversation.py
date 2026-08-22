@@ -13,7 +13,9 @@ from beeagent_module.core.rop_conversation import (
 from beeagent_module.core.rop_outbound_correlation import (
     _activity_message_id,
     _activity_target,
+    _extract_reference_ids,
     _is_outbound_activity,
+    _normalize_message_id,
     collect_outbound_correlation_evidence,
     resolve_outbound_bridge,
     write_outbound_correlation_artifact,
@@ -188,6 +190,46 @@ class TestConversationTimeline:
         assert events["b"]["source_id"] == "mailbox-b"
         assert events["b"]["role"] == "reply"
 
+    def test_trusted_attach_timeline_shows_operational_case_type(
+        self, tmp_path: Path
+    ) -> None:
+        state = {
+            "events": {
+                "welding|mailbox-b|<b@test>|": {
+                    "event_id": "b",
+                    "event_instance_id": "event-b",
+                    "client_id": "welding",
+                    "source_id": "mailbox-b",
+                    "message_id": "<b@test>",
+                    "in_reply_to": "<a@test>",
+                    "references": "<a@test>",
+                    "sender_email": "client@example.com",
+                    "subject": "Re: Need quote",
+                    "case_type": "existing_deal",
+                    "semantic_case_type": "new_lead",
+                    "outcome": "attach_existing",
+                    "status": "attached",
+                    "target_entity_type": "lead",
+                    "target_entity_id": 1001,
+                    "target_provenance": "thread_resolved",
+                    "last_run_id": "run-2",
+                    "created_at_utc": "2026-08-02T10:00:00Z",
+                },
+            }
+        }
+        (tmp_path / "interfaces").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "interfaces" / "rop_writeback_state.json").write_text(
+            json.dumps(state), encoding="utf-8"
+        )
+
+        timeline = build_conversation_timeline(tmp_path, "run-2", "b", "event-b")
+        assert timeline["available"] is True
+        events = {item["event_id"]: item for item in timeline["events"]}
+        assert events["b"]["case_type"] == "existing_deal"
+        assert events["b"]["semantic_case_type"] == "new_lead"
+        assert events["b"]["writeback"]["outcome"] == "attach_existing"
+        assert events["b"]["writeback"]["target_provenance"] == "thread_resolved"
+
     def test_independent_conversation_not_included(self, tmp_path: Path) -> None:
         state = {
             "events": {
@@ -275,12 +317,13 @@ class TestOutboundCorrelationCollect:
             result=[
                 {
                     "ID": 11,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
                     "DIRECTION": 2,
                     "SUBJECT": "Re: Need quote",
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-X@employee.test>"},
                 }
             ]
         )
@@ -288,8 +331,8 @@ class TestOutboundCorrelationCollect:
             {
                 "event_id": "evt-b",
                 "event_instance_id": "event-b",
-                "in_reply_to": "<out-1@employee.test>",
-                "references": "<out-1@employee.test>",
+                "in_reply_to": "<crm.activity.11-X@employee.test>",
+                "references": "<crm.activity.11-X@employee.test>",
             }
         ]
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
@@ -298,13 +341,14 @@ class TestOutboundCorrelationCollect:
         assert evidence[0]["bridge_exact"] is True
         assert evidence[0]["target_entity_id"] == 1001
         assert evidence[0]["target_responsible_user_id"] == 42
-        assert client.calls[0]["filter_params"]["TYPE_ID"] == 4
+        assert client.calls[0]["filter_params"] == {"ID": 11}
 
     def test_exact_bridge_via_message_headers_location(self) -> None:
         client = _FakeBitrixClient(
             result=[
                 {
                     "ID": 1617905,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 199425,
                     "RESPONSIBLE_ID": 1610,
@@ -347,7 +391,9 @@ class TestOutboundCorrelationCollect:
         from beeagent_module.adapters.bitrix_client import BitrixConnectorError
 
         client = _FakeBitrixClient(error=BitrixConnectorError("boom"))
-        events = [{"event_id": "evt-b", "in_reply_to": "<x@test>"}]
+        events = [
+            {"event_id": "evt-b", "in_reply_to": "<crm.activity.11-X@employee.test>"}
+        ]
         assert (
             collect_outbound_correlation_evidence(client, events, _null_logger()) == []
         )
@@ -357,26 +403,30 @@ class TestOutboundCorrelationCollect:
             result=[
                 {
                     "ID": 11,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-A@employee.test>"},
                 },
                 {
                     "ID": 12,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 2,
                     "OWNER_ID": 2001,
                     "RESPONSIBLE_ID": 43,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-2@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.12-B@employee.test>"},
                 },
             ]
         )
         events = [
             {
                 "event_id": "evt-b",
-                "in_reply_to": "<out-1@employee.test> <out-2@employee.test>",
+                "in_reply_to": (
+                    "<crm.activity.11-A@employee.test> <crm.activity.12-B@employee.test>"
+                ),
             }
         ]
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
@@ -435,11 +485,12 @@ class TestOutboundCorrelationCollect:
             call["filter_params"] == {"ID": 1617905} for call in client.calls
         )
 
-    def test_non_crm_activity_references_skip_id_lookup(self) -> None:
+    def test_plain_reference_without_crm_activity_hint_no_lookup(self) -> None:
         client = _FakeBitrixClient(
             result=[
                 {
                     "ID": 11,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
@@ -456,8 +507,204 @@ class TestOutboundCorrelationCollect:
             }
         ]
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert evidence == []
+        assert client.calls == []
+
+    def test_direct_id_lookup_wrong_type_id_no_bridge(self) -> None:
+        class _WrongTypeIdClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                if "ID" in filter_params:
+                    return {
+                        "result": [
+                            {
+                                "ID": 123,
+                                "TYPE_ID": 3,
+                                "OWNER_TYPE_ID": 1,
+                                "OWNER_ID": 1001,
+                                "RESPONSIBLE_ID": 42,
+                                "DIRECTION": 2,
+                                "SETTINGS": {
+                                    "MESSAGE_HEADERS": {
+                                        "Message-Id": (
+                                            "<crm.activity.123-ABC@my.welding.kz>"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                return {"result": []}
+
+        client = _WrongTypeIdClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.123-ABC@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert evidence == []
+
+    def test_direct_id_lookup_missing_type_id_no_bridge(self) -> None:
+        class _MissingTypeIdClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                if "ID" in filter_params:
+                    return {
+                        "result": [
+                            {
+                                "ID": 123,
+                                "OWNER_TYPE_ID": 1,
+                                "OWNER_ID": 1001,
+                                "RESPONSIBLE_ID": 42,
+                                "DIRECTION": 2,
+                                "SETTINGS": {
+                                    "MESSAGE_HEADERS": {
+                                        "Message-Id": (
+                                            "<crm.activity.123-ABC@my.welding.kz>"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                return {"result": []}
+
+        client = _MissingTypeIdClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.123-ABC@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert evidence == []
+
+    def test_direct_id_lookup_inbound_direction_no_bridge(self) -> None:
+        class _InboundDirectionClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                if "ID" in filter_params:
+                    return {
+                        "result": [
+                            {
+                                "ID": 123,
+                                "TYPE_ID": 4,
+                                "OWNER_TYPE_ID": 1,
+                                "OWNER_ID": 1001,
+                                "RESPONSIBLE_ID": 42,
+                                "DIRECTION": 1,
+                                "SETTINGS": {
+                                    "MESSAGE_HEADERS": {
+                                        "Message-Id": (
+                                            "<crm.activity.123-ABC@my.welding.kz>"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                return {"result": []}
+
+        client = _InboundDirectionClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.123-ABC@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert evidence == []
+
+    def test_direct_id_lookup_untrusted_owner_no_bridge(self) -> None:
+        class _UntrustedOwnerClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                if "ID" in filter_params:
+                    return {
+                        "result": [
+                            {
+                                "ID": 123,
+                                "TYPE_ID": 4,
+                                "OWNER_TYPE_ID": 1,
+                                "OWNER_ID": 1001,
+                                "RESPONSIBLE_ID": 42,
+                                "DIRECTION": 2,
+                                "SETTINGS": {
+                                    "MESSAGE_HEADERS": {
+                                        "Message-Id": (
+                                            "<crm.activity.123-ABC@my.welding.kz>"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                return {"result": []}
+
+        client = _UntrustedOwnerClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.123-ABC@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
         assert len(evidence) == 1
-        assert all("ID" not in call["filter_params"] for call in client.calls)
+        assert evidence[0]["bridge_exact"] is True
+        trusted = set()
+        bridge = resolve_outbound_bridge(events[0], evidence, trusted)
+        assert bridge is not None
+        assert bridge["authorized"] is False
+        assert bridge["reason_code"] == "outbound_candidate_untrusted"
+
+    def test_direct_id_lookup_nonexistent_activity_no_bridge(self) -> None:
+        class _NoActivityClient:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def activity_list(
+                self, filter_params: dict, select: list[str], start: int = 0
+            ) -> dict:
+                self.calls.append({"filter_params": filter_params, "start": start})
+                return {"result": []}
+
+        client = _NoActivityClient()
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.1617969-ZP2J9I@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
+        assert evidence == []
+        assert any(call["filter_params"] == {"ID": 1617969} for call in client.calls)
 
 
 class TestActivityMessageId:
@@ -516,6 +763,230 @@ class TestActivityMessageId:
     def test_missing_message_id_returns_empty(self) -> None:
         assert _activity_message_id({"SETTINGS": {"OTHER": "x"}}) == ""
         assert _activity_message_id({}) == ""
+
+
+class TestMessageIdStrictValidation:
+    def test_valid_bracketed_message_id_normalized(self) -> None:
+        assert (
+            _normalize_message_id("<crm.activity.1617905-0R9TBN@my.welding.kz>")
+            == "crm.activity.1617905-0R9TBN@my.welding.kz"
+        )
+
+    def test_valid_unbracketed_message_id_normalized(self) -> None:
+        assert _normalize_message_id("out-1@employee.test") == "out-1@employee.test"
+
+    def test_outer_whitespace_trimmed(self) -> None:
+        assert _normalize_message_id("  <a@b.test>  ") == "a@b.test"
+
+    def test_missing_at_rejected(self) -> None:
+        assert _normalize_message_id("not-a-message-id") == ""
+
+    def test_internal_whitespace_rejected(self) -> None:
+        assert _normalize_message_id("<a b@c.test>") == ""
+        assert _normalize_message_id("a b@c.test") == ""
+
+    def test_control_characters_rejected(self) -> None:
+        assert _normalize_message_id("a\x00b@c.test") == ""
+
+    def test_internal_crlf_rejected(self) -> None:
+        assert _normalize_message_id("a@b.test\r\nmore") == ""
+        assert _normalize_message_id("a\r\n@b.test") == ""
+
+    def test_unmatched_angle_bracket_rejected(self) -> None:
+        assert _normalize_message_id("<a@b.test") == ""
+        assert _normalize_message_id("a@b.test>") == ""
+
+    def test_embedded_angle_brackets_rejected(self) -> None:
+        assert _normalize_message_id("<a<b@c.test>") == ""
+
+    def test_empty_local_part_rejected(self) -> None:
+        assert _normalize_message_id("<@b.test>") == ""
+
+    def test_empty_domain_part_rejected(self) -> None:
+        assert _normalize_message_id("<a@>") == ""
+
+    def test_multiple_at_rejected(self) -> None:
+        assert _normalize_message_id("<a@b@c.test>") == ""
+
+    def test_oversized_message_id_fails_closed(self) -> None:
+        oversized = "x@" + ("a" * 400)
+        assert _normalize_message_id(oversized) == ""
+        assert _normalize_message_id("<" + oversized + ">") == ""
+
+    def test_oversized_identifiers_do_not_collide(self) -> None:
+        prefix = "same-prefix@"
+        assert _normalize_message_id(prefix + ("a" * 400)) == ""
+        assert _normalize_message_id(prefix + ("b" * 400)) == ""
+
+    def test_extract_malformed_bracket_structure_empty(self) -> None:
+        assert _extract_reference_ids("<a<b@c.test>") == []
+        assert _extract_reference_ids("<a@b.test") == []
+        assert _extract_reference_ids("a@b.test>") == []
+        assert _extract_reference_ids("not-a-message-id") == []
+
+    def test_extract_valid_references_still_work(self) -> None:
+        assert _extract_reference_ids("<a@x.test> <b@y.test>") == [
+            "a@x.test",
+            "b@y.test",
+        ]
+        assert _extract_reference_ids("a@x.test") == ["a@x.test"]
+
+
+class TestOutboundCorrelationMalformedMessageId:
+    def test_valid_bitrix_message_id_bridge_still_works(self) -> None:
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 1617905,
+                    "TYPE_ID": 4,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 199425,
+                    "RESPONSIBLE_ID": 1610,
+                    "DIRECTION": 2,
+                    "SETTINGS": {
+                        "MESSAGE_HEADERS": {
+                            "Message-Id": (
+                                "<crm.activity.1617905-0R9TBN@my.welding.kz>"
+                            )
+                        }
+                    },
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-reply",
+                "event_instance_id": "event-reply",
+                "references": "<crm.activity.1617905-0R9TBN@my.welding.kz>",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(
+            client, events, _null_logger()
+        )
+        assert len(evidence) == 1
+        assert evidence[0]["bridge_exact"] is True
+        assert evidence[0]["outbound_message_id"] == (
+            "crm.activity.1617905-0R9TBN@my.welding.kz"
+        )
+
+    def test_malformed_activity_message_id_no_bridge(self) -> None:
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 11,
+                    "TYPE_ID": 4,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 1001,
+                    "RESPONSIBLE_ID": 42,
+                    "DIRECTION": 2,
+                    "SETTINGS": {"MESSAGE_ID": "not-a-message-id"},
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-b",
+                "event_instance_id": "event-b",
+                "in_reply_to": "not-a-message-id",
+                "references": "not-a-message-id",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(
+            client, events, _null_logger()
+        )
+        assert evidence == []
+
+    def test_malformed_activity_message_id_variants_no_bridge(self) -> None:
+        malformed_values = [
+            "no-at-sign",
+            "has space@test",
+            "a@b\r\nc",
+            "a\x00b@c.test",
+            "<unmatched@test",
+            "<a<b@c.test>",
+            "<@empty.local>",
+            "a@",
+            "a@b@c.test",
+        ]
+        for malformed in malformed_values:
+            client = _FakeBitrixClient(
+                result=[
+                    {
+                        "ID": 11,
+                        "TYPE_ID": 4,
+                        "OWNER_TYPE_ID": 1,
+                        "OWNER_ID": 1001,
+                        "RESPONSIBLE_ID": 42,
+                        "DIRECTION": 2,
+                        "SETTINGS": {"MESSAGE_ID": malformed},
+                    }
+                ]
+            )
+            events = [
+                {
+                    "event_id": "evt-b",
+                    "event_instance_id": "event-b",
+                    "in_reply_to": malformed,
+                }
+            ]
+            evidence = collect_outbound_correlation_evidence(
+                client, events, _null_logger()
+            )
+            assert evidence == []
+
+    def test_malformed_inbound_ancestry_does_not_bridge(self) -> None:
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 11,
+                    "TYPE_ID": 4,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 1001,
+                    "RESPONSIBLE_ID": 42,
+                    "DIRECTION": 2,
+                    "SETTINGS": {"MESSAGE_ID": "<valid-out@employee.test>"},
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-b",
+                "event_instance_id": "event-b",
+                "in_reply_to": "<a<b@c.test>",
+                "references": "not-a-message-id",
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(
+            client, events, _null_logger()
+        )
+        assert evidence == []
+
+    def test_oversized_message_id_no_bridge(self) -> None:
+        oversized = "x@" + ("a" * 400)
+        client = _FakeBitrixClient(
+            result=[
+                {
+                    "ID": 11,
+                    "TYPE_ID": 4,
+                    "OWNER_TYPE_ID": 1,
+                    "OWNER_ID": 1001,
+                    "RESPONSIBLE_ID": 42,
+                    "DIRECTION": 2,
+                    "SETTINGS": {"MESSAGE_ID": oversized},
+                }
+            ]
+        )
+        events = [
+            {
+                "event_id": "evt-b",
+                "event_instance_id": "event-b",
+                "in_reply_to": oversized,
+            }
+        ]
+        evidence = collect_outbound_correlation_evidence(
+            client, events, _null_logger()
+        )
+        assert evidence == []
 
 
 class TestResolveOutboundBridge:
@@ -650,20 +1121,35 @@ class TestResolveOutboundBridge:
 
 class TestOutboundActivityDirection:
     def test_direction_two_accepted(self) -> None:
-        assert _is_outbound_activity({"DIRECTION": 2}) is True
-        assert _is_outbound_activity({"DIRECTION": "2"}) is True
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": 2}) is True
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": "2"}) is True
 
     def test_direction_one_rejected(self) -> None:
-        assert _is_outbound_activity({"DIRECTION": 1}) is False
-        assert _is_outbound_activity({"DIRECTION": "1"}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": 1}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": "1"}) is False
 
     def test_missing_direction_rejected(self) -> None:
-        assert _is_outbound_activity({}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4}) is False
 
     def test_malformed_direction_rejected(self) -> None:
-        assert _is_outbound_activity({"DIRECTION": "two"}) is False
-        assert _is_outbound_activity({"DIRECTION": -2}) is False
-        assert _is_outbound_activity({"DIRECTION": True}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": "two"}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": -2}) is False
+        assert _is_outbound_activity({"TYPE_ID": 4, "DIRECTION": True}) is False
+
+    def test_missing_type_id_rejected(self) -> None:
+        assert _is_outbound_activity({"DIRECTION": 2}) is False
+
+    def test_malformed_type_id_rejected(self) -> None:
+        assert _is_outbound_activity({"TYPE_ID": "email", "DIRECTION": 2}) is False
+        assert _is_outbound_activity({"TYPE_ID": -4, "DIRECTION": 2}) is False
+        assert _is_outbound_activity({"TYPE_ID": True, "DIRECTION": 2}) is False
+
+    def test_non_email_type_id_rejected(self) -> None:
+        assert _is_outbound_activity({"TYPE_ID": 3, "DIRECTION": 2}) is False
+        assert _is_outbound_activity({"TYPE_ID": 2, "DIRECTION": 2}) is False
+
+    def test_type_id_numeric_string_accepted(self) -> None:
+        assert _is_outbound_activity({"TYPE_ID": "4", "DIRECTION": 2}) is True
 
     def test_numeric_string_target_ids_accepted(self) -> None:
         assert _activity_target(
@@ -686,12 +1172,19 @@ class TestOutboundActivityDirection:
     def test_message_id_presence_is_not_outbound_proof(self) -> None:
         assert (
             _is_outbound_activity(
-                {"DIRECTION": 1, "SETTINGS": {"MESSAGE_ID": "<out@x.test>"}}
+                {
+                    "TYPE_ID": 4,
+                    "DIRECTION": 1,
+                    "SETTINGS": {"MESSAGE_ID": "<out@x.test>"},
+                }
             )
             is False
         )
         assert (
-            _is_outbound_activity({"SETTINGS": {"MESSAGE_ID": "<out@x.test>"}}) is False
+            _is_outbound_activity(
+                {"TYPE_ID": 4, "SETTINGS": {"MESSAGE_ID": "<out@x.test>"}}
+            )
+            is False
         )
 
     def test_owner_type_must_be_lead_or_deal(self) -> None:
@@ -712,19 +1205,21 @@ class TestOutboundActivityDirection:
             result=[
                 {
                     "ID": 11,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-X@employee.test>"},
                 },
                 {
                     "ID": 12,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 2,
                     "OWNER_ID": 2001,
                     "RESPONSIBLE_ID": 43,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-X@employee.test>"},
                 },
             ]
         )
@@ -732,7 +1227,7 @@ class TestOutboundActivityDirection:
             {
                 "event_id": "evt-b",
                 "event_instance_id": "event-b",
-                "in_reply_to": "<out-1@employee.test>",
+                "in_reply_to": "<crm.activity.11-X@employee.test>",
             }
         ]
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
@@ -743,19 +1238,21 @@ class TestOutboundActivityDirection:
             result=[
                 {
                     "ID": 11,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-X@employee.test>"},
                 },
                 {
                     "ID": 12,
+                    "TYPE_ID": 4,
                     "OWNER_TYPE_ID": 1,
                     "OWNER_ID": 1001,
                     "RESPONSIBLE_ID": 42,
                     "DIRECTION": 2,
-                    "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
+                    "SETTINGS": {"MESSAGE_ID": "<crm.activity.11-X@employee.test>"},
                 },
             ]
         )
@@ -763,7 +1260,7 @@ class TestOutboundActivityDirection:
             {
                 "event_id": "evt-b",
                 "event_instance_id": "event-b",
-                "in_reply_to": "<out-1@employee.test>",
+                "in_reply_to": "<crm.activity.11-X@employee.test>",
             }
         ]
         evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
@@ -774,180 +1271,12 @@ class TestOutboundActivityDirection:
 
     def test_malformed_result_fails_closed(self) -> None:
         client = _FakeBitrixClient(responses=[{"result": "malformed"}])
-        events = [{"event_id": "evt-b", "in_reply_to": "<out-1@employee.test>"}]
-        assert (
-            collect_outbound_correlation_evidence(client, events, _null_logger()) == []
-        )
-
-    def test_exact_message_id_on_later_page_discovered(self) -> None:
-        client = _FakeBitrixClient(
-            responses=[
-                {
-                    "result": [
-                        {
-                            "ID": 11,
-                            "OWNER_TYPE_ID": 1,
-                            "OWNER_ID": 1001,
-                            "RESPONSIBLE_ID": 42,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
-                        }
-                    ],
-                    "next": 1,
-                },
-                {
-                    "result": [
-                        {
-                            "ID": 12,
-                            "OWNER_TYPE_ID": 2,
-                            "OWNER_ID": 2001,
-                            "RESPONSIBLE_ID": 43,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-2@employee.test>"},
-                        }
-                    ]
-                },
-            ]
-        )
         events = [
-            {
-                "event_id": "evt-b",
-                "event_instance_id": "event-b",
-                "in_reply_to": "<out-2@employee.test>",
-            }
-        ]
-        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
-        assert len(evidence) == 1
-        assert evidence[0]["bridge_exact"] is True
-        assert evidence[0]["target_entity_id"] == 2001
-        assert evidence[0]["target_responsible_user_id"] == 43
-        assert [call["start"] for call in client.calls] == [0, 1]
-
-    def test_same_message_id_cross_page_targets_ambiguous(self) -> None:
-        client = _FakeBitrixClient(
-            responses=[
-                {
-                    "result": [
-                        {
-                            "ID": 11,
-                            "OWNER_TYPE_ID": 1,
-                            "OWNER_ID": 1001,
-                            "RESPONSIBLE_ID": 42,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
-                        }
-                    ],
-                    "next": 1,
-                },
-                {
-                    "result": [
-                        {
-                            "ID": 12,
-                            "OWNER_TYPE_ID": 2,
-                            "OWNER_ID": 2001,
-                            "RESPONSIBLE_ID": 43,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
-                        }
-                    ]
-                },
-            ]
-        )
-        events = [
-            {
-                "event_id": "evt-b",
-                "event_instance_id": "event-b",
-                "in_reply_to": "<out-1@employee.test>",
-            }
-        ]
-        evidence = collect_outbound_correlation_evidence(client, events, _null_logger())
-        assert evidence == []
-
-    def test_malformed_next_cursor_fails_closed(self) -> None:
-        client = _FakeBitrixClient(
-            responses=[
-                {
-                    "result": [
-                        {
-                            "ID": 11,
-                            "OWNER_TYPE_ID": 1,
-                            "OWNER_ID": 1001,
-                            "RESPONSIBLE_ID": 42,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
-                        }
-                    ],
-                    "next": "abc",
-                }
-            ]
-        )
-        events = [
-            {
-                "event_id": "evt-b",
-                "event_instance_id": "event-b",
-                "in_reply_to": "<out-1@employee.test>",
-            }
+            {"event_id": "evt-b", "in_reply_to": "<crm.activity.11-X@employee.test>"}
         ]
         assert (
             collect_outbound_correlation_evidence(client, events, _null_logger()) == []
         )
-
-    def test_pages_max_respected(self) -> None:
-        client = _FakeBitrixClient(
-            responses=[
-                {
-                    "result": [
-                        {
-                            "ID": 11,
-                            "OWNER_TYPE_ID": 1,
-                            "OWNER_ID": 1001,
-                            "RESPONSIBLE_ID": 42,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-1@employee.test>"},
-                        }
-                    ],
-                    "next": 1,
-                },
-                {
-                    "result": [
-                        {
-                            "ID": 12,
-                            "OWNER_TYPE_ID": 2,
-                            "OWNER_ID": 2001,
-                            "RESPONSIBLE_ID": 43,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-2@employee.test>"},
-                        }
-                    ],
-                    "next": 2,
-                },
-                {
-                    "result": [
-                        {
-                            "ID": 13,
-                            "OWNER_TYPE_ID": 2,
-                            "OWNER_ID": 3001,
-                            "RESPONSIBLE_ID": 44,
-                            "DIRECTION": 2,
-                            "SETTINGS": {"MESSAGE_ID": "<out-3@employee.test>"},
-                        }
-                    ]
-                },
-            ]
-        )
-        events = [
-            {
-                "event_id": "evt-b",
-                "event_instance_id": "event-b",
-                "in_reply_to": "<out-2@employee.test>",
-            }
-        ]
-        evidence = collect_outbound_correlation_evidence(
-            client, events, _null_logger(), pages_max=2
-        )
-        assert [call["start"] for call in client.calls] == [0, 1]
-        assert len(evidence) == 1
-        assert evidence[0]["outbound_message_id"] == "out-2@employee.test"
 
 
 class TestOutboundCorrelationArtifact:

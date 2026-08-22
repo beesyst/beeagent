@@ -179,7 +179,7 @@ bitrix:
       enabled: true # true/false - read-only проверка exact outbound email correlation (crm.activity.list, Message-ID bridge)
       window_days: 180 # окно поиска outbound email-активностей (дней назад)
   writeback:
-    enabled: true # true/false - включить/выключить Bitrix write-back (disabled by default)
+    enabled: false # true/false - включить/выключить Bitrix write-back (disabled by default)
     webhook_env: "BITRIX_WRITEBACK_WEBHOOK_URL" # имя env переменной с отдельным write credential (https URL)
     timeout: 10 # таймаут HTTP-запроса для write-back (сек)
     attempts_retry_max: 3 # максимум bounded попыток для retryable failures

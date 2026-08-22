@@ -471,6 +471,7 @@ def test_thread_context_cross_run_prior_message_reference() -> None:
         {
             "event_id": "<root@yandex.test>",
             "message_id": "<root@yandex.test>",
+            "client_id": "welding",
             "subject": "Запрос КП",
             "sender": "buyer@yandex.test",
         }
@@ -485,6 +486,7 @@ def test_thread_context_cross_run_prior_message_reference() -> None:
         {
             "event_id": "<reply@yandex.test>",
             "message_id": "<reply@yandex.test>",
+            "client_id": "welding",
             "in_reply_to": "<root@yandex.test>",
             "references": "<root@yandex.test>",
             "subject": "Re: Запрос КП",
@@ -507,7 +509,118 @@ def test_thread_context_cross_run_prior_message_reference() -> None:
     assert "prior_run_reference" in entry["reason_codes"]
 
 
-def test_thread_context_crm_activity_reference_is_existing_deal() -> None:
+def test_thread_context_cross_client_prior_reference_fails_closed() -> None:
+    prior_events = [
+        {
+            "event_id": "<root@yandex.test>",
+            "message_id": "<root@yandex.test>",
+            "client_id": "client-a",
+            "subject": "Запрос КП",
+            "sender": "buyer@yandex.test",
+        }
+    ]
+    prior_classified = [
+        {
+            "event_id": "<root@yandex.test>",
+            "case_type": "new_lead",
+        }
+    ]
+    events = [
+        {
+            "event_id": "<reply@yandex.test>",
+            "message_id": "<reply@yandex.test>",
+            "client_id": "client-b",
+            "in_reply_to": "<root@yandex.test>",
+            "references": "<root@yandex.test>",
+            "subject": "Re: Запрос КП",
+            "sender": "buyer@yandex.test",
+        }
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[],
+        logger=_null_logger(),
+        prior_events=prior_events,
+        prior_classified=prior_classified,
+    )
+
+    entries = [
+        item
+        for item in context["contexts"]
+        if item["event_id"] == "<reply@yandex.test>"
+    ]
+    assert entries == []
+    for entry in entries:
+        assert entry["previous_case_type"] != "new_lead"
+        assert "prior_run_reference" not in entry["reason_codes"]
+
+
+def test_thread_index_same_message_id_different_clients_isolated() -> None:
+    events = [
+        {
+            "event_id": "evt-a1",
+            "message_id": "<shared@example.test>",
+            "client_id": "client-a",
+            "source_id": "mailbox-a",
+            "subject": "Запрос КП",
+            "sender": "buyer@example.test",
+        },
+        {
+            "event_id": "evt-b1",
+            "message_id": "<shared@example.test>",
+            "client_id": "client-b",
+            "source_id": "mailbox-b",
+            "subject": "Запрос КП",
+            "sender": "buyer@example.test",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    threads = index["threads"]
+    assert len(threads) == 2
+    event_to_thread = {
+        eid: t["thread_id"] for t in threads for eid in t["event_ids"]
+    }
+    assert event_to_thread["evt-a1"] != event_to_thread["evt-b1"]
+
+
+def test_thread_context_malformed_ids_no_exact_continuation() -> None:
+    events = [
+        {
+            "event_id": "evt-root",
+            "message_id": "not-a-message-id",
+            "client_id": "welding",
+            "source_id": "mailbox-a",
+            "subject": "Запрос КП",
+            "sender": "buyer@example.test",
+        },
+        {
+            "event_id": "evt-reply",
+            "message_id": "not-a-message-id",
+            "client_id": "welding",
+            "source_id": "mailbox-a",
+            "in_reply_to": "not-a-message-id",
+            "subject": "Re: Запрос КП",
+            "sender": "buyer@example.test",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[
+            {"event_id": "evt-root", "case_type": "new_lead"},
+        ],
+        logger=_null_logger(),
+    )
+    for entry in context["contexts"]:
+        assert entry["previous_case_type"] != "new_lead"
+        assert "message_id_chain" not in entry["reason_codes"]
+        assert "references_chain" not in entry["reason_codes"]
+
+
+def test_thread_context_crm_activity_reference_is_lookup_hint_only() -> None:
     events = [
         {
             "event_id": "<reply@yandex.test>",
@@ -526,7 +639,80 @@ def test_thread_context_crm_activity_reference_is_existing_deal() -> None:
         logger=_null_logger(),
     )
 
-    assert len(context["contexts"]) == 1
-    entry = context["contexts"][0]
-    assert entry["previous_case_type"] == "existing_deal"
-    assert "references_bitrix_activity" in entry["reason_codes"]
+    assert context["contexts"] == []
+    for entry in context["contexts"]:
+        assert entry["previous_case_type"] != "existing_deal"
+
+
+def test_thread_context_similar_subject_same_sender_no_exact_ancestry() -> None:
+    events = [
+        {
+            "event_id": "evt-root",
+            "message_id": "<root@example.test>",
+            "subject": "Запрос КП на сварочное оборудование",
+            "sender": "buyer@example.test",
+            "source_id": "mailbox-a",
+            "client_id": "welding",
+        },
+        {
+            "event_id": "evt-new",
+            "message_id": "<new@example.test>",
+            "subject": "Re: Запрос КП на сварочное оборудование",
+            "sender": "buyer@example.test",
+            "source_id": "mailbox-a",
+            "client_id": "welding",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[
+            {"event_id": "evt-root", "case_type": "new_lead"},
+        ],
+        logger=_null_logger(),
+    )
+
+    entry = next(
+        item for item in context["contexts"] if item["event_id"] == "evt-new"
+    )
+    assert entry["previous_case_type"] != "existing_deal"
+    assert "previous_new_lead" not in entry["reason_codes"]
+    assert "previous_existing_deal" not in entry.get("reason_codes", [])
+
+
+def test_thread_context_exact_rfc_reply_after_new_lead_keeps_previous() -> None:
+    events = [
+        {
+            "event_id": "evt-root",
+            "message_id": "<root@example.test>",
+            "subject": "Запрос КП на сварочное оборудование",
+            "sender": "buyer@example.test",
+            "source_id": "mailbox-a",
+            "client_id": "welding",
+        },
+        {
+            "event_id": "evt-reply",
+            "message_id": "<reply@example.test>",
+            "in_reply_to": "<root@example.test>",
+            "references": "<root@example.test>",
+            "subject": "Re: Запрос КП на сварочное оборудование",
+            "sender": "buyer@example.test",
+            "source_id": "mailbox-a",
+            "client_id": "welding",
+        },
+    ]
+    index = build_thread_index(events, logger=_null_logger())
+    context = build_thread_context(
+        events=events,
+        thread_index=index,
+        classified_events=[
+            {"event_id": "evt-root", "case_type": "new_lead"},
+        ],
+        logger=_null_logger(),
+    )
+
+    entry = next(
+        item for item in context["contexts"] if item["event_id"] == "evt-reply"
+    )
+    assert entry["previous_case_type"] == "new_lead"

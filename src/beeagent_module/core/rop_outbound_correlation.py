@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeGuard
 
-from beeagent_module.adapters.bitrix_client import (
-    BitrixConnectorError,
-    BitrixMalformedResponse,
+from beeagent_module.adapters.bitrix_client import BitrixConnectorError
+from beeagent_module.core.message_id import (
+    extract_reference_ids as _extract_reference_ids,
+    normalize_message_id as _normalize_message_id,
 )
 
 OUTBOUND_CORRELATION_ARTIFACT = "bitrix_outbound_correlation.json"
@@ -26,15 +26,6 @@ def _bounded_text(value: Any, max_length: int = _MAX_IDENTIFIER_LENGTH) -> str:
     if not isinstance(value, str):
         return ""
     return value.strip()[:max_length]
-
-
-def _normalize_message_id(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    value = value.strip()
-    if len(value) > 2 and value.startswith("<") and value.endswith(">"):
-        value = value[1:-1].strip()
-    return value[:_MAX_IDENTIFIER_LENGTH]
 
 
 def _safe_list(value: Any) -> list:
@@ -58,20 +49,6 @@ def _positive_int_or_none(value: Any) -> int | None:
             parsed = int(normalized)
             return parsed if parsed > 0 else None
     return None
-
-
-def _extract_reference_ids(value: Any) -> list[str]:
-    if not isinstance(value, str) or not value.strip():
-        return []
-    tokens = re.findall(r"<([^<>]+)>", value)
-    if not tokens:
-        tokens = value.split()
-    result: list[str] = []
-    for token in tokens:
-        token = _normalize_message_id(token)
-        if token and token not in result:
-            result.append(token)
-    return result
 
 
 def _event_reference_ids(event: dict[str, Any]) -> list[str]:
@@ -150,7 +127,11 @@ def _owner_identity(item: dict[str, Any]) -> tuple[str, int, int] | None:
 
 
 def _is_outbound_activity(activity: dict[str, Any]) -> bool:
-    return _positive_int_or_none(activity.get("DIRECTION")) == _ACTIVITY_DIRECTION_OUT
+    return (
+        _positive_int_or_none(activity.get("TYPE_ID")) == _ACTIVITY_EMAIL_TYPE_ID
+        and _positive_int_or_none(activity.get("DIRECTION"))
+        == _ACTIVITY_DIRECTION_OUT
+    )
 
 
 def _index_outbound_activity(
@@ -193,9 +174,7 @@ def collect_outbound_correlation_evidence(
     events: list[dict[str, Any]],
     logger: logging.Logger,
     *,
-    window_days: int = 180,
     max_activities: int = _MAX_OUTBOUND_ACTIVITIES,
-    pages_max: int = 3,
 ) -> list[dict[str, Any]]:
     candidate_events = [
         event
@@ -205,15 +184,9 @@ def collect_outbound_correlation_evidence(
     if not candidate_events:
         return []
 
-    window_start = datetime.now() - timedelta(days=window_days)
-    window_start_iso = window_start.strftime("%Y-%m-%dT%H:%M:%S+00:00")
-    filter_params = {
-        "TYPE_ID": _ACTIVITY_EMAIL_TYPE_ID,
-        "COMPLETED": "Y",
-        ">=DATE_CREATE": window_start_iso,
-    }
     select = [
         "ID",
+        "TYPE_ID",
         "OWNER_TYPE_ID",
         "OWNER_ID",
         "RESPONSIBLE_ID",
@@ -256,45 +229,6 @@ def collect_outbound_correlation_evidence(
                 max_activities,
             ):
                 break
-
-    start = 0
-    try:
-        for _ in range(pages_max):
-            if len(outbound_by_message_id) >= max_activities:
-                break
-            data = client.activity_list(
-                filter_params=filter_params,
-                select=select,
-                start=start,
-            )
-            result = data.get("result")
-            if not isinstance(result, list):
-                logger.warning("rop outbound correlation malformed response")
-                return []
-
-            for activity in result:
-                if _index_outbound_activity(
-                    outbound_by_message_id,
-                    ambiguous_message_ids,
-                    activity,
-                    max_activities,
-                ):
-                    break
-
-            if len(outbound_by_message_id) >= max_activities:
-                break
-
-            next_start = data.get("next")
-            if next_start is None:
-                break
-            if not isinstance(next_start, int) or isinstance(next_start, bool):
-                raise BitrixMalformedResponse(
-                    "Bitrix returned malformed pagination cursor"
-                )
-            start = next_start
-    except BitrixConnectorError as exc:
-        logger.warning("rop outbound correlation connector error: %s", exc)
-        return []
 
     if not outbound_by_message_id:
         return []

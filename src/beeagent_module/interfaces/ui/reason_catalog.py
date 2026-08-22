@@ -165,6 +165,16 @@ _ATTENTION_REASON_DISPLAY = {
         "en": "AI did not resolve a semantic decision; deterministic result preserved",
         "ru": "ИИ не принял семантическое решение; детерминированный результат сохранён",
     },
+    "ai_transition_rule_not_satisfied_deterministic_result_preserved": {
+        "en": (
+            "AI semantic transition was not authorized by an explicit evidence "
+            "rule; deterministic result preserved"
+        ),
+        "ru": (
+            "Семантический переход ИИ не разрешён явным правилом улик; "
+            "детерминированный результат сохранён"
+        ),
+    },
     "possible_duplicate_unresolved_base_preserved": {
         "en": "Possible duplicate could not be resolved; base classification preserved",
         "ru": "Возможный дубликат не разрешён; базовая классификация сохранена",

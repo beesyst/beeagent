@@ -148,8 +148,6 @@ def run_reconciliation(
             client=client,
             events=events_to_reconcile,
             logger=logger,
-            window_days=int(corr_cfg["window_days"]),
-            pages_max=int(bitrix_cfg.get("pages_max", 3)),
         )
     outbound_refs = write_outbound_correlation_artifact(
         storage_dir=storage_dir,

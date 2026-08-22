@@ -992,6 +992,42 @@ def _ai_output_conflicts_with_marker_signals(
     ai_correct_action = validated.get("correct_action")
     if ai_case_type == "irrelevant":
         return not (ai_queue == "ignore" and ai_correct_action == "ignore")
+    if ai_queue == "ignore" or ai_correct_action == "ignore":
+        return True
+    return False
+
+
+_NON_ACTIONABLE_DOWNGRADE_RULES = (
+    ("non_actionable_supplier_outreach", "supplier_outreach"),
+    ("non_actionable_bulk_or_newsletter", "newsletter_bulk"),
+)
+_NEW_LEAD_TRANSITION_REASON_CODES = frozenset(
+    {"customer_request_detected", "tender_or_rfq_detected"}
+)
+_EXISTING_DEAL_TRANSITION_REASON_CODES = frozenset(
+    {"existing_deal_continuation", "logistics_or_finance_continuation"}
+)
+
+
+def _ai_transition_is_authorized(
+    event: dict[str, Any],
+    validated: dict[str, Any],
+) -> bool:
+    deterministic_case_type = _deterministic_value(event, "case_type", "unknown")
+    ai_case_type = validated.get("case_type")
+    if ai_case_type == deterministic_case_type:
+        return True
+    ai_reason_code = str(validated.get("reason_code", "") or "")
+    ai_evidence_codes = set(validated.get("evidence_codes", []) or [])
+    if ai_case_type == "irrelevant":
+        return any(
+            ai_reason_code == reason_code and evidence_code in ai_evidence_codes
+            for reason_code, evidence_code in _NON_ACTIONABLE_DOWNGRADE_RULES
+        )
+    if ai_case_type == "new_lead":
+        return ai_reason_code in _NEW_LEAD_TRANSITION_REASON_CODES
+    if ai_case_type == "existing_deal":
+        return ai_reason_code in _EXISTING_DEAL_TRANSITION_REASON_CODES
     return False
 
 
@@ -1805,27 +1841,44 @@ def run_adjudicator_for_event(
     merge_reason = "validated_ai_adjudicator_output"
     ai_decision_valid = not validation_errors and bool(validated.get("reason_code", ""))
     if ai_decision_valid and ai_confidence >= min_confidence:
-        if _ai_output_is_semantic_unresolved(
-            validated
-        ) or _ai_output_conflicts_with_marker_signals(event, validated):
+        if _ai_output_is_semantic_unresolved(validated):
             status = "deterministic_preserved"
             final_case_type = _deterministic_value(event, "case_type", "unknown")
             final_case_subtype = _deterministic_value(event, "case_subtype", None)
             final_recommended_queue, final_correct_action, final_should_rop_see = (
                 _deterministic_final_routing(event)
             )
-            if _ai_output_is_semantic_unresolved(validated):
-                ai_error = (
-                    "AI output did not resolve a semantic decision; "
-                    "deterministic result preserved."
-                )
-                merge_reason = "ai_output_unresolved_deterministic_result_preserved"
-            else:
-                ai_error = (
-                    "AI output conflicts with supplier/newsletter conflict signals; "
-                    "deterministic result preserved."
-                )
-                merge_reason = "ai_output_conflict_deterministic_result_preserved"
+            ai_error = (
+                "AI output did not resolve a semantic decision; "
+                "deterministic result preserved."
+            )
+            merge_reason = "ai_output_unresolved_deterministic_result_preserved"
+        elif _ai_output_conflicts_with_marker_signals(event, validated):
+            status = "deterministic_preserved"
+            final_case_type = _deterministic_value(event, "case_type", "unknown")
+            final_case_subtype = _deterministic_value(event, "case_subtype", None)
+            final_recommended_queue, final_correct_action, final_should_rop_see = (
+                _deterministic_final_routing(event)
+            )
+            ai_error = (
+                "AI output conflicts with supplier/newsletter conflict signals; "
+                "deterministic result preserved."
+            )
+            merge_reason = "ai_output_conflict_deterministic_result_preserved"
+        elif not _ai_transition_is_authorized(event, validated):
+            status = "deterministic_preserved"
+            final_case_type = _deterministic_value(event, "case_type", "unknown")
+            final_case_subtype = _deterministic_value(event, "case_subtype", None)
+            final_recommended_queue, final_correct_action, final_should_rop_see = (
+                _deterministic_final_routing(event)
+            )
+            ai_error = (
+                "AI semantic transition is not authorized by an explicit "
+                "evidence rule; deterministic result preserved."
+            )
+            merge_reason = (
+                "ai_transition_rule_not_satisfied_deterministic_result_preserved"
+            )
         else:
             final_case_type = validated.get("case_type") or final_case_type
             final_case_subtype = validated.get("case_subtype")
