@@ -3910,6 +3910,74 @@ def test_rop_event_detail_exposes_deterministic_and_conversation_sections(
     assert events["evt-2"]["writeback"]["outcome"] == "attach_existing"
 
 
+def test_rop_event_detail_trusted_attach_projects_operational_final(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-op")
+    state = {
+        "events": {
+            "welding|hotline_mailbox|msg-a|": {
+                "event_id": "evt-1",
+                "event_instance_id": "",
+                "client_id": "welding",
+                "source_id": "hotline_mailbox",
+                "message_id": "msg-a",
+                "in_reply_to": "msg-root",
+                "references": "msg-root",
+                "sender_email": "client@example.com",
+                "subject": "Re: Need welding quote",
+                "case_type": "existing_deal",
+                "semantic_case_type": "new_lead",
+                "outcome": "attach_existing",
+                "status": "attached",
+                "target_entity_type": "lead",
+                "target_entity_id": 1001,
+                "target_provenance": "thread_resolved",
+                "last_run_id": "run-detail-op",
+                "created_at_utc": "2026-08-02T10:00:00Z",
+            },
+        }
+    }
+    (storage_dir / "interfaces").mkdir(parents=True, exist_ok=True)
+    (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-op", "evt-1")
+
+    final_decision = data["final_decision"]
+    assert final_decision["final_case_type"] == "existing_deal"
+    assert final_decision["semantic_case_type"] == "new_lead"
+    conversation = data["conversation"]
+    conv_event = next(
+        item for item in conversation["events"] if item["event_id"] == "evt-1"
+    )
+    assert conv_event["case_type"] == "existing_deal"
+    assert conv_event["semantic_case_type"] == "new_lead"
+
+
+def test_rop_event_detail_independent_event_keeps_semantic_final(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-ind")
+
+    data = build_rop_event_detail_read_model(storage_dir, "run-detail-ind", "evt-1")
+
+    final_decision = data["final_decision"]
+    assert final_decision["final_case_type"] == "new_lead"
+    assert "semantic_case_type" not in final_decision
+
+
 def test_rop_event_detail_deterministic_shows_original_not_current(
     tmp_path: Path,
 ) -> None:
@@ -7707,6 +7775,71 @@ class TestRopDashboardAggregateReadModel:
         assert set(row_by_event) == {"evt-a", "evt-b"}
         assert row_by_event["evt-a"]["run_id"] == "agg-run-a"
         assert row_by_event["evt-b"]["run_id"] == "agg-run-b"
+
+    def test_trusted_attach_projects_existing_deal_in_queue(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-q",
+            event_id="evt-q",
+            source_id="src_q",
+            priority="high",
+            sender="client@example.com",
+        )
+        (storage_dir / "interfaces").mkdir(parents=True, exist_ok=True)
+        (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "policy_snapshot": {},
+                    "events": {
+                        "welding|src_q|msg-q|": {
+                            "event_id": "evt-q",
+                            "event_instance_id": "",
+                            "client_id": "welding",
+                            "source_id": "src_q",
+                            "message_id": "msg-q",
+                            "case_type": "existing_deal",
+                            "semantic_case_type": "new_lead",
+                            "outcome": "attach_existing",
+                            "status": "attached",
+                            "target_entity_type": "lead",
+                            "target_entity_id": 1001,
+                            "target_provenance": "thread_resolved",
+                            "last_run_id": "agg-run-q",
+                        }
+                    },
+                    "runs": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-q", period="all")
+        row = next(item for item in data["queue_rows"] if item["event_id"] == "evt-q")
+        assert row["case_type"] == "existing_deal"
+        assert row["bot_case_type"] == "existing_deal"
+        assert row["semantic_case_type"] == "new_lead"
+
+    def test_independent_event_keeps_new_lead_in_queue(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        self._write_aggregate_run(
+            storage_dir,
+            "agg-run-q",
+            event_id="evt-q",
+            source_id="src_q",
+            priority="high",
+            sender="client@example.com",
+        )
+
+        data = build_rop_dashboard_read_model(storage_dir, "agg-run-q", period="all")
+        row = next(item for item in data["queue_rows"] if item["event_id"] == "evt-q")
+        assert row["case_type"] == "new_lead"
+        assert row["bot_case_type"] == "new_lead"
 
     def test_filters_apply_over_aggregate_queue_rows(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)

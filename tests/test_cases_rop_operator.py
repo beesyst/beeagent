@@ -2683,19 +2683,19 @@ def test_rop_batch_reviewed_buyer_rfq_exercises_ai_adjudicator_gate(
         )
         event = classified_events[0]
         assert event["deterministic_case_type"] == "new_lead"
-        assert event["ai_adjudicator_status"] == "ok"
-        assert event["case_type"] == "irrelevant"
-        assert event["recommended_queue"] == "ignore"
-        assert event["correct_action"] == "ignore"
+        assert event["ai_adjudicator_status"] == "deterministic_preserved"
+        assert event["case_type"] == "new_lead"
+        assert event["recommended_queue"] == "sales"
+        assert event["correct_action"] == "review_new_lead"
 
         final_decisions = json.loads(
             (run_dir / "rop_final_decisions.json").read_text(encoding="utf-8")
         )
         final_decision = final_decisions["events"][0]
-        assert final_decision["final_decision_source"] == "ai_adjudicator"
-        assert final_decision["final_case_type"] == "irrelevant"
-        assert final_decision["final_queue"] == "ignore"
-        assert final_decision["final_action"] == "ignore"
+        assert final_decision["final_decision_source"] == "deterministic_preserved"
+        assert final_decision["final_case_type"] == "new_lead"
+        assert final_decision["final_queue"] == "sales"
+        assert final_decision["final_action"] == "review_new_lead"
         assert provider_calls == [None]
     finally:
         _remove_fake_package("test_stub_adj_buyer_rfq")
@@ -2931,6 +2931,45 @@ def test_rop_batch_orders_offset_timestamps_in_utc(tmp_path: Path) -> None:
     assert by_id["offset-later"]["duplicate"]["candidate"]["event_id"] == (
         "offset-earlier"
     )
+
+
+def test_load_prior_rop_context_bounds_oversized_run(tmp_path: Path) -> None:
+    from beeagent_module.cases.rop_operator import _load_prior_rop_context
+
+    prior_run_dir = tmp_path / "runs" / "run-prior-huge"
+    prior_run_dir.mkdir(parents=True, exist_ok=True)
+    events = [
+        {
+            "event_id": f"evt-{index}",
+            "message_id": f"<msg-{index}@test>",
+            "subject": f"Subject {index}",
+            "sender": "buyer@example.com",
+            "received_at": f"2026-08-01T10:{index // 60:02d}:{index % 60:02d}Z",
+        }
+        for index in range(5000)
+    ]
+    classified = [
+        {"event_id": f"evt-{index}", "case_type": "new_lead"}
+        for index in range(5000)
+    ]
+    (prior_run_dir / "normalized_events.json").write_text(
+        json.dumps(events), encoding="utf-8"
+    )
+    (prior_run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+
+    prior_events, prior_classified = _load_prior_rop_context(
+        storage_dir=tmp_path,
+        current_run_id="run-current",
+        logger=_null_logger(),
+    )
+
+    assert len(prior_events) <= 300
+    assert len(prior_classified) <= 300
+    classified_by_event = {item["event_id"]: item for item in prior_classified}
+    for event in prior_events:
+        assert event["event_id"] in classified_by_event
 
 
 def test_duplicate_candidates_order_offset_timestamps_in_utc() -> None:

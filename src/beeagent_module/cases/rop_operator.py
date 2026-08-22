@@ -166,16 +166,29 @@ def _load_prior_rop_context(
     prior_events: list[dict[str, Any]] = []
     prior_classified: list[dict[str, Any]] = []
     for _, run_dir in candidates[:_PRIOR_RUN_MAX]:
+        if len(prior_events) >= _PRIOR_EVENT_MAX:
+            break
         events = _read_run_artifact_json(run_dir / "normalized_events.json")
         classified = _read_run_artifact_json(run_dir / "classified_events.json")
         if not isinstance(events, list):
             events = []
         if not isinstance(classified, list):
             classified = []
-        prior_events.extend(events)
-        prior_classified.extend(classified)
-        if len(prior_events) >= _PRIOR_EVENT_MAX:
-            break
+        classified_by_event: dict[str, dict[str, Any]] = {}
+        for entry in classified:
+            if isinstance(entry, dict):
+                entry_id = entry.get("event_id")
+                if isinstance(entry_id, str) and entry_id:
+                    classified_by_event[entry_id] = entry
+        remaining = _PRIOR_EVENT_MAX - len(prior_events)
+        loaded = events[:remaining]
+        prior_events.extend(loaded)
+        for event in loaded:
+            if not isinstance(event, dict):
+                continue
+            event_id = event.get("event_id")
+            if isinstance(event_id, str) and event_id in classified_by_event:
+                prior_classified.append(classified_by_event[event_id])
     if prior_events:
         logger.debug(
             "prior ROP thread context loaded: runs=%d events=%d classified=%d",

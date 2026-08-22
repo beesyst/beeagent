@@ -6,9 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-THREAD_ID_PREFIX = "thr"
+from beeagent_module.core.message_id import normalize_message_id
 
-_CRM_ACTIVITY_REF_RE = re.compile(r"crm\.activity\.(\d+)")
+THREAD_ID_PREFIX = "thr"
 
 
 def _normalize_subject(subject: str) -> str:
@@ -92,13 +92,20 @@ def build_thread_index(
     threads: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    mid_to_thread: dict[str, int] = {}
-    ref_to_thread: dict[str, list[int]] = {}
+    mid_to_thread: dict[tuple[str, str], int] = {}
+    ref_to_thread: dict[tuple[str, str], list[int]] = {}
     subject_threads: dict[tuple[str, str, str], list[int]] = {}
     thread_data: list[dict[str, Any]] = []
 
     for idx, event in enumerate(events):
         message_id, in_reply_to, references = _extract_message_ids(event)
+        client_id = str(event.get("client_id") or "")
+        norm_message_id = normalize_message_id(message_id)
+        norm_refs = [
+            normalized
+            for ref_id in [*in_reply_to, *references]
+            if (normalized := normalize_message_id(ref_id))
+        ]
         norm_subject = _normalized_subject_key(event)
 
         matched_thread: int | None = None
@@ -108,20 +115,20 @@ def build_thread_index(
             "subject_fallback": False,
         }
 
-        if message_id and message_id in mid_to_thread:
-            matched_thread = mid_to_thread[message_id]
+        if norm_message_id and (client_id, norm_message_id) in mid_to_thread:
+            matched_thread = mid_to_thread[(client_id, norm_message_id)]
             evidence["message_id_link"] = True
 
         if matched_thread is None:
-            for ref_id in [*in_reply_to, *references]:
-                if ref_id in mid_to_thread:
-                    matched_thread = mid_to_thread[ref_id]
+            for ref_id in norm_refs:
+                if (client_id, ref_id) in mid_to_thread:
+                    matched_thread = mid_to_thread[(client_id, ref_id)]
                     evidence["references_link"] = True
                     break
 
         if matched_thread is None:
-            for ref_id in [*in_reply_to, *references]:
-                candidates = ref_to_thread.get(ref_id, [])
+            for ref_id in norm_refs:
+                candidates = ref_to_thread.get((client_id, ref_id), [])
                 if candidates:
                     matched_thread = candidates[0]
                     evidence["references_link"] = True
@@ -179,14 +186,14 @@ def build_thread_index(
             if (thread["latest_at"] is None) or (event_date > thread["latest_at"]):
                 thread["latest_at"] = event_date
 
-        if message_id:
-            mid_to_thread[message_id] = matched_thread
-            for ref_id in [*in_reply_to, *references]:
-                if ref_id:
-                    if ref_id not in ref_to_thread:
-                        ref_to_thread[ref_id] = []
-                    if matched_thread not in ref_to_thread[ref_id]:
-                        ref_to_thread[ref_id].append(matched_thread)
+        if norm_message_id:
+            mid_to_thread[(client_id, norm_message_id)] = matched_thread
+            for ref_id in norm_refs:
+                ref_key = (client_id, ref_id)
+                if ref_key not in ref_to_thread:
+                    ref_to_thread[ref_key] = []
+                if matched_thread not in ref_to_thread[ref_key]:
+                    ref_to_thread[ref_key].append(matched_thread)
 
         if matched_thread is not None and norm_subject:
             source_scope, client_scope = _thread_scope_key(event)
@@ -289,21 +296,24 @@ def build_thread_context(
                 if eid:
                     prior_classified_by_event[eid] = ce
 
-    prior_message_to_case: dict[str, str] = {}
+    prior_message_to_case: dict[tuple[str, str], str] = {}
     if prior_events:
         for pe in prior_events:
             if not isinstance(pe, dict):
                 continue
-            mid = pe.get("message_id") or pe.get("Message-ID") or ""
+            mid = normalize_message_id(
+                pe.get("message_id") or pe.get("Message-ID") or ""
+            )
             eid = pe.get("event_id") or ""
-            if not (isinstance(mid, str) and mid and isinstance(eid, str) and eid):
+            client_id = str(pe.get("client_id") or "")
+            if not (mid and isinstance(eid, str) and eid and client_id):
                 continue
             prior_ce = prior_classified_by_event.get(eid)
             if not isinstance(prior_ce, dict):
                 continue
             prior_ct = prior_ce.get("case_type") or prior_ce.get("bot_case_type") or ""
             if prior_ct:
-                prior_message_to_case[mid] = str(prior_ct)
+                prior_message_to_case[(client_id, mid)] = str(prior_ct)
 
     contexts: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -325,28 +335,28 @@ def build_thread_context(
             and event_to_thread.get(prior_event_id) is thread
         ]
 
+        client_id = str(event.get("client_id") or "")
         current_message_id, current_in_reply_to, current_references = (
             _extract_message_ids(event)
         )
-        current_reference_ids = {*current_in_reply_to, *current_references}
+        current_norm_message_id = normalize_message_id(current_message_id)
+        current_norm_refs = {
+            normalized
+            for ref_id in [*current_in_reply_to, *current_references]
+            if (normalized := normalize_message_id(ref_id))
+        }
+        current_client_ref_keys = {(client_id, ref_id) for ref_id in current_norm_refs}
 
         cross_prev_case_type = ""
         cross_prev_event_id = ""
         cross_reason_code = ""
         if not previous_ids:
-            for ref in current_reference_ids:
-                if ref in prior_message_to_case:
-                    cross_prev_case_type = prior_message_to_case[ref]
-                    cross_prev_event_id = ref
+            for ref_key in current_client_ref_keys:
+                if ref_key in prior_message_to_case:
+                    cross_prev_case_type = prior_message_to_case[ref_key]
+                    cross_prev_event_id = ref_key[1]
                     cross_reason_code = "prior_run_reference"
                     break
-            if not cross_prev_case_type:
-                for ref in current_reference_ids:
-                    if _CRM_ACTIVITY_REF_RE.search(ref):
-                        cross_prev_case_type = "existing_deal"
-                        cross_reason_code = "references_bitrix_activity"
-                        break
-
         if not previous_ids and not cross_prev_case_type:
             prior_event_ids.append(event_id)
             continue
@@ -384,27 +394,32 @@ def build_thread_context(
 
         for previous_event in previous_events:
             prior_participants.update(_participants(previous_event))
+            if str(previous_event.get("client_id") or "") != client_id:
+                continue
             (
                 previous_message_id,
                 previous_in_reply_to,
                 previous_references,
             ) = _extract_message_ids(previous_event)
 
-            if previous_message_id:
-                prior_message_ids.add(previous_message_id)
-                prior_link_ids.add(previous_message_id)
+            previous_norm_message_id = normalize_message_id(previous_message_id)
+            if previous_norm_message_id:
+                prior_message_ids.add(previous_norm_message_id)
+                prior_link_ids.add(previous_norm_message_id)
 
-            prior_link_ids.update(previous_in_reply_to)
-            prior_link_ids.update(previous_references)
+            for ref_id in [*previous_in_reply_to, *previous_references]:
+                normalized_ref = normalize_message_id(ref_id)
+                if normalized_ref:
+                    prior_link_ids.add(normalized_ref)
 
         current_subject_key = _normalized_subject_key(event)
 
         local_evidence = {
             "message_id_link": bool(
-                current_message_id and current_message_id in prior_message_ids
+                current_norm_message_id and current_norm_message_id in prior_message_ids
             ),
             "references_link": bool(
-                current_reference_ids & prior_link_ids
+                current_norm_refs & prior_link_ids
             )
             or bool(cross_prev_case_type),
             "subject_fallback": bool(
@@ -416,6 +431,14 @@ def build_thread_context(
                 )
             ),
         }
+
+        if prev_case_type and not cross_prev_case_type:
+            if not (
+                local_evidence["message_id_link"]
+                or local_evidence["references_link"]
+            ):
+                prev_case_type = ""
+                prev_case_subtype = ""
 
         participant_overlap = bool(evt_participants & prior_participants)
 

@@ -61,6 +61,7 @@ ATTENTION_REASON_CODES = frozenset(
         "ai_validation_error_manual_review",
         "ai_output_conflict_deterministic_result_preserved",
         "ai_output_unresolved_deterministic_result_preserved",
+        "ai_transition_rule_not_satisfied_deterministic_result_preserved",
         "ai_output_invalid_deterministic_result_preserved",
         "possible_duplicate_unresolved_base_preserved",
         "ai_output_with_validation_errors_deterministic_result_preserved",

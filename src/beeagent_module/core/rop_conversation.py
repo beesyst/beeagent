@@ -401,6 +401,9 @@ def build_conversation_timeline(
                     record.get("sender_email") or record.get("sender"), 320
                 ),
                 "case_type": _bounded_text(record.get("case_type"), 80),
+                "semantic_case_type": _bounded_text(
+                    record.get("semantic_case_type"), 80
+                ),
                 "date": _bounded_text(
                     record.get("created_at_utc") or record.get("updated_at_utc"),
                     200,

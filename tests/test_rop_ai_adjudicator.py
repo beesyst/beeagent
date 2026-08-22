@@ -1958,7 +1958,9 @@ class TestAdjudicatorForEvent:
         assert result["result"]["final_recommended_queue"] == "ignore"
         assert result["result"]["final_correct_action"] == "ignore"
 
-    def test_valid_high_confidence_ai_noise_decision_becomes_final(self) -> None:
+    def test_valid_high_confidence_ai_noise_decision_preserves_deterministic(
+        self,
+    ) -> None:
         def _return_ignore(**kwargs: object) -> str:
             return json.dumps(
                 {
@@ -1987,11 +1989,173 @@ class TestAdjudicatorForEvent:
                     prompts_cfg=_minimal_prompts_cfg(),
                     logger=_null_logger(),
                 )
-        assert result["result"]["ai_status"] == "ok"
-        assert result["result"]["final_case_type"] == "irrelevant"
-        assert result["result"]["final_recommended_queue"] == "ignore"
-        assert result["result"]["final_correct_action"] == "ignore"
-        assert result["result"]["merge_reason"] == "validated_ai_adjudicator_output"
+        assert result["decision"]["status"] == "deterministic_preserved"
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "existing_deal"
+        assert result["result"]["final_case_subtype"] == "shipment_follow_up"
+        assert result["result"]["final_recommended_queue"] == "logistics"
+        assert result["result"]["final_correct_action"] == "attach_to_deal"
+        assert result["result"]["final_should_rop_see"] is True
+        assert result["result"]["merge_reason"] == (
+            "ai_transition_rule_not_satisfied_deterministic_result_preserved"
+        )
+        assert result["result"]["ai_error"]
+
+    def test_high_confidence_ai_ignore_without_explicit_rule_preserves_deterministic(
+        self,
+    ) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "bulk",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.93,
+                    "reason": "Generic noise without non-actionable evidence.",
+                    "risk_flags": ["low_signal"],
+                    "reason_code": "insufficient_business_signal",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_tender_candidate_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "new_lead"
+        assert result["result"]["final_recommended_queue"] == "tender"
+        assert result["result"]["final_correct_action"] == "review_tender"
+        assert result["result"]["merge_reason"] == (
+            "ai_transition_rule_not_satisfied_deterministic_result_preserved"
+        )
+
+    def test_high_confidence_ai_ignore_with_wrong_evidence_preserves_deterministic(
+        self,
+    ) -> None:
+        def _return_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "irrelevant",
+                    "case_subtype": "supplier_offer",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": False,
+                    "correct_action": "ignore",
+                    "confidence": 0.92,
+                    "reason": "Supplier outreach but evidence does not match.",
+                    "risk_flags": ["supplier_outreach"],
+                    "reason_code": "non_actionable_supplier_outreach",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_supplier_spam_false_positive_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "existing_deal"
+        assert result["result"]["final_recommended_queue"] == "procurement"
+        assert result["result"]["final_correct_action"] == "check_bitrix"
+        assert result["result"]["merge_reason"] == (
+            "ai_transition_rule_not_satisfied_deterministic_result_preserved"
+        )
+
+    def test_non_irrelevant_ai_with_ignore_routing_preserves_deterministic(
+        self,
+    ) -> None:
+        def _return_non_irrelevant_ignore(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "existing_deal",
+                    "case_subtype": "shipment_follow_up",
+                    "recommended_queue": "ignore",
+                    "should_rop_see": True,
+                    "correct_action": "ignore",
+                    "confidence": 0.92,
+                    "reason": "Conflicting routing with ignore action.",
+                    "risk_flags": [],
+                    "reason_code": "existing_deal_continuation",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_non_irrelevant_ignore,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_logistics_existing_deal_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "existing_deal"
+        assert result["result"]["final_recommended_queue"] == "logistics"
+        assert result["result"]["final_correct_action"] == "attach_to_deal"
+        assert result["result"]["merge_reason"] == (
+            "ai_output_conflict_deterministic_result_preserved"
+        )
+
+    def test_ai_class_change_without_explicit_reason_preserves_deterministic(
+        self,
+    ) -> None:
+        def _return_new_lead_conflict(**kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "case_type": "new_lead",
+                    "case_subtype": "rfq",
+                    "recommended_queue": "sales",
+                    "should_rop_see": True,
+                    "correct_action": "review_new_lead",
+                    "confidence": 0.93,
+                    "reason": "Conflicting signals without explicit demand reason.",
+                    "risk_flags": [],
+                    "reason_code": "conflicting_business_signals",
+                    "evidence_codes": ["low_signal"],
+                }
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            with patch(
+                "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+                _return_new_lead_conflict,
+            ):
+                result = run_adjudicator_for_event(
+                    event=_sample_logistics_existing_deal_event(),
+                    adj_cfg=_minimal_adj_cfg(),
+                    profile_cfg=_minimal_profile_cfg(),
+                    prompts_cfg=_minimal_prompts_cfg(),
+                    logger=_null_logger(),
+                )
+        assert result["result"]["ai_status"] == "deterministic_preserved"
+        assert result["result"]["final_case_type"] == "existing_deal"
+        assert result["result"]["final_recommended_queue"] == "logistics"
+        assert result["result"]["final_correct_action"] == "attach_to_deal"
+        assert result["result"]["merge_reason"] == (
+            "ai_transition_rule_not_satisfied_deterministic_result_preserved"
+        )
 
 
 class TestAdjudicatorBatch:

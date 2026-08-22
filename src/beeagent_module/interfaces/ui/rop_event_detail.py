@@ -51,6 +51,7 @@ _QUEUE_ACTION_TONE = {
 }
 _MAX_REASON_TEXT_LENGTH = 600
 _MAX_REASON_CODE_LENGTH = 80
+_TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
 
 
 def _bool_display(value: Any, lang: str) -> str:
@@ -789,6 +790,28 @@ def build_rop_event_detail_read_model(
     )
     if not conversation_section.get("available"):
         conversation_section = {"available": False}
+
+    if isinstance(conversation_section, dict) and final_decision_section:
+        conversation_event = _select_event_occurrence(
+            [
+                item
+                for item in _safe_list(conversation_section.get("events"))
+                if isinstance(item, dict) and item.get("event_id") == event_id
+            ],
+            event_instance_id,
+        )
+
+        if conversation_event is not None:
+            writeback = _safe_dict(conversation_event.get("writeback"))
+            if (
+                writeback.get("outcome") == "attach_existing"
+                and writeback.get("target_provenance")
+                in _TRUSTED_ATTACH_PROVENANCES
+            ):
+                final_decision_section["semantic_case_type"] = _str(
+                    final_decision_section.get("final_case_type", "")
+                )
+                final_decision_section["final_case_type"] = "existing_deal"
 
     result = {
         "run_id": run_id,

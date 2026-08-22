@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import tempfile
 from datetime import UTC, datetime
 from email.utils import getaddresses
@@ -26,6 +25,10 @@ from beeagent_module.adapters.bitrix_write_client import (
     build_bitrix_write_client,
 )
 from beeagent_module.core.input_source import effective_rop_sender_email
+from beeagent_module.core.message_id import (
+    extract_reference_ids as _extract_reference_ids_shared,
+    normalize_message_id as _normalize_message_id_shared,
+)
 from beeagent_module.core.rop_outbound_correlation import resolve_outbound_bridge
 
 WRITEBACK_STATE_FILENAME = "rop_writeback_state.json"
@@ -52,7 +55,6 @@ _TRUSTED_TARGET_PROVENANCES: frozenset[str] = frozenset(
     {"beeagent_created", "thread_resolved", "bitrix_outbound_exact"}
 )
 _PENDING_THREAD_ROOT_REASON = "pending_thread_root"
-_MAX_THREAD_ID_LENGTH = 250
 _MAX_THREAD_REFERENCES = 50
 _MAX_THREAD_HEADER_LENGTH = 1000
 
@@ -488,6 +490,10 @@ def _build_planned_record(
         case_type, recon_item, routing_item, policy, thread_target
     )
 
+    operational_case_type = case_type
+    if delivery["outcome"] == "attach_existing":
+        operational_case_type = "existing_deal"
+
     record = {
         "identity": identity,
         "client_id": client_id,
@@ -521,7 +527,8 @@ def _build_planned_record(
         ),
         "attach_attempts": 0,
         "last_attach_error_code": None,
-        "case_type": case_type,
+        "case_type": operational_case_type,
+        "semantic_case_type": case_type,
         "should_rop_see": should_rop_see,
         "outcome": delivery["outcome"],
         "status": (
@@ -692,28 +699,11 @@ def _positive_int(value: Any) -> TypeGuard[int]:
 
 
 def _normalize_message_id(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    value = value.strip()
-    if len(value) > 2 and value.startswith("<") and value.endswith(">"):
-        value = value[1:-1].strip()
-    return value[:_MAX_THREAD_ID_LENGTH]
+    return _normalize_message_id_shared(value)
 
 
 def _extract_reference_ids(value: Any) -> list[str]:
-    if not isinstance(value, str) or not value.strip():
-        return []
-    tokens = re.findall(r"<([^<>]+)>", value)
-    if not tokens:
-        tokens = value.split()
-    result: list[str] = []
-    for token in tokens:
-        normalized = _normalize_message_id(token)
-        if normalized and normalized not in result:
-            result.append(normalized)
-        if len(result) >= _MAX_THREAD_REFERENCES:
-            break
-    return result
+    return _extract_reference_ids_shared(value)[:_MAX_THREAD_REFERENCES]
 
 
 def _build_message_id_index(
