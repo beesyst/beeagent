@@ -774,6 +774,23 @@ def _canonical_trusted_targets(
     return result
 
 
+def load_trusted_targets_by_client(
+    storage_dir: Path,
+) -> dict[str, set[tuple[str, int, int, int]]]:
+    state = _load_state(storage_dir)
+    records = [
+        record
+        for record in state.get("events", {}).values()
+        if isinstance(record, dict)
+    ]
+    result: dict[str, set[tuple[str, int, int, int]]] = {}
+    for record in records:
+        client_id = _bounded_text(record.get("client_id"))
+        if client_id and client_id not in result:
+            result[client_id] = _canonical_trusted_targets(records, client_id)
+    return result
+
+
 def _resolve_thread_target(
     event: dict[str, Any],
     index: dict[str, list[dict[str, Any]]],

@@ -3004,6 +3004,210 @@ def test_duplicate_candidates_order_offset_timestamps_in_utc() -> None:
     ]
 
 
+def test_bitrix_continuation_handoff_is_occurrence_scoped(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.core.rop_thread_context import build_public_thread_context
+    from beeagent_module.core.thread_index import (
+        build_thread_context,
+        build_thread_index,
+    )
+
+    continuation_contexts = {
+        ("evt-shared", "event-000001"): {
+            "provenance": "bitrix_outbound_exact",
+            "previous_case_type": "existing_deal",
+            "reply_or_forward": True,
+            "thread_context_confidence": 1.0,
+            "reason_codes": ["bitrix_outbound_exact"],
+            "event_instance_id": "event-000001",
+            "target_entity_type": "lead",
+            "target_entity_type_id": 1,
+            "target_entity_id": 1001,
+            "target_responsible_user_id": 1563,
+        }
+    }
+    occ1 = {
+        "event_id": "evt-shared",
+        "event_instance_id": "event-000001",
+        "client_id": "welding",
+        "source_id": "mailbox_test",
+        "message_id": "<occ1@my.welding.kz>",
+        "in_reply_to": "<crm.activity.123-ABC@my.welding.kz>",
+        "references": "<crm.activity.123-ABC@my.welding.kz>",
+        "subject": "Re: Запрос на доставку",
+        "sender": "client@example.test",
+    }
+    occ2 = {
+        "event_id": "evt-shared",
+        "event_instance_id": "event-000002",
+        "client_id": "other",
+        "source_id": "mailbox_test",
+        "message_id": "<occ2@my.other.kz>",
+        "subject": "Re: Запрос на доставку",
+        "sender": "client@example.test",
+    }
+
+    index = build_thread_index([occ1, occ2], _null_logger())
+    tc = build_thread_context(
+        [occ1, occ2],
+        index,
+        [],
+        _null_logger(),
+        continuation_contexts=continuation_contexts,
+    )
+    by_occurrence = {
+        (c.get("event_id", ""), str(c.get("event_instance_id") or "")): c
+        for c in tc["contexts"]
+    }
+    entry1 = by_occurrence.get(("evt-shared", "event-000001"))
+    assert entry1 is not None
+    assert entry1["previous_case_type"] == "existing_deal"
+    assert entry1["provenance"] == "bitrix_outbound_exact"
+    assert entry1["reply_or_forward"] is True
+    assert entry1["thread_context_confidence"] == 1.0
+    assert ("evt-shared", "event-000002") not in by_occurrence
+
+    public1 = build_public_thread_context(entry1, occ1)
+    assert public1["previous_case_type"] == "existing_deal"
+    assert public1["reply_markers"] is True
+
+    class _ContinuationStub:
+        @property
+        def module_id(self) -> str:
+            return "beeagent-rop"
+
+        @property
+        def authority(self) -> AuthorityLevel:
+            return AuthorityLevel.READ_ONLY
+
+        def supported_case_types(self) -> list[str]:
+            return ["lead_classification", "rop_summary"]
+
+        def handle(self, context: ModuleContext) -> ModuleResult:
+            if context.case_type == "rop_summary":
+                return ModuleResult(
+                    module_id="beeagent-rop",
+                    case_type="rop_summary",
+                    authority=AuthorityLevel.READ_ONLY,
+                    status="ok",
+                    summary="Summary",
+                    data={"counts": {"existing_deal": 1}},
+                )
+            payload = context.payload or {}
+            tc_payload = payload.get("thread_context")
+            previous_case_type = ""
+            reply_markers = False
+            if isinstance(tc_payload, dict):
+                previous_case_type = str(
+                    tc_payload.get("previous_case_type") or ""
+                ).strip()
+                reply_markers = bool(tc_payload.get("reply_markers"))
+            if reply_markers and previous_case_type == "existing_deal":
+                case_type = "existing_deal"
+                reason_code = "existing_deal_conversation_continuation"
+                queue = "logistics"
+                action = "attach_to_deal"
+            else:
+                case_type = "new_lead"
+                reason_code = "new_lead_request_signal"
+                queue = "sales"
+                action = "review_new_lead"
+            return ModuleResult(
+                module_id="beeagent-rop",
+                case_type="lead_classification",
+                authority=AuthorityLevel.READ_ONLY,
+                status="ok",
+                summary="Classified",
+                data={
+                    "event_id": payload.get("event_id"),
+                    "case_type": case_type,
+                    "case_subtype": (
+                        "shipment_follow_up"
+                        if case_type == "existing_deal"
+                        else "rfq"
+                    ),
+                    "recommended_queue": queue,
+                    "should_rop_see": True,
+                    "correct_action": action,
+                    "priority": "medium",
+                    "confidence": 0.85,
+                    "reason_code": reason_code,
+                    "is_fallback": case_type == "new_lead",
+                },
+            )
+
+    _make_fake_package("test_stub_rop_occurrence", "RopModule", _ContinuationStub)
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beeagent-rop",
+                    "package": "test_stub_rop_occurrence",
+                    "entry": "RopModule",
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        run_rop_operator_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            payload={
+                "event_id": "evt-shared",
+                "event_instance_id": "event-000001",
+                "source": "email",
+                "sender": "client@example.test",
+                "subject": "Re: Запрос на доставку",
+                "body": "Просим проверить сроки доставки.",
+                "thread_context": public1,
+            },
+            run_id="run-occ1",
+            session_id="session-occ1",
+        )
+        run_rop_operator_case(
+            settings=settings,
+            storage_dir=tmp_path,
+            logger=_null_logger(),
+            registry=registry,
+            payload={
+                "event_id": "evt-shared",
+                "event_instance_id": "event-000002",
+                "source": "email",
+                "sender": "client@example.test",
+                "subject": "Re: Запрос на доставку",
+                "body": "Просим проверить сроки доставки.",
+            },
+            run_id="run-occ2",
+            session_id="session-occ2",
+        )
+        result1 = json.loads(
+            (
+                tmp_path
+                / "runs"
+                / "run-occ1"
+                / "module-beeagent-rop"
+                / "module_result.json"
+            ).read_text(encoding="utf-8")
+        )
+        result2 = json.loads(
+            (
+                tmp_path
+                / "runs"
+                / "run-occ2"
+                / "module-beeagent-rop"
+                / "module_result.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert (result1.get("data") or {}).get("case_type") == "existing_deal"
+        assert (result2.get("data") or {}).get("case_type") != "existing_deal"
+    finally:
+        _remove_fake_package("test_stub_rop_occurrence")
+
+
 def test_ai_paths_skip_deterministic_duplicate() -> None:
     from beeagent_module.cases.rop_operator import _is_event_eligible_for_ai_assist
     from beeagent_module.core.rop_ai_adjudicator import (
