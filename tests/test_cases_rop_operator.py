@@ -1627,6 +1627,71 @@ def test_rop_batch_exact_duplicate_classified_with_evidence(tmp_path: Path) -> N
     assert operator["classification"]["classified_count"] == 3
 
 
+def test_rop_batch_cross_run_exact_duplicate_uses_prior_canonical_event(
+    tmp_path: Path,
+) -> None:
+    event = {
+        "source": "email",
+        "sender": "buyer@example.com",
+        "subject": "Перевозка груза",
+        "body": "Запрос на подтверждение перевозки груза",
+        "received_at": "2026-08-01T10:00:00Z",
+    }
+
+    first_run = _classify_raw_batch(
+        tmp_path,
+        [dict(event, event_id="A", message_id="<A>")],
+        "run-cross-run-duplicate-a",
+    )
+    second_run = _classify_raw_batch(
+        tmp_path,
+        [dict(event, event_id="B", message_id="<B>")],
+        "run-cross-run-duplicate-b",
+    )
+
+    assert first_run[0]["case_type"] != "duplicate"
+    assert second_run[0]["case_type"] == "duplicate"
+    assert second_run[0]["duplicate"]["is_duplicate"] is True
+    assert second_run[0]["duplicate"]["candidate"]["event_id"] == "A"
+    assert second_run[0]["reason_code"] == "duplicate_candidate_confirmed"
+
+    failed_history = tmp_path / "failed-history"
+    failed_run_dir = failed_history / "runs" / "run-cross-run-failed-c"
+    failed_run_dir.mkdir(parents=True)
+    failed_event = {
+        "event_id": "C",
+        "message_id": "<C>",
+        "client_id": "welding",
+        "sender": event["sender"],
+        "subject": event["subject"],
+        "body_preview": event["body"],
+    }
+    (failed_run_dir / "normalized_events.json").write_text(
+        json.dumps([failed_event]), encoding="utf-8"
+    )
+    (failed_run_dir / "classified_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": "C",
+                    "case_type": "unknown",
+                    "reason_code": "classification_error",
+                    "confidence": 0.0,
+                    "is_fallback": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    failed_history_run = _classify_raw_batch(
+        failed_history,
+        [dict(event, event_id="D", message_id="<D>")],
+        "run-cross-run-duplicate-d",
+    )
+
+    assert failed_history_run[0]["case_type"] != "duplicate"
+
+
 def test_rop_batch_duplicates_do_not_become_canonical_source(tmp_path: Path) -> None:
     batch_path = _write_raw_events_batch(
         tmp_path,
