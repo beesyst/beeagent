@@ -580,6 +580,25 @@ def _classify_normalized_events(
     already_classified_count = 0
     failed_count = 0
     canonical_events: list[tuple[int, dict[str, Any]]] = []
+    prior_classified_by_event = {
+        classified_event.get("event_id"): classified_event
+        for classified_event in prior_classified or []
+        if isinstance(classified_event, dict)
+        and isinstance(classified_event.get("event_id"), str)
+        and classified_event.get("event_id")
+    }
+    for prior_item_index, prior_event in enumerate(prior_events or []):
+        if not isinstance(prior_event, dict):
+            continue
+        prior_event_id = prior_event.get("event_id")
+        if not isinstance(prior_event_id, str) or not prior_event_id:
+            continue
+        prior_classification = prior_classified_by_event.get(prior_event_id)
+        if (
+            _is_eligible_canonical_source(prior_classification)
+            and prior_classification.get("reason_code") != "classification_error"
+        ):
+            canonical_events.append((-(prior_item_index + 1), prior_event))
 
     ordered_events = sorted(
         enumerate(events),
