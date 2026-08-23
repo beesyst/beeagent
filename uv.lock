@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.53.1"
+version = "0.53.2"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -58,7 +58,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", specifier = "==0.26.0" },
+    { name = "beeui", specifier = "==0.26.1" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "langgraph", specifier = "==1.2.11" },
@@ -77,7 +77,7 @@ dev = [
 
 [[package]]
 name = "beeagent-rop"
-version = "0.19.5"
+version = "0.19.6"
 source = { editable = "../beeagent-rop" }
 
 [package.metadata]
@@ -87,7 +87,7 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "beeui"
-version = "0.26.0"
+version = "0.26.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -97,9 +97,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/20/9de4dd8c8f06fd381c52836c68c88f13095f898a2adee8167627e3b6f70a/beeui-0.26.0.tar.gz", hash = "sha256:53198b8f810c014e24bbce399f548368d4b13ec98009497c6f0897b644539eed", size = 517559, upload-time = "2026-08-12T04:24:54.756Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/c5/4c7d917a1a67b25382471f75d2b9a9a07d66171a15b76f58e954e2c653ac/beeui-0.26.1.tar.gz", hash = "sha256:2b5e752930d7100a33f3a2b250dd67b8707dc5d87d7da0580104c1f049e87407", size = 517783, upload-time = "2026-08-23T08:52:27.011Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/e7/e9e1f21b75944f3055d60759fec7643a2b10b66d39343deb4e915cb58bad/beeui-0.26.0-py3-none-any.whl", hash = "sha256:e74fe56f63b24d9107823d325fc06d6d6c407d1d7052168ac6acca477c090ec5", size = 432440, upload-time = "2026-08-12T04:24:50.726Z" },
+    { url = "https://files.pythonhosted.org/packages/38/12/7587fc4cf011a2f54c5c699004c132271ada9a443b0c4a207e5ed04c1ee6/beeui-0.26.1-py3-none-any.whl", hash = "sha256:43221750b2a26b8e4e3cb9abc71cb83107dffb1960b3030e6deb9ddba5648de6", size = 432473, upload-time = "2026-08-23T08:52:22.147Z" },
 ]
 
 [[package]]
