@@ -269,6 +269,7 @@ def build_thread_context(
     logger: logging.Logger,
     prior_events: list[dict[str, Any]] | None = None,
     prior_classified: list[dict[str, Any]] | None = None,
+    continuation_contexts: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     threads = thread_index.get("threads", [])
     if not isinstance(threads, list):
@@ -325,15 +326,23 @@ def build_thread_context(
             continue
 
         thread = event_to_thread.get(event_id)
-        if thread is None:
+        continuation = None
+        if continuation_contexts:
+            continuation = continuation_contexts.get(
+                (event_id, str(event.get("event_instance_id") or ""))
+            )
+        if thread is None and continuation is None:
             continue
 
-        previous_ids = [
-            prior_event_id
-            for prior_event_id in prior_event_ids
-            if prior_event_id != event_id
-            and event_to_thread.get(prior_event_id) is thread
-        ]
+        if thread is None:
+            previous_ids = []
+        else:
+            previous_ids = [
+                prior_event_id
+                for prior_event_id in prior_event_ids
+                if prior_event_id != event_id
+                and event_to_thread.get(prior_event_id) is thread
+            ]
 
         client_id = str(event.get("client_id") or "")
         current_message_id, current_in_reply_to, current_references = (
@@ -357,7 +366,7 @@ def build_thread_context(
                     cross_prev_event_id = ref_key[1]
                     cross_reason_code = "prior_run_reference"
                     break
-        if not previous_ids and not cross_prev_case_type:
+        if not previous_ids and not cross_prev_case_type and continuation is None:
             prior_event_ids.append(event_id)
             continue
 
@@ -381,11 +390,23 @@ def build_thread_context(
         if not prev_case_type and cross_prev_case_type:
             prev_case_type = cross_prev_case_type
 
-        previous_events = [
-            previous_event
-            for previous_event in events[:event_position]
-            if event_to_thread.get(previous_event.get("event_id") or "") is thread
-        ]
+        if continuation is not None:
+            continuation_type = continuation.get("previous_case_type")
+            if continuation_type:
+                prev_case_type = str(continuation_type)
+                prev_case_subtype = str(
+                    continuation.get("previous_case_subtype") or ""
+                )
+            is_reply = True
+
+        previous_events = []
+        if thread is not None:
+            previous_events = [
+                previous_event
+                for previous_event in events[:event_position]
+                if event_to_thread.get(previous_event.get("event_id") or "")
+                is thread
+            ]
 
         evt_participants = _participants(event)
         prior_participants: set[str] = set()
@@ -432,7 +453,7 @@ def build_thread_context(
             ),
         }
 
-        if prev_case_type and not cross_prev_case_type:
+        if prev_case_type and not cross_prev_case_type and continuation is None:
             if not (
                 local_evidence["message_id_link"]
                 or local_evidence["references_link"]
@@ -458,13 +479,46 @@ def build_thread_context(
         if cross_reason_code:
             reason_codes.append(cross_reason_code)
 
+        if continuation is not None:
+            continuation_reasons = continuation.get("reason_codes")
+            if isinstance(continuation_reasons, list):
+                for reason in continuation_reasons:
+                    if isinstance(reason, str) and reason not in reason_codes:
+                        reason_codes.append(reason)
+            if "reply_or_forward" not in reason_codes:
+                reason_codes.append("reply_or_forward")
+
         previous_event_ids = list(previous_ids)
         if cross_prev_event_id and cross_prev_event_id not in previous_event_ids:
             previous_event_ids.append(cross_prev_event_id)
 
+        if continuation is not None:
+            continuation_confidence = continuation.get("thread_context_confidence")
+            if (
+                isinstance(continuation_confidence, (int, float))
+                and not isinstance(continuation_confidence, bool)
+            ):
+                context_confidence = float(continuation_confidence)
+            else:
+                context_confidence = _compute_confidence(
+                    evidence=local_evidence,
+                    is_reply=is_reply,
+                    prev_case_type=prev_case_type,
+                )
+        else:
+            context_confidence = _compute_confidence(
+                evidence=local_evidence,
+                is_reply=is_reply,
+                prev_case_type=prev_case_type,
+            )
+
+        context_thread_id = (
+            thread.get("thread_id", "") if thread is not None else ""
+        )
         context_entry: dict[str, Any] = {
             "event_id": event_id,
-            "thread_id": thread.get("thread_id", ""),
+            "event_instance_id": str(event.get("event_instance_id") or ""),
+            "thread_id": context_thread_id,
             "reply_or_forward": is_reply,
             "previous_event_ids": previous_event_ids,
             "previous_case_type": prev_case_type,
@@ -472,13 +526,21 @@ def build_thread_context(
             "participant_overlap": participant_overlap,
             "previous_subject": "",
             "previous_summary": "",
-            "thread_context_confidence": _compute_confidence(
-                evidence=local_evidence,
-                is_reply=is_reply,
-                prev_case_type=prev_case_type,
-            ),
+            "thread_context_confidence": context_confidence,
             "reason_codes": reason_codes,
         }
+        if continuation is not None:
+            context_entry["provenance"] = str(
+                continuation.get("provenance") or "bitrix_outbound_exact"
+            )
+            context_entry["bitrix_target"] = {
+                "target_entity_type": continuation.get("target_entity_type"),
+                "target_entity_type_id": continuation.get("target_entity_type_id"),
+                "target_entity_id": continuation.get("target_entity_id"),
+                "target_responsible_user_id": continuation.get(
+                    "target_responsible_user_id"
+                ),
+            }
 
         if previous_classified:
             prev_subject_raw = previous_classified.get("subject") or ""

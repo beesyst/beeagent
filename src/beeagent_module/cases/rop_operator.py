@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from beeagent_module.adapters.bitrix_client import build_bitrix_client
+from beeagent_module.cases.rop_writeback import load_trusted_targets_by_client
 from beeagent_module.core.attachment_extraction import build_attachment_extraction
 from beeagent_module.core.input_source import (
     InputSourceError,
@@ -33,6 +35,10 @@ from beeagent_module.core.rop_conversation import (
     write_conversation_artifacts,
 )
 from beeagent_module.core.rop_final_decision import build_final_decisions
+from beeagent_module.core.rop_outbound_correlation import (
+    collect_outbound_correlation_evidence,
+    resolve_outbound_bridge,
+)
 from beeagent_module.core.rop_thread_context import build_public_thread_context
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 from beeagent_module.core.settings import (
@@ -473,6 +479,88 @@ def _build_duplicate_candidates(
     return candidates
 
 
+def build_bitrix_continuation_contexts(
+    events: list[dict[str, Any]],
+    settings: dict,
+    storage_dir: Path,
+    logger: logging.Logger,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    bitrix_cfg = settings.get("bitrix")
+    if not isinstance(bitrix_cfg, dict) or bitrix_cfg.get("enabled") is not True:
+        return {}
+    recon_cfg = bitrix_cfg.get("reconciliation")
+    if not isinstance(recon_cfg, dict) or recon_cfg.get("enabled") is not True:
+        return {}
+    corr_cfg = recon_cfg.get("correlation")
+    if not isinstance(corr_cfg, dict) or corr_cfg.get("enabled") is not True:
+        return {}
+    if not events:
+        return {}
+
+    try:
+        client = build_bitrix_client(settings, logger=logger)
+    except Exception as exc:
+        logger.warning(
+            "bitrix continuation context skipped: client unavailable: %s", exc
+        )
+        return {}
+
+    try:
+        evidence = collect_outbound_correlation_evidence(
+            client=client,
+            events=events,
+            logger=logger,
+        )
+    except Exception as exc:
+        logger.warning(
+            "bitrix continuation context skipped: correlation evidence failed: %s",
+            exc,
+        )
+        return {}
+    if not evidence:
+        return {}
+
+    try:
+        trusted_by_client = load_trusted_targets_by_client(storage_dir)
+    except Exception as exc:
+        logger.warning(
+            "bitrix continuation context skipped: trusted targets unavailable: %s",
+            exc,
+        )
+        return {}
+
+    contexts: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in events:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            continue
+        event_instance_id = str(event.get("event_instance_id") or "")
+        client_id = str(event.get("client_id") or "")
+        bridge = resolve_outbound_bridge(
+            event,
+            evidence,
+            trusted_by_client.get(client_id),
+        )
+        if not isinstance(bridge, dict) or bridge.get("authorized") is not True:
+            continue
+        target = bridge.get("target")
+        if not isinstance(target, dict):
+            continue
+        contexts[(event_id, event_instance_id)] = {
+            "provenance": "bitrix_outbound_exact",
+            "previous_case_type": "existing_deal",
+            "reply_or_forward": True,
+            "thread_context_confidence": 1.0,
+            "reason_codes": ["bitrix_outbound_exact"],
+            "event_instance_id": event_instance_id,
+            "target_entity_type": target.get("target_entity_type"),
+            "target_entity_type_id": target.get("target_entity_type_id"),
+            "target_entity_id": target.get("target_entity_id"),
+            "target_responsible_user_id": target.get("target_responsible_user_id"),
+        }
+    return contexts
+
+
 def _classify_normalized_events(
     events: list[dict[str, Any]],
     registry: ModuleRegistry,
@@ -485,6 +573,7 @@ def _classify_normalized_events(
     thread_index: dict[str, Any] | None = None,
     prior_events: list[dict[str, Any]] | None = None,
     prior_classified: list[dict[str, Any]] | None = None,
+    continuation_contexts: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     classified_events: list[dict[str, Any]] = []
     classified_count = 0
@@ -541,13 +630,19 @@ def _classify_normalized_events(
                 logger=logger,
                 prior_events=prior_events,
                 prior_classified=prior_classified,
+                continuation_contexts=continuation_contexts,
             )
             context_map = {
-                item.get("event_id", ""): item
+                (
+                    str(item.get("event_id", "")),
+                    str(item.get("event_instance_id") or ""),
+                ): item
                 for item in current_thread_context.get("contexts", [])
                 if isinstance(item, dict) and item.get("event_id")
             }
-            event_tc = context_map.get(event_id)
+            event_tc = context_map.get(
+                (event_id, str(event.get("event_instance_id") or ""))
+            )
             if event_tc:
                 filtered_event["thread_context"] = build_public_thread_context(
                     event_tc,
@@ -1259,6 +1354,16 @@ def run_rop_batch_case(
             logger=logger,
         )
 
+        bitrix_continuation_contexts = build_bitrix_continuation_contexts(
+            events=normalized_events,
+            settings=settings,
+            storage_dir=storage_dir,
+            logger=logger,
+        )
+        classification_diagnostics["bitrix_continuation_count"] = len(
+            bitrix_continuation_contexts
+        )
+
         classified_events, classification_diagnostics = _classify_normalized_events(
             events=normalized_events,
             registry=registry,
@@ -1271,6 +1376,7 @@ def run_rop_batch_case(
             thread_index=thread_index,
             prior_events=prior_events,
             prior_classified=prior_classified,
+            continuation_contexts=bitrix_continuation_contexts,
         )
 
         thread_context = build_thread_context(
@@ -1280,6 +1386,7 @@ def run_rop_batch_case(
             logger=logger,
             prior_events=prior_events,
             prior_classified=prior_classified,
+            continuation_contexts=bitrix_continuation_contexts,
         )
         thread_refs = write_thread_artifacts(
             storage_dir=storage_dir,
@@ -1342,9 +1449,15 @@ def run_rop_batch_case(
 
             for event in eligible_events:
                 event_id = event.get("event_id", "")
+                event_instance_id = str(event.get("event_instance_id") or "")
                 tc = None
                 for ctx in thread_context.get("contexts", []):
-                    if isinstance(ctx, dict) and ctx.get("event_id") == event_id:
+                    if (
+                        isinstance(ctx, dict)
+                        and ctx.get("event_id") == event_id
+                        and str(ctx.get("event_instance_id") or "")
+                        == event_instance_id
+                    ):
                         tc = ctx
                         break
 
@@ -1717,13 +1830,15 @@ def _enrich_classified_events(
     conversation_relation: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
-    context_map: dict[str, dict[str, Any]] = {}
+    context_map: dict[tuple[str, str], dict[str, Any]] = {}
     if thread_context and isinstance(thread_context, dict):
         for ctx in thread_context.get("contexts", []):
             if isinstance(ctx, dict):
                 eid = ctx.get("event_id", "")
                 if eid:
-                    context_map[eid] = ctx
+                    context_map[
+                        (str(eid), str(ctx.get("event_instance_id") or ""))
+                    ] = ctx
 
     for event in classified_events:
         if not isinstance(event, dict):
@@ -1745,7 +1860,9 @@ def _enrich_classified_events(
         enriched_event["deterministic_reason_code"] = event.get("reason_code", "")
 
         eid = event.get("event_id", "")
-        tc = context_map.get(eid)
+        tc = context_map.get(
+            (str(eid), str(event.get("event_instance_id") or ""))
+        )
         enriched_event["thread_context_ref"] = tc.get("thread_id") if tc else None
         if tc:
             public_tc = build_public_thread_context(tc, event)
