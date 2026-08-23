@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.53.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.1...beeagent-v0.53.2) (2026-08-23)
+
+
+### Bug Fixes
+
+* **rop:** cross-run continuation + locale ([044b0dd](https://github.com/beesyst/beeagent/commit/044b0ddc1b98361c835bb621e5974a877c4d71ca))
+* **rop:** detect duplicates across runs ([0cf584f](https://github.com/beesyst/beeagent/commit/0cf584f8d1d0196debd64734701e56ddd61bf244))
+* **rop:** harden Bitrix outbound correlation bridge ([c6a6074](https://github.com/beesyst/beeagent/commit/c6a607420a4452744fb5175b2c8cff773eafa568))
+* **rop:** harden conversation identity and AI decision resolution ([034d74e](https://github.com/beesyst/beeagent/commit/034d74ed13efa020c7620242d2dab5d2e4db1cfb))
+* **rop:** harden conversation identity, Bitrix correlation and AI adjudication ([7f1ec48](https://github.com/beesyst/beeagent/commit/7f1ec48f4702d64629bd2855acee0cd7102aa342))
+* **rop:** keep CRM candidate evidence separate from new lead creation ([fd5f796](https://github.com/beesyst/beeagent/commit/fd5f7962ed2b314656ea99af81342653b8f591fd))
+* **rop:** restore trusted Bitrix continuation classification ([133199a](https://github.com/beesyst/beeagent/commit/133199a68e64f15733f65dab7efe084f5dd374f3))
+
 ## [0.53.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.0...beeagent-v0.53.1) (2026-08-20)
 
 
