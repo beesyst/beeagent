@@ -142,7 +142,7 @@ _PRIOR_EVENT_MAX = 300
 def _read_run_artifact_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -1474,8 +1474,7 @@ def run_rop_batch_case(
                     if (
                         isinstance(ctx, dict)
                         and ctx.get("event_id") == event_id
-                        and str(ctx.get("event_instance_id") or "")
-                        == event_instance_id
+                        and str(ctx.get("event_instance_id") or "") == event_instance_id
                     ):
                         tc = ctx
                         break
@@ -1855,9 +1854,9 @@ def _enrich_classified_events(
             if isinstance(ctx, dict):
                 eid = ctx.get("event_id", "")
                 if eid:
-                    context_map[
-                        (str(eid), str(ctx.get("event_instance_id") or ""))
-                    ] = ctx
+                    context_map[(str(eid), str(ctx.get("event_instance_id") or ""))] = (
+                        ctx
+                    )
 
     for event in classified_events:
         if not isinstance(event, dict):
@@ -1879,9 +1878,7 @@ def _enrich_classified_events(
         enriched_event["deterministic_reason_code"] = event.get("reason_code", "")
 
         eid = event.get("event_id", "")
-        tc = context_map.get(
-            (str(eid), str(event.get("event_instance_id") or ""))
-        )
+        tc = context_map.get((str(eid), str(event.get("event_instance_id") or "")))
         enriched_event["thread_context_ref"] = tc.get("thread_id") if tc else None
         if tc:
             public_tc = build_public_thread_context(tc, event)

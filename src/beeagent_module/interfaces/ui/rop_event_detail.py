@@ -805,8 +805,7 @@ def build_rop_event_detail_read_model(
             writeback = _safe_dict(conversation_event.get("writeback"))
             if (
                 writeback.get("outcome") == "attach_existing"
-                and writeback.get("target_provenance")
-                in _TRUSTED_ATTACH_PROVENANCES
+                and writeback.get("target_provenance") in _TRUSTED_ATTACH_PROVENANCES
             ):
                 final_decision_section["semantic_case_type"] = _str(
                     final_decision_section.get("final_case_type", "")
