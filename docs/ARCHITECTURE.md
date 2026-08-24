@@ -54,8 +54,13 @@ BeeAgent владеет bounded execution-capable Bitrix write-back path для 
 - `BitrixReadonlyClient` остаётся строго read-only; `crm.activity.list` используется
   только для idempotency reconciliation и не даёт mutation capability;
 - отдельный `BitrixWriteClient` — bounded execution boundary с собственным allowlist
-  точных mutation methods (`crm.item.add`, `crm.activity.add`) и отдельным env-backed
-  write credential;
+  точных mutation methods (`crm.item.add`, `crm.activity.add`, и, только для
+  физической доставки attachment files It40, `crm.activity.update`) и отдельным
+  env-backed write credential;
+- attachment lifecycle (It40) — BeeAgent-owned bounded opaque store
+  `storage/attachments/<run_id>/` + per-run manifest, authenticated download и
+  physical-file Bitrix delivery; `beeagent-rop` потребляет только bounded
+  attachment extraction contract;
 - authoritative write-back state живёт в `storage/interfaces/rop_writeback_state.json`
   (durable, cross-run, idempotent), per-run операторская проекция —
   `rop_writeback_summary.json`;

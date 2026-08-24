@@ -187,3 +187,97 @@ def test_mailbox_poll_sources_all_true_without_mailbox_source_fails(
     changed["rop"]["sources"][1]["enabled"] = False
     with pytest.raises(RuntimeError, match="sources_all"):
         validate_settings(changed)
+
+
+def _attach_env(monkeypatch) -> None:
+    _base_env(monkeypatch)
+
+
+def test_attachment_storage_missing_block_fails(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"].pop("storage")
+    with pytest.raises(RuntimeError, match="rop.attachments.storage"):
+        validate_settings(changed)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "file_max_bytes",
+        "message_aggregate_max_bytes",
+        "files_max_per_message",
+    ],
+)
+def test_attachment_storage_invalid_value_fails(monkeypatch, key) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["storage"][key] = 0
+    with pytest.raises(RuntimeError, match=key):
+        validate_settings(changed)
+
+
+def test_attachment_storage_enabled_must_be_bool(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["storage"]["enabled"] = "yes"
+    with pytest.raises(RuntimeError, match="storage.enabled"):
+        validate_settings(changed)
+
+
+def test_attachment_analysis_invalid_file_capable_fails(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["analysis"]["file_capable"] = "yes"
+    with pytest.raises(RuntimeError, match="analysis.file_capable"):
+        validate_settings(changed)
+
+
+def test_attachment_analysis_invalid_max_chars_fails(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["analysis"]["max_chars"] = -1
+    with pytest.raises(RuntimeError, match="analysis.max_chars"):
+        validate_settings(changed)
+
+
+def test_bitrix_writeback_file_attach_required_bool(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["bitrix"]["writeback"]["file_attach"] = "yes"
+    with pytest.raises(RuntimeError, match="bitrix.writeback.file_attach"):
+        validate_settings(changed)
+
+
+def test_attachment_config_valid_passes(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    validate_settings(settings)
+    assert settings["rop"]["attachments"]["storage"]["enabled"] is True
+    assert settings["bitrix"]["writeback"]["file_attach"] is False
+
+
+def test_attachment_analysis_requires_storage_enabled(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["storage"]["enabled"] = False
+    with pytest.raises(RuntimeError, match="storage.enabled=true"):
+        validate_settings(changed)
+
+
+def test_attachment_analysis_disabled_with_storage_disabled_passes(
+    monkeypatch,
+) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["enabled"] = False
+    changed["rop"]["attachments"]["storage"]["enabled"] = False
+    validate_settings(changed)

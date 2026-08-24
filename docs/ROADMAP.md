@@ -8877,7 +8877,9 @@ ROP runtime получает двухуровневую semantic classification 
 
 ### Итерация 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
 
-**Статус:** PLANNED
+**Статус:** DONE
+
+#### Implemented (Issue #209)
 
 #### Goal
 
@@ -9084,6 +9086,23 @@ mailbox MIME
 - config and security contracts are explicit and validated;
 - tests, controlled provider/Bitrix smoke, security checks and docs are ready for PR review;
 - `pyproject.toml.version` is unchanged.
+
+#### Verification (Issue #209)
+
+- mailbox normalization теперь сохраняет accepted MIME attachment bytes под private key `_raw_attachments` (удаляется до записи `normalized_events.json`); bytes не попадают в normal JSON artifacts/logs/HTML/API;
+- dedicated bounded opaque attachment store: `storage/attachments/<run_id>/<blob_id>.bin` + `attachment_manifest.json` (generated `att-<sha256[:24]>` blob ids, filename только metadata, SHA-256 + exact size в manifest, no raw bytes); required persistence failure raises `AttachmentStoreError` → batch degraded → mailbox checkpoint не продвигается;
+- config-driven storage bounds: `rop.attachments.storage.{enabled,file_max_bytes,message_aggregate_max_bytes,files_max_per_message}` (validated fail-fast; per-file/aggregate/count limits применяются до хранения); oversized/count/aggregate/blocked (`.eml`/`message/rfc822`) — explicit manifest `storage_status`;
+- `rop.attachments.enabled:false` → zero provider calls (analysis artifact `analysis_status=disabled`), retention/download/Bitrix delivery независимы и продолжают работать;
+- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,max_chars}`; текстовые типы — chat-completions path, binary — только при `file_capable:true` (openai_responses `input_file`, base64); unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated и bounded; document instructions не дают tool/mailbox/CRM authority;
+- AI preview интегрирован в existing attachment extraction contract: `attachment_text_preview` / `attachment_preview_available` / status/refusal fields (для `beeagent-rop` без изменения package);
+- authenticated download route `GET /rop/attachments/{attachment_id}/download?run_id=...&event_id=...`: существующая BeeUI session auth + authorization scopes, lookup только по safe manifest attachment ID, invalid/traversal/unrelated → fail closed, forced `attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: no-store`, `application/octet-stream` (no inline render);
+- Event Detail показывает filename/content_type/size/storage_status/analysis_status/sha256/safe download link; attachment manifest и analysis добавлены в evidence artifacts и allowlists;
+- Bitrix physical file delivery: отдельный switch `bitrix.writeback.file_attach` (bool, validated), отдельный `file_attach_status`/`file_attach_attempts`/`last_file_attach_error_code`/`attachment_refs` в write-back state; файлы читаются из durable attachment store по manifest refs (retry без mailbox re-ingestion); используется только уже выбранный trusted/new CRM target (email activity), доставка сама не выбирает target; `email_attach` backward-compatible; replay не дублирует activity/files (state idempotency); write allowlist расширен ровно на `crm.activity.update` (FILES/fileData);
+- `beeagent-rop` не изменялся; `beeui` не изменялся (generic renderer, download contract BeeAgent-owned);
+- `uv run pytest -q` → 1800 passed (exit 0); `uv run python -B -m compileall -q src tests` OK; `git diff --check` OK; `./start.sh routes` показывает download route;
+- controlled live-like mailbox smoke (synthetic multipart PDF/TXT в `_FakeMailboxClient`) прогоняет реальный ROP batch: blob persisted, manifest, extraction enriched, no raw bytes в `normalized_events.json`;
+- controlled Bitrix test-portal attachment smoke и controlled AI provider file-input smoke для production форматов НЕ выполнялись (нет сконфигурированного тестового портала/провайдера в текущем окружении) — `not verifiable / blocker for full DoD`; эквивалентные positive/negative сценарии покрыты mock-level integration тестами;
+- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

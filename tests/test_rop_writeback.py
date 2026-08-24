@@ -66,6 +66,7 @@ def _writeback_settings(
     email_completed: bool = True,
     source_id: str = "",
     user_id_fallback: int | None = None,
+    file_attach: bool = False,
 ) -> dict:
     writeback: dict[str, Any] = {
         "enabled": enabled,
@@ -75,6 +76,7 @@ def _writeback_settings(
         "dry_run": dry_run,
         "email_attach": email_attach,
         "email_completed": email_completed,
+        "file_attach": file_attach,
         "source_id": source_id,
         "stages": stages or {"new_lead": "NEW", "irrelevant": "NEW"},
     }
@@ -353,6 +355,8 @@ def _default_handler(call: dict[str, Any]) -> bytes:
         return json.dumps({"result": {"item": {"id": 1001}}}).encode("utf-8")
     if method == "crm.activity.add":
         return json.dumps({"result": 9001}).encode("utf-8")
+    if method == "crm.activity.update":
+        return json.dumps({"result": True}).encode("utf-8")
     raise AssertionError(f"unexpected method: {method}")
 
 
@@ -572,7 +576,13 @@ class TestWritebackSettingsValidation:
 
 class TestWriteClientBoundary:
     def test_write_allowed_methods_are_bounded(self) -> None:
-        assert WRITE_ALLOWED_METHODS == frozenset({"crm.item.add", "crm.activity.add"})
+        assert WRITE_ALLOWED_METHODS == frozenset(
+            {
+                "crm.item.add",
+                "crm.activity.add",
+                "crm.activity.update",
+            }
+        )
 
     def test_readonly_client_rejects_write_methods(self) -> None:
         assert "crm.item.add" not in ALLOWED_METHODS
@@ -5449,3 +5459,451 @@ class TestWritebackCli:
         execute_default = parser.parse_args(["writeback", "execute"])
         assert execute_default.run_id == "manual-execute"
         assert execute_default.dry_run is False
+
+
+def _seed_attachment_manifest(storage_dir: Path, run_id: str) -> dict[str, Any]:
+    import hashlib
+
+    content = b"physical file bytes for bitrix delivery"
+    blob_id = "att-" + hashlib.sha256(content).hexdigest()[:24]
+    store_dir = storage_dir / "attachments" / run_id
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / f"{blob_id}.bin").write_bytes(content)
+    manifest = {
+        "run_id": run_id,
+        "version": 1,
+        "status": "ok",
+        "policy": {
+            "enabled": True,
+            "file_max_bytes": 1048576,
+            "message_aggregate_max_bytes": 2097152,
+            "files_max_per_message": 10,
+        },
+        "aggregate": {
+            "attachment_count": 1,
+            "stored_count": 1,
+            "refused_count": 0,
+            "failed_count": 0,
+            "total_bytes": len(content),
+        },
+        "items": [
+            {
+                "attachment_id": "evt-1-att-0",
+                "event_id": "evt-1",
+                "event_instance_id": "inst-1",
+                "blob_id": blob_id,
+                "filename": "quote.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "storage_status": "stored",
+                "reason_code": None,
+                "refusal_reason": None,
+            }
+        ],
+    }
+    (store_dir / "attachment_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return manifest
+
+
+class TestPhysicalFileAttachmentDelivery:
+    def test_create_lead_delivers_physical_files_to_activity(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb-files"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file@example.test>",
+                    sender="sender@example.com",
+                    subject="Files request",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, "run-wb-files")
+        settings = _writeback_settings(
+            email_attach=True, source_id="EMAIL", file_attach=True
+        )
+        build_writeback_plan(tmp_path, "run-wb-files", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb-files", settings, _null_logger()
+            )
+        assert result["writes_performed"] >= 3
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert len(update_calls) == 1
+        fields = update_calls[0]["payload"]["fields"]
+        assert update_calls[0]["payload"]["id"] == 9001
+        assert "FILES" in fields
+        file_data = fields["FILES"][0]["fileData"]
+        assert file_data[0] == "quote.pdf"
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["file_attach_required"] is True
+        assert record["file_attach_status"] == "attached"
+        assert record["last_file_attach_error_code"] is None
+        assert record["attachment_refs"][0]["attachment_id"] == "evt-1-att-0"
+
+    def test_file_attach_disabled_switch_no_update_calls(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb-files-off"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-off@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, "run-wb-files-off")
+        settings = _writeback_settings(email_attach=True, file_attach=False)
+        build_writeback_plan(tmp_path, "run-wb-files-off", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-wb-files-off", settings, _null_logger()
+            )
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert update_calls == []
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["file_attach_required"] is False
+        assert record["file_attach_status"] == "not_required"
+
+    def test_file_attach_replay_no_duplicate_delivery(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb-files-replay"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-replay@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, "run-wb-files-replay")
+        settings = _writeback_settings(
+            email_attach=True, file_attach=True
+        )
+        build_writeback_plan(tmp_path, "run-wb-files-replay", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-wb-files-replay", settings, _null_logger()
+            )
+            execute_writeback_pending(
+                tmp_path, "run-wb-files-replay", settings, _null_logger()
+            )
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert len(update_calls) == 1
+        activity_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.add"
+        ]
+        assert len(activity_calls) == 1
+
+    def test_file_attach_missing_blob_degrades(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb-files-missing"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-missing@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        # Manifest references a blob that does not exist on disk
+        store_dir = tmp_path / "attachments" / "run-wb-files-missing"
+        store_dir.mkdir(parents=True, exist_ok=True)
+        (store_dir / "attachment_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-wb-files-missing",
+                    "version": 1,
+                    "status": "ok",
+                    "policy": {},
+                    "aggregate": {},
+                    "items": [
+                        {
+                            "attachment_id": "evt-1-att-0",
+                            "event_id": "evt-1",
+                            "event_instance_id": "inst-1",
+                            "blob_id": "att-missingblob",
+                            "filename": "ghost.pdf",
+                            "content_type": "application/pdf",
+                            "size_bytes": 4,
+                            "sha256": "abc",
+                            "storage_status": "stored",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = _writeback_settings(
+            email_attach=True, file_attach=True
+        )
+        build_writeback_plan(tmp_path, "run-wb-files-missing", settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-wb-files-missing", settings, _null_logger()
+            )
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert update_calls == []
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert record["file_attach_status"] == "failed"
+        assert record["last_file_attach_error_code"] == "attachment_blob_unavailable"
+
+    def test_file_attach_uses_recovered_existing_email_activity(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb-files-recovered"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-recovered@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, "run-wb-files-recovered")
+        settings = _writeback_settings(
+            email_attach=True, file_attach=True
+        )
+        build_writeback_plan(tmp_path, "run-wb-files-recovered", settings, _null_logger())
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        record["status"] = "created"
+        record["remote_entity_type_id"] = 1
+        record["remote_entity_id"] = 1001
+        record["email_activity_id"] = 9999
+        record["email_attachment_status"] = "attached"
+        _save_state_for_test(tmp_path, state)
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(
+                tmp_path, "run-wb-files-recovered", settings, _null_logger()
+            )
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert len(update_calls) == 1
+        assert update_calls[0]["payload"]["id"] == 9999
+
+    def test_file_attach_skips_non_stored_refs(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-wb-files-mixed"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-mixed@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        import hashlib
+
+        content = b"stored physical file bytes"
+        blob_id = "att-" + hashlib.sha256(content).hexdigest()[:24]
+        store_dir = tmp_path / "attachments" / run_id
+        store_dir.mkdir(parents=True, exist_ok=True)
+        (store_dir / f"{blob_id}.bin").write_bytes(content)
+        (store_dir / "attachment_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "version": 1,
+                    "status": "ok",
+                    "policy": {},
+                    "aggregate": {},
+                    "items": [
+                        {
+                            "attachment_id": "evt-1-att-0",
+                            "event_id": "evt-1",
+                            "event_instance_id": "inst-1",
+                            "blob_id": blob_id,
+                            "filename": "quote.pdf",
+                            "content_type": "application/pdf",
+                            "size_bytes": len(content),
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                            "storage_status": "stored",
+                            "reason_code": None,
+                            "refusal_reason": None,
+                        },
+                        {
+                            "attachment_id": "evt-1-att-1",
+                            "event_id": "evt-1",
+                            "event_instance_id": "inst-1",
+                            "blob_id": None,
+                            "filename": "huge.bin",
+                            "content_type": "application/octet-stream",
+                            "size_bytes": 999999,
+                            "sha256": None,
+                            "storage_status": "oversized",
+                            "reason_code": "attachment_oversized",
+                            "refusal_reason": "attachment exceeds storage size limit",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = _writeback_settings(email_attach=True, file_attach=True)
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        assert [r["attachment_id"] for r in record["attachment_refs"]] == [
+            "evt-1-att-0"
+        ]
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+        update_calls = [
+            call
+            for call in recorder.calls
+            if call["method"] == "crm.activity.update"
+        ]
+        assert len(update_calls) == 1
+        file_data = update_calls[0]["payload"]["fields"]["FILES"]
+        assert len(file_data) == 1
+        assert file_data[0]["fileData"][0] == "quote.pdf"
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        assert record["file_attach_status"] == "attached"
+
+    def test_file_attach_refs_refreshed_from_current_run(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-wb-files-refresh"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-refresh@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, run_id)
+        settings = _writeback_settings(email_attach=True, file_attach=True)
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        state = _load_state(tmp_path)
+        record = list(state["events"].values())[0]
+        record["attachment_refs"] = [
+            {
+                "attachment_id": "evt-1-att-99",
+                "filename": "stale.bin",
+                "content_type": "application/octet-stream",
+                "size_bytes": 1,
+                "sha256": "stale",
+            }
+        ]
+        _save_state_for_test(tmp_path, state)
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        assert [r["attachment_id"] for r in record["attachment_refs"]] == [
+            "evt-1-att-0"
+        ]
+
+
+def _save_state_for_test(storage_dir: Path, state: dict[str, Any]) -> None:
+    path = storage_dir / "interfaces" / WRITEBACK_STATE_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+def test_email_activity_uses_fallback_subject_when_empty(
+    tmp_path: Path, writeback_env: None
+) -> None:
+    run_dir = tmp_path / "runs" / "run-wb-empty-subject"
+    _write_artifacts(
+        run_dir,
+        classified=[
+            _classified_event(
+                "evt-1",
+                "new_lead",
+                message_id="<msg-empty-subject@example.test>",
+                sender="sender@example.com",
+                subject="",
+            )
+        ],
+        decisions=[_decision("evt-1", "new_lead")],
+        reconciliation=[_recon_item("evt-1", "not_found")],
+        routing=[_routing_item("evt-1", "matched")],
+    )
+    settings = _writeback_settings(email_attach=True, source_id="EMAIL")
+    build_writeback_plan(tmp_path, "run-wb-empty-subject", settings, _null_logger())
+    recorder = _HttpRecorder(_default_handler)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(
+            tmp_path, "run-wb-empty-subject", settings, _null_logger()
+        )
+    activity_call = next(
+        call for call in recorder.calls if call["method"] == "crm.activity.add"
+    )
+    assert activity_call["payload"]["fields"]["SUBJECT"] == (
+        "ROP email from sender@example.com"
+    )
+    state = _load_state(tmp_path)
+    record = list(state["events"].values())[0]
+    assert record["email_activity_id"] == 9001
+    assert record["email_attachment_status"] == "attached"

@@ -41,6 +41,10 @@ REQUIRED_KEYS = (
     ("rop", "attachments", "chars_max"),
     ("rop", "attachments", "size_max"),
     ("rop", "attachments", "types"),
+    ("rop", "attachments", "storage", "enabled"),
+    ("rop", "attachments", "storage", "file_max_bytes"),
+    ("rop", "attachments", "storage", "message_aggregate_max_bytes"),
+    ("rop", "attachments", "storage", "files_max_per_message"),
     ("rop", "email_preview", "body_chars_max"),
     ("rop", "sources"),
     ("rop", "dashboard", "default_period"),
@@ -304,6 +308,56 @@ def validate_settings(settings: dict) -> None:
         if not isinstance(item, str) or not item.strip():
             raise RuntimeError(
                 f"Invalid rop.attachments.types[{idx}], expected non-empty string"
+            )
+
+    storage_cfg = attachments_cfg.get("storage")
+    if not isinstance(storage_cfg, dict):
+        raise RuntimeError(
+            "Invalid type for rop.attachments.storage, expected mapping"
+        )
+    if not isinstance(storage_cfg.get("enabled"), bool):
+        raise RuntimeError(
+            "Invalid type for rop.attachments.storage.enabled, expected bool"
+        )
+    for storage_key in (
+        "file_max_bytes",
+        "message_aggregate_max_bytes",
+        "files_max_per_message",
+    ):
+        storage_value = storage_cfg.get(storage_key)
+        if not isinstance(storage_value, int) or storage_value <= 0:
+            raise RuntimeError(
+                f"Invalid rop.attachments.storage.{storage_key}, expected int > 0"
+            )
+    if attachments_cfg.get("enabled") is True and storage_cfg.get("enabled") is not True:
+        raise RuntimeError(
+            "rop.attachments.enabled=true requires rop.attachments.storage.enabled=true; "
+            "semantic analysis reads files from the attachment store"
+        )
+
+    analysis_cfg = attachments_cfg.get("analysis")
+    if analysis_cfg is not None and not isinstance(analysis_cfg, dict):
+        raise RuntimeError(
+            "Invalid type for rop.attachments.analysis, expected mapping"
+        )
+    if isinstance(analysis_cfg, dict):
+        if not isinstance(analysis_cfg.get("file_capable"), bool):
+            raise RuntimeError(
+                "Invalid type for rop.attachments.analysis.file_capable, "
+                "expected bool"
+            )
+        analysis_provider = analysis_cfg.get("provider")
+        if analysis_provider is not None and not isinstance(analysis_provider, str):
+            raise RuntimeError(
+                "Invalid type for rop.attachments.analysis.provider, "
+                "expected string or empty"
+            )
+        analysis_max_chars = analysis_cfg.get("max_chars")
+        if analysis_max_chars is not None and (
+            not isinstance(analysis_max_chars, int) or analysis_max_chars <= 0
+        ):
+            raise RuntimeError(
+                "Invalid rop.attachments.analysis.max_chars, expected int > 0"
             )
 
     _VALID_SOURCE_TYPES = {"json_batch", "mailbox_readonly"}
@@ -1029,6 +1083,11 @@ def _validate_bitrix_settings(settings: dict) -> None:
         if not isinstance(email_attach, bool):
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.email_attach, expected bool"
+            )
+        file_attach = writeback_cfg.get("file_attach")
+        if not isinstance(file_attach, bool):
+            raise RuntimeError(
+                "Invalid type for bitrix.writeback.file_attach, expected bool"
             )
         if "email_attach_completed" in writeback_cfg:
             raise RuntimeError(

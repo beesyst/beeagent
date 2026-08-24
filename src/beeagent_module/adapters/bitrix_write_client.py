@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from beeagent_module.adapters.bitrix_client import (
 WRITE_ALLOWED_METHODS: frozenset[str] = frozenset({
     "crm.item.add",
     "crm.activity.add",
+    "crm.activity.update",
 })
 LEAD_ENTITY_TYPE_ID = 1
 _ACTIVITY_TYPE_EMAIL = 4
@@ -27,6 +29,7 @@ _ACTIVITY_SUBJECT_MAX = 255
 _ACTIVITY_DESCRIPTION_MAX = 3000
 _ACTIVITY_EMAIL_MAX = 320
 _ACTIVITY_ORIGIN_MAX = 200
+_ACTIVITY_FILENAME_MAX = 255
 
 
 class BitrixWriteClient:
@@ -152,6 +155,35 @@ class BitrixWriteClient:
         }
         result = self.call("crm.activity.add", {"fields": fields})
         return _extract_activity_id(result)
+
+    def attach_files_to_activity(
+        self,
+        activity_id: int,
+        files: list[tuple[str, bytes]],
+    ) -> None:
+        file_data: list[dict[str, Any]] = []
+        for filename, content in files:
+            if not isinstance(filename, str):
+                filename = "attachment"
+            if not isinstance(content, bytes):
+                continue
+            file_data.append(
+                {
+                    "fileData": [
+                        filename[: _ACTIVITY_FILENAME_MAX],
+                        base64.b64encode(content).decode("ascii"),
+                    ]
+                }
+            )
+        if not file_data:
+            return
+        self.call(
+            "crm.activity.update",
+            {
+                "id": activity_id,
+                "fields": {"FILES": file_data},
+            },
+        )
 
 
 def _extract_added_item_id(data: dict[str, Any]) -> int:

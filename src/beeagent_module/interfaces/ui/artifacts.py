@@ -10,6 +10,8 @@ ARTIFACT_ALLOWLIST: dict[str, str] = {
     "normalized_events_json": "normalized_events.json",
     "classified_events_json": "classified_events.json",
     "attachment_extraction_json": "attachment_extraction.json",
+    "attachment_manifest_json": "attachment_manifest.json",
+    "attachment_analysis_json": "attachment_analysis.json",
     "rop_review_table_tsv": "rop_review_table.tsv",
     "rop_current_state_json": "rop_current_state.json",
     "bitrix_reconciliation_json": "bitrix_reconciliation.json",

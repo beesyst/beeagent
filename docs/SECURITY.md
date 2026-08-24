@@ -466,6 +466,56 @@ Rules:
 - Cross-run stable identity is `client_id + source_id + (message_id → x_email_id → event_id)`. The run-local `event_instance_id` is not used as remote business identity.
 - Credentials, webhook URLs, raw `.eml`, raw attachment bytes and unbounded Bitrix responses never appear in logs, write-back state or write-back summaries.
 
+## Attachment lifecycle security boundary (Iteration 40)
+
+BeeAgent has a bounded opaque attachment lifecycle for ROP mailbox attachments.
+
+Rules:
+
+- accepted MIME attachment bytes are retained only as opaque blobs in the
+  dedicated bounded store `storage/attachments/<run_id>/`; generated blob ids
+  (`att-<sha256[:24]>`) and manifest ids are used for filesystem/URL identity;
+  original filenames are metadata only and never control filesystem location;
+- raw attachment bytes never appear in `normalized_events.json`, classification
+  artifacts, write-back state/summaries, logs, HTML or JSON APIs; the private
+  `_raw_attachments` event key is stripped before any JSON serialization;
+- storage is durable before mailbox checkpoint advancement; required persistence
+  failure blocks checkpoint advancement (fail closed);
+- configured storage bounds (per-file, per-message aggregate, files count) are
+  enforced before unbounded storage allocation; oversized/count-exceeded/
+  aggregate-exceeded/blocked (`.eml`/`message/rfc822`) files get explicit
+  `storage_status` and are never stored;
+- retention/download/Bitrix delivery are independent from semantic analysis:
+  `rop.attachments.enabled:false` means zero provider calls but files remain
+  stored, downloadable and eligible for Bitrix delivery;
+- AI document understanding is a bounded domain-assist path only:
+  - only explicitly supported configured content types/sizes are analyzed;
+  - file egress to a provider happens only through an explicit configured/
+    validated file-capable provider path (binary input requires
+    `rop.attachments.analysis.file_capable:true` and `openai_responses`);
+  - provider failure/timeout/invalid output degrades explicitly and never
+    triggers an unsafe local PDF/Office parser fallback;
+  - document contents are untrusted data: instructions inside a document never
+    grant tool, mailbox, broker or CRM execution authority;
+  - AI output is bounded, schema-validated and only feeds the existing
+    attachment extraction contract (`attachment_text_preview`/status fields);
+- download (`GET /rop/attachments/{attachment_id}/download`) is authenticated and
+  authorized by the existing BeeUI session/auth/scope boundary; lookup is only by
+  safe manifest attachment id (never arbitrary filesystem paths); invalid run/
+  event/attachment ids, path traversal and unrelated scopes fail closed; response
+  uses forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control:
+  no-store` and `application/octet-stream` (no inline rendering, no public cache);
+- Bitrix physical file delivery uses only the already-selected trusted/new CRM
+  target and email activity from the existing write-back authority; delivery never
+  selects a target itself; it is gated by the separate
+  `bitrix.writeback.file_attach` switch, has its own `file_attach_status`/
+  idempotency state, and reads files from the durable local attachment store so a
+  Bitrix temporary failure is retryable without mailbox re-ingestion; replay does
+  not duplicate email activity or files; the write allowlist is extended only with
+  the exact required `crm.activity.update` (FILES/fileData);
+- no credential, webhook URL, raw `.eml` or attachment bytes appear in logs/HTML/
+  JSON APIs; no arbitrary filesystem download route exists.
+
 ## Security and SDLC integration
 
 Use security as part of the normal workflow:

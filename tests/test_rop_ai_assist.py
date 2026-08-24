@@ -147,6 +147,17 @@ def _valid_settings() -> dict:
                 "chars_max": 500,
                 "size_max": 1048576,
                 "types": ["text/plain"],
+                "storage": {
+                    "enabled": True,
+                    "file_max_bytes": 1048576,
+                    "message_aggregate_max_bytes": 2097152,
+                    "files_max_per_message": 10,
+                },
+                "analysis": {
+                    "provider": "",
+                    "file_capable": False,
+                    "max_chars": 2000,
+                },
             },
             "sources": [],
             "dashboard": {"default_period": "7d", "periods": ["7d", "30d", "all"]},

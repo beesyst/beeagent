@@ -3018,6 +3018,8 @@ def test_rop_dashboard_evidence_links_use_allowlist(tmp_path: Path) -> None:
         "source_diagnostics_json",
         "intake_metadata_json",
         "attachment_extraction_json",
+        "attachment_manifest_json",
+        "attachment_analysis_json",
         "normalized_events_json",
         "classified_events_json",
         "rop_review_table_tsv",
@@ -7068,6 +7070,17 @@ def _build_full_settings() -> dict:
                 "chars_max": 100,
                 "size_max": 100,
                 "types": ["text/plain"],
+                "storage": {
+                    "enabled": True,
+                    "file_max_bytes": 1048576,
+                    "message_aggregate_max_bytes": 2097152,
+                    "files_max_per_message": 10,
+                },
+                "analysis": {
+                    "provider": "",
+                    "file_capable": False,
+                    "max_chars": 2000,
+                },
             },
             "sources": [],
             "dashboard": {
@@ -9549,3 +9562,264 @@ def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
         _assert_badge_in(html, "bg-secondary-lt", expected_no)
 
         assert "bg-success-lt" not in html
+
+
+def _seed_download_attachment(storage_dir: Path, run_id: str) -> dict[str, Any]:
+    content = b"%PDF-1.4 download body bytes"
+    blob_id = "att-" + sha256(content).hexdigest()[:24]
+    run_dir = storage_dir / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "classified_events.json").write_text(
+        json.dumps([{"event_id": "evt-1"}]), encoding="utf-8"
+    )
+    store_dir = storage_dir / "attachments" / run_id
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / f"{blob_id}.bin").write_bytes(content)
+    manifest = {
+        "run_id": run_id,
+        "version": 1,
+        "status": "ok",
+        "policy": {},
+        "aggregate": {"attachment_count": 1, "stored_count": 1},
+        "items": [
+            {
+                "attachment_id": "evt-1-att-0",
+                "event_id": "evt-1",
+                "event_instance_id": "event-000001",
+                "blob_id": blob_id,
+                "filename": "brief.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(content),
+                "sha256": sha256(content).hexdigest(),
+                "storage_status": "stored",
+            }
+        ],
+    }
+    (store_dir / "attachment_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return manifest
+
+
+def test_attachment_download_forced_headers_and_content(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _seed_download_attachment(storage_dir, "run-dl")
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=run-dl",
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 download body bytes"
+    disposition = response.headers.get("content-disposition", "")
+    assert disposition.startswith("attachment")
+    assert "brief.pdf" in disposition
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("cache-control") == "no-store"
+    assert response.headers.get("content-type", "").startswith(
+        "application/octet-stream"
+    )
+
+
+def test_attachment_download_invalid_run_id(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _seed_download_attachment(storage_dir, "run-dl")
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=../escape"
+    )
+    assert response.status_code == 400
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id="
+    )
+    assert response.status_code == 400
+
+
+def test_attachment_download_unknown_and_traversal(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _seed_download_attachment(storage_dir, "run-dl")
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/unknown-id/download?run_id=run-dl"
+    )
+    assert response.status_code == 404
+    response = client.get(
+        "/rop/attachments/..%2F..%2Fsecret/download?run_id=run-dl"
+    )
+    assert response.status_code in (400, 404)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=run-other"
+    )
+    assert response.status_code == 404
+
+
+def test_attachment_download_event_mismatch_fails_closed(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _seed_download_attachment(storage_dir, "run-dl")
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=run-dl&event_id=other-event"
+    )
+    assert response.status_code == 404
+
+
+class TestAttachmentDownloadAuth:
+    _env: dict[str, str] = {}
+    _previous_env: dict[str, str | None] = {}
+
+    @classmethod
+    def setup_class(cls) -> None:
+        cls._env, cls._previous_env = _set_auth_env()
+
+    @classmethod
+    def teardown_class(cls) -> None:
+        _clear_auth_env(cls._env, cls._previous_env)
+
+    def test_unauthenticated_download_rejected(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _seed_download_attachment(storage_dir, "run-dl")
+        client = _auth_client(storage_dir)
+        response = client.get(
+            "/rop/attachments/evt-1-att-0/download?run_id=run-dl",
+            follow_redirects=False,
+        )
+        assert response.status_code in (302, 401)
+
+    def test_authenticated_rop_principal_can_download(
+        self, tmp_path: Path
+    ) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _seed_download_attachment(storage_dir, "run-dl")
+        client = _auth_client(storage_dir)
+        login = client.post(
+            "/auth/login",
+            data={"user_id": "rop", "token": "rop-test-token"},
+            follow_redirects=False,
+        )
+        assert login.status_code in (200, 302)
+        response = client.get(
+            "/rop/attachments/evt-1-att-0/download?run_id=run-dl"
+        )
+        assert response.status_code == 200
+        assert response.content == b"%PDF-1.4 download body bytes"
+        assert response.headers.get("x-content-type-options") == "nosniff"
+
+    def test_authenticated_admin_can_download(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _seed_download_attachment(storage_dir, "run-dl")
+        client = _auth_client(storage_dir)
+        client.post(
+            "/auth/login",
+            data={"user_id": "admin", "token": "admin-test-token"},
+            follow_redirects=False,
+        )
+        response = client.get(
+            "/rop/attachments/evt-1-att-0/download?run_id=run-dl"
+        )
+        assert response.status_code == 200
+
+    def test_authenticated_rop_unknown_attachment_404(self, tmp_path: Path) -> None:
+        storage_dir = _make_storage(tmp_path)
+        _seed_download_attachment(storage_dir, "run-dl")
+        client = _auth_client(storage_dir)
+        client.post(
+            "/auth/login",
+            data={"user_id": "rop", "token": "rop-test-token"},
+            follow_redirects=False,
+        )
+        response = client.get(
+            "/rop/attachments/not-there/download?run_id=run-dl"
+        )
+        assert response.status_code == 404
+
+
+def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_read_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = storage_dir / "runs" / "run-detail-lifecycle"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    event_id = "evt-lifecycle"
+    normalized = [
+        {
+            "event_id": event_id,
+            "event_instance_id": "event-000001",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "sender": "buyer@example.com",
+            "subject": "Attachment lifecycle",
+            "body_preview": "see attached",
+            "received_at": "2026-08-03T10:00:00Z",
+            "attachments": [
+                {
+                    "filename": "quote.pdf",
+                    "content_type": "application/pdf",
+                    "size_bytes": 128,
+                }
+            ],
+        }
+    ]
+    classified = [
+        {
+            "event_id": event_id,
+            "event_instance_id": "event-000001",
+            "source_id": "hotline_mailbox",
+            "client_id": "welding",
+            "case_type": "new_lead",
+            "priority": "high",
+            "confidence": 0.9,
+        }
+    ]
+    extraction = {
+        "run_id": "run-detail-lifecycle",
+        "status": "ok",
+        "aggregate": {"attachment_count": 1},
+        "items": [
+            {
+                "event_id": event_id,
+                "event_instance_id": "event-000001",
+                "attachment_id": "evt-lifecycle-att-0",
+                "filename": "quote.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 128,
+                "extraction_status": "metadata_only",
+                "storage_status": "stored",
+                "analysis_status": "ok",
+                "sha256": "a" * 64,
+                "download_url": "/rop/attachments/evt-lifecycle-att-0/download?run_id=run-detail-lifecycle",
+                "preview_available": False,
+            }
+        ],
+    }
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    (run_dir / "attachment_extraction.json").write_text(
+        json.dumps(extraction), encoding="utf-8"
+    )
+
+    data = build_rop_event_detail_read_model(
+        storage_dir, "run-detail-lifecycle", event_id
+    )
+    assert len(data["attachments"]) == 1
+    att = data["attachments"][0]
+    assert att["filename"] == "quote.pdf"
+    assert att["storage_status"] == "stored"
+    assert att["analysis_status"] == "ok"
+    assert att["download_url"].startswith("/rop/attachments/")
+    assert att["sha256"] == "a" * 64
+
+    client = _client(storage_dir)
+    response = client.get(
+        f"/api/rop/events/{event_id}?run_id=run-detail-lifecycle"
+    )
+    assert response.status_code == 200
+    api_att = response.json()["data"]["attachments"][0]
+    assert api_att["storage_status"] == "stored"
+    assert api_att["analysis_status"] == "ok"
+    assert api_att["download_url"].startswith("/rop/attachments/")

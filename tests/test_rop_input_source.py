@@ -1981,3 +1981,156 @@ class TestIt33BatchSanitization:
         assert "raw_eml" not in result
         assert "attachment_content" not in result
         assert "content_bytes" not in result
+
+
+def _storage_attachment_settings(enabled: bool = True) -> dict:
+    return {
+        "enabled": True,
+        "chars_max": 500,
+        "size_max": 1048576,
+        "types": ["text/plain"],
+        "storage": {
+            "enabled": enabled,
+            "file_max_bytes": 1048576,
+            "message_aggregate_max_bytes": 2097152,
+            "files_max_per_message": 10,
+        },
+        "analysis": {
+            "provider": "",
+            "file_capable": False,
+            "max_chars": 2000,
+        },
+    }
+
+
+def _multipart_pdf_message(pdf_bytes: bytes) -> bytes:
+    return (
+        b"From: Sender <lead@example.com>\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Attachment request\n"
+        b"Date: Thu, 08 May 2026 10:30:00 +0000\n"
+        b"Message-ID: <mail-att@example.com>\n"
+        b"Content-Type: multipart/mixed; boundary=sep\n\n"
+        b"--sep\nContent-Type: text/plain; charset=utf-8\n\n"
+        b"Please see the attached brief.\n"
+        b"--sep\nContent-Type: application/pdf\n"
+        b"Content-Disposition: attachment; filename=brief.pdf\n\n"
+        + pdf_bytes
+        + b"\n--sep--\n"
+    )
+
+
+def test_mailbox_pdf_bytes_survive_normalization(monkeypatch) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            [_multipart_pdf_message(pdf)]
+        ),
+        attachment_storage_settings=_storage_attachment_settings(),
+    )
+
+    assert len(events) == 1
+    raw = events[0]["_raw_attachments"]
+    assert len(raw) == 1
+    assert raw[0]["filename"] == "brief.pdf"
+    assert raw[0]["content_type"] == "application/pdf"
+    assert raw[0]["payload"] == pdf
+    assert raw[0]["size"] == len(pdf)
+    assert events[0]["attachments"][0]["filename"] == "brief.pdf"
+
+
+def test_mailbox_storage_disabled_retains_no_payloads(monkeypatch) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    pdf = b"%PDF-1.4 fake"
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            [_multipart_pdf_message(pdf)]
+        ),
+        attachment_storage_settings=_storage_attachment_settings(enabled=False),
+    )
+
+    assert events[0]["_raw_attachments"] == []
+    assert events[0]["attachments"][0]["filename"] == "brief.pdf"
+
+
+def test_mailbox_without_storage_settings_keeps_metadata_only(monkeypatch) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    pdf = b"%PDF-1.4 fake"
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient(
+            [_multipart_pdf_message(pdf)]
+        ),
+    )
+
+    assert events[0]["_raw_attachments"] == []
+    assert events[0]["attachments"][0]["filename"] == "brief.pdf"
+
+
+def test_mailbox_blocked_eml_attachment_never_retained(monkeypatch) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    message = (
+        b"From: Sender <lead@example.com>\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Nested eml\n"
+        b"Message-ID: <mail-eml@example.com>\n"
+        b"Content-Type: multipart/mixed; boundary=sep\n\n"
+        b"--sep\nContent-Type: text/plain; charset=utf-8\n\nbody\n"
+        b"--sep\nContent-Type: message/rfc822\n"
+        b"Content-Disposition: attachment; filename=note.eml\n\n"
+        b"From: x@y.z\nSubject: nested\n\ninner\n"
+        b"--sep--\n"
+    )
+
+    events, _metadata, _diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+        attachment_storage_settings=_storage_attachment_settings(),
+    )
+
+    assert events[0]["attachments"] == []
+    assert events[0]["_raw_attachments"] == []
+
+
+def test_mailbox_truncated_mime_degrades_without_crash(monkeypatch) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
+    truncated = (
+        b"From: Sender <lead@example.com>\n"
+        b"To: hotline@example.com\n"
+        b"Subject: Truncated\n"
+        b"Message-ID: <mail-trunc@example.com>\n"
+        b"Content-Type: multipart/mixed; boundary=sep\n\n"
+        b"--sep\nContent-Type: application/pdf\n"
+        b"Content-Disposition: attachment; filename=a.pdf\n\n"
+        b"%PDF-"  # truncated attachment payload
+    )
+
+    events, _metadata, diagnostics = load_mailbox_readonly(
+        source=_mailbox_source(),
+        logger=_null_logger(),
+        email_preview_body_chars_max=EMAIL_PREVIEW_BODY_CHARS_MAX,
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([truncated]),
+        attachment_storage_settings=_storage_attachment_settings(),
+    )
+
+    assert diagnostics["malformed_count"] == 0
+    assert len(events) == 1

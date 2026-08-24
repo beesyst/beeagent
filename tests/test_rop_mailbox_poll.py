@@ -702,6 +702,7 @@ def test_poll_multi_source_no_new_messages_skips_pipeline(
         "attempts_retry_max": 3,
         "dry_run": False,
         "email_attach": True,
+        "file_attach": False,
         "source_id": "EMAIL",
         "stages": {"new_lead": "NEW", "irrelevant": "NEW"},
     }
@@ -952,6 +953,7 @@ def _writeback_poll_settings(writeback_enabled: bool) -> dict:
         "attempts_retry_max": 3,
         "dry_run": False,
         "email_attach": True,
+        "file_attach": False,
         "source_id": "EMAIL",
         "stages": {"new_lead": "NEW", "irrelevant": "NEW"},
     }
@@ -1467,3 +1469,130 @@ def test_poll_no_new_messages_disabled_does_not_recover_writeback(
         _writeback_poll_settings(False), tmp_path, tmp_path, logging.getLogger("test")
     )
     assert mailbox.fetched == []
+
+
+def test_poll_attachment_storage_failure_blocks_checkpoint_advance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101, 102, 103])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
+        lambda **_kwargs: {
+            "status": "degraded",
+            "module_status": "error",
+            "source": {"malformed_count": 0},
+            "run_id": "run",
+        },
+    )
+    with pytest.raises(RuntimeError, match="did not complete successfully"):
+        handle_mailbox_poll(
+            _poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+        )
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 100
+    )
+    assert not (tmp_path / "attachments").exists()
+
+
+def test_poll_attachment_blobs_persist_before_checkpoint_advance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _poll_env(monkeypatch)
+    mailbox = _PollMailbox(7, [101])
+    path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
+    _write_checkpoint(
+        path,
+        {
+            "version": 1,
+            "sources": {
+                "source": {
+                    "folder": "INBOX",
+                    "uidvalidity": 7,
+                    "last_processed_uid": 100,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
+        lambda *_args: mailbox,
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_batch(**kwargs):
+        storage_dir = kwargs["storage_dir"]
+        run_id = kwargs.get("run_id") or "run"
+        store_dir = storage_dir / "attachments" / run_id
+        store_dir.mkdir(parents=True, exist_ok=True)
+        (store_dir / "att-blob.bin").write_bytes(b"blob-bytes")
+        (store_dir / "attachment_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "version": 1,
+                    "status": "ok",
+                    "aggregate": {"stored_count": 1},
+                    "items": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        captured["run_id"] = run_id
+        return {
+            "status": "ok",
+            "module_status": "ok",
+            "source": {"malformed_count": 0},
+            "run_id": run_id,
+        }
+
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case", _fake_batch
+    )
+    for name, result in (
+        ("build_recipient_routing_artifact", {}),
+        ("run_reconciliation", {"status": "ok"}),
+        ("build_action_drafts", {}),
+        ("build_context_enrichment", {}),
+        ("write_context_enrichment_artifact", None),
+        ("build_routing_map", {}),
+        ("build_recommendations", {}),
+        ("build_rop_current_state", {}),
+        ("write_current_state", None),
+        ("build_rop_dashboard", {}),
+        ("write_rop_dashboard", None),
+    ):
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_mailbox_poll." + name,
+            lambda *args, _result=result, **kwargs: _result,
+        )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
+        lambda *args, **kwargs: None,
+    )
+    handle_mailbox_poll(
+        _poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
+    )
+    run_id = captured["run_id"]
+    assert (tmp_path / "attachments" / run_id / "attachment_manifest.json").exists()
+    assert (
+        json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 101
+    )

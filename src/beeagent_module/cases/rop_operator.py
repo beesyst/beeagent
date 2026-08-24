@@ -9,6 +9,11 @@ from typing import Any
 from beeagent_module.adapters.bitrix_client import build_bitrix_client
 from beeagent_module.cases.rop_writeback import load_trusted_targets_by_client
 from beeagent_module.core.attachment_extraction import build_attachment_extraction
+from beeagent_module.core.attachment_analysis import run_attachment_analysis
+from beeagent_module.core.attachment_store import (
+    ATTACHMENT_STORE_DIRNAME,
+    persist_run_attachments,
+)
 from beeagent_module.core.input_source import (
     InputSourceError,
     load_rop_source,
@@ -795,6 +800,8 @@ def _make_fallback_event(
         "attachment_text_preview": event.get("attachment_text_preview"),
         "attachment_extraction_refs": event.get("attachment_extraction_refs"),
         "attachment_refusal_reasons": event.get("attachment_refusal_reasons"),
+        "attachment_storage_status": event.get("attachment_storage_status"),
+        "attachment_analysis_status": event.get("attachment_analysis_status"),
         "case_type": "unknown",
         "priority": "medium",
         "reason_code": "classification_error",
@@ -925,6 +932,8 @@ def _attach_classification_trace(
         "attachment_text_preview",
         "attachment_extraction_refs",
         "attachment_refusal_reasons",
+        "attachment_storage_status",
+        "attachment_analysis_status",
         "received_at",
         "date",
         "event_date",
@@ -1089,6 +1098,9 @@ def run_rop_batch_case(
                         "body_chars_max"
                     ],
                     mailbox_client_factory=mailbox_client_factory,
+                    attachment_storage_settings=settings.get("rop", {}).get(
+                        "attachments", {}
+                    ),
                 )
                 effective_period = str(
                     period_override or intake_metadata.get("period") or ""
@@ -1287,10 +1299,48 @@ def run_rop_batch_case(
             raise RuntimeError("Invalid settings.rop.attachments, expected mapping")
 
         normalized_events = _assign_event_instance_ids(normalized_events)
+
+        attachment_manifest = persist_run_attachments(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            events=normalized_events,
+            attachment_settings=attachment_settings,
+            logger=logger,
+        )
+        attachment_manifest_path = run_dir / "attachment_manifest.json"
+        attachment_manifest_path.write_text(
+            json.dumps(attachment_manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        artifact_refs.append(
+            attachment_manifest_path.relative_to(storage_dir).as_posix()
+        )
+        for event in normalized_events:
+            event.pop("_raw_attachments", None)
+
+        analysis_results = run_attachment_analysis(
+            storage_dir=storage_dir,
+            run_id=effective_run_id,
+            attachment_settings=attachment_settings,
+            ai_settings=settings.get("ai", {}),
+            logger=logger,
+        )
+        if analysis_results:
+            analysis_artifact_path = run_dir / "attachment_analysis.json"
+            analysis_artifact_path.write_text(
+                json.dumps(analysis_results, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            artifact_refs.append(
+                analysis_artifact_path.relative_to(storage_dir).as_posix()
+            )
+
         extraction_artifact, normalized_events = build_attachment_extraction(
             run_id=effective_run_id,
             events=normalized_events,
             attachment_settings=attachment_settings,
+            attachment_manifest=attachment_manifest,
+            analysis_results=analysis_results,
         )
 
         attachment_extraction_path = run_dir / "attachment_extraction.json"
@@ -1304,6 +1354,10 @@ def run_rop_batch_case(
         attachment_extraction_summary = {
             "status": extraction_artifact.get("status"),
             "aggregate": extraction_artifact.get("aggregate", {}),
+            "attachment_manifest": {
+                "path": f"{ATTACHMENT_STORE_DIRNAME}/{effective_run_id}/attachment_manifest.json",
+                "aggregate": attachment_manifest.get("aggregate", {}),
+            },
         }
 
         normalized_path.write_text(

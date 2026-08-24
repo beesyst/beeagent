@@ -115,11 +115,21 @@ rop:
       manual_review:
         bitrix_category: manual_review
   attachments: # настройки для извлечения вложений из событий ROP
-    enabled: true # true/false - включить/выключить извлечение вложений из событий ROP
+    enabled: true # true/false - включить/выключить semantic analysis вложений (не влияет на retention/download/Bitrix delivery)
     chars_max: 500 # макс. число символов для извлечения из одного вложения
     size_max: 1048576 # макс. размер вложения в байтах для попытки извлечения (пример: 1 МБ = 1048576 байт)
-    types: # non-empty allowlist типов контента, разрешенных для bounded text preview extraction
+    types: # non-empty allowlist типов контента, разрешенных для bounded text preview / AI analysis
       - "text/plain"
+      - "text/csv"
+    storage: # bounded opaque retention policy (independent from analysis)
+      enabled: true # true/false - сохранять accepted attachment blobs как opaque files
+      file_max_bytes: 10485760 # макс. размер одного сохраняемого вложения в байтах (10 МБ)
+      message_aggregate_max_bytes: 20971520 # макс. суммарный размер вложений одного письма в байтах (20 МБ)
+      files_max_per_message: 20 # макс. число сохраняемых вложений на одно письмо
+    analysis: # bounded file-capable AI analysis policy
+      provider: "" # явный file-capable AI profile (пусто = активный ai.profiles.*); используется только при attachments.enabled=true
+      file_capable: false # true/false - разрешить binary file input для поддерживаемых типов (требует контролируемый provider smoke)
+      max_chars: 2000 # макс. число символов bounded attachment context из AI analysis
   sources:
     - source_id: "rop_batch_sample"
       source_type: "json_batch" # тип источника (поддерживается: json_batch)
@@ -179,13 +189,14 @@ bitrix:
       enabled: true # true/false - read-only проверка exact outbound email correlation (crm.activity.list, Message-ID bridge)
       window_days: 180 # окно поиска outbound email-активностей (дней назад)
   writeback:
-    enabled: false # true/false - включить/выключить Bitrix write-back (disabled by default)
+    enabled: true # true/false - включить/выключить Bitrix write-back (disabled by default)
     webhook_env: "BITRIX_WRITEBACK_WEBHOOK_URL" # имя env переменной с отдельным write credential (https URL)
     timeout: 10 # таймаут HTTP-запроса для write-back (сек)
     attempts_retry_max: 3 # максимум bounded попыток для retryable failures
     dry_run: false # true/false - планировать без реальных write-операций (zero writes)
     email_attach: true # true/false - прикреплять email-активность (crm.activity.add) к созданному или trusted exact thread CRM target
     email_completed: false # true/false - состояние COMPLETED создаваемой email-активности (false = письмо заметнее в таймлайне как незавершённое; true = завершённое)
+    file_attach: true # true/false - отдельный switch физической доставки сохранённых attachment files в Bitrix email activity (crm.activity.update, FILES/fileData)
     source_id: "EMAIL" # Bitrix lead SOURCE_ID для создаваемых лидов (например EMAIL = "Входящее письмо"); пусто = не задавать
     user_id_fallback: 1563 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено)
     stages: # customer Lead stageId mapping (configurable, validated against Bitrix before POST when enabled)

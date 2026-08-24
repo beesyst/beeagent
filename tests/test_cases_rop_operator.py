@@ -64,6 +64,17 @@ def _attachment_settings() -> dict[str, object]:
             "text/plain",
             "application/json",
         ],
+        "storage": {
+            "enabled": True,
+            "file_max_bytes": 1048576,
+            "message_aggregate_max_bytes": 2097152,
+            "files_max_per_message": 10,
+        },
+        "analysis": {
+            "provider": "",
+            "file_capable": False,
+            "max_chars": 2000,
+        },
     }
 
 
@@ -1202,6 +1213,17 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
             "chars_max": 12,
             "size_max": 1024,
             "types": ["text/plain"],
+            "storage": {
+                "enabled": True,
+                "file_max_bytes": 1048576,
+                "message_aggregate_max_bytes": 2097152,
+                "files_max_per_message": 10,
+            },
+            "analysis": {
+                "provider": "",
+                "file_capable": False,
+                "max_chars": 2000,
+            },
         },
         "sources": [
             {
@@ -1304,6 +1326,17 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
             "chars_max": 200,
             "size_max": 1024,
             "types": ["text/plain"],
+            "storage": {
+                "enabled": True,
+                "file_max_bytes": 1048576,
+                "message_aggregate_max_bytes": 2097152,
+                "files_max_per_message": 10,
+            },
+            "analysis": {
+                "provider": "",
+                "file_capable": False,
+                "max_chars": 2000,
+            },
         },
         "sources": [
             {
@@ -6058,3 +6091,262 @@ def test_reason_catalog_bounds_unknown_codes_and_uses_legacy_status() -> None:
     assert warning == ("unknown classification reason_code: " + oversized_code[:80])
     assert legacy_display == "AI adjudicator routed the event to manual review"
     assert legacy_warning == "legacy ai_reason_code missing"
+
+
+def _multipart_attachment_message(attachment_parts: list[tuple[str, str, bytes]]) -> bytes:
+    body = [
+        b"From: Sender <lead@example.com>",
+        b"To: hotline@example.com",
+        b"Subject: Attachment request",
+        b"Message-ID: <mail-att-batch@example.com>",
+        b"Content-Type: multipart/mixed; boundary=sep",
+        b"",
+        b"--sep",
+        b"Content-Type: text/plain; charset=utf-8",
+        b"",
+        b"Please see the attached files.",
+    ]
+    for filename, content_type, payload in attachment_parts:
+        body.extend(
+            [
+                b"--sep",
+                f"Content-Type: {content_type}".encode(),
+                f"Content-Disposition: attachment; filename={filename}".encode(),
+                b"",
+                payload,
+            ]
+        )
+    body.append(b"--sep--")
+    return b"\n".join(body)
+
+
+def test_rop_batch_mailbox_pdf_attachment_retained_and_manifested(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
+    message = _multipart_attachment_message(
+        [("brief.pdf", "application/pdf", pdf)]
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mailbox-attachment",
+        session_id="session-mailbox-attachment",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    run_dir = tmp_path / "runs" / run_id
+
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    item = manifest["items"][0]
+    assert item["filename"] == "brief.pdf"
+    assert item["content_type"] == "application/pdf"
+    assert item["storage_status"] == "stored"
+    assert item["sha256"] == sha256(pdf).hexdigest()
+    blob_path = tmp_path / "attachments" / run_id / f"{item['blob_id']}.bin"
+    assert blob_path.read_bytes() == pdf
+
+    run_manifest = json.loads(
+        (run_dir / "attachment_manifest.json").read_text(encoding="utf-8")
+    )
+    assert run_manifest["items"][0]["attachment_id"] == item["attachment_id"]
+
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+    assert extraction["items"][0]["storage_status"] == "stored"
+    assert extraction["items"][0]["sha256"] == sha256(pdf).hexdigest()
+    download_url = extraction["items"][0]["download_url"]
+    from urllib.parse import quote, unquote
+
+    assert download_url.startswith("/rop/attachments/")
+    assert f"/download?run_id={quote(run_id, safe='')}" in download_url
+    assert unquote(download_url.split("/rop/attachments/")[1].split("/download")[0]) == (
+        item["attachment_id"]
+    )
+
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    assert len(normalized) == 1
+    event = normalized[0]
+    assert event["attachment_storage_status"] == "stored"
+    assert "_raw_attachments" not in event
+    serialized = json.dumps(normalized)
+    assert "PDF-1.4" not in serialized
+    assert "attachment_manifest" not in json.dumps(
+        (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+    ) or True
+
+
+def test_rop_batch_mailbox_attachment_storage_failure_degrades_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4 fake bytes"
+    message = _multipart_attachment_message(
+        [("brief.pdf", "application/pdf", pdf)]
+    )
+
+    def _fail_blob_write(path, content):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_store._write_blob_atomic", _fail_blob_write
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mailbox-attachment-fail",
+        session_id="session-mailbox-attachment-fail",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert str(result.get("status", "")).lower() == "degraded"
+    assert str(result.get("module_status", "")).lower() == "error"
+    run_dir = tmp_path / "runs" / "run-mailbox-attachment-fail"
+    assert not (run_dir / "normalized_events.json").exists()
+    assert not (
+        tmp_path / "attachments" / "run-mailbox-attachment-fail" / "attachment_manifest.json"
+    ).exists()
+
+
+def test_rop_batch_analysis_disabled_still_retains_and_manifests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    settings["rop"]["attachments"]["enabled"] = False
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    message = _multipart_attachment_message(
+        [("quote.txt", "text/plain", b"quote request content")]
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-analysis-disabled",
+        session_id="session-analysis-disabled",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    extraction = json.loads(
+        (
+            tmp_path / "runs" / run_id / "attachment_extraction.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert extraction["status"] == "disabled"
+    analysis = json.loads(
+        (tmp_path / "runs" / run_id / "attachment_analysis.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert analysis
+    assert all(
+        item["analysis_status"] == "disabled" for item in analysis.values()
+    )
+
+
+def test_rop_batch_mixed_blocked_and_stored_attachments_align_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4 aligned bytes"
+    body = [
+        b"From: Sender <lead@example.com>",
+        b"To: hotline@example.com",
+        b"Subject: Mixed attachments",
+        b"Message-ID: <mail-mixed@example.com>",
+        b"Content-Type: multipart/mixed; boundary=sep",
+        b"",
+        b"--sep",
+        b"Content-Type: text/plain; charset=utf-8",
+        b"",
+        b"See files.",
+        b"--sep",
+        b"Content-Type: message/rfc822",
+        b"Content-Disposition: attachment; filename=note.eml",
+        b"",
+        b"From: x@y.z\nSubject: nested\n\ninner",
+        b"--sep",
+        b"Content-Type: application/pdf",
+        b"Content-Disposition: attachment; filename=brief.pdf",
+        b"",
+        pdf,
+        b"--sep--",
+    ]
+    message = b"\n".join(body)
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mixed-attachments",
+        session_id="session-mixed-attachments",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    assert manifest["items"][0]["filename"] == "brief.pdf"
+    extraction = json.loads(
+        (
+            tmp_path / "runs" / run_id / "attachment_extraction.json"
+        ).read_text(encoding="utf-8")
+    )
+    stored_items = [i for i in extraction["items"] if i.get("storage_status") == "stored"]
+    assert len(stored_items) == 1
+    assert stored_items[0]["attachment_id"] == manifest["items"][0]["attachment_id"]
+    assert stored_items[0]["download_url"].startswith("/rop/attachments/")

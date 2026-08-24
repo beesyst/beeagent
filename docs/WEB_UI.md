@@ -137,6 +137,27 @@ Query parameters:
 - `event_instance_id` (optional): additive run-local selector for a distinct processing occurrence when several items share the same public `event_id`; omitted for old runs and unique event ids.
 - `lang` (optional, `en`/`ru`): locale override; при отсутствии параметра используется значение cookie `beeui_lang` (сохраняется BeeUI при выборе языка через `?lang=`), иначе default из `config/beeui.yml`
 
+## Attachment download route (It40)
+
+- `GET /rop/attachments/{attachment_id}/download?run_id=<run_id>&event_id=<event_id>` —
+  authenticated/authorized forced download of an accepted original attachment.
+
+Query parameters:
+
+- `run_id` (required): run identifier
+- `event_id` (optional): must match the manifest item when provided
+
+Behavior:
+
+- lookup только по safe manifest attachment id (никогда по произвольному filesystem path);
+- invalid/unknown run/event/attachment ids и path traversal fail closed;
+- response: forced `attachment`, `X-Content-Type-Options: nosniff`,
+  `Cache-Control: no-store`, `application/octet-stream` (no inline render);
+- route защищён существующей BeeUI session auth + resource authorization
+  (ROP scope); ROP-scoped principal не может использовать его для чтения
+  unrelated surfaces;
+- raw attachment bytes никогда не отдаются через JSON API/HTML контент.
+
 ## JSON API routes
 
 Реализованные JSON API routes (через BeeUI product console + custom BeeAgent routes):
@@ -602,7 +623,9 @@ Session secret не печатается.
 
 HTML routes:
 
-- `/`, `/rop`, `/rop/events/{event_id}`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
+- `/`, `/rop`, `/rop/events/{event_id}`, `/rop/attachments/{attachment_id}/download`,
+  `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`,
+  `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
 
 API routes:
 
