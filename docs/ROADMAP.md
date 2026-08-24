@@ -8852,158 +8852,238 @@ ROP runtime получает двухуровневую semantic classification 
 
 #### Implemented (v2, Issue #206)
 
-- deterministic classifier остаётся первым semantic echelon; AI adjudicator расширен на
-  business-impacting deterministic `new_lead` / `existing_deal` (высокая уверенность больше
-  не exempt); confirmed duplicate (`case_type=duplicate`) защищён от AI reclassification;
-  AI = реальный второй semantic echelon: eligibility minimal — possible duplicate →
-  eligible, confirmed duplicate (`case_type=duplicate`) → skip, все остальные semantic
-  events AI-eligible; transport labels (SPAM/FWD/RE, включая `spam_label_present`) — weak
-  transport evidence и никогда не gate semantic verifier (mail-server spam label не
-  позволяет ошибочному deterministic irrelevant обойти AI); marker signals остаются
-  bounded evidence в prompt/audit, но не являются вторым semantic classifier с veto
-  authority после AI (valid high-confidence AI semantic decision становится final, кроме
-  структурно невозможных комбинаций); body контекст в prompt ограничен config
-  (`rop.email_preview.body_chars_max`) внутри absolute `input_chars_max`;
-- `ai_reason_code` обязателен для нового valid AI decision: missing/unknown reason code —
-  validation diagnostic с сохранением deterministic result (не `legacy`); historical
-  artifacts без `ai_reason_code` остаются backward-compatible readable;
-- class/evidence-aware merge policy вместо confidence-only: valid + high confidence + no
-  conflict → AI applied; conflict / unresolved (`manual_review` queue) / invalid / low
-  confidence / provider failure → deterministic result preserved с explicit diagnostics;
-  `manual_review` не является normal terminal semantic queue; provider timeout/error/
-  invalid output сохраняет deterministic classification + diagnostics;
-- unsafe/ambiguous CRM target остаётся `deferred` и fail-closed; weak sender/subject/time
-  evidence никогда не авторизует `attach_existing`;
-- BeeAgent-owned conversation relation отдельно от domain `case_type`:
-  `rop_conversation.json` (per-run conversations, roles root/reply/continuation, exact RFC
-  authority, same `client_id` across sources); exact continuation через `source_id`
-  работает в пределах одного `client_id`; два независимых треда одного sender остаются
-  раздельными; semantic `case_type` не выводится из conversation/CRM membership;
-- controlled read-only Bitrix outbound-correlation evidence check
-  (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID
-  из outbound activity) + последующий inbound RFC ancestry → exact conversation bridge;
-  bridge авторизует `attach_existing` (`target_provenance=bitrix_outbound_exact`) только
-  когда canonical CRM entity identity (entity type/type-id/entity-id) совпадает с
-  canonical trusted CRM target из write-back state (provenances
-  `beeagent_created`/`thread_resolved`); outbound activity `RESPONSIBLE_ID` — diagnostic
-  evidence, не часть trusted identity и не может заменить trusted responsible; без exact
-  identifier, без совпадения RFC ancestry или без trusted-target совпадения —
-  candidate-only/deferred (`outbound_candidate_untrusted`) без mutation authority;
-  проверенный `bitrix_outbound_exact` становится trusted thread root для следующего RFC
-  hop; реальный Bitrix Message-ID читается из `SETTINGS.MESSAGE_HEADERS.<Message-Id>`
-  (case-insensitive header name) и legacy locations (`SETTINGS.MESSAGE_ID`,
-  `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`);
-  outbound evidence collection bounded/paginated: `crm.activity.list` paginates через
-  cursor `next` в пределах `bitrix.pages_max`, same Message-ID conflict обнаруживается по
-  всей bounded result set (включая cross-page), malformed top-level response / malformed
-  cursor / malformed result → fail-closed (`BitrixMalformedResponse`, без bridge, без
-  mutation), `call()` требует object top-level JSON (list/null/string →
-  `BitrixMalformedResponse`), read-only method allowlist не содержит mutation methods;
-- Event Detail: `deterministic` section (deterministic case_type/queue/action/confidence/
-  reason), `conversation` section (cross-run/cross-source timeline всех известных сообщений
-  conversation с write-back CRM outcome), отдельные AI proposal (`ai_adjudicator`) и final
-  semantic result (`final_decision`); deterministic/AI/final/conversation визуально
-  различимы;
-- It38 exact `Message-ID`/`In-Reply-To`/bounded `References` authority и trusted-target/
-  idempotency гарантии сохранены.
+- deterministic classifier остаётся первым semantic echelon; AI adjudicator расширен на business-impacting deterministic `new_lead` / `existing_deal` (высокая уверенность больше не exempt); confirmed duplicate (`case_type=duplicate`) защищён от AI reclassification; AI = реальный второй semantic echelon: eligibility minimal — possible duplicate → eligible, confirmed duplicate (`case_type=duplicate`) → skip, все остальные semantic events AI-eligible; transport labels (SPAM/FWD/RE, включая `spam_label_present`) — weak transport evidence и никогда не gate semantic verifier (mail-server spam label не позволяет ошибочному deterministic irrelevant обойти AI); marker signals остаются bounded evidence в prompt/audit, но не являются вторым semantic classifier с veto authority после AI (valid high-confidence AI semantic decision становится final, кроме структурно невозможных комбинаций); body контекст в prompt ограничен config (`rop.email_preview.body_chars_max`) внутри absolute `input_chars_max`;
+- `ai_reason_code` обязателен для нового valid AI decision: missing/unknown reason code — validation diagnostic с сохранением deterministic result (не `legacy`); historical artifacts без `ai_reason_code` остаются backward-compatible readable; class/evidence-aware merge policy вместо confidence-only: valid + high confidence + no conflict → AI applied; conflict / unresolved (`manual_review` queue) / invalid / low confidence / provider failure → deterministic result preserved с explicit diagnostics; `manual_review` не является normal terminal semantic queue; provider timeout/error/ invalid output сохраняет deterministic classification + diagnostics;
+- unsafe/ambiguous CRM target остаётся `deferred` и fail-closed; weak sender/subject/time evidence никогда не авторизует `attach_existing`;
+- BeeAgent-owned conversation relation отдельно от domain `case_type`: `rop_conversation.json` (per-run conversations, roles root/reply/continuation, exact RFC authority, same `client_id` across sources); exact continuation через `source_id` работает в пределах одного `client_id`; два независимых треда одного sender остаются раздельными; semantic `case_type` не выводится из conversation/CRM membership;
+- controlled read-only Bitrix outbound-correlation evidence check (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID из outbound activity) + последующий inbound RFC ancestry → exact conversation bridge; bridge авторизует `attach_existing` (`target_provenance=bitrix_outbound_exact`) только когда canonical CRM entity identity (entity type/type-id/entity-id) совпадает с canonical trusted CRM target из write-back state (provenances `beeagent_created`/`thread_resolved`); outbound activity `RESPONSIBLE_ID` — diagnostic evidence, не часть trusted identity и не может заменить trusted responsible; без exact identifier, без совпадения RFC ancestry или без trusted-target совпадения — candidate-only/deferred (`outbound_candidate_untrusted`) без mutation authority; проверенный `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop; реальный Bitrix Message-ID читается из `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name) и legacy locations (`SETTINGS.MESSAGE_ID`, `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`); outbound evidence collection bounded/paginated: `crm.activity.list` paginates через cursor `next` в пределах `bitrix.pages_max`, same Message-ID conflict обнаруживается по всей bounded result set (включая cross-page), malformed top-level response / malformed cursor / malformed result → fail-closed (`BitrixMalformedResponse`, без bridge, без mutation), `call()` требует object top-level JSON (list/null/string → `BitrixMalformedResponse`), read-only method allowlist не содержит mutation methods;
+- Event Detail: `deterministic` section (deterministic case_type/queue/action/confidence/ reason), `conversation` section (cross-run/cross-source timeline всех известных сообщений conversation с write-back CRM outcome), отдельные AI proposal (`ai_adjudicator`) и final semantic result (`final_decision`); deterministic/AI/final/conversation визуально различимы;
+- It38 exact `Message-ID`/`In-Reply-To`/bounded `References` authority и trusted-target/idempotency гарантии сохранены.
 
 #### Verification (Issue #206)
 
-- reviewed classification integration gate: 8/8 reviewed scenarios достигают ожидаемого
-  final semantic type (`run-9cd9d1ae99e9`, `run-844530c057e6`, `run-ce974a9b8582` →
-  `irrelevant`; `run-41d2bcf42389`, `run-d96b18d8fc70` → `new_lead`;
-  `run-a7c20bc709ba`, `run-0036f2c6d9ee`, `run-8bf12d19f51e` → `irrelevant`);
-- targeted AI eligibility, validation/reason-code, class/evidence-aware merge, provider
-  failure, strong-noise skip, confirmed-duplicate skip, possible-duplicate unresolved
-  base-preserved, low-confidence conflict, RFC A→B→C, cross-source exact reply, two
-  independent threads same sender, subject-similarity never-authorizes, conflicting/malformed
-  RFC, outbound exact bridge, candidate-only fail-closed, untrusted outbound candidate →
-  deferred/zero mutation, trusted-entity outbound bridge → attach (activity responsible
-  mismatch diagnostic only), numeric-string Bitrix IDs/DIRECTION, DIRECTION
-  inbound/missing/malformed rejected, duplicate outbound Message-ID conflict → no bridge,
-  stale bridge without current RFC ancestry → no bridge, proven bridge next-hop C
-  continuation, conversation timeline, Event Detail deterministic/AI/final/conversation
-  distinction;
-- correction run (final review blockers): trusted-canonical-entity authority для
-  `bitrix_outbound_exact` (authorize `attach_existing` при совпадении canonical CRM
-  entity identity entity type/type-id/entity-id с trusted CRM target из write-back state;
-  outbound activity responsible — diagnostic only и не может заменить trusted responsible;
-  иначе `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound
-  proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence не является
-  proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated
-  против текущего RFC ancestry; proven `bitrix_outbound_exact` становится trusted thread
-  root для следующего RFC hop; bounded AI context только из canonical attachment
-  extraction evidence (nested `attachments[].text_preview` не является authority);
-  `input_chars_max` — абсолютная граница (иначе degraded `prompt_budget_exceeded`, без
-  provider call); `manual_review` удалён из схемы новых AI-решений и нормализуется в
-  final routing как `unresolved`/`no_action`/attention (`semantic_unresolved_no_operator_queue`);
-  exact RFC trusted-target ambiguity использует полный trusted identity
-  (entity_type/type-id/entity-id/responsible); confirmed: format-only churn в diff against
-  main отсутствует (нет except-syntax churn и reflows; все hunks Issue-required);
-- final-review echelon hardening (Pass 6): AI = реальный второй semantic echelon —
-  eligibility упрощён (possible-duplicate → eligible; confirmed duplicate → skip;
-  все остальные semantic events eligible), marker-veto удалён из
-  `_ai_output_conflicts_with_marker_signals` (только структурно невозможные комбинации
-  veto), body context budget из `rop.email_preview.body_chars_max` внутри absolute
-  `input_chars_max`; Bitrix outbound correlation hardened: top-level non-object JSON →
-  `BitrixMalformedResponse`, bounded pagination (`bitrix.pages_max`) с cross-page
-  same-Message-ID ambiguity, malformed cursor/result → fail-closed без bridge;
-- final-review AI-echelon correction (Pass 7): удалён structured spam-label gate —
-  `_is_strong_explicit_irrelevant` полностью убран; `_is_event_eligible_for_adjudicator`
-  минимален (possible duplicate → eligible; иначе `case_type != "duplicate"`);
-  транспортные SPAM/FWD/RE labels (включая `spam_label_present`) — weak transport evidence
-  и никогда не bypass AI semantic verifier;
-- new regression coverage (Pass 6+7): late-RFQ (за пределами первых 500 символов)
-  deterministic high-confidence ignore остаётся AI-eligible и valid high-confidence AI
-  `new_lead` может стать final, в т.ч. при `spam_label_present=true`; valid
-  high-confidence AI semantic correction не vetoed generic marker lists; configured
-  `body_chars_max` honored (content >1600 символов достигает AI при достаточном
-  `input_chars_max`); reviewed buyer-RFQ gate и spam-labelled RFQ gate упражняют второй
-  semantic echelon (valid AI decision → `final_decision_source=ai_adjudicator`);
-  confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact
-  Message-ID на page 2, cross-page conflict → no bridge, malformed `next`/result →
-  fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
-- CRM-identity/write-back boundary correction (Pass 8): non-authoritative Bitrix
-  identity/candidate evidence (`safe_to_use_as_target=false`: `weak_match`, `ambiguous`,
-  `duplicate_candidate`, `matched_*`) не может veto независимый final `new_lead`;
-  `_decide_delivery` использует normal configured create path для CREATE_CASE_TYPES
-  (`new_lead`, `irrelevant`) при candidate-only CRM evidence без trusted exact RFC
-  target; `bitrix_match_status=duplicate_candidate` остаётся CRM reconciliation evidence,
-  а не semantic `case_type=duplicate`; exact trusted RFC/outbound target по-прежнему
-  авторизует `attach_existing` (первым приоритетом), conflicting exact RFC targets /
-  unresolved responsible / connector errors / malformed prerequisites — fail-closed;
-  semantic `existing_deal` / `duplicate` без trusted target — non-creating/deferred;
-  replay/origin idempotency и `pending_thread_root` сохранены; action-draft projection
-  (`_map_action_v0`) для final `new_lead` + candidate evidence показывает independent
-  `create_lead` (reason `new_lead_crm_duplicate_candidate`/`new_lead_crm_weak_match`/
-  `new_lead_crm_ambiguous`), не «resolve_duplicate_candidate»; Event Detail/read-model
-  раздельно показывают semantic final, conversation, Bitrix evidence и delivery outcome;
-- new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/
-  `duplicate_candidate` → `create_lead` (без attach, без выбора candidate, c реальным
-  `crm.item.add` при execute); new_lead + existing Bitrix `matched_lead`
-  (`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal +
-  `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` +
-  `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead
-  + candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix
-  `duplicate_candidate` — separate fields;
-- live Bitrix outbound-correlation regression fix: реальный outbound Message-ID из
-  `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy
-  `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID`
-  сохранены); outbound bridge authorization — по canonical CRM entity identity
-  (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` — diagnostic only
-  (сотрудник, отправивший письмо, может отличаться от responsible самого Lead) и не
-  может заменить trusted responsible; exact bridge → `attach_existing` с
-  `target_provenance=bitrix_outbound_exact` и canonical trusted responsible; trusted
-  responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong
-  direction / no RFC ancestry — fail-closed;
-- `uv run pytest -q` → 1674 passed (exit 0); runtime smoke через ROP batch entrypoint
-  (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и
-  secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix
-  outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/
-  вебхука в текущем окружении); эквивалентные positive/negative сценарии покрыты
-  mock-level integration тестами (pagination/bridge/authority, deferred/zero mutation);
+- reviewed classification integration gate: 8/8 reviewed scenarios достигают ожидаемого final semantic type (`run-9cd9d1ae99e9`, `run-844530c057e6`, `run-ce974a9b8582` → `irrelevant`; `run-41d2bcf42389`, `run-d96b18d8fc70` → `new_lead`; `run-a7c20bc709ba`, `run-0036f2c6d9ee`, `run-8bf12d19f51e` → `irrelevant`);
+- targeted AI eligibility, validation/reason-code, class/evidence-aware merge, provider failure, strong-noise skip, confirmed-duplicate skip, possible-duplicate unresolved base-preserved, low-confidence conflict, RFC A→B→C, cross-source exact reply, two independent threads same sender, subject-similarity never-authorizes, conflicting/malformed RFC, outbound exact bridge, candidate-only fail-closed, untrusted outbound candidate → deferred/zero mutation, trusted-entity outbound bridge → attach (activity responsible mismatch diagnostic only), numeric-string Bitrix IDs/DIRECTION, DIRECTION inbound/missing/malformed rejected, duplicate outbound Message-ID conflict → no bridge, stale bridge without current RFC ancestry → no bridge, proven bridge next-hop C continuation, conversation timeline, Event Detail deterministic/AI/final/conversation distinction;
+- correction run (final review blockers): trusted-canonical-entity authority для `bitrix_outbound_exact` (authorize `attach_existing` при совпадении canonical CRM entity identity entity type/type-id/entity-id с trusted CRM target из write-back state; outbound activity responsible — diagnostic only и не может заменить trusted responsible; иначе `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence не является proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated против текущего RFC ancestry; proven `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop; bounded AI context только из canonical attachment extraction evidence (nested `attachments[].text_preview` не является authority); `input_chars_max` — абсолютная граница (иначе degraded `prompt_budget_exceeded`, без provider call); `manual_review` удалён из схемы новых AI-решений и нормализуется в final routing как `unresolved`/`no_action`/attention (`semantic_unresolved_no_operator_queue`); exact RFC trusted-target ambiguity использует полный trusted identity (entity_type/type-id/entity-id/responsible); confirmed: format-only churn в diff against main отсутствует (нет except-syntax churn и reflows; все hunks Issue-required);
+- final-review echelon hardening (Pass 6): AI = реальный второй semantic echelon — eligibility упрощён (possible-duplicate → eligible; confirmed duplicate → skip; все остальные semantic events eligible), marker-veto удалён из `_ai_output_conflicts_with_marker_signals` (только структурно невозможные комбинации veto), body context budget из `rop.email_preview.body_chars_max` внутри absolute `input_chars_max`; Bitrix outbound correlation hardened: top-level non-object JSON → `BitrixMalformedResponse`, bounded pagination (`bitrix.pages_max`) с cross-page same-Message-ID ambiguity, malformed cursor/result → fail-closed без bridge;
+- final-review AI-echelon correction (Pass 7): удалён structured spam-label gate — `_is_strong_explicit_irrelevant` полностью убран; `_is_event_eligible_for_adjudicator` минимален (possible duplicate → eligible; иначе `case_type != "duplicate"`); транспортные SPAM/FWD/RE labels (включая `spam_label_present`) — weak transport evidence и никогда не bypass AI semantic verifier;
+- new regression coverage (Pass 6+7): late-RFQ (за пределами первых 500 символов) deterministic high-confidence ignore остаётся AI-eligible и valid high-confidence AI `new_lead` может стать final, в т.ч. при `spam_label_present=true`; valid high-confidence AI semantic correction не vetoed generic marker lists; configured `body_chars_max` honored (content >1600 символов достигает AI при достаточном `input_chars_max`); reviewed buyer-RFQ gate и spam-labelled RFQ gate упражняют второй semantic echelon (valid AI decision → `final_decision_source=ai_adjudicator`); confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact Message-ID на page 2, cross-page conflict → no bridge, malformed `next`/result → fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
+- CRM-identity/write-back boundary correction (Pass 8): non-authoritative Bitrix identity/candidate evidence (`safe_to_use_as_target=false`: `weak_match`, `ambiguous`, `duplicate_candidate`, `matched_*`) не может veto независимый final `new_lead`; `_decide_delivery` использует normal configured create path для CREATE_CASE_TYPES (`new_lead`, `irrelevant`) при candidate-only CRM evidence без trusted exact RFC target; `bitrix_match_status=duplicate_candidate` остаётся CRM reconciliation evidence, а не semantic `case_type=duplicate`; exact trusted RFC/outbound target по-прежнему авторизует `attach_existing` (первым приоритетом), conflicting exact RFC targets / unresolved responsible / connector errors / malformed prerequisites — fail-closed; semantic `existing_deal` / `duplicate` без trusted target — non-creating/deferred; replay/origin idempotency и `pending_thread_root` сохранены; action-draft projection (`_map_action_v0`) для final `new_lead` + candidate evidence показывает independent `create_lead` (reason `new_lead_crm_duplicate_candidate`/`new_lead_crm_weak_match`/`new_lead_crm_ambiguous`), не «resolve_duplicate_candidate»; Event Detail/read-model раздельно показывают semantic final, conversation, Bitrix evidence и delivery outcome;
+- new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/`duplicate_candidate` → `create_lead` (без attach, без выбора candidate, c реальным `crm.item.add` при execute); new_lead + existing Bitrix `matched_lead` ()`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal + `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` + `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead - candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix `duplicate_candidate` — separate fields;
+- live Bitrix outbound-correlation regression fix: реальный outbound Message-ID из `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID` сохранены); outbound bridge authorization — по canonical CRM entity identity (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` — diagnostic only (сотрудник, отправивший письмо, может отличаться от responsible самого Lead) и не может заменить trusted responsible; exact bridge → `attach_existing` с `target_provenance=bitrix_outbound_exact` и canonical trusted responsible; trusted responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong direction / no RFC ancestry — fail-closed;
+- `uv run pytest -q` → 1674 passed (exit 0); runtime smoke через ROP batch entrypoint (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/вебхука в текущем окружении); эквивалентные positive/negative сценарии покрыты mock-level integration тестами (pagination/bridge/authority, deferred/zero mutation);
 - `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены;
   `beeagent-rop` не изменялся (public contract consumption only).
+
+### Итерация 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Добавить production-safe end-to-end lifecycle для email attachments в ROP: BeeAgent должен сохранять принятые MIME-вложения как opaque untrusted files до mailbox checkpoint, давать авторизованному оператору безопасно скачать исходный файл из Event Detail, передавать физические вложения вместе с соответствующим email activity в Bitrix и, при включённой config policy, получать bounded semantic context из поддерживаемых документов через configured AI provider для улучшения существующей ROP classification.
+
+Attachment retention/delivery и attachment semantic analysis должны быть независимы: отключение AI/content analysis не должно удалять вложение, скрывать download или запрещать Bitrix delivery.
+
+AI document understanding не является malware scanner, sandbox или execution authority.
+
+#### Scope
+
+**Включено:**
+
+- реализовать изменения в `beeagent`;
+- сохранить `beeagent-rop` public attachment/classification contract без изменений;
+- сохранить BeeUI generic presentation contract без product-specific changes;
+- расширить mailbox ingestion так, чтобы accepted MIME attachment bytes не терялись после normalization;
+- хранить raw attachment bytes только в dedicated bounded opaque attachment store, отдельно от normal JSON artifacts;
+- использовать generated attachment IDs / content hashes вместо untrusted filenames для filesystem paths;
+- сохранять bounded attachment manifest metadata:
+  - attachment_id;
+  - event identity;
+  - original bounded filename;
+  - declared content type;
+  - size;
+  - SHA-256;
+  - storage status;
+  - analysis status;
+  - preview availability;
+  - refusal/degradation reason;
+- не помещать raw attachment bytes в `normalized_events.json`, classification artifacts, write-back summaries, logs, HTML или JSON APIs;
+- сохранять accepted attachment blobs до mailbox checkpoint advancement;
+- при storage failure для attachment, который policy требует сохранить, не продвигать checkpoint;
+- добавить config-driven storage bounds:
+  - per-file size;
+  - aggregate per-message attachment size;
+  - attachment count;
+- сохранить `rop.attachments.enabled` как operator-visible switch semantic attachment analysis:
+  - `true` — выполнять bounded analysis для поддерживаемых файлов;
+  - `false` — zero attachment content analysis / zero file egress to AI provider;
+- при `rop.attachments.enabled: false` продолжать:
+  - сохранять accepted attachments;
+  - показывать metadata;
+  - разрешать authenticated download;
+  - передавать файлы в Bitrix when write-back/file delivery policy permits;
+- сохранить существующие `rop.attachments.chars_max`, `size_max` и `types` как bounded analysis policy или мигрировать их с explicit backward-compatible validation if implementation requires clearer naming;
+- поддержать common business formats для semantic analysis where the configured provider capability is explicitly supported and verified, including target coverage for:
+  - `text/plain`;
+  - PDF;
+  - DOCX;
+  - DOC where provider support exists;
+  - JPEG;
+  - PNG;
+- unsupported provider/file combinations должны оставаться stored/downloadable/deliverable с explicit `analysis_status`, без local unsafe fallback parser;
+- не добавлять local PDF/DOC/DOCX/image deep parser в BeeAgent main process в v1;
+- передавать attachment bytes во внешний AI provider только через explicit configured/validated file-capable provider path;
+- считать attachment contents untrusted data and never treat instructions inside a document as agent/tool instructions;
+- AI attachment result должен быть bounded, schema-validated и преобразовываться в existing attachment extraction evidence (`attachment_text_preview`, status/refusal fields);
+- существующий `beeagent-rop` attachment-aware classification должен потреблять этот context без filesystem/provider access;
+- existing BeeAgent AI adjudicator может использовать resulting bounded attachment context through the current semantic decision path;
+- provider/analysis failure не должен удалять файл или блокировать deterministic classification; failure должен быть explicit degraded evidence;
+- добавить BeeAgent-owned authenticated download route for event attachments;
+- download должен разрешаться только через safe manifest lookup, без arbitrary path access;
+- download должен использовать forced attachment response and anti-sniff/no-store security headers;
+- Event Detail должен показывать attachment metadata, analysis status and safe internal download link;
+- product-specific attachment route/read-model должны оставаться на стороне BeeAgent; BeeUI только renders normalized data;
+- сохранить current `bitrix.writeback.email_attach` semantics as email-activity binding;
+- добавить отдельную config policy для physical file attachment delivery to Bitrix;
+- физические attachments должны доставляться к тому же trusted/new Lead/Deal email activity without weakening existing It37–39 CRM target authority;
+- file delivery state/idempotency должен храниться отдельно от current email-activity attachment status;
+- replay одного email не должен создавать duplicate Lead, duplicate email activity или uncontrolled duplicate file delivery;
+- Bitrix physical-file REST contract должен быть подтверждён controlled test-portal smoke before production enablement;
+- если physical-file binding требует дополнительного Bitrix mutation method, расширить write allowlist только exact required method;
+- обновить config validation, artifacts, docs and tests;
+- reconcile `docs/product/ui_roadmap.md` UI-10 with the new BeeAgent-owned secure download contract;
+- не менять `pyproject.toml.version`.
+
+#### Excluded
+
+- считать AI malware/antivirus scanner;
+- claim that an AI-read file is safe to execute/open;
+- executing attachment content;
+- macros/scripts execution;
+- local office application invocation;
+- arbitrary shell/converter execution;
+- broad local PDF/DOC/DOCX parsing stack in v1;
+- browser inline PDF/Office/image viewer;
+- arbitrary filesystem download route;
+- using original filename as storage path;
+- unbounded attachment storage;
+- unbounded provider upload;
+- attachment bytes in JSON artifacts/logs/API payloads;
+- raw `.eml` / `message/rfc822` nested attachment processing in v1;
+- OCR/local computer-vision pipeline separate from configured provider support;
+- new classification rules in BeeAgent;
+- changes to `beeagent-rop`;
+- product-specific changes in `beeui`;
+- weakening It37–39 trusted CRM target, responsible, thread, retry or idempotency boundaries;
+- broad Bitrix write-method access;
+- malware sandbox / antivirus verdict;
+- attachment retention/admin management UI;
+- automatic deletion/pruning policy unless an existing storage lifecycle requires it;
+- version bump.
+
+#### Deliverable
+
+ROP получает end-to-end attachment lifecycle:
+
+```text
+mailbox MIME
+→ bounded opaque BeeAgent attachment storage
+→ safe manifest
+→ optional AI semantic analysis
+→ existing attachment-aware classification
+→ authenticated ROP download
+→ idempotent physical Bitrix attachment delivery
+```
+
+Оператор может открыть Event Detail и скачать исходный accepted attachment. В Bitrix соответствующий Lead/Deal email activity содержит физические attachments. При включённом analysis BeeAgent получает bounded document context и использует existing ROP classification path; при выключенном analysis файлы продолжают храниться, скачиваться и доставляться в Bitrix без provider file calls.
+
+#### Acceptance criteria
+
+- live-like mailbox PDF attachment bytes survive mailbox normalization and are persisted as an opaque blob;
+- DOCX, DOC, TXT, JPEG and PNG attachments within configured retention policy are preserved as opaque files regardless of AI analysis support;
+- attachment original filename is metadata only and never controls filesystem location;
+- SHA-256 and stable generated attachment identity are recorded;
+- `normalized_events.json` and other normal JSON artifacts contain no raw attachment bytes;
+- accepted attachment storage is durable before mailbox checkpoint advancement;
+- required attachment persistence failure prevents checkpoint advancement;
+- configured file/count/aggregate limits are enforced before unbounded storage allocation;
+- oversized/refused/blocked files produce explicit bounded metadata status;
+- `rop.attachments.enabled: false` results in zero attachment content analysis/provider file calls while preserved files remain downloadable and eligible for Bitrix delivery;
+- `rop.attachments.enabled: true` analyzes only explicitly supported configured file types/sizes;
+- supported provider analysis produces bounded validated attachment context through the existing attachment extraction contract;
+- unsupported provider/file type degrades explicitly and never triggers an unsafe local parser fallback;
+- AI/document text cannot grant tool, mailbox or CRM execution authority;
+- attachment provider failure preserves deterministic processing and explicit diagnostics;
+- existing `beeagent-rop` package requires no implementation change;
+- Event Detail displays attachment filename, type, size, storage status, analysis status and download action;
+- download requires existing BeeAgent authentication/authorization;
+- invalid run/event/attachment IDs fail closed;
+- path traversal and arbitrary filesystem paths cannot retrieve files;
+- download uses forced attachment semantics, no inline rendering, no MIME sniffing and no public caching;
+- a ROP-scoped principal cannot use the attachment route to read unrelated module/run files;
+- physical file delivery to Bitrix uses the same trusted/new target selected by existing write-back authority;
+- physical attachment delivery never creates a new CRM target by itself;
+- current `bitrix.writeback.email_attach` behavior remains backward-compatible for email activity creation;
+- physical file delivery has an explicit separate config switch/status;
+- replay does not create duplicate Lead/email activity and does not cause uncontrolled duplicate file delivery;
+- Bitrix temporary failure can be retried from durable local attachment storage without mailbox re-ingestion;
+- exact physical Bitrix file-binding behavior is verified on a controlled test portal before production enablement;
+- no credential, webhook URL, raw `.eml` or attachment bytes appear in logs/HTML/JSON APIs;
+- `beeui` requires no product-specific implementation;
+- `pyproject.toml.version` is unchanged.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted `tests/test_rop_input_source.py`;
+- targeted settings/config validation tests;
+- targeted attachment extraction/storage tests;
+- targeted mailbox poll/checkpoint tests;
+- targeted ROP operator/classification integration tests;
+- targeted `tests/test_rop_writeback.py`;
+- targeted BeeAgent Web/Event Detail/auth/scope tests;
+- MIME fixtures for TXT/PDF/DOCX/DOC/JPEG/PNG;
+- malformed filename/path traversal fixtures;
+- oversized file, aggregate size and files-count boundary tests;
+- same filename/different content and different filename/same content scenarios;
+- truncated/malformed MIME scenario;
+- disabled-analysis zero-provider-call regression;
+- provider unsupported/timeout/error/invalid-result regressions;
+- attachment prompt-injection style fixture proving document instructions do not grant execution authority;
+- download unauthenticated/forbidden/not-found/path-traversal checks;
+- response header check for forced download / nosniff / no-store;
+- mailbox checkpoint does not advance after required attachment storage failure;
+- replay/idempotency regressions;
+- controlled live-like mailbox smoke with synthetic business attachments;
+- controlled Bitrix test-portal smoke proving the physical attachment can be opened/downloaded from the resulting Lead/Deal activity;
+- controlled AI provider file-input smoke for each format claimed as supported by the configured production profile;
+- logs/artifact inspection;
+- `uv run python -B -m compileall -q src tests`;
+- `git diff --check`;
+- SAST required;
+- DAST-style attachment download and Bitrix connector checks required;
+- SCA required only if dependency files change;
+- malformed/adversarial MIME, filename and path fuzz-style tests required;
+- IAST not required.
+
+#### DoD
+
+- mailbox attachment bytes are no longer lost after ingestion;
+- accepted attachments are durably stored before checkpoint advancement;
+- attachment retention/delivery is independent from AI analysis;
+- operator can safely download an accepted original attachment from ROP Event Detail;
+- physical attachments are available from the correct Bitrix Lead/Deal email activity;
+- attachment delivery preserves existing trusted-target/idempotency boundaries;
+- AI can enrich classification from supported documents without becoming malware or execution authority;
+- unsupported or failed analysis degrades safely;
+- no arbitrary local deep parser stack is introduced;
+- no arbitrary file-serving route exists;
+- raw attachment bytes remain outside normal artifacts/logs/HTML/JSON APIs;
+- `beeagent-rop` and `beeui` require no implementation changes;
+- config and security contracts are explicit and validated;
+- tests, controlled provider/Bitrix smoke, security checks and docs are ready for PR review;
+- `pyproject.toml.version` is unchanged.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
