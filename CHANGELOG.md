@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.2...beeagent-v0.54.0) (2026-08-25)
+
+
+### Features
+
+* **rop:** secure ROP attachment lifecycle, download and Bitrix file delivery (it40) ([#210](https://github.com/beesyst/beeagent/issues/210)) ([4f280e7](https://github.com/beesyst/beeagent/commit/4f280e7c03811283643d113d0a0a95527bf92ab6))
+
 ## [0.53.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.1...beeagent-v0.53.2) (2026-08-23)
 
 
