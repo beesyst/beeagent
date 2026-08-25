@@ -9663,6 +9663,130 @@ def test_attachment_download_event_mismatch_fails_closed(tmp_path: Path) -> None
     assert response.status_code == 404
 
 
+def _seed_format_attachment(
+    storage_dir: Path,
+    run_id: str,
+    attachment_id: str,
+    filename: str,
+    content_type: str,
+    content: bytes,
+) -> None:
+    run_dir = storage_dir / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "classified_events.json").write_text(
+        json.dumps([{"event_id": "evt-1"}]), encoding="utf-8"
+    )
+    store_dir = storage_dir / "attachments" / run_id
+    store_dir.mkdir(parents=True, exist_ok=True)
+    blob_id = "att-" + sha256(content).hexdigest()[:24]
+    (store_dir / f"{blob_id}.bin").write_bytes(content)
+    manifest_path = store_dir / "attachment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {
+        "run_id": run_id,
+        "version": 1,
+        "status": "ok",
+        "policy": {},
+        "aggregate": {"attachment_count": 0, "stored_count": 0},
+        "items": [],
+    }
+    manifest["items"].append(
+        {
+            "attachment_id": attachment_id,
+            "event_id": "evt-1",
+            "event_instance_id": "event-000001",
+            "blob_id": blob_id,
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": len(content),
+            "sha256": sha256(content).hexdigest(),
+            "storage_status": "stored",
+        }
+    )
+    manifest["aggregate"]["attachment_count"] = len(manifest["items"])
+    manifest["aggregate"]["stored_count"] = len(manifest["items"])
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "filename,content_type,payload",
+    [
+        ("rfq.txt", "text/plain", b"RFQ: 100 kg ER70S-6 welding wire"),
+        ("prices.csv", "text/csv", b"sku,qty\nER70S-6,100\n"),
+        ("rfq.pdf", "application/pdf", b"%PDF-1.4 download body bytes"),
+        (
+            "rfq.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            b"PK\x03\x04 docx download",
+        ),
+        ("rfq.jpg", "image/jpeg", b"\xff\xd8\xff\xe0 download jpeg"),
+        ("rfq.png", "image/png", b"\x89PNG\r\n\x1a\n download png"),
+    ],
+)
+def test_attachment_download_all_supported_formats(
+    tmp_path: Path,
+    filename: str,
+    content_type: str,
+    payload: bytes,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _seed_format_attachment(
+        storage_dir, "run-dl-formats", "evt-1-att-0", filename, content_type, payload
+    )
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=run-dl-formats&event_id=evt-1"
+    )
+    assert response.status_code == 200
+    assert response.content == payload
+    disposition = response.headers.get("content-disposition", "")
+    assert disposition.startswith("attachment;")
+    assert response.headers.get("content-type") == "application/octet-stream"
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("cache-control") == "no-store"
+
+
+def test_attachment_download_blocked_eml_has_no_blob(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_id = "run-dl-eml"
+    run_dir = storage_dir / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "classified_events.json").write_text(
+        json.dumps([{"event_id": "evt-1"}]), encoding="utf-8"
+    )
+    store_dir = storage_dir / "attachments" / run_id
+    store_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "run_id": run_id,
+        "version": 1,
+        "status": "ok",
+        "policy": {},
+        "aggregate": {"attachment_count": 1, "stored_count": 0},
+        "items": [
+            {
+                "attachment_id": "evt-1-att-0",
+                "event_id": "evt-1",
+                "event_instance_id": "event-000001",
+                "blob_id": None,
+                "filename": "nested.eml",
+                "content_type": "message/rfc822",
+                "size_bytes": 128,
+                "sha256": None,
+                "storage_status": "blocked",
+                "reason_code": "blocked_email_attachment",
+            }
+        ],
+    }
+    (store_dir / "attachment_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop/attachments/evt-1-att-0/download?run_id=run-dl-eml&event_id=evt-1"
+    )
+    assert response.status_code == 404
+    assert not list(store_dir.glob("*.bin"))
+
+
 class TestAttachmentDownloadAuth:
     _env: dict[str, str] = {}
     _previous_env: dict[str, str | None] = {}

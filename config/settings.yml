@@ -118,8 +118,9 @@ rop:
     enabled: true # true/false - включить/выключить semantic analysis вложений (не влияет на retention/download/Bitrix delivery)
     chars_max: 500 # макс. число символов для извлечения из одного вложения
     size_max: 1048576 # макс. размер вложения в байтах для попытки извлечения (пример: 1 МБ = 1048576 байт)
-    types: # non-empty allowlist типов контента, разрешенных для bounded text preview / AI analysis
+    types:
       - "text/plain"
+      - "text/csv"
       - "application/pdf"
       - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       - "image/jpeg"

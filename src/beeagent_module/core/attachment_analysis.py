@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib import request
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from beeagent_module.core.attachment_store import (
     load_attachment_manifest,
@@ -236,6 +237,7 @@ def _call_file_provider(
     if ai_cfg.get("dry_run"):
         logger.info("attachment analysis: file dry_run=True, skipping API call")
         return json.dumps({"summary": "dry run placeholder", "risk_flags": []})
+    timeout = int(ai_cfg.get("request_timeout") or _ANALYSIS_PROVIDER_TIMEOUT)
 
     if content_type in _IMAGE_INPUT_TYPES:
         content_input = {
@@ -246,19 +248,67 @@ def _call_file_provider(
             ),
             "detail": "low",
         }
-    elif content_type in _FILE_INPUT_TYPES:
-        content_input = {
-            "type": "input_file",
-            "filename": filename[:255],
-            "file_data": base64.b64encode(content).decode("ascii"),
-        }
-    else:
-        logger.warning(
-            "attachment analysis: provider does not support content_type=%s",
-            content_type,
+        return _post_responses_file(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            content_input=content_input,
+            prompt=prompt,
+            timeout=timeout,
+            logger=logger,
         )
-        return None
 
+    if content_type in _FILE_INPUT_TYPES:
+        file_id = _upload_provider_file(
+            base_url=base_url,
+            api_key=api_key,
+            filename=filename,
+            content=content,
+            content_type=content_type,
+            timeout=timeout,
+            logger=logger,
+        )
+        if file_id is None:
+            logger.warning(
+                "attachment analysis: provider file upload failed for %s",
+                content_type,
+            )
+            return None
+        try:
+            return _post_responses_file(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                content_input={"type": "input_file", "file_id": file_id},
+                prompt=prompt,
+                timeout=timeout,
+                logger=logger,
+            )
+        finally:
+            _delete_provider_file(
+                base_url=base_url,
+                api_key=api_key,
+                file_id=file_id,
+                timeout=timeout,
+                logger=logger,
+            )
+
+    logger.warning(
+        "attachment analysis: provider does not support content_type=%s",
+        content_type,
+    )
+    return None
+
+
+def _post_responses_file(
+    base_url: str,
+    api_key: str,
+    model: str,
+    content_input: dict[str, Any],
+    prompt: str,
+    timeout: int,
+    logger: logging.Logger,
+) -> str | None:
     payload = {
         "model": model,
         "input": [
@@ -277,9 +327,90 @@ def _call_file_provider(
         url=base_url.rstrip("/") + "/responses",
         payload=payload,
         api_key=api_key,
-        timeout=int(ai_cfg.get("request_timeout") or _ANALYSIS_PROVIDER_TIMEOUT),
+        timeout=timeout,
         logger=logger,
     )
+
+
+def _safe_multipart_filename(filename: str) -> str:
+    cleaned = str(filename or "").strip().replace("\r", "").replace("\n", "")
+    cleaned = cleaned.replace('"', "")
+    return cleaned[:255]
+
+
+def _upload_provider_file(
+    base_url: str,
+    api_key: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    timeout: int,
+    logger: logging.Logger,
+) -> str | None:
+    boundary = uuid.uuid4().hex
+    purpose_part = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="purpose"\r\n\r\n'
+        "assistants\r\n"
+    ).encode("utf-8")
+    file_header = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; '
+        f'filename="{_safe_multipart_filename(filename)}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8")
+    body = (
+        purpose_part
+        + file_header
+        + content
+        + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    )
+    url = base_url.rstrip("/") + "/files"
+    try:
+        req = request.Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        with request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception as exc:
+        logger.warning("attachment analysis: provider file upload failed: %s", exc)
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        logger.warning("attachment analysis: malformed provider upload response")
+        return None
+    file_id = data.get("id") if isinstance(data, dict) else None
+    if isinstance(file_id, str) and file_id.strip():
+        return file_id.strip()
+    logger.warning("attachment analysis: provider upload response missing file id")
+    return None
+
+
+def _delete_provider_file(
+    base_url: str,
+    api_key: str,
+    file_id: str,
+    timeout: int,
+    logger: logging.Logger,
+) -> None:
+    url = base_url.rstrip("/") + f"/files/{quote(str(file_id), safe='')}"
+    try:
+        req = request.Request(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="DELETE",
+        )
+        with request.urlopen(req, timeout=timeout):
+            pass
+    except Exception as exc:
+        logger.warning("attachment analysis: provider file cleanup failed: %s", exc)
 
 
 def _provider_api_key(ai_cfg: dict[str, Any]) -> str:
@@ -503,6 +634,9 @@ def run_attachment_analysis(
         summary = validated.get("summary")
         if isinstance(summary, str) and summary.strip():
             preview_parts.append(summary)
+        document_type = validated.get("document_type")
+        if isinstance(document_type, str) and document_type.strip():
+            preview_parts.append(f"document_type: {document_type}")
         key_points = validated.get("key_points")
         if isinstance(key_points, list):
             preview_parts.extend(str(point) for point in key_points if point)

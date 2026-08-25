@@ -482,7 +482,7 @@ Rules:
 - retention/download/Bitrix delivery are independent from semantic analysis: `rop.attachments.enabled:false` means zero provider calls but files remain stored, downloadable and eligible for Bitrix delivery;
 - AI document understanding is a bounded domain-assist path only:
   - only explicitly supported configured content types/sizes are analyzed;
-  - file egress to a provider happens only through an explicit configured/ validated file-capable provider path (binary input requires `rop.attachments.analysis.file_capable:true` and `openai_responses`); PDF/DOCX use the provider file input contract and JPEG/PNG use the provider image input contract; file capability remains false until controlled smoke evidence validates the configured profile;
+  - file egress to a provider happens only through an explicit configured/ validated file-capable provider path (binary input requires `rop.attachments.analysis.file_capable:true` and `openai_responses`); PDF/DOCX use a bounded provider file-upload/reference lifecycle (file uploaded via the provider Files API, referenced by `file_id` in the response request, then deleted after the response) and JPEG/PNG use the provider image input contract (`input_image` data URLs); file capability is enabled only after controlled smoke evidence validates the configured profile;
   - provider failure/timeout/invalid output degrades explicitly and never triggers an unsafe local PDF/Office parser fallback;
   - document contents are untrusted data: instructions inside a document never grant tool, mailbox, broker or CRM execution authority;
   - AI output is bounded, schema-validated and only feeds the existing attachment extraction contract (`attachment_text_preview`/status fields);

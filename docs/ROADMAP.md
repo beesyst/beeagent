@@ -8814,9 +8814,7 @@ ROP runtime получает двухуровневую semantic classification 
 
 ### Итерация 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
 
-**Статус:** IN PROGRESS
-
-#### Implemented (Issue #209)
+**Статус:** DONE
 
 #### Goal
 
@@ -8865,6 +8863,7 @@ AI document understanding не является malware scanner, sandbox или 
 - сохранить существующие `rop.attachments.chars_max`, `size_max` и `types` как bounded analysis policy или мигрировать их с explicit backward-compatible validation if implementation requires clearer naming;
 - поддержать common business formats для semantic analysis where the configured provider capability is explicitly supported and verified, including target coverage for:
   - `text/plain`;
+  - `text/csv`;
   - PDF;
   - DOCX;
   - DOC where provider support exists;
@@ -9030,14 +9029,14 @@ mailbox MIME
 - dedicated bounded opaque attachment store: `storage/attachments/<run_id>/<blob_id>.bin` + `attachment_manifest.json` (generated `att-<sha256[:24]>` blob ids, filename только metadata, SHA-256 + exact size в manifest, no raw bytes); required persistence failure raises `AttachmentStoreError` → batch degraded → mailbox checkpoint не продвигается;
 - config-driven storage bounds: `rop.attachments.storage.{enabled,file_max,message_max,files_message_max}` (validated fail-fast; count and bounded encoded-size preflight apply before decoded payload retention, then exact file/aggregate limits apply immediately after decode); oversized/count/aggregate/blocked (`.eml`/`message/rfc822`) — explicit manifest `storage_status`;
 - `rop.attachments.enabled:false` → zero provider calls (analysis artifact `analysis_status=disabled`), retention/download/Bitrix delivery независимы и продолжают работать;
-- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,chars_max}`; OpenAI Responses uses `input_file` base64 for PDF/DOCX and `input_image` data URLs for JPEG/PNG; binary analysis is enabled only after controlled provider smoke proves the configured profile; unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated и bounded; document instructions не дают tool/mailbox/CRM authority;
+- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,chars_max}`; PDF/DOCX use the provider file-upload reference contract (file uploaded via the provider Files API, then `input_file` referenced by `file_id`, temporary file deleted after the response) and JPEG/PNG use `input_image` data URLs; binary analysis enabled (`file_capable:true`) only after controlled provider smokes prove the configured profile for PDF/DOCX/JPEG/PNG; unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated и bounded; document instructions не дают tool/mailbox/CRM authority;
 - AI preview интегрирован в existing attachment extraction contract: `attachment_text_preview` / `attachment_preview_available` / status/refusal fields (для `beeagent-rop` без изменения package);
 - authenticated download route `GET /rop/attachments/{attachment_id}/download?run_id=...&event_id=...`: существующая BeeUI session auth + authorization scopes, lookup только по safe manifest attachment ID, invalid/traversal/unrelated → fail closed, forced `attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: no-store`, `application/octet-stream` (no inline render);
 - Event Detail показывает filename/content_type/size/storage_status/analysis_status/sha256/safe download link; attachment manifest и analysis добавлены в evidence artifacts и allowlists;
 - Bitrix physical file delivery: отдельный disabled-by-default switch `bitrix.writeback.file_attach` (bool, validated), отдельный `file_attach_status`/`file_attach_attempts`/`last_file_attach_error_code`/`attachment_refs` в write-back state; файлы читаются из durable attachment store по manifest refs (retry без mailbox re-ingestion); используется только уже выбранный trusted/new CRM target (email activity), доставка сама не выбирает target; `email_attach` backward-compatible; timeout/malformed file updates fail closed as `reconciliation_required` and replay never resends them blindly; write allowlist расширен ровно на `crm.activity.update` (FILES/fileData);
 - `beeagent-rop` не изменялся; `beeui` не изменялся (generic renderer, download contract BeeAgent-owned);
 - local verification is recorded only after fresh targeted and full-suite commands complete for this correction run;
-- controlled Bitrix test-portal attachment smoke и controlled AI provider file-input smoke для production форматов require configured controlled credentials and remain blockers for full DoD until actual evidence is recorded;
+- controlled AI provider smoke для TXT/CSV/PDF/DOCX/JPEG/PNG выполнен на configured production profile: все шесть форматов дают successful bounded analysis и attachment-aware classification; controlled Bitrix test-portal attachment smoke остаётся NOT VERIFIABLE в текущем окружении, потому что доступен только production portal, и остаётся blocker для full DoD;
 - `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)

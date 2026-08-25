@@ -5695,7 +5695,6 @@ class TestPhysicalFileAttachmentDelivery:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        # Manifest references a blob that does not exist on disk
         store_dir = tmp_path / "attachments" / "run-wb-files-missing"
         store_dir.mkdir(parents=True, exist_ok=True)
         (store_dir / "attachment_manifest.json").write_text(

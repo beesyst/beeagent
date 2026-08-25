@@ -266,6 +266,103 @@ def test_valid_text_analysis_bounded(tmp_path: Path, monkeypatch) -> None:
     assert result["risk_flags"] == []
 
 
+def _csv_attachment(filename: str, content: str) -> dict:
+    payload = content.encode("utf-8")
+    return {
+        "filename": filename,
+        "content_type": "text/csv",
+        "size": len(payload),
+        "payload": payload,
+        "storage_status": "stored",
+        "reason_code": None,
+    }
+
+
+def test_csv_attachment_analyzed_through_text_provider_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    csv_text = (
+        "sku,item,quantity\n"
+        "ER70S-6,swaging wire,100\n"
+        "ANOH-21,electrode,50\n"
+    )
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "summary": "CSV lists welding consumables: 100 kg of "
+                    "ER70S-6 wire and 50 of ANO-21 electrodes.",
+                    "key_points": ["ER70S-6 wire 100 kg"],
+                    "document_type": "csv_inventory",
+                    "language": "en",
+                    "risk_flags": [],
+                }
+            )
+        ]
+    )
+    text_prompts: list[str] = []
+    file_calls: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_text_provider",
+        lambda *a, **k: text_prompts.append(a[1]) or next(responses),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_file_provider",
+        lambda *a, **k: file_calls.append("file") or '{"summary": "x"}',
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _persist_event(tmp_path, "run-csv", [_csv_attachment("prices.csv", csv_text)])
+
+    results = run_attachment_analysis(
+        storage_dir=tmp_path,
+        run_id="run-csv",
+        attachment_settings=_attachment_settings(
+            types=["text/csv"], file_capable=True
+        ),
+        ai_settings=_ai_settings(),
+        logger=_logger(),
+    )
+
+    result = results["evt-1-att-0"]
+    assert result["analysis_status"] == "ok"
+    assert result["reason_code"] == "ai_analysis_completed"
+    assert result["preview_available"] is True
+    assert "ER70S-6" in result["analysis_preview"]
+    assert len(text_prompts) == 1
+    assert "prices.csv" in text_prompts[0]
+    assert "ER70S-6" in text_prompts[0]
+    assert file_calls == []
+
+
+def test_csv_attachment_ineligible_when_type_not_allowed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_text_provider",
+        lambda *a, **k: '{"summary": "x"}',
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _persist_event(
+        tmp_path,
+        "run-csv-2",
+        [_csv_attachment("prices.csv", "sku,qty\nwire,100\n")],
+    )
+
+    results = run_attachment_analysis(
+        storage_dir=tmp_path,
+        run_id="run-csv-2",
+        attachment_settings=_attachment_settings(types=["text/plain"]),
+        ai_settings=_ai_settings(),
+        logger=_logger(),
+    )
+
+    result = results["evt-1-att-0"]
+    assert result["analysis_status"] == "unsupported"
+    assert result["reason_code"] == "unsupported_content_type"
+
+
 def test_provider_failure_degrades_deterministic(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "beeagent_module.core.attachment_analysis._call_text_provider",
@@ -458,49 +555,291 @@ def test_file_capable_binary_uses_file_provider(tmp_path: Path, monkeypatch) -> 
     assert seen["content"] == b"\x89PNG\r\n\x1a\n"
 
 
-@pytest.mark.parametrize(
-    "content_type,expected_type",
-    [
-        ("application/pdf", "input_file"),
-        ("image/png", "input_image"),
-    ],
-)
-def test_file_provider_uses_content_type_specific_responses_input(
+def _file_provider_cfg() -> dict:
+    return {
+        "provider": "openai_responses",
+        "model": "gpt-5.4-nano",
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "request_timeout": 30,
+        "dry_run": False,
+    }
+
+
+def test_file_provider_pdf_uploads_and_references_file_id(monkeypatch) -> None:
+    from beeagent_module.core.attachment_analysis import _call_file_provider
+
+    captured: dict[str, object] = {}
+    uploaded: list[object] = []
+    deleted: list[object] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._upload_provider_file",
+        lambda *a, **k: uploaded.append(k) or "file-abc123",
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._post_json",
+        lambda *a, **k: captured.update(payload=k["payload"])
+        or json.dumps({"summary": "ok"}),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._delete_provider_file",
+        lambda *a, **k: deleted.append(k),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    result = _call_file_provider(
+        _file_provider_cfg(),
+        "prompt",
+        "input.pdf",
+        b"binary-content",
+        "application/pdf",
+        _logger(),
+    )
+
+    assert result is not None
+    content = captured["payload"]["input"][0]["content"][0]
+    assert content == {"type": "input_file", "file_id": "file-abc123"}
+    assert "filename" not in content
+    assert "file_data" not in content
+    assert captured["payload"]["store"] is False
+    assert len(uploaded) == 1
+    assert uploaded[0]["filename"] == "input.pdf"
+    assert uploaded[0]["content"] == b"binary-content"
+    assert uploaded[0]["content_type"] == "application/pdf"
+    assert len(deleted) == 1
+    assert deleted[0]["file_id"] == "file-abc123"
+
+
+def test_file_provider_docx_uses_same_upload_lifecycle(monkeypatch) -> None:
+    from beeagent_module.core.attachment_analysis import _call_file_provider
+
+    captured: dict[str, object] = {}
+    uploaded: list[object] = []
+    deleted: list[object] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._upload_provider_file",
+        lambda *a, **k: uploaded.append(k) or "file-docx-1",
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._post_json",
+        lambda *a, **k: captured.update(payload=k["payload"])
+        or json.dumps({"summary": "ok"}),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._delete_provider_file",
+        lambda *a, **k: deleted.append(k),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _call_file_provider(
+        _file_provider_cfg(),
+        "prompt",
+        "input.docx",
+        b"PK\x03\x04 docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _logger(),
+    )
+    content = captured["payload"]["input"][0]["content"][0]
+    assert content == {"type": "input_file", "file_id": "file-docx-1"}
+    assert len(uploaded) == 1
+    assert uploaded[0]["filename"] == "input.docx"
+    assert len(deleted) == 1
+
+
+def test_file_provider_upload_failure_degrades_without_post(
     monkeypatch,
-    content_type: str,
-    expected_type: str,
 ) -> None:
+    from beeagent_module.core.attachment_analysis import _call_file_provider
+
+    posts: list[object] = []
+    deletes: list[object] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._upload_provider_file",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._post_json",
+        lambda *a, **k: posts.append(a) or json.dumps({"summary": "ok"}),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._delete_provider_file",
+        lambda *a, **k: deletes.append(a),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    result = _call_file_provider(
+        _file_provider_cfg(),
+        "prompt",
+        "input.pdf",
+        b"binary-content",
+        "application/pdf",
+        _logger(),
+    )
+    assert result is None
+    assert posts == []
+    assert deletes == []
+
+
+def test_file_provider_image_uses_data_url_input(monkeypatch) -> None:
     from beeagent_module.core.attachment_analysis import _call_file_provider
 
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "beeagent_module.core.attachment_analysis._post_json",
         lambda *a, **k: captured.update(payload=k["payload"])
-        or json.dumps({"summary": "ok"}),
+        or json.dumps({"summary": "image ok"}),
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     _call_file_provider(
-        {
-            "provider": "openai_responses",
-            "model": "gpt-5.4-nano",
-            "api_key_env": "OPENAI_API_KEY",
-            "base_url": "https://api.openai.com/v1",
-            "request_timeout": 30,
-            "dry_run": False,
-        },
+        _file_provider_cfg(),
         "prompt",
-        "input.pdf" if content_type == "application/pdf" else "input.png",
-        b"binary-content",
-        content_type,
+        "input.png",
+        b"\x89PNG\r\n\x1a\n",
+        "image/png",
         _logger(),
     )
     content = captured["payload"]["input"][0]["content"][0]
-    assert content["type"] == expected_type
+    assert content["type"] == "input_image"
+    assert content["image_url"].startswith("data:image/png;base64,")
+    assert content["detail"] == "low"
     assert captured["payload"]["store"] is False
-    if expected_type == "input_file":
-        assert content["file_data"] == "YmluYXJ5LWNvbnRlbnQ="
-    else:
-        assert content["image_url"].startswith("data:image/png;base64,")
+
+
+class _FakeResponse:
+    def __init__(self, raw: bytes, status: int = 200):
+        self._raw = raw
+        self.status = status
+
+    def read(self) -> bytes:
+        return self._raw
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+def test_upload_provider_file_posts_multipart_to_files_endpoint(
+    monkeypatch,
+) -> None:
+    from beeagent_module.core.attachment_analysis import _upload_provider_file
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, **kw: captured.update(
+            url=req.full_url,
+            method=req.get_method(),
+            headers=req.headers,
+            body=req.data,
+        )
+        or _FakeResponse(b'{"id": "file-xyz789", "object": "file"}'),
+    )
+    result = _upload_provider_file(
+        base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        filename='rfq.pdf"',
+        content=b"%PDF-1.4",
+        content_type="application/pdf",
+        timeout=30,
+        logger=_logger(),
+    )
+    assert result == "file-xyz789"
+    assert captured["url"] == "https://api.openai.com/v1/files"
+    assert captured["method"] == "POST"
+    assert captured["body"]
+    assert b'name="purpose"' in captured["body"]
+    assert b"assistants" in captured["body"]
+    assert b'name="file"' in captured["body"]
+    assert b'filename="rfq.pdf"' in captured["body"]
+    assert b"%PDF-1.4" in captured["body"]
+    assert "multipart/form-data" in captured["headers"]["Content-type"]
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_upload_provider_file_missing_id_returns_none(monkeypatch) -> None:
+    from beeagent_module.core.attachment_analysis import _upload_provider_file
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, **kw: _FakeResponse(b'{"object": "file"}'),
+    )
+    result = _upload_provider_file(
+        base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        filename="rfq.pdf",
+        content=b"%PDF-1.4",
+        content_type="application/pdf",
+        timeout=30,
+        logger=_logger(),
+    )
+    assert result is None
+
+
+def test_upload_provider_file_http_error_returns_none(monkeypatch) -> None:
+    import urllib.error
+
+    from beeagent_module.core.attachment_analysis import _upload_provider_file
+
+    def _boom(_req, **kw):
+        raise urllib.error.HTTPError(
+            "https://api.openai.com/v1/files", 500, "err", {}, None
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    result = _upload_provider_file(
+        base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        filename="rfq.pdf",
+        content=b"%PDF-1.4",
+        content_type="application/pdf",
+        timeout=30,
+        logger=_logger(),
+    )
+    assert result is None
+
+
+def test_delete_provider_file_issues_delete(monkeypatch) -> None:
+    from beeagent_module.core.attachment_analysis import _delete_provider_file
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, **kw: captured.update(
+            url=req.full_url,
+            method=req.get_method(),
+            headers=req.headers,
+        )
+        or _FakeResponse(b'{"deleted": true}'),
+    )
+    _delete_provider_file(
+        base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        file_id="file-xyz789",
+        timeout=30,
+        logger=_logger(),
+    )
+    assert captured["url"] == "https://api.openai.com/v1/files/file-xyz789"
+    assert captured["method"] == "DELETE"
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_delete_provider_file_cleanup_failure_is_non_fatal(monkeypatch) -> None:
+    import urllib.error
+
+    from beeagent_module.core.attachment_analysis import _delete_provider_file
+
+    def _boom(_req, **kw):
+        raise urllib.error.HTTPError(
+            "https://api.openai.com/v1/files/file-x", 404, "err", {}, None
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    _delete_provider_file(
+        base_url="https://api.openai.com/v1",
+        api_key="sk-test",
+        file_id="file-x",
+        timeout=30,
+        logger=_logger(),
+    )
 
 
 def test_file_provider_rejects_non_https_base_url(monkeypatch) -> None:
