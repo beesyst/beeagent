@@ -288,8 +288,7 @@ Use only what matches the change:
 - IAST for high-risk runtime instrumentation cases;
 - fuzzing for parsers, serializers, or fragile input handling.
 
-The goal is not to “tick every box”.
-The goal is to apply the right check for the right type of change.
+The goal is not to “tick every box”. The goal is to apply the right check for the right type of change.
 
 See `docs/SECURITY.md`.
 

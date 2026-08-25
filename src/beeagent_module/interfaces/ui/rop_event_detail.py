@@ -213,6 +213,30 @@ def _match_by_event_id(
     )
 
 
+def _match_attachment_extraction_items(
+    artifact: dict | None,
+    event_id: str,
+    event_instance_id: str | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(artifact, dict):
+        return []
+    items = _safe_list(artifact.get("items"))
+    candidates = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("event_id") == event_id
+    ]
+    if event_instance_id is not None:
+        exact = [
+            item
+            for item in candidates
+            if item.get("event_instance_id") == event_instance_id
+        ]
+        if exact:
+            return exact
+    return candidates
+
+
 def _select_event_occurrence(
     candidates: list[dict[str, Any]],
     event_instance_id: str | None,
@@ -724,7 +748,32 @@ def build_rop_event_detail_read_model(
         recipient_routing_section = {"available": False}
 
     attachments_section: list[dict[str, Any]] = []
-    if norm_event:
+    extraction_items = _match_attachment_extraction_items(
+        attachment_extraction, event_id, event_instance_id
+    )
+    if extraction_items:
+        for att in extraction_items:
+            if isinstance(att, dict):
+                attachments_section.append(
+                    {
+                        "attachment_id": _str(att.get("attachment_id")),
+                        "filename": _str(att.get("filename")),
+                        "content_type": _str(att.get("content_type")),
+                        "size_bytes": _int(
+                            att.get("size_bytes", att.get("size", 0))
+                        ),
+                        "extraction_status": _str(att.get("extraction_status")),
+                        "storage_status": _str(att.get("storage_status")),
+                        "reason_code": _str(att.get("reason_code")),
+                        "analysis_status": _str(att.get("analysis_status")),
+                        "analysis_reason_code": _str(att.get("analysis_reason_code")),
+                        "sha256": _str(att.get("sha256")),
+                        "download_url": _str(att.get("download_url")),
+                        "preview_available": bool(att.get("preview_available")),
+                        "text_preview": _str(att.get("text_preview")),
+                    }
+                )
+    elif norm_event:
         for att in _safe_list(norm_event.get("attachments")):
             if isinstance(att, dict):
                 attachments_section.append(
@@ -741,6 +790,8 @@ def build_rop_event_detail_read_model(
         "normalized_events_json",
         "classified_events_json",
         "attachment_extraction_json",
+        "attachment_manifest_json",
+        "attachment_analysis_json",
         "mail_thread_context_json",
         "rop_ai_assist_results_json",
         "rop_ai_adjudicator_results_json",
@@ -1361,6 +1412,10 @@ def build_rop_event_detail_page_model(
             "filename": attachment.get("filename"),
             "content_type": attachment.get("content_type"),
             "size_bytes": _format_size(attachment.get("size_bytes")),
+            "storage_status": attachment.get("storage_status"),
+            "reason_code": attachment.get("reason_code"),
+            "analysis_status": attachment.get("analysis_status"),
+            "download_url": attachment.get("download_url"),
         }
         for attachment in attachments
         if isinstance(attachment, dict)
@@ -1374,10 +1429,38 @@ def build_rop_event_detail_page_model(
                     {"key": "filename", "label": t("Filename", lang)},
                     {"key": "content_type", "label": t("Content type", lang)},
                     {"key": "size_bytes", "label": t("Size", lang)},
+                    {
+                        "key": "storage_status",
+                        "label": t("Storage status", lang),
+                    },
+                    {"key": "reason_code", "label": t("Reason", lang)},
+                    {
+                        "key": "analysis_status",
+                        "label": t("Analysis status", lang),
+                    },
                 ],
                 "rows": attachment_rows,
             }
         )
+        download_rows = [
+            row
+            for row in attachment_rows
+            if isinstance(row.get("download_url"), str) and row.get("download_url")
+        ]
+        if download_rows:
+            sections.append(
+                {
+                    "kind": "links",
+                    "title": t("Attachment downloads", lang),
+                    "items": [
+                        {
+                            "label": _str(row.get("filename")) or t("Download", lang),
+                            "href": _str(row.get("download_url")),
+                        }
+                        for row in download_rows
+                    ],
+                }
+            )
 
     link_items = [
         {

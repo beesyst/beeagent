@@ -67,23 +67,17 @@ ROADMAP не дублирует полные правила процесса и 
 
 Каждая итерация проходит по упрощённому циклу:
 
-1. **Planning**  
-   Итерация описана в ROADMAP и оформлена как Issue.
+1. **Planning** Итерация описана в ROADMAP и оформлена как Issue.
 
-2. **Requirements**  
-   Для итерации определены scope, deliverable, артефакты, проверки и DoD.
+2. **Requirements** Для итерации определены scope, deliverable, артефакты, проверки и DoD.
 
-3. **Implementation**  
-   Изменения вносятся в отдельной ветке и только в рамках текущей итерации.
+3. **Implementation** Изменения вносятся в отдельной ветке и только в рамках текущей итерации.
 
-4. **Verification**  
-   Выполняются тесты, smoke-check, проверка логов и артефактов, а также required quality/security checks для данного типа изменения.
+4. **Verification** Выполняются тесты, smoke-check, проверка логов и артефактов, а также required quality/security checks для данного типа изменения.
 
-5. **Review / PR**  
-   В PR фиксируются изменения, тесты, артефакты и ограничения.
+5. **Review / PR** В PR фиксируются изменения, тесты, артефакты и ограничения.
 
-6. **Merge**  
-   Итерация считается завершённой после выполнения DoD.
+6. **Merge** Итерация считается завершённой после выполнения DoD.
 
 ## Status values
 
@@ -8444,13 +8438,8 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 - хранить Bitrix `stageId` как изменяемый config, а не hardcoded business value;
 - включить `irrelevant` в read-only reconciliation и delivery planning;
 - использовать existing safe reconciliation result для выбора existing CRM target;
-- разрешать safe Deal target только после exact sender email/phone → Contact/Company →
-  bounded read-only `crm.item.list` relation lookup (`entityTypeId=2`, `contactId`/
-  `companyId`): один Deal strong/safe, multiple/none/error fail closed; title/subject never
-  authorizes Deal targeting;
-- считать Contact/Company только identity evidence: после успешного exact Lead и related-Deal
-  поиска без executable target `identity_only_no_target` допускает configured create только
-  для `new_lead`/`irrelevant`;
+- разрешать safe Deal target только после exact sender email/phone → Contact/Company → bounded read-only `crm.item.list` relation lookup (`entityTypeId=2`, `contactId`/ `companyId`): один Deal strong/safe, multiple/none/error fail closed; title/subject never authorizes Deal targeting;
+- считать Contact/Company только identity evidence: после успешного exact Lead и related-Deal поиска без executable target `identity_only_no_target` допускает configured create только для `new_lead`/`irrelevant`;
 - использовать existing `rop_recipient_routing.json` для exact responsible resolution;
 - `new_lead` и `irrelevant` без safe existing target создавать как Lead через `crm.item.add`, `entityTypeId=1`;
 - `existing_deal` / `duplicate` и любой safe existing target обрабатывать через attach-existing path без создания нового Lead;
@@ -8532,42 +8521,18 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 
 #### Implemented (v0, Issue #199)
 
-- `bitrix.writeback` config (disabled by default) с fail-fast validation; `email_attach`
-  (email-activity binding на созданные лиды) и `source_id` (Lead SOURCE_ID);
-- отдельный `BitrixWriteClient` с exact mutation allowlist `crm.item.add` /
-  `crm.activity.add` и отдельным env credential; `BitrixReadonlyClient` остаётся
-  strictly read-only, а `crm.activity.list` используется только для idempotency lookup;
+- `bitrix.writeback` config (disabled by default) с fail-fast validation; `email_attach` (email-activity binding на созданные лиды) и `source_id` (Lead SOURCE_ID);
+- отдельный `BitrixWriteClient` с exact mutation allowlist `crm.item.add` / `crm.activity.add` и отдельным env credential; `BitrixReadonlyClient` остаётся strictly read-only, а `crm.activity.list` используется только для idempotency lookup;
 - `irrelevant` включён в read-only reconciliation;
-- safe existing Deal становится reachable only through exact Contact/Company communication
-  evidence and bounded read-only generic Deal relation lookup; title/subject remains unsafe;
-- exact Contact/Company without an executable Lead/Deal remains identity-only evidence;
-  `identity_only_no_target` may enter configured create only for `new_lead`/`irrelevant`;
-- authoritative write-back planner/executor с outcomes `create_lead` / `attach_existing`
-  / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`,
-  idempotent `crm.item.add` (`entityTypeId=1`) с bounded `ORIGINATOR_ID`/`ORIGIN_ID`,
-  recovery uncertain POST по idempotency lookup, bounded retry и fail-closed stage/
-  responsible/target обработкой;
-- прикрепление письма к созданному или safe existing Lead/Deal через официальный
-  `crm.activity.add` (email activity, `TYPE_ID=4`) при
-  `bitrix.writeback.email_attach: true`; перед каждым activity POST, включая timeout или
-  malformed response, read-only `crm.activity.list` сверяет stable origin identity, а
-  returned activity ID сохраняется в canonical state;
-- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering —
-  durable intent → checkpoint → external execution → original per-run projection refresh, а temporary reconciliation outage
-  остаётся recoverable deferred state для later poll/run без mailbox re-ingestion;
+- safe existing Deal становится reachable only through exact Contact/Company communication evidence and bounded read-only generic Deal relation lookup; title/subject remains unsafe;
+- exact Contact/Company without an executable Lead/Deal remains identity-only evidence; `identity_only_no_target` may enter configured create only for `new_lead`/`irrelevant`;
+- authoritative write-back planner/executor с outcomes `create_lead` / `attach_existing` / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`, idempotent `crm.item.add` (`entityTypeId=1`) с bounded `ORIGINATOR_ID`/`ORIGIN_ID`, recovery uncertain POST по idempotency lookup, bounded retry и fail-closed stage/ responsible/target обработкой;
+- прикрепление письма к созданному или safe existing Lead/Deal через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.email_attach: true`; перед каждым activity POST, включая timeout или malformed response, read-only `crm.activity.list` сверяет stable origin identity, а returned activity ID сохраняется в canonical state;
+- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering — durable intent → checkpoint → external execution → original per-run projection refresh, а temporary reconciliation outage остаётся recoverable deferred state для later poll/run без mailbox re-ingestion;
 - CLI `rop writeback plan/execute`;
-- per-run операторская проекция `rop_writeback_summary.json` и read-only action drafts
-  refreshятся из canonical state для каждого original run после execution/recovery; `rop run`
-  не может сообщить успех, если reconciliation или durable plan persistence не создали intent.
+- per-run операторская проекция `rop_writeback_summary.json` и read-only action drafts refreshятся из canonical state для каждого original run после execution/recovery; `rop run` не может сообщить успех, если reconciliation или durable plan persistence не создали intent.
 
-Официальный binding contract: Bitrix документирует email activity через
-[`crm.activity.add`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-add.html)
-с `TYPE_ID=4`, `OWNER_TYPE_ID`, `OWNER_ID`, `COMMUNICATIONS` и `RESPONSIBLE_ID`; его
-[`crm.activity.list`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-list.html)
-поддерживает field filters для remote idempotency reconciliation. Safe existing Lead/Deal
-получает exactly one activity на исходный stable email identity без `crm.item.add` и без
-изменения responsible target entity. Existing-target live smoke остаётся обязательным
-перед production enablement; до него Iteration 37 не считается DONE.
+Официальный binding contract: Bitrix документирует email activity через [`crm.activity.add`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-add.html) с `TYPE_ID=4`, `OWNER_TYPE_ID`, `OWNER_ID`, `COMMUNICATIONS` и `RESPONSIBLE_ID`; его [`crm.activity.list`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-list.html) поддерживает field filters для remote idempotency reconciliation. Safe existing Lead/Deal получает exactly one activity на исходный stable email identity без `crm.item.add` и без изменения responsible target entity. Existing-target live smoke остаётся обязательным перед production enablement; до него Iteration 37 не считается DONE.
 
 ### Итерация 38 — Thread-aware Bitrix email write-back hardening v1
 
@@ -8706,46 +8671,19 @@ Email activity description в Bitrix содержит bounded readable plain tex
 
 #### Implemented (v1, Issue #203)
 
-- customer identity (sender email/phone, Contact/Company and related historical CRM
-  relation) больше не является automatic execution target: reconciliation never emits
-  `safe_to_use_as_target=true` для identity-only Lead/Deal matches; такие matches остаются
-  strong identity/candidate evidence (`matched_*` c `safe_to_use_as_target=false` и
-  `needs_manual_review=true`);
-- cross-run exact thread-to-CRM resolution поверх existing
-  `storage/interfaces/rop_writeback_state.json` без отдельной thread database: exact
-  `In-Reply-To` (preferred) и bounded `References` ancestry обязаны согласоваться на одном
-  trusted target, иначе `ambiguous_thread_target` deferred с zero mutation;
-- bounded target provenance в write-back state: confirmed BeeAgent-created Lead
-  (`target_provenance=beeagent_created`) является authoritative thread root;
-  thread-resolved attach (`target_provenance=thread_resolved`) распространяет target по
-  цепочке; legacy records без trusted provenance не являются thread authority (fail closed);
+- customer identity (sender email/phone, Contact/Company and related historical CRM relation) больше не является automatic execution target: reconciliation never emits `safe_to_use_as_target=true` для identity-only Lead/Deal matches; такие matches остаются strong identity/candidate evidence (`matched_*` c `safe_to_use_as_target=false` и `needs_manual_review=true`);
+- cross-run exact thread-to-CRM resolution поверх existing `storage/interfaces/rop_writeback_state.json` без отдельной thread database: exact `In-Reply-To` (preferred) и bounded `References` ancestry обязаны согласоваться на одном trusted target, иначе `ambiguous_thread_target` deferred с zero mutation;
+- bounded target provenance в write-back state: confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) является authoritative thread root; thread-resolved attach (`target_provenance=thread_resolved`) распространяет target по цепочке; legacy records без trusted provenance не являются thread authority (fail closed);
 - matching scope — same `client_id`, не обязательно same `source_id`;
-- exact reply с thread references прикрепляется к тому же Lead/Deal без нового
-  `crm.item.add`; цепочка `A → B → C` сохраняет target; два независимых треда одного
-  sender могут резолвиться в разные Leads; independent `new_lead` от известного sender
-  может создать новый Lead;
-- `existing_deal`/`duplicate` без safe exact target остаются deferred/manual-review;
-  run-local `thr_*` никогда не используется как durable CRM identity; classifier/AI/
-  subject/`RE:`/`FWD:` markers alone не авторизуют attach; existing target responsible
-  сохраняется (без reassignment);
-- same-run reply к planned create в том же batch получает recoverable
-  `pending_thread_root` deferred и резолвится после подтверждения root;
-- bounded body preview normalization: удаление `<!DOCTYPE ...>`/comments/script/style/
-  HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся
-  читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded,
-  прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
-- bounded thread headers (`in_reply_to`/`references`) и target-resolution provenance
-  добавлены в classified events и write-back state/summaries;
-- optional `bitrix.writeback.user_id_fallback` назначает ответственного только при
-  `responsible.status=not_found`; matched, ambiguous, degraded, unresolved и not-attempted
-  остаются deferred; optional `bitrix.writeback.email_completed` (boolean, default `true`)
-  задаёт, завершена ли создаваемая email-активность (`false` = письмо незавершённое/заметнее
-  в таймлайне);
+- exact reply с thread references прикрепляется к тому же Lead/Deal без нового `crm.item.add`; цепочка `A → B → C` сохраняет target; два независимых треда одного sender могут резолвиться в разные Leads; independent `new_lead` от известного sender может создать новый Lead;
+- `existing_deal`/`duplicate` без safe exact target остаются deferred/manual-review; run-local `thr_*` никогда не используется как durable CRM identity; classifier/AI/ subject/`RE:`/`FWD:` markers alone не авторизуют attach; existing target responsible сохраняется (без reassignment);
+- same-run reply к planned create в том же batch получает recoverable `pending_thread_root` deferred и резолвится после подтверждения root;
+- bounded body preview normalization: удаление `<!DOCTYPE ...>`/comments/script/style/ HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
+- bounded thread headers (`in_reply_to`/`references`) и target-resolution provenance добавлены в classified events и write-back state/summaries;
+- optional `bitrix.writeback.user_id_fallback` назначает ответственного только при `responsible.status=not_found`; matched, ambiguous, degraded, unresolved и not-attempted остаются deferred; optional `bitrix.writeback.email_completed` (boolean, default `true`) задаёт, завершена ли создаваемая email-активность (`false` = письмо незавершённое/заметнее в таймлайне);
 - `beeagent-rop` public contract не менялся; dependencies/`uv.lock` не менялись.
 
-Live controlled Bitrix test-portal smoke (A создаёт L1 → reply B прикрепляется к L1 →
-independent C создаёт L2 → reply D прикрепляется к L2) остаётся обязательным перед
-production enablement; до него Iteration 38 не считается полностью DONE.
+Live controlled Bitrix test-portal smoke (A создаёт L1 → reply B прикрепляется к L1 → independent C создаёт L2 → reply D прикрепляется к L2) остаётся обязательным перед production enablement; до него Iteration 38 не считается полностью DONE.
 
 ### Итерация 39 — ROP conversation identity and AI decision hardening v2
 
@@ -8872,12 +8810,11 @@ ROP runtime получает двухуровневую semantic classification 
 - new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/`duplicate_candidate` → `create_lead` (без attach, без выбора candidate, c реальным `crm.item.add` при execute); new_lead + existing Bitrix `matched_lead` ()`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal + `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` + `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead - candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix `duplicate_candidate` — separate fields;
 - live Bitrix outbound-correlation regression fix: реальный outbound Message-ID из `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID` сохранены); outbound bridge authorization — по canonical CRM entity identity (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` — diagnostic only (сотрудник, отправивший письмо, может отличаться от responsible самого Lead) и не может заменить trusted responsible; exact bridge → `attach_existing` с `target_provenance=bitrix_outbound_exact` и canonical trusted responsible; trusted responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong direction / no RFC ancestry — fail-closed;
 - `uv run pytest -q` → 1674 passed (exit 0); runtime smoke через ROP batch entrypoint (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/вебхука в текущем окружении); эквивалентные positive/negative сценарии покрыты mock-level integration тестами (pagination/bridge/authority, deferred/zero mutation);
-- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены;
-  `beeagent-rop` не изменялся (public contract consumption only).
+- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены; `beeagent-rop` не изменялся (public contract consumption only).
 
 ### Итерация 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -8926,6 +8863,7 @@ AI document understanding не является malware scanner, sandbox или 
 - сохранить существующие `rop.attachments.chars_max`, `size_max` и `types` как bounded analysis policy или мигрировать их с explicit backward-compatible validation if implementation requires clearer naming;
 - поддержать common business formats для semantic analysis where the configured provider capability is explicitly supported and verified, including target coverage for:
   - `text/plain`;
+  - `text/csv`;
   - PDF;
   - DOCX;
   - DOC where provider support exists;
@@ -9084,6 +9022,22 @@ mailbox MIME
 - config and security contracts are explicit and validated;
 - tests, controlled provider/Bitrix smoke, security checks and docs are ready for PR review;
 - `pyproject.toml.version` is unchanged.
+
+#### Verification (Issue #209)
+
+- mailbox normalization теперь сохраняет accepted MIME attachment bytes под private key `_raw_attachments` (удаляется до записи `normalized_events.json`); bytes не попадают в normal JSON artifacts/logs/HTML/API;
+- dedicated bounded opaque attachment store: `storage/attachments/<run_id>/<blob_id>.bin` + `attachment_manifest.json` (generated `att-<sha256[:24]>` blob ids, filename только metadata, SHA-256 + exact size в manifest, no raw bytes); required persistence failure raises `AttachmentStoreError` → batch degraded → mailbox checkpoint не продвигается;
+- config-driven storage bounds: `rop.attachments.storage.{enabled,file_max,message_max,files_message_max}` (validated fail-fast; count and bounded encoded-size preflight apply before decoded payload retention, then exact file/aggregate limits apply immediately after decode); oversized/count/aggregate/blocked (`.eml`/`message/rfc822`) — explicit manifest `storage_status`;
+- `rop.attachments.enabled:false` → zero provider calls (analysis artifact `analysis_status=disabled`), retention/download/Bitrix delivery независимы и продолжают работать;
+- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,chars_max}`; PDF/DOCX use the provider file-upload reference contract (file uploaded via the provider Files API, then `input_file` referenced by `file_id`, temporary file deleted after the response) and JPEG/PNG use `input_image` data URLs; binary analysis enabled (`file_capable:true`) only after controlled provider smokes prove the configured profile for PDF/DOCX/JPEG/PNG; unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated и bounded; document instructions не дают tool/mailbox/CRM authority;
+- AI preview интегрирован в existing attachment extraction contract: `attachment_text_preview` / `attachment_preview_available` / status/refusal fields (для `beeagent-rop` без изменения package);
+- authenticated download route `GET /rop/attachments/{attachment_id}/download?run_id=...&event_id=...`: существующая BeeUI session auth + authorization scopes, lookup только по safe manifest attachment ID, invalid/traversal/unrelated → fail closed, forced `attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: no-store`, `application/octet-stream` (no inline render);
+- Event Detail показывает filename/content_type/size/storage_status/analysis_status/sha256/safe download link; attachment manifest и analysis добавлены в evidence artifacts и allowlists;
+- Bitrix physical file delivery: отдельный disabled-by-default switch `bitrix.writeback.file_attach` (bool, validated), отдельный `file_attach_status`/`file_attach_attempts`/`last_file_attach_error_code`/`attachment_refs` в write-back state; файлы читаются из durable attachment store по manifest refs (retry без mailbox re-ingestion); используется только уже выбранный trusted/new CRM target (email activity), доставка сама не выбирает target; `email_attach` backward-compatible; timeout/malformed file updates fail closed as `reconciliation_required` and replay never resends them blindly; write allowlist расширен ровно на `crm.activity.update` (FILES/fileData);
+- `beeagent-rop` не изменялся; `beeui` не изменялся (generic renderer, download contract BeeAgent-owned);
+- local verification is recorded only after fresh targeted and full-suite commands complete for this correction run;
+- controlled AI provider smoke для TXT/CSV/PDF/DOCX/JPEG/PNG выполнен на configured production profile: все шесть форматов дают successful bounded analysis и attachment-aware classification; controlled Bitrix test-portal attachment smoke остаётся NOT VERIFIABLE в текущем окружении, потому что доступен только production portal, и остаётся blocker для full DoD;
+- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

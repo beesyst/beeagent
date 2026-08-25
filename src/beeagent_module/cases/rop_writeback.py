@@ -25,6 +25,10 @@ from beeagent_module.adapters.bitrix_write_client import (
     build_bitrix_write_client,
 )
 from beeagent_module.core.input_source import effective_rop_sender_email
+from beeagent_module.core.attachment_store import (
+    load_attachment_manifest as _load_attachment_manifest,
+    read_attachment_blob as _read_attachment_blob,
+)
 from beeagent_module.core.message_id import (
     extract_reference_ids as _extract_reference_ids_shared,
     normalize_message_id as _normalize_message_id_shared,
@@ -207,6 +211,7 @@ def _writeback_policy(settings: dict) -> dict[str, Any]:
         "stages": stages,
         "email_attach": wb.get("email_attach") is True,
         "email_completed": ("N" if wb.get("email_completed") is False else "Y"),
+        "file_attach": wb.get("file_attach") is True,
         "source_id": str(wb.get("source_id") or ""),
         "user_id_fallback": (
             int(fallback_id)
@@ -300,6 +305,26 @@ def _items_by_identity(
         if not isinstance(event_id, str) or not event_id:
             continue
         result[(event_id, str(instance_id or ""))] = item
+    return result
+
+
+def _attachment_refs_by_identity(
+    manifest: dict[str, Any] | None,
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    result: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    if not isinstance(manifest, dict):
+        return result
+    items = manifest.get("items")
+    if not isinstance(items, list):
+        return result
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        event_id = item.get("event_id")
+        instance_id = item.get("event_instance_id")
+        if not isinstance(event_id, str) or not event_id:
+            continue
+        result.setdefault((event_id, str(instance_id or "")), []).append(item)
     return result
 
 
@@ -474,6 +499,7 @@ def _build_planned_record(
     policy: dict[str, Any],
     run_id: str,
     thread_target: dict[str, Any] | None = None,
+    attachment_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     client_id = _bounded_text(event.get("client_id"))
     source_id = _bounded_text(event.get("source_id"))
@@ -493,6 +519,28 @@ def _build_planned_record(
     operational_case_type = case_type
     if delivery["outcome"] == "attach_existing":
         operational_case_type = "existing_deal"
+
+    email_activity_required = (
+        delivery["outcome"] in {"create_lead", "attach_existing"}
+        and policy["email_attach"] is True
+    )
+    file_attach_required = email_activity_required and policy["file_attach"] is True
+    safe_attachment_refs = [
+        {
+            "attachment_id": _bounded_text(ref.get("attachment_id")),
+            "filename": _bounded_text(ref.get("filename")),
+            "content_type": _bounded_text(ref.get("content_type")),
+            "size_bytes": ref.get("size_bytes")
+            if isinstance(ref.get("size_bytes"), int)
+            else None,
+            "sha256": _bounded_text(ref.get("sha256")),
+        }
+        for ref in (attachment_refs or [])
+        if isinstance(ref, dict)
+        and isinstance(ref.get("attachment_id"), str)
+        and ref.get("attachment_id")
+        and ref.get("storage_status") == "stored"
+    ]
 
     record = {
         "identity": identity,
@@ -515,18 +563,19 @@ def _build_planned_record(
             _MAX_ACTIVITY_DESCRIPTION_LENGTH,
         ),
         "email_activity_id": None,
-        "email_attachment_required": (
-            delivery["outcome"] in {"create_lead", "attach_existing"}
-            and policy["email_attach"] is True
-        ),
+        "email_attachment_required": email_activity_required,
         "email_attachment_status": (
-            "pending"
-            if delivery["outcome"] in {"create_lead", "attach_existing"}
-            and policy["email_attach"] is True
-            else "not_required"
+            "pending" if email_activity_required else "not_required"
         ),
         "attach_attempts": 0,
         "last_attach_error_code": None,
+        "file_attach_required": file_attach_required,
+        "file_attach_status": (
+            "pending" if file_attach_required else "not_required"
+        ),
+        "file_attach_attempts": 0,
+        "last_file_attach_error_code": None,
+        "attachment_refs": safe_attachment_refs,
         "case_type": operational_case_type,
         "semantic_case_type": case_type,
         "should_rop_see": should_rop_see,
@@ -630,6 +679,19 @@ def _merge_planned_record(
         )
     merged["attach_attempts"] = existing.get("attach_attempts", 0)
     merged["last_attach_error_code"] = existing.get("last_attach_error_code")
+    merged["file_attach_required"] = existing.get(
+        "file_attach_required", planned.get("file_attach_required", False)
+    )
+    merged["file_attach_status"] = existing.get(
+        "file_attach_status", planned.get("file_attach_status", "not_required")
+    )
+    merged["file_attach_attempts"] = existing.get("file_attach_attempts", 0)
+    merged["last_file_attach_error_code"] = existing.get(
+        "last_file_attach_error_code"
+    )
+    merged["attachment_refs"] = planned.get("attachment_refs") or existing.get(
+        "attachment_refs", []
+    )
     return merged
 
 
@@ -644,6 +706,7 @@ def _aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         "status_counts": {},
         "delivery_status_counts": {},
         "reason_counts": {},
+        "file_attach_status_counts": {},
     }
     for record in records:
         outcome = record.get("outcome")
@@ -660,6 +723,10 @@ def _aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         reason = str(record.get("reason_code") or "none")
         aggregate["reason_counts"][reason] = (
             aggregate["reason_counts"].get(reason, 0) + 1
+        )
+        file_status = str(record.get("file_attach_status") or "not_required")
+        aggregate["file_attach_status_counts"][file_status] = (
+            aggregate["file_attach_status_counts"].get(file_status, 0) + 1
         )
     return aggregate
 
@@ -987,6 +1054,9 @@ def build_writeback_plan(
     recon_by_id = _items_by_identity(reconciliation.get("items", []))
     routing_by_id = _items_by_identity(routing.get("items", []))
     normalized_by_identity = _items_by_identity(normalized_events)
+    attachment_refs_by_identity = _attachment_refs_by_identity(
+        _load_attachment_manifest(storage_dir, run_id)
+    )
 
     policy = _writeback_policy(settings)
 
@@ -999,6 +1069,7 @@ def build_writeback_plan(
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
         "email_completed": policy["email_completed"],
+        "file_attach": policy["file_attach"],
         "source_id": policy["source_id"],
         "user_id_fallback": policy["user_id_fallback"],
     }
@@ -1043,6 +1114,7 @@ def build_writeback_plan(
             policy=policy,
             run_id=run_id,
             thread_target=thread_target,
+            attachment_refs=attachment_refs_by_identity.get(identity_key, []),
         )
         if planned is None:
             logger.warning(
@@ -1374,13 +1446,16 @@ def _execute_email_attachment(
             existing_id,
         )
         return False
+    subject = record.get("subject") or ""
+    if not isinstance(subject, str) or not subject.strip():
+        subject = f"ROP email from {sender_email}"
     try:
         activity_id = write_client.add_email_activity(
             owner_entity_type_id=owner_entity_type_id,
             owner_id=owner_id,
             responsible_id=responsible_id,
             origin_id=record["origin_id"],
-            subject=record.get("subject") or "",
+            subject=subject,
             description=record.get("body_preview") or "",
             sender_email=sender_email,
             completed=policy["email_completed"],
@@ -1422,6 +1497,100 @@ def _execute_email_attachment(
             error_code,
         )
         return False
+
+
+def _execute_file_attachment(
+    record: dict[str, Any],
+    policy: dict[str, Any],
+    write_client: BitrixWriteClient,
+    storage_dir: Path,
+    logger: logging.Logger,
+) -> bool:
+    if record.get("file_attach_required") is not True:
+        record["file_attach_status"] = "not_required"
+        return False
+    if not policy["file_attach"]:
+        record["file_attach_status"] = "pending"
+        record["last_file_attach_error_code"] = "file_attach_disabled"
+        return False
+    activity_id = record.get("email_activity_id")
+    if not _positive_int(activity_id):
+        record["file_attach_status"] = "pending"
+        record["last_file_attach_error_code"] = "email_activity_unavailable"
+        return False
+    if record.get("file_attach_status") == "attached":
+        return False
+    if record.get("file_attach_status") in (
+        "uncertain",
+        "reconciliation_required",
+    ):
+        record["file_attach_status"] = "reconciliation_required"
+        record["last_file_attach_error_code"] = "reconciliation_required"
+        logger.warning(
+            "ROP write-back file attach requires reconciliation: identity=%s",
+            record["identity"],
+        )
+        return False
+    attachment_refs = record.get("attachment_refs")
+    if not isinstance(attachment_refs, list) or not attachment_refs:
+        record["file_attach_status"] = "completed"
+        record["last_file_attach_error_code"] = None
+        return False
+    attempts = int(record.get("file_attach_attempts", 0) or 0)
+    if attempts >= policy["attempts_retry_max"]:
+        record["file_attach_status"] = "failed"
+        record["last_file_attach_error_code"] = "retry_exhausted"
+        return False
+    run_id = str(record.get("last_run_id") or "")
+    files: list[tuple[str, bytes]] = []
+    for ref in attachment_refs:
+        attachment_id = str(ref.get("attachment_id") or "")
+        if not attachment_id:
+            continue
+        blob = _read_attachment_blob(storage_dir, run_id, attachment_id)
+        if blob is None:
+            record["file_attach_status"] = "failed"
+            record["last_file_attach_error_code"] = "attachment_blob_unavailable"
+            logger.warning(
+                "ROP write-back file attach blob unavailable: identity=%s "
+                "attachment_id=%s",
+                record["identity"],
+                attachment_id,
+            )
+            return False
+        content, meta = blob
+        filename = meta.get("filename") or ref.get("filename") or "attachment"
+        files.append((filename, content))
+    if not files:
+        record["file_attach_status"] = "completed"
+        record["last_file_attach_error_code"] = None
+        return False
+    try:
+        write_client.attach_files_to_activity(int(activity_id), files)
+    except BitrixConnectorError as exc:
+        error_code, retryable, uncertain = _classify_write_failure(exc)
+        record["file_attach_attempts"] = attempts + 1
+        record["last_file_attach_error_code"] = error_code
+        record["file_attach_status"] = (
+            "uncertain" if uncertain else "pending" if retryable else "failed"
+        )
+        logger.warning(
+            "ROP write-back file attach failed: identity=%s error_code=%s",
+            record["identity"],
+            error_code,
+        )
+        return False
+    record["file_attach_status"] = "attached"
+    record["file_attach_attempts"] = attempts + 1
+    record["last_file_attach_error_code"] = None
+    record["uncertain"] = False
+    logger.info(
+        "ROP write-back files attached to activity: identity=%s activity_id=%s files=%d",
+        record["identity"],
+        activity_id,
+        len(files),
+    )
+    return True
 
 
 def _execute_create_lead(
@@ -1568,6 +1737,7 @@ def execute_writeback_pending(
         "stages": policy["stages"],
         "email_attach": policy["email_attach"],
         "email_completed": policy["email_completed"],
+        "file_attach": policy["file_attach"],
         "source_id": policy["source_id"],
         "user_id_fallback": policy["user_id_fallback"],
     }
@@ -1674,6 +1844,15 @@ def execute_writeback_pending(
                 record["attach_attempts"] = 0
                 record["email_attachment_status"] = "pending"
                 record["last_attach_error_code"] = None
+                rearmed += 1
+            elif (
+                record.get("file_attach_required") is True
+                and record.get("file_attach_status") == "failed"
+                and record.get("last_file_attach_error_code") == "retry_exhausted"
+            ):
+                record["file_attach_attempts"] = 0
+                record["file_attach_status"] = "pending"
+                record["last_file_attach_error_code"] = None
                 rearmed += 1
         if rearmed:
             logger.info(
@@ -1811,6 +1990,28 @@ def execute_writeback_pending(
             policy,
             readonly_client,
             write_client,
+            logger,
+        ):
+            writes_performed += 1
+        record["updated_at_utc"] = _utc_now()
+
+    for record in events.values():
+        if record.get("file_attach_required") is not True:
+            continue
+        if record.get("file_attach_status") in (
+            "attached",
+            "completed",
+            "not_required",
+            "failed",
+        ):
+            continue
+        if not _positive_int(record.get("email_activity_id")):
+            continue
+        if _execute_file_attachment(
+            record,
+            policy,
+            write_client,
+            storage_dir,
             logger,
         ):
             writes_performed += 1

@@ -14,6 +14,8 @@ RUN_ARTIFACT_WHITELIST = {
     "source_diagnostics.json",
     "intake_metadata.json",
     "attachment_extraction.json",
+    "attachment_manifest.json",
+    "attachment_analysis.json",
     "normalized_events.json",
     "classified_events.json",
     "rop_review_table.tsv",

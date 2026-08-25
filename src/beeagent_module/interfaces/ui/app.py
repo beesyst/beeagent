@@ -30,6 +30,10 @@ from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
 )
+from beeagent_module.core.attachment_store import (
+    lookup_attachment,
+    read_attachment_blob,
+)
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
@@ -737,6 +741,30 @@ def _is_path_traversal(value: str) -> bool:
     return bool(_PATH_TRAVERSAL_RE.search(value))
 
 
+def _safe_download_filename(filename: str) -> str:
+    if not isinstance(filename, str):
+        return "attachment"
+    cleaned = "".join(
+        char for char in filename if ord(char) >= 32 and char not in ('"', "\\")
+    )
+    cleaned = cleaned.replace("/", "_").replace("\x00", "")
+    cleaned = cleaned.strip().strip(".")
+    if not cleaned:
+        return "attachment"
+    return cleaned[:_MAX_DOWNLOAD_FILENAME]
+
+
+def _content_disposition_header(filename: str) -> str:
+    ascii_name = filename.encode("ascii", errors="ignore").decode("ascii")
+    if not ascii_name:
+        ascii_name = "attachment"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
+
+
+_MAX_DOWNLOAD_FILENAME = 180
+
+
 def _register_custom_routes(
     app: FastAPI,
     adapter: BeeAgentUiAdapter,
@@ -919,6 +947,88 @@ def _register_custom_routes(
             )
         finally:
             reset_current_locale(token)
+
+    @app.get("/rop/attachments/{attachment_id}/download", include_in_schema=False)
+    async def rop_attachment_download(request: Request, attachment_id: str) -> Response:
+        run_id = request.query_params.get("run_id")
+        event_id = request.query_params.get("event_id")
+        if not run_id:
+            return _error_json(
+                "missing_run_id",
+                "run_id query parameter is required",
+                status_code=400,
+            )
+        try:
+            from beeui_module.adapters.ids import validate_run_id
+
+            validate_run_id(run_id)
+        except Exception:
+            return _error_json(
+                "invalid_run_id",
+                "Invalid run_id",
+                status_code=400,
+            )
+
+        if _is_path_traversal(attachment_id):
+            return _error_json(
+                "invalid_attachment_id",
+                "Invalid attachment_id",
+                status_code=400,
+            )
+        if len(attachment_id) > 300:
+            return _error_json(
+                "invalid_attachment_id",
+                "Invalid attachment_id",
+                status_code=400,
+            )
+
+        storage_dir = getattr(app.state, "beeagent_storage_dir", None)
+        if storage_dir is None:
+            return _error_json(
+                "server_error", "Storage unavailable", status_code=503
+            )
+
+        item = lookup_attachment(storage_dir, run_id, attachment_id)
+        if item is None:
+            return _error_json(
+                "not_found",
+                "Attachment not found",
+                status_code=404,
+            )
+        if event_id is not None and str(item.get("event_id") or "") != event_id:
+            return _error_json(
+                "not_found",
+                "Attachment not found",
+                status_code=404,
+            )
+        if item.get("storage_status") != "stored":
+            return _error_json(
+                "not_found",
+                "Attachment not available",
+                status_code=404,
+            )
+
+        blob = read_attachment_blob(storage_dir, run_id, attachment_id)
+        if blob is None:
+            return _error_json(
+                "not_found",
+                "Attachment not found",
+                status_code=404,
+            )
+        content, meta = blob
+
+        filename = str(meta.get("filename") or "attachment")
+        safe_filename = _safe_download_filename(filename)
+        disposition = _content_disposition_header(safe_filename)
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": disposition,
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            },
+        )
 
     _register_bitrix_widget_routes(app, adapter, logger)
     _register_bitrix_embed_routes(app, logger)

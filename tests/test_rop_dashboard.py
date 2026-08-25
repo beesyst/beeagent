@@ -1625,6 +1625,17 @@ class TestCrossRunPeriodAggregation:
             "chars_max": 120,
             "size_max": 4096,
             "types": ["text/plain", "application/json"],
+            "storage": {
+                "enabled": True,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
+            },
+            "analysis": {
+                "provider": "",
+                "file_capable": False,
+                "chars_max": 2000,
+            },
         }
         self._write_attachment_run(
             tmp_path,

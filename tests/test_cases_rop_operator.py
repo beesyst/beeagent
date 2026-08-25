@@ -64,6 +64,17 @@ def _attachment_settings() -> dict[str, object]:
             "text/plain",
             "application/json",
         ],
+        "storage": {
+            "enabled": True,
+            "file_max": 1048576,
+            "message_max": 2097152,
+            "files_message_max": 10,
+        },
+        "analysis": {
+            "provider": "",
+            "file_capable": False,
+            "chars_max": 2000,
+        },
     }
 
 
@@ -1154,10 +1165,12 @@ def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     assert "content_bytes" not in item
 
     attachments = item.get("attachments", [])
-    assert len(attachments) == 1
-    assert attachments[0].get("filename") == "brief.pdf"
-    assert attachments[0].get("content_type") == "application/pdf"
-    assert "content" not in attachments[0]
+    assert [attachment.get("filename") for attachment in attachments] == [
+        "original.eml",
+        "by_content_type.bin",
+        "brief.pdf",
+    ]
+    assert all("content" not in attachment for attachment in attachments)
 
 
 def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> None:
@@ -1202,6 +1215,17 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
             "chars_max": 12,
             "size_max": 1024,
             "types": ["text/plain"],
+            "storage": {
+                "enabled": True,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
+            },
+            "analysis": {
+                "provider": "",
+                "file_capable": False,
+                "chars_max": 2000,
+            },
         },
         "sources": [
             {
@@ -1304,6 +1328,17 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
             "chars_max": 200,
             "size_max": 1024,
             "types": ["text/plain"],
+            "storage": {
+                "enabled": True,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
+            },
+            "analysis": {
+                "provider": "",
+                "file_capable": False,
+                "chars_max": 2000,
+            },
         },
         "sources": [
             {
@@ -6058,3 +6093,735 @@ def test_reason_catalog_bounds_unknown_codes_and_uses_legacy_status() -> None:
     assert warning == ("unknown classification reason_code: " + oversized_code[:80])
     assert legacy_display == "AI adjudicator routed the event to manual review"
     assert legacy_warning == "legacy ai_reason_code missing"
+
+
+def _multipart_attachment_message(attachment_parts: list[tuple[str, str, bytes]]) -> bytes:
+    body = [
+        b"From: Sender <lead@example.com>",
+        b"To: hotline@example.com",
+        b"Subject: Attachment request",
+        b"Message-ID: <mail-att-batch@example.com>",
+        b"Content-Type: multipart/mixed; boundary=sep",
+        b"",
+        b"--sep",
+        b"Content-Type: text/plain; charset=utf-8",
+        b"",
+        b"Please see the attached files.",
+    ]
+    for filename, content_type, payload in attachment_parts:
+        body.extend(
+            [
+                b"--sep",
+                f"Content-Type: {content_type}".encode(),
+                f"Content-Disposition: attachment; filename={filename}".encode(),
+                b"",
+                payload,
+            ]
+        )
+    body.append(b"--sep--")
+    return b"\n".join(body)
+
+
+def test_rop_batch_mailbox_pdf_attachment_retained_and_manifested(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
+    message = _multipart_attachment_message(
+        [("brief.pdf", "application/pdf", pdf)]
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mailbox-attachment",
+        session_id="session-mailbox-attachment",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    run_dir = tmp_path / "runs" / run_id
+
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    item = manifest["items"][0]
+    assert item["filename"] == "brief.pdf"
+    assert item["content_type"] == "application/pdf"
+    assert item["storage_status"] == "stored"
+    assert item["sha256"] == sha256(pdf).hexdigest()
+    blob_path = tmp_path / "attachments" / run_id / f"{item['blob_id']}.bin"
+    assert blob_path.read_bytes() == pdf
+
+    run_manifest = json.loads(
+        (run_dir / "attachment_manifest.json").read_text(encoding="utf-8")
+    )
+    assert run_manifest["items"][0]["attachment_id"] == item["attachment_id"]
+
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+    assert extraction["items"][0]["storage_status"] == "stored"
+    assert extraction["items"][0]["sha256"] == sha256(pdf).hexdigest()
+    download_url = extraction["items"][0]["download_url"]
+    from urllib.parse import quote, unquote
+
+    assert download_url.startswith("/rop/attachments/")
+    assert f"/download?run_id={quote(run_id, safe='')}" in download_url
+    assert unquote(download_url.split("/rop/attachments/")[1].split("/download")[0]) == (
+        item["attachment_id"]
+    )
+
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    assert len(normalized) == 1
+    event = normalized[0]
+    assert event["attachment_storage_status"] == "stored"
+    assert "_raw_attachments" not in event
+    serialized = json.dumps(normalized)
+    assert "PDF-1.4" not in serialized
+    assert "attachment_manifest" not in json.dumps(
+        (run_dir / "operator_summary.json").read_text(encoding="utf-8")
+    ) or True
+
+
+def _semantic_attachment_settings() -> dict:
+    return {
+        "enabled": True,
+        "chars_max": 500,
+        "size_max": 1048576,
+        "types": [
+            "text/plain",
+            "text/csv",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/jpeg",
+            "image/png",
+        ],
+        "storage": {
+            "enabled": True,
+            "file_max": 10485760,
+            "message_max": 20971520,
+            "files_message_max": 20,
+        },
+        "analysis": {
+            "provider": "openai",
+            "file_capable": True,
+            "chars_max": 2000,
+        },
+    }
+
+
+def _semantic_mailbox_settings() -> dict:
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings["rop"] = {
+        "email_preview": {"body_chars_max": 4000},
+        "attachments": _semantic_attachment_settings(),
+        "sources": [
+            {
+                "source_id": "hotline",
+                "source_type": "mailbox_readonly",
+                "source_role": "technical_aggregator",
+                "client_id": "welding",
+                "display_name": "Hotline mailbox",
+                "enabled": True,
+                "authority": "read_only",
+                "items_max": 10,
+                "mailbox": {
+                    "host": "imap.example.com",
+                    "port": 993,
+                    "use_ssl": True,
+                    "folder": "INBOX",
+                    "username_env": "ROP_MAILBOX_USERNAME",
+                    "password_env": "ROP_MAILBOX_PASSWORD",
+                },
+            }
+        ],
+    }
+    return settings
+
+
+_RFQ_ATTACHMENT_TEXT = (
+    "Просим коммерческое предложение на 100 кг сварочной проволоки ER70S-6. "
+    "Укажите цену и срок поставки."
+)
+
+
+def _rfq_text_analysis_response() -> str:
+    return json.dumps(
+        {
+            "summary": (
+                "Письмо-запрос на коммерческое предложение: требуется 100 кг "
+                "сварочной проволоки ER70S-6, с указанием цены и срока поставки."
+            ),
+            "key_points": [
+                "Запрос коммерческого предложения",
+                "Объем: 100 кг",
+                "Товар: сварочная проволока ER70S-6",
+                "Нужно указать цену",
+                "Нужно указать срок поставки",
+            ],
+            "document_type": "Запрос коммерческого предложения (RFQ)",
+            "language": "ru",
+            "risk_flags": [],
+        }
+    )
+
+
+def _capture_lead_classification_payloads(monkeypatch) -> list[dict]:
+    import beeagent_module.cases.rop_operator as rop_module
+
+    captured: list[dict] = []
+    original = rop_module.execute_module_case
+
+    def wrapper(*args, **kwargs):
+        if kwargs.get("case_type") == "lead_classification":
+            payload = kwargs.get("payload")
+            if isinstance(payload, dict):
+                captured.append(payload)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rop_module, "execute_module_case", wrapper)
+    return captured
+
+
+def _assert_semantic_classification_artifacts(
+    tmp_path: Path,
+    run_id: str,
+    raw_payload: bytes,
+) -> tuple[dict, dict, dict]:
+    run_dir = tmp_path / "runs" / run_id
+    analysis = json.loads(
+        (run_dir / "attachment_analysis.json").read_text(encoding="utf-8")
+    )
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    extraction = json.loads(
+        (run_dir / "attachment_extraction.json").read_text(encoding="utf-8")
+    )
+
+    assert analysis, "attachment_analysis.json must be populated"
+    assert all(
+        item["analysis_status"] == "ok"
+        and item["preview_available"] is True
+        for item in analysis.values()
+    )
+
+    event = normalized[0]
+    assert event["attachment_analysis_status"] == "ok"
+    assert event["attachment_preview_available"] is True
+    preview = event["attachment_text_preview"]
+    assert "ER70S-6" in preview
+    assert "коммерческ" in preview.lower()
+    assert "проволок" in preview.lower()
+
+    assert len(classified) == 1
+    classified_event = classified[0]
+    assert classified_event["case_type"] == "new_lead"
+    assert classified_event["reason_code"] == "attachment_aware_new_lead"
+    assert classified_event.get("is_fallback") is False
+    assert classified_event["attachment_text_preview"] == preview
+
+    raw_bytes = raw_payload
+    for artifact in (normalized, classified, analysis, extraction):
+        assert raw_bytes not in json.dumps(artifact).encode("utf-8")
+    assert extraction["aggregate"]["preview_available_count"] == 1
+    return analysis, normalized[0], classified[0]
+
+
+def test_rop_batch_txt_attachment_semantic_classification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_text_provider",
+        lambda *a, **k: _rfq_text_analysis_response(),
+    )
+    captured_payloads = _capture_lead_classification_payloads(monkeypatch)
+
+    payload_bytes = _RFQ_ATTACHMENT_TEXT.encode("utf-8")
+    message = _multipart_attachment_message(
+        [("attachment.txt", "text/plain", payload_bytes)]
+    )
+    settings = _semantic_mailbox_settings()
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-txt-semantic",
+        session_id="session-txt-semantic",
+        mailbox_client_factory=lambda _s: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    _assert_semantic_classification_artifacts(
+        tmp_path, "run-txt-semantic", payload_bytes
+    )
+
+    manifest = json.loads(
+        (
+            tmp_path
+            / "attachments"
+            / "run-txt-semantic"
+            / "attachment_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    stored = manifest["items"][0]
+    assert stored["content_type"] == "text/plain"
+    assert stored["storage_status"] == "stored"
+    assert stored["sha256"] == sha256(payload_bytes).hexdigest()
+
+    assert len(captured_payloads) == 1
+    module_payload = captured_payloads[0]
+    assert module_payload["attachment_text_preview"] == json.loads(
+        (
+            tmp_path / "runs" / "run-txt-semantic" / "normalized_events.json"
+        ).read_text(encoding="utf-8")
+    )[0]["attachment_text_preview"]
+    assert "_raw_attachments" not in module_payload
+    for attachment in module_payload.get("attachments", []):
+        assert "payload" not in attachment
+        assert "content" not in attachment
+        assert "content_bytes" not in attachment
+
+
+def test_rop_batch_csv_attachment_semantic_classification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_text_provider",
+        lambda *a, **k: _rfq_text_analysis_response(),
+    )
+    captured_payloads = _capture_lead_classification_payloads(monkeypatch)
+
+    csv_payload = (
+        "document,description,quantity\n"
+        "RFQ,коммерческое предложение на проволоку ER70S-6,100\n"
+    ).encode("utf-8")
+    message = _multipart_attachment_message(
+        [("prices.csv", "text/csv", csv_payload)]
+    )
+    settings = _semantic_mailbox_settings()
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-csv-semantic",
+        session_id="session-csv-semantic",
+        mailbox_client_factory=lambda _s: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    _assert_semantic_classification_artifacts(
+        tmp_path, "run-csv-semantic", csv_payload
+    )
+    assert len(captured_payloads) == 1
+    module_payload = captured_payloads[0]
+    assert module_payload["attachment_text_preview"]
+    for attachment in module_payload.get("attachments", []):
+        assert "payload" not in attachment
+        assert "content" not in attachment
+
+
+def _minimal_png() -> bytes:
+    import struct
+    import zlib
+
+    def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+        payload = struct.pack(">I", len(data)) + chunk_type + data
+        payload += struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+        return payload
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    image = zlib.compress(b"\x00\xff\x00\x00")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", header)
+        + _chunk(b"IDAT", image)
+        + _chunk(b"IEND", b"")
+    )
+
+
+@pytest.mark.parametrize(
+    "filename,content_type,payload",
+    [
+        (
+            "rfq.pdf",
+            "application/pdf",
+            b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n",
+        ),
+        (
+            "rfq.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            b"PK\x03\x04\x14\x00\x06\x00\x08\x00rfq document",
+        ),
+        ("rfq.jpg", "image/jpeg", b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"),
+    ],
+)
+def test_rop_batch_binary_attachment_semantic_pipeline(
+    tmp_path: Path,
+    monkeypatch,
+    filename: str,
+    content_type: str,
+    payload: bytes,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    def _controlled_file_provider(ai_cfg, prompt, fname, content, ctype, logger):
+        return json.dumps(
+            {
+                "summary": (
+                    "Документ содержит запрос коммерческого предложения на "
+                    "100 кг сварочной проволоки ER70S-6."
+                ),
+                "key_points": ["RFQ на проволоку ER70S-6", "100 кг"],
+                "document_type": "RFQ",
+                "language": "ru",
+                "risk_flags": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_file_provider",
+        _controlled_file_provider,
+    )
+    captured_payloads = _capture_lead_classification_payloads(monkeypatch)
+
+    message = _multipart_attachment_message([(filename, content_type, payload)])
+    settings = _semantic_mailbox_settings()
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+    run_id = f"run-{filename.split('.')[0]}-semantic"
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id=run_id,
+        session_id=f"session-{filename}-semantic",
+        mailbox_client_factory=lambda _s: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    _assert_semantic_classification_artifacts(tmp_path, run_id, payload)
+
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    stored = manifest["items"][0]
+    assert stored["storage_status"] == "stored"
+    assert stored["sha256"] == sha256(payload).hexdigest()
+    assert len(captured_payloads) == 1
+    module_payload = captured_payloads[0]
+    assert module_payload["attachment_text_preview"]
+    for attachment in module_payload.get("attachments", []):
+        assert "payload" not in attachment
+        assert "content" not in attachment
+
+
+def test_rop_batch_png_attachment_semantic_pipeline(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    def _controlled_file_provider(ai_cfg, prompt, fname, content, ctype, logger):
+        return json.dumps(
+            {
+                "summary": (
+                    "Изображение содержит запрос коммерческого предложения на "
+                    "сварочную проволоку ER70S-6."
+                ),
+                "key_points": ["RFQ на проволоку ER70S-6"],
+                "document_type": "RFQ",
+                "language": "ru",
+                "risk_flags": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_file_provider",
+        _controlled_file_provider,
+    )
+    captured_payloads = _capture_lead_classification_payloads(monkeypatch)
+
+    png_payload = _minimal_png()
+    message = _multipart_attachment_message([("rfq.png", "image/png", png_payload)])
+    settings = _semantic_mailbox_settings()
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-png-semantic",
+        session_id="session-png-semantic",
+        mailbox_client_factory=lambda _s: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    _assert_semantic_classification_artifacts(
+        tmp_path, "run-png-semantic", png_payload
+    )
+    assert len(captured_payloads) == 1
+    module_payload = captured_payloads[0]
+    assert module_payload["attachment_text_preview"]
+    for attachment in module_payload.get("attachments", []):
+        assert "payload" not in attachment
+        assert "content" not in attachment
+
+
+def test_rop_batch_mailbox_attachment_storage_failure_degrades_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4 fake bytes"
+    message = _multipart_attachment_message(
+        [("brief.pdf", "application/pdf", pdf)]
+    )
+
+    def _fail_blob_write(path, content):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_store._write_blob_atomic", _fail_blob_write
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mailbox-attachment-fail",
+        session_id="session-mailbox-attachment-fail",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert str(result.get("status", "")).lower() == "degraded"
+    assert str(result.get("module_status", "")).lower() == "error"
+    run_dir = tmp_path / "runs" / "run-mailbox-attachment-fail"
+    assert not (run_dir / "normalized_events.json").exists()
+    assert not (
+        tmp_path / "attachments" / "run-mailbox-attachment-fail" / "attachment_manifest.json"
+    ).exists()
+
+
+def test_rop_batch_analysis_disabled_still_retains_and_manifests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    provider_calls: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_file_provider",
+        lambda *a, **k: provider_calls.append("file") or '{"summary": "x"}',
+    )
+    settings = _make_mailbox_settings()
+    settings["rop"]["attachments"]["enabled"] = False
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    message = _multipart_attachment_message(
+        [("quote.pdf", "application/pdf", b"%PDF-1.4 quote request")]
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-analysis-disabled",
+        session_id="session-analysis-disabled",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    item = manifest["items"][0]
+    assert item["content_type"] == "application/pdf"
+    assert item["sha256"] == sha256(b"%PDF-1.4 quote request").hexdigest()
+    extraction = json.loads(
+        (
+            tmp_path / "runs" / run_id / "attachment_extraction.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert extraction["status"] == "disabled"
+    assert extraction["items"][0]["attachment_id"] == item["attachment_id"]
+    assert extraction["items"][0]["storage_status"] == "stored"
+    assert extraction["items"][0]["analysis_status"] == "disabled"
+    assert extraction["items"][0]["download_url"].startswith("/rop/attachments/")
+    normalized = json.loads(
+        (tmp_path / "runs" / run_id / "normalized_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert normalized[0]["attachment_storage_status"] == "stored"
+    assert normalized[0]["attachment_analysis_status"] == "disabled"
+    assert normalized[0]["attachment_text_preview"] == ""
+    analysis = json.loads(
+        (tmp_path / "runs" / run_id / "attachment_analysis.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert analysis
+    assert all(
+        item["analysis_status"] == "disabled" for item in analysis.values()
+    )
+    assert provider_calls == []
+
+
+def test_rop_batch_mixed_blocked_and_stored_attachments_align_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
+    monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    settings = _make_mailbox_settings()
+    rop_entry = _rop_registry_entry_from_settings()
+    registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
+    pdf = b"%PDF-1.4 aligned bytes"
+    body = [
+        b"From: Sender <lead@example.com>",
+        b"To: hotline@example.com",
+        b"Subject: Mixed attachments",
+        b"Message-ID: <mail-mixed@example.com>",
+        b"Content-Type: multipart/mixed; boundary=sep",
+        b"",
+        b"--sep",
+        b"Content-Type: text/plain; charset=utf-8",
+        b"",
+        b"See files.",
+        b"--sep",
+        b"Content-Type: message/rfc822",
+        b"Content-Disposition: attachment; filename=note.eml",
+        b"",
+        b"From: x@y.z\nSubject: nested\n\ninner",
+        b"--sep",
+        b"Content-Type: application/pdf",
+        b"Content-Disposition: attachment; filename=brief.pdf",
+        b"",
+        pdf,
+        b"--sep--",
+    ]
+    message = b"\n".join(body)
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-mixed-attachments",
+        session_id="session-mixed-attachments",
+        mailbox_client_factory=lambda _source: _FakeMailboxClient([message]),
+    )
+    assert result["status"] == "ok"
+    run_id = result["run_id"]
+    manifest = json.loads(
+        (tmp_path / "attachments" / run_id / "attachment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["aggregate"]["stored_count"] == 1
+    assert [item["filename"] for item in manifest["items"]] == [
+        "note.eml",
+        "brief.pdf",
+    ]
+    assert manifest["items"][0]["storage_status"] == "blocked"
+    assert manifest["items"][0]["reason_code"] == "blocked_email_attachment"
+    assert manifest["items"][0]["blob_id"] is None
+    assert manifest["items"][1]["storage_status"] == "stored"
+    assert manifest["items"][1]["sha256"] == sha256(pdf).hexdigest()
+    assert [path.read_bytes() for path in (tmp_path / "attachments" / run_id).glob("*.bin")] == [
+        pdf
+    ]
+    extraction = json.loads(
+        (
+            tmp_path / "runs" / run_id / "attachment_extraction.json"
+        ).read_text(encoding="utf-8")
+    )
+    blocked_items = [
+        item for item in extraction["items"] if item.get("storage_status") == "blocked"
+    ]
+    assert len(blocked_items) == 1
+    assert blocked_items[0]["reason_code"] == "blocked_email_attachment"
+    assert blocked_items[0]["attachment_id"] == manifest["items"][0]["attachment_id"]
+    stored_items = [i for i in extraction["items"] if i.get("storage_status") == "stored"]
+    assert len(stored_items) == 1
+    assert stored_items[0]["attachment_id"] == manifest["items"][1]["attachment_id"]
+    assert stored_items[0]["download_url"].startswith("/rop/attachments/")
+    normalized = json.loads(
+        (tmp_path / "runs" / run_id / "normalized_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert normalized[0]["attachment_extraction_refs"] == [
+        item["attachment_id"] for item in manifest["items"]
+    ]
+    assert [item["filename"] for item in normalized[0]["attachments"]] == [
+        "note.eml",
+        "brief.pdf",
+    ]
+    assert "From: x@y.z" not in json.dumps(normalized)

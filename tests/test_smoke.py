@@ -83,6 +83,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+    storage:
+      enabled: true
+      file_max: 10485760
+      message_max: 20971520
+      files_message_max: 20
+    analysis:
+      provider: ""
+      file_capable: false
+      chars_max: 2000
   dashboard:
     default_period: "7d"
     periods:
@@ -295,6 +304,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+    storage:
+      enabled: true
+      file_max: 10485760
+      message_max: 20971520
+      files_message_max: 20
+    analysis:
+      provider: ""
+      file_capable: false
+      chars_max: 2000
   dashboard:
     default_period: "7d"
     periods:
@@ -495,6 +513,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+    storage:
+      enabled: true
+      file_max: 10485760
+      message_max: 20971520
+      files_message_max: 20
+    analysis:
+      provider: ""
+      file_capable: false
+      chars_max: 2000
   dashboard:
     default_period: "7d"
     periods:
@@ -704,6 +731,15 @@ rop:
     size_max: 1048576
     types:
       - "text/plain"
+    storage:
+      enabled: true
+      file_max: 10485760
+      message_max: 20971520
+      files_message_max: 20
+    analysis:
+      provider: ""
+      file_capable: false
+      chars_max: 2000
   dashboard:
     default_period: "7d"
     periods:

@@ -235,12 +235,9 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
 Артефакты:
 
 - `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
-- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed
-  together with `rop_action_drafts.json` for each original affected run after execution/recovery.
+- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed together with `rop_action_drafts.json` for each original affected run after execution/recovery.
 
-With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it
-can report success. A projection or post-persistence executor failure never erases canonical
-intent and remains recoverable through later run, poll or controlled manual execution.
+With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it can report success. A projection or post-persistence executor failure never erases canonical intent and remains recoverable through later run, poll or controlled manual execution.
 
 ## 11. Стек
 

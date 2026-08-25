@@ -107,6 +107,7 @@ def load_rop_source(
     logger: logging.Logger,
     email_preview_body_chars_max: int,
     mailbox_client_factory: Callable[[dict], MailboxReadonlyClient] | None = None,
+    attachment_storage_settings: dict[str, Any] | None = None,
 ) -> tuple[list[dict], dict[str, Any], dict[str, Any]]:
     source_type = source.get("source_type")
 
@@ -145,6 +146,7 @@ def load_rop_source(
             logger=logger,
             email_preview_body_chars_max=email_preview_body_chars_max,
             mailbox_client_factory=mailbox_client_factory,
+            attachment_storage_settings=attachment_storage_settings,
         )
 
     raise InputSourceError(
@@ -179,6 +181,7 @@ def load_mailbox_readonly(
     logger: logging.Logger,
     email_preview_body_chars_max: int,
     mailbox_client_factory: Callable[[dict], MailboxReadonlyClient] | None = None,
+    attachment_storage_settings: dict[str, Any] | None = None,
 ) -> tuple[list[dict], dict[str, Any], dict[str, Any]]:
     source_id = str(source.get("source_id", "unknown"))
     items_max = source.get("items_max")
@@ -308,6 +311,7 @@ def load_mailbox_readonly(
                     source=source,
                     position=index,
                     email_preview_body_chars_max=email_preview_body_chars_max,
+                    attachment_storage_settings=attachment_storage_settings,
                 )
             )
         except ValueError as exc:
@@ -715,6 +719,7 @@ def _normalize_mailbox_message(
     source: dict,
     position: int,
     email_preview_body_chars_max: int,
+    attachment_storage_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     message = BytesParser(policy=policy.default).parsebytes(raw_message)
     source_id = str(source.get("source_id", "unknown"))
@@ -734,6 +739,9 @@ def _normalize_mailbox_message(
     to_list = _extract_addresses(message, "To")
     cc_list = _extract_addresses(message, "Cc")
     attachments = _extract_attachment_metadata(message)
+    raw_attachments = _extract_attachment_payloads(
+        message, attachment_storage_settings=attachment_storage_settings
+    )
     subject = _clean_header_value(message.get("Subject"))
 
     if (
@@ -802,6 +810,7 @@ def _normalize_mailbox_message(
         "_date_fallback": date_fallback,
         **body_preview_fields,
         "attachments": attachments,
+        "_raw_attachments": raw_attachments,
     }
 
 
@@ -888,18 +897,27 @@ def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
     attachments: list[dict[str, Any]] = []
 
     for part in message.iter_attachments():
+        filename = part.get_filename() or ""
+        content_type = part.get_content_type()
+
+        if _is_blocked_email_attachment(filename=filename, content_type=content_type):
+            attachments.append(
+                {
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size": None,
+                    "storage_status": "blocked",
+                    "reason_code": "blocked_email_attachment",
+                }
+            )
+            continue
+
         payload = part.get_payload(decode=False)
         size: int | None = None
         if isinstance(payload, str):
             size = len(payload.encode("utf-8", errors="ignore"))
         elif isinstance(payload, bytes):
             size = len(payload)
-
-        filename = part.get_filename() or ""
-        content_type = part.get_content_type()
-
-        if _is_blocked_email_attachment(filename=filename, content_type=content_type):
-            continue
 
         item: dict[str, Any] = {
             "filename": filename,
@@ -909,6 +927,164 @@ def _extract_attachment_metadata(message: Any) -> list[dict[str, Any]]:
         attachments.append(item)
 
     return attachments
+
+
+def _extract_attachment_payloads(
+    message: Any,
+    attachment_storage_settings: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if attachment_storage_settings is None:
+        return []
+    storage = attachment_storage_settings.get("storage", {})
+    if not isinstance(storage, dict) or storage.get("enabled") is not True:
+        return []
+
+    file_max = int(storage.get("file_max") or 0)
+    message_max = int(storage.get("message_max") or 0)
+    files_message_max = int(storage.get("files_message_max") or 0)
+    items: list[dict[str, Any]] = []
+    aggregate_size = 0
+    for index, part in enumerate(message.iter_attachments(), start=1):
+        filename = part.get_filename() or ""
+        content_type = part.get_content_type()
+
+        if _is_blocked_email_attachment(filename=filename, content_type=content_type):
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    None,
+                    "blocked",
+                    "blocked_email_attachment",
+                )
+            )
+            continue
+
+        if files_message_max > 0 and index > files_message_max:
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    None,
+                    "count_exceeded",
+                    "attachment_count_exceeded",
+                )
+            )
+            continue
+
+        preflight_size = _decoded_payload_upper_bound(part)
+        if file_max > 0 and preflight_size is not None and preflight_size > file_max:
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    preflight_size,
+                    "oversized",
+                    "attachment_oversized",
+                )
+            )
+            continue
+        if (
+            message_max > 0
+            and preflight_size is not None
+            and aggregate_size + preflight_size > message_max
+        ):
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    preflight_size,
+                    "aggregate_exceeded",
+                    "message_aggregate_exceeded",
+                )
+            )
+            continue
+
+        decoded = part.get_payload(decode=True)
+        if not isinstance(decoded, bytes):
+            items.append(
+                {
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size": None,
+                    "payload": None,
+                    "storage_status": "malformed",
+                    "reason_code": "malformed_attachment_metadata",
+                }
+            )
+            continue
+
+        size = len(decoded)
+        if file_max > 0 and size > file_max:
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    size,
+                    "oversized",
+                    "attachment_oversized",
+                )
+            )
+            continue
+        if message_max > 0 and aggregate_size + size > message_max:
+            items.append(
+                _refused_attachment_payload(
+                    filename,
+                    content_type,
+                    size,
+                    "aggregate_exceeded",
+                    "message_aggregate_exceeded",
+                )
+            )
+            continue
+
+        aggregate_size += size
+
+        items.append(
+            {
+                "filename": filename,
+                "content_type": content_type,
+                "size": size,
+                "payload": decoded,
+                "storage_status": "stored",
+                "reason_code": None,
+            }
+        )
+
+    return items
+
+
+def _refused_attachment_payload(
+    filename: str,
+    content_type: str,
+    size: int | None,
+    storage_status: str,
+    reason_code: str,
+) -> dict[str, Any]:
+    return {
+        "filename": filename,
+        "content_type": content_type,
+        "size": size,
+        "payload": None,
+        "storage_status": storage_status,
+        "reason_code": reason_code,
+    }
+
+
+def _decoded_payload_upper_bound(part: Any) -> int | None:
+    payload = part.get_payload(decode=False)
+    if isinstance(payload, str):
+        encoded_size = len(payload.encode("utf-8", errors="ignore"))
+    elif isinstance(payload, bytes):
+        encoded_size = len(payload)
+    else:
+        return None
+    transfer_encoding = str(part.get("Content-Transfer-Encoding") or "").lower()
+    if transfer_encoding == "base64":
+        return (encoded_size * 3) // 4 + 2
+    if transfer_encoding in {"", "7bit", "8bit", "binary", "quoted-printable"}:
+        return encoded_size
+    return None
 
 
 def _extract_addresses(message: Any, header_name: str) -> list[str]:
