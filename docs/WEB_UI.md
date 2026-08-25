@@ -139,8 +139,7 @@ Query parameters:
 
 ## Attachment download route (It40)
 
-- `GET /rop/attachments/{attachment_id}/download?run_id=<run_id>&event_id=<event_id>` —
-  authenticated/authorized forced download of an accepted original attachment.
+- `GET /rop/attachments/{attachment_id}/download?run_id=<run_id>&event_id=<event_id>` — authenticated/authorized forced download of an accepted original attachment.
 
 Query parameters:
 
@@ -151,11 +150,9 @@ Behavior:
 
 - lookup только по safe manifest attachment id (никогда по произвольному filesystem path);
 - invalid/unknown run/event/attachment ids и path traversal fail closed;
-- response: forced `attachment`, `X-Content-Type-Options: nosniff`,
-  `Cache-Control: no-store`, `application/octet-stream` (no inline render);
-- route защищён существующей BeeUI session auth + resource authorization
-  (ROP scope); ROP-scoped principal не может использовать его для чтения
-  unrelated surfaces;
+- response: forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `application/octet-stream` (no inline render);
+- route защищён существующей BeeUI session auth + resource authorization (ROP scope); ROP-scoped principal не может использовать его для чтения unrelated surfaces;
+- Event Detail retains stored attachment metadata and this download action when `rop.attachments.enabled:false`; that switch disables semantic analysis only;
 - raw attachment bytes никогда не отдаются через JSON API/HTML контент.
 
 ## JSON API routes
@@ -182,8 +179,7 @@ Behavior:
 
 - `storage/runs/<run_id>/rop_recommendations.json`
 
-Recommendations tab читает delivery recommendations из `rop_recommendations.json`.
-Она не должна использовать legacy deterministic dashboard recommendations как основной источник данных.
+Recommendations tab читает delivery recommendations из `rop_recommendations.json`. Она не должна использовать legacy deterministic dashboard recommendations как основной источник данных.
 
 Доступные поля в текущем scope:
 
@@ -547,9 +543,7 @@ Launch handler для application open context. Только POST; GET на `/bi
 
 ## Auth mode (UI-7)
 
-BeeAgent Web Console поддерживает config-driven auth boundary через BeeUI session/role layer.
-BeeUI владеет login/logout/session/CSRF.
-BeeAgent владеет config/env policy, bootstrap, CLI rotation, route protection и server-side resource authorization.
+BeeAgent Web Console поддерживает config-driven auth boundary через BeeUI session/role layer. BeeUI владеет login/logout/session/CSRF. BeeAgent владеет config/env policy, bootstrap, CLI rotation, route protection и server-side resource authorization.
 
 Auth настройки живут в `config/settings.yml` → `web.auth`:
 
@@ -610,8 +604,7 @@ resource access = scopes
 ./start.sh auth rotate session
 ```
 
-После rotation нужен restart web app.
-Session secret не печатается.
+После rotation нужен restart web app. Session secret не печатается.
 
 ### Поведение
 
@@ -623,9 +616,7 @@ Session secret не печатается.
 
 HTML routes:
 
-- `/`, `/rop`, `/rop/events/{event_id}`, `/rop/attachments/{attachment_id}/download`,
-  `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`,
-  `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
+- `/`, `/rop`, `/rop/events/{event_id}`, `/rop/attachments/{attachment_id}/download`, `/runs`, `/runs/{run_id}`, `/runs/{run_id}/artifacts`, `/runs/{run_id}/artifacts/{artifact_id}`, `/modules`
 
 API routes:
 
@@ -681,9 +672,7 @@ Session управляется BeeUI через подписанную cookie `b
 - `operator` — operator-level доступ (future)
 - `admin` — admin-level доступ (future config/actions)
 
-Поддерживаются `viewer` / `operator` / `admin`.
-Role не определяет resource scope: resource access определяется только `scopes`.
-Все текущие business/operator routes Web Console остаются read-only.
+Поддерживаются `viewer` / `operator` / `admin`. Role не определяет resource scope: resource access определяется только `scopes`. Все текущие business/operator routes Web Console остаются read-only.
 
 ### Rollout
 
@@ -948,8 +937,7 @@ Browser route показывает bounded/redacted artifact preview через 
 | `rop_final_decisions_json`        | `rop_final_decisions.json`                            |
 | `rop_writeback_summary_json`      | `rop_writeback_summary.json`                          |
 
-UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path.
-It32 artifacts `rop_context_enrichment.json`, `rop_recommendations.json` и `rop_evaluation.json` в текущей реализации не входят в generic artifact allowlist. Recommendations tab и widget API читают `rop_recommendations.json` через read-model/widget code, а не через browser artifact viewer.
+UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path. It32 artifacts `rop_context_enrichment.json`, `rop_recommendations.json` и `rop_evaluation.json` в текущей реализации не входят в generic artifact allowlist. Recommendations tab и widget API читают `rop_recommendations.json` через read-model/widget code, а не через browser artifact viewer.
 
 `rop_writeback_summary.json` — read-only per-run projection операторского write-back state (Iteration 37): bounded outcome/status per event (`create_lead` / `attach_existing` / `deferred`), source of truth — `storage/interfaces/rop_writeback_state.json`. Проекция не содержит credentials, raw `.eml` и raw attachment content.
 
@@ -1323,8 +1311,8 @@ Existing UI-5 поля сохраняются.
 Sanitization rules:
 
 - JSON responses strip `raw_eml`, `raw_message`, `attachment_content`, `content`, `content_bytes`, `payload_bytes`;
-- attachment entries with `.eml` or `message/rfc822` are removed from rendered payloads;
-- dashboard shows only metadata/preview fields.
+- raw `.eml` / `message/rfc822` content is never rendered; blocked nested-email attachments may remain in rendered payloads only as bounded lifecycle metadata with `storage_status=blocked` and `reason_code=blocked_email_attachment`, without blob or download link;
+- dashboard shows only bounded metadata, lifecycle status and preview fields.
 
 ## Out of scope
 
@@ -1337,8 +1325,7 @@ Sanitization rules:
 - DB-backed user management;
 - POST/write actions;
 - CRM/mailbox actions;
-- UI-triggered CRM/Bitrix write-back; controlled server-side `rop run` and `rop poll`
-  write-back remains outside Web/widget routes;
+- UI-triggered CRM/Bitrix write-back; controlled server-side `rop run` and `rop poll` write-back remains outside Web/widget routes;
 - web-triggered ROP run;
 - widget-triggered execution;
 - save-human-decision UI flow;
@@ -1394,8 +1381,7 @@ Column visibility is managed through the toolbar ellipsis action (column chooser
 | `sort`      | string  | `received_at` | Sort field            | `received_at`, `date`, `event_date`, `sender`, `subject`, `case_type`, `priority`, `bitrix_status` |
 | `order`     | string  | `desc`        | Sort direction        | `asc` или `desc`                                                                                   |
 
-`sort` и `order` образуют атомарную пару: URL содержит оба параметра или не
-содержит ни одного для default `received_at` / `desc`.
+`sort` и `order` образуют атомарную пару: URL содержит оба параметра или не содержит ни одного для default `received_at` / `desc`.
 
 #### Canonical params preserved in all ROP links
 

@@ -764,6 +764,7 @@ def build_rop_event_detail_read_model(
                         ),
                         "extraction_status": _str(att.get("extraction_status")),
                         "storage_status": _str(att.get("storage_status")),
+                        "reason_code": _str(att.get("reason_code")),
                         "analysis_status": _str(att.get("analysis_status")),
                         "analysis_reason_code": _str(att.get("analysis_reason_code")),
                         "sha256": _str(att.get("sha256")),
@@ -1412,6 +1413,7 @@ def build_rop_event_detail_page_model(
             "content_type": attachment.get("content_type"),
             "size_bytes": _format_size(attachment.get("size_bytes")),
             "storage_status": attachment.get("storage_status"),
+            "reason_code": attachment.get("reason_code"),
             "analysis_status": attachment.get("analysis_status"),
             "download_url": attachment.get("download_url"),
         }
@@ -1431,6 +1433,7 @@ def build_rop_event_detail_page_model(
                         "key": "storage_status",
                         "label": t("Storage status", lang),
                     },
+                    {"key": "reason_code", "label": t("Reason", lang)},
                     {
                         "key": "analysis_status",
                         "label": t("Analysis status", lang),

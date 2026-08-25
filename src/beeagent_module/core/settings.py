@@ -42,9 +42,12 @@ REQUIRED_KEYS = (
     ("rop", "attachments", "size_max"),
     ("rop", "attachments", "types"),
     ("rop", "attachments", "storage", "enabled"),
-    ("rop", "attachments", "storage", "file_max_bytes"),
-    ("rop", "attachments", "storage", "message_aggregate_max_bytes"),
-    ("rop", "attachments", "storage", "files_max_per_message"),
+    ("rop", "attachments", "storage", "file_max"),
+    ("rop", "attachments", "storage", "message_max"),
+    ("rop", "attachments", "storage", "files_message_max"),
+    ("rop", "attachments", "analysis", "provider"),
+    ("rop", "attachments", "analysis", "file_capable"),
+    ("rop", "attachments", "analysis", "chars_max"),
     ("rop", "email_preview", "body_chars_max"),
     ("rop", "sources"),
     ("rop", "dashboard", "default_period"),
@@ -320,9 +323,9 @@ def validate_settings(settings: dict) -> None:
             "Invalid type for rop.attachments.storage.enabled, expected bool"
         )
     for storage_key in (
-        "file_max_bytes",
-        "message_aggregate_max_bytes",
-        "files_max_per_message",
+        "file_max",
+        "message_max",
+        "files_message_max",
     ):
         storage_value = storage_cfg.get(storage_key)
         if not isinstance(storage_value, int) or storage_value <= 0:
@@ -336,29 +339,24 @@ def validate_settings(settings: dict) -> None:
         )
 
     analysis_cfg = attachments_cfg.get("analysis")
-    if analysis_cfg is not None and not isinstance(analysis_cfg, dict):
+    if not isinstance(analysis_cfg, dict):
         raise RuntimeError(
             "Invalid type for rop.attachments.analysis, expected mapping"
         )
-    if isinstance(analysis_cfg, dict):
-        if not isinstance(analysis_cfg.get("file_capable"), bool):
-            raise RuntimeError(
-                "Invalid type for rop.attachments.analysis.file_capable, "
-                "expected bool"
-            )
-        analysis_provider = analysis_cfg.get("provider")
-        if analysis_provider is not None and not isinstance(analysis_provider, str):
-            raise RuntimeError(
-                "Invalid type for rop.attachments.analysis.provider, "
-                "expected string or empty"
-            )
-        analysis_max_chars = analysis_cfg.get("max_chars")
-        if analysis_max_chars is not None and (
-            not isinstance(analysis_max_chars, int) or analysis_max_chars <= 0
-        ):
-            raise RuntimeError(
-                "Invalid rop.attachments.analysis.max_chars, expected int > 0"
-            )
+    if not isinstance(analysis_cfg.get("file_capable"), bool):
+        raise RuntimeError(
+            "Invalid type for rop.attachments.analysis.file_capable, expected bool"
+        )
+    analysis_provider = analysis_cfg.get("provider")
+    if not isinstance(analysis_provider, str):
+        raise RuntimeError(
+            "Invalid type for rop.attachments.analysis.provider, expected string"
+        )
+    analysis_chars_max = analysis_cfg.get("chars_max")
+    if not isinstance(analysis_chars_max, int) or analysis_chars_max <= 0:
+        raise RuntimeError(
+            "Invalid rop.attachments.analysis.chars_max, expected int > 0"
+        )
 
     _VALID_SOURCE_TYPES = {"json_batch", "mailbox_readonly"}
     _VALID_AUTHORITY_VALUES = {"read_only", "draft_only", "execution_capable"}

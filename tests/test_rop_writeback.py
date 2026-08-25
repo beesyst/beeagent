@@ -5475,9 +5475,9 @@ def _seed_attachment_manifest(storage_dir: Path, run_id: str) -> dict[str, Any]:
         "status": "ok",
         "policy": {
             "enabled": True,
-            "file_max_bytes": 1048576,
-            "message_aggregate_max_bytes": 2097152,
-            "files_max_per_message": 10,
+            "file_max": 1048576,
+            "message_max": 2097152,
+            "files_message_max": 10,
         },
         "aggregate": {
             "attachment_count": 1,
@@ -5629,6 +5629,53 @@ class TestPhysicalFileAttachmentDelivery:
             call for call in recorder.calls if call["method"] == "crm.activity.add"
         ]
         assert len(activity_calls) == 1
+
+    def test_uncertain_file_update_requires_reconciliation_before_replay(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_id = "run-wb-files-uncertain"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-file-uncertain@example.test>",
+                    sender="sender@example.com",
+                )
+            ],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched")],
+        )
+        _seed_attachment_manifest(tmp_path, run_id)
+        settings = _writeback_settings(email_attach=True, file_attach=True)
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        remote_file_deliveries = 0
+
+        def remote_success_then_timeout(call: dict[str, Any]) -> bytes:
+            nonlocal remote_file_deliveries
+            if call["method"] == "crm.activity.update":
+                remote_file_deliveries += 1
+                raise URLError("timed out after remote success")
+            return _default_handler(call)
+
+        recorder = _HttpRecorder(remote_success_then_timeout)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+            first_record = list(_load_state(tmp_path)["events"].values())[0]
+            assert first_record["file_attach_status"] == "uncertain"
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+
+        record = list(_load_state(tmp_path)["events"].values())[0]
+        update_calls = [
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
+        ]
+        assert remote_file_deliveries == 1
+        assert len(update_calls) == 1
+        assert record["file_attach_status"] == "reconciliation_required"
+        assert record["last_file_attach_error_code"] == "reconciliation_required"
 
     def test_file_attach_missing_blob_degrades(
         self, tmp_path: Path, writeback_env: None

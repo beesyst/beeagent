@@ -33,9 +33,9 @@ def _storage_settings(
     return {
         "storage": {
             "enabled": enabled,
-            "file_max_bytes": file_max,
-            "message_aggregate_max_bytes": aggregate_max,
-            "files_max_per_message": files_max,
+            "file_max": file_max,
+            "message_max": aggregate_max,
+            "files_message_max": files_max,
         }
     }
 
@@ -398,9 +398,9 @@ def test_long_event_id_attachment_id_truncated_consistently(
         "types": ["text/plain", "application/pdf"],
         "storage": {
             "enabled": True,
-            "file_max_bytes": 1048576,
-            "message_aggregate_max_bytes": 2097152,
-            "files_max_per_message": 10,
+            "file_max": 1048576,
+            "message_max": 2097152,
+            "files_message_max": 10,
         },
     }
     manifest = persist_run_attachments(

@@ -7072,14 +7072,14 @@ def _build_full_settings() -> dict:
                 "types": ["text/plain"],
                 "storage": {
                     "enabled": True,
-                    "file_max_bytes": 1048576,
-                    "message_aggregate_max_bytes": 2097152,
-                    "files_max_per_message": 10,
+                    "file_max": 1048576,
+                    "message_max": 2097152,
+                    "files_message_max": 10,
                 },
                 "analysis": {
                     "provider": "",
                     "file_capable": False,
-                    "max_chars": 2000,
+                    "chars_max": 2000,
                 },
             },
             "sources": [],
@@ -9775,7 +9775,7 @@ def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
     extraction = {
         "run_id": "run-detail-lifecycle",
         "status": "ok",
-        "aggregate": {"attachment_count": 1},
+        "aggregate": {"attachment_count": 2},
         "items": [
             {
                 "event_id": event_id,
@@ -9790,7 +9790,20 @@ def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
                 "sha256": "a" * 64,
                 "download_url": "/rop/attachments/evt-lifecycle-att-0/download?run_id=run-detail-lifecycle",
                 "preview_available": False,
-            }
+            },
+            {
+                "event_id": event_id,
+                "event_instance_id": "event-000001",
+                "attachment_id": "evt-lifecycle-att-1",
+                "filename": "forwarded.eml",
+                "content_type": "message/rfc822",
+                "size_bytes": None,
+                "extraction_status": "refused",
+                "storage_status": "blocked",
+                "reason_code": "blocked_email_attachment",
+                "analysis_status": "disabled",
+                "preview_available": False,
+            },
         ],
     }
     (run_dir / "normalized_events.json").write_text(
@@ -9806,13 +9819,17 @@ def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
     data = build_rop_event_detail_read_model(
         storage_dir, "run-detail-lifecycle", event_id
     )
-    assert len(data["attachments"]) == 1
+    assert len(data["attachments"]) == 2
     att = data["attachments"][0]
     assert att["filename"] == "quote.pdf"
     assert att["storage_status"] == "stored"
     assert att["analysis_status"] == "ok"
     assert att["download_url"].startswith("/rop/attachments/")
     assert att["sha256"] == "a" * 64
+    blocked = data["attachments"][1]
+    assert blocked["filename"] == "forwarded.eml"
+    assert blocked["storage_status"] == "blocked"
+    assert blocked["reason_code"] == "blocked_email_attachment"
 
     client = _client(storage_dir)
     response = client.get(
@@ -9823,3 +9840,6 @@ def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
     assert api_att["storage_status"] == "stored"
     assert api_att["analysis_status"] == "ok"
     assert api_att["download_url"].startswith("/rop/attachments/")
+    api_blocked = response.json()["data"]["attachments"][1]
+    assert api_blocked["storage_status"] == "blocked"
+    assert api_blocked["reason_code"] == "blocked_email_attachment"

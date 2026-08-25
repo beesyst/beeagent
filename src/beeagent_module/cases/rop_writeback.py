@@ -1520,6 +1520,17 @@ def _execute_file_attachment(
         return False
     if record.get("file_attach_status") == "attached":
         return False
+    if record.get("file_attach_status") in (
+        "uncertain",
+        "reconciliation_required",
+    ):
+        record["file_attach_status"] = "reconciliation_required"
+        record["last_file_attach_error_code"] = "reconciliation_required"
+        logger.warning(
+            "ROP write-back file attach requires reconciliation: identity=%s",
+            record["identity"],
+        )
+        return False
     attachment_refs = record.get("attachment_refs")
     if not isinstance(attachment_refs, list) or not attachment_refs:
         record["file_attach_status"] = "completed"

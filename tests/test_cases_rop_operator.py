@@ -66,14 +66,14 @@ def _attachment_settings() -> dict[str, object]:
         ],
         "storage": {
             "enabled": True,
-            "file_max_bytes": 1048576,
-            "message_aggregate_max_bytes": 2097152,
-            "files_max_per_message": 10,
+            "file_max": 1048576,
+            "message_max": 2097152,
+            "files_message_max": 10,
         },
         "analysis": {
             "provider": "",
             "file_capable": False,
-            "max_chars": 2000,
+            "chars_max": 2000,
         },
     }
 
@@ -1165,10 +1165,12 @@ def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     assert "content_bytes" not in item
 
     attachments = item.get("attachments", [])
-    assert len(attachments) == 1
-    assert attachments[0].get("filename") == "brief.pdf"
-    assert attachments[0].get("content_type") == "application/pdf"
-    assert "content" not in attachments[0]
+    assert [attachment.get("filename") for attachment in attachments] == [
+        "original.eml",
+        "by_content_type.bin",
+        "brief.pdf",
+    ]
+    assert all("content" not in attachment for attachment in attachments)
 
 
 def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> None:
@@ -1215,14 +1217,14 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
             "types": ["text/plain"],
             "storage": {
                 "enabled": True,
-                "file_max_bytes": 1048576,
-                "message_aggregate_max_bytes": 2097152,
-                "files_max_per_message": 10,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
             },
             "analysis": {
                 "provider": "",
                 "file_capable": False,
-                "max_chars": 2000,
+                "chars_max": 2000,
             },
         },
         "sources": [
@@ -1328,14 +1330,14 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
             "types": ["text/plain"],
             "storage": {
                 "enabled": True,
-                "file_max_bytes": 1048576,
-                "message_aggregate_max_bytes": 2097152,
-                "files_max_per_message": 10,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
             },
             "analysis": {
                 "provider": "",
                 "file_capable": False,
-                "max_chars": 2000,
+                "chars_max": 2000,
             },
         },
         "sources": [
@@ -6243,12 +6245,17 @@ def test_rop_batch_analysis_disabled_still_retains_and_manifests(
 ) -> None:
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
     monkeypatch.setenv("ROP_MAILBOX_PASSWORD", "secret")
+    provider_calls: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.core.attachment_analysis._call_file_provider",
+        lambda *a, **k: provider_calls.append("file") or '{"summary": "x"}',
+    )
     settings = _make_mailbox_settings()
     settings["rop"]["attachments"]["enabled"] = False
     rop_entry = _rop_registry_entry_from_settings()
     registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
     message = _multipart_attachment_message(
-        [("quote.txt", "text/plain", b"quote request content")]
+        [("quote.pdf", "application/pdf", b"%PDF-1.4 quote request")]
     )
 
     result = run_rop_batch_case(
@@ -6270,12 +6277,27 @@ def test_rop_batch_analysis_disabled_still_retains_and_manifests(
         )
     )
     assert manifest["aggregate"]["stored_count"] == 1
+    item = manifest["items"][0]
+    assert item["content_type"] == "application/pdf"
+    assert item["sha256"] == sha256(b"%PDF-1.4 quote request").hexdigest()
     extraction = json.loads(
         (
             tmp_path / "runs" / run_id / "attachment_extraction.json"
         ).read_text(encoding="utf-8")
     )
     assert extraction["status"] == "disabled"
+    assert extraction["items"][0]["attachment_id"] == item["attachment_id"]
+    assert extraction["items"][0]["storage_status"] == "stored"
+    assert extraction["items"][0]["analysis_status"] == "disabled"
+    assert extraction["items"][0]["download_url"].startswith("/rop/attachments/")
+    normalized = json.loads(
+        (tmp_path / "runs" / run_id / "normalized_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert normalized[0]["attachment_storage_status"] == "stored"
+    assert normalized[0]["attachment_analysis_status"] == "disabled"
+    assert normalized[0]["attachment_text_preview"] == ""
     analysis = json.loads(
         (tmp_path / "runs" / run_id / "attachment_analysis.json").read_text(
             encoding="utf-8"
@@ -6285,6 +6307,7 @@ def test_rop_batch_analysis_disabled_still_retains_and_manifests(
     assert all(
         item["analysis_status"] == "disabled" for item in analysis.values()
     )
+    assert provider_calls == []
 
 
 def test_rop_batch_mixed_blocked_and_stored_attachments_align_ids(
@@ -6340,13 +6363,43 @@ def test_rop_batch_mixed_blocked_and_stored_attachments_align_ids(
         )
     )
     assert manifest["aggregate"]["stored_count"] == 1
-    assert manifest["items"][0]["filename"] == "brief.pdf"
+    assert [item["filename"] for item in manifest["items"]] == [
+        "note.eml",
+        "brief.pdf",
+    ]
+    assert manifest["items"][0]["storage_status"] == "blocked"
+    assert manifest["items"][0]["reason_code"] == "blocked_email_attachment"
+    assert manifest["items"][0]["blob_id"] is None
+    assert manifest["items"][1]["storage_status"] == "stored"
+    assert manifest["items"][1]["sha256"] == sha256(pdf).hexdigest()
+    assert [path.read_bytes() for path in (tmp_path / "attachments" / run_id).glob("*.bin")] == [
+        pdf
+    ]
     extraction = json.loads(
         (
             tmp_path / "runs" / run_id / "attachment_extraction.json"
         ).read_text(encoding="utf-8")
     )
+    blocked_items = [
+        item for item in extraction["items"] if item.get("storage_status") == "blocked"
+    ]
+    assert len(blocked_items) == 1
+    assert blocked_items[0]["reason_code"] == "blocked_email_attachment"
+    assert blocked_items[0]["attachment_id"] == manifest["items"][0]["attachment_id"]
     stored_items = [i for i in extraction["items"] if i.get("storage_status") == "stored"]
     assert len(stored_items) == 1
-    assert stored_items[0]["attachment_id"] == manifest["items"][0]["attachment_id"]
+    assert stored_items[0]["attachment_id"] == manifest["items"][1]["attachment_id"]
     assert stored_items[0]["download_url"].startswith("/rop/attachments/")
+    normalized = json.loads(
+        (tmp_path / "runs" / run_id / "normalized_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert normalized[0]["attachment_extraction_refs"] == [
+        item["attachment_id"] for item in manifest["items"]
+    ]
+    assert [item["filename"] for item in normalized[0]["attachments"]] == [
+        "note.eml",
+        "brief.pdf",
+    ]
+    assert "From: x@y.z" not in json.dumps(normalized)

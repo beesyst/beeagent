@@ -28,21 +28,50 @@ def build_attachment_extraction(
     analysis_results = analysis_results or {}
 
     if not enabled:
+        items: list[dict[str, Any]] = []
+        enriched_events: list[dict[str, Any]] = []
+        for event in events:
+            enriched_event, event_items = _extract_disabled_event_attachments(event)
+            merged_items = _merge_storage_and_analysis_items(
+                event_items=event_items,
+                manifest_items=manifest_items,
+                analysis_results={
+                    item["attachment_id"]: {
+                        "analysis_status": "disabled",
+                        "reason_code": "analysis_disabled",
+                        "analysis_preview": "",
+                        "preview_available": False,
+                    }
+                    for item in event_items
+                },
+                run_id=run_id,
+                preview_chars_max=preview_chars_max,
+            )
+            enriched_events.append(
+                _merge_storage_and_analysis_event(enriched_event, merged_items)
+            )
+            items.extend(merged_items)
         artifact = {
             "run_id": run_id,
             "status": "disabled",
             "aggregate": {
                 "event_count": len(events),
-                "attachment_count": 0,
+                "attachment_count": len(items),
                 "preview_available_count": 0,
-                "metadata_only_count": 0,
+                "metadata_only_count": sum(
+                    1
+                    for item in items
+                    if item["extraction_status"] == "metadata_only"
+                ),
                 "refused_count": 0,
                 "unsupported_count": 0,
-                "failed_count": 0,
+                "failed_count": sum(
+                    1 for item in items if item["extraction_status"] == "failed"
+                ),
             },
-            "items": [],
+            "items": items,
         }
-        return artifact, list(events)
+        return artifact, enriched_events
 
     items: list[dict[str, Any]] = []
     enriched_events: list[dict[str, Any]] = []
@@ -236,15 +265,7 @@ def _extract_event_attachments(
     merged_preview = merged_preview[:preview_chars_max]
 
     enriched = dict(event)
-    enriched["attachments"] = [
-        item
-        for item in attachments
-        if isinstance(item, dict)
-        and not _is_blocked_email_attachment(
-            filename=_as_text(item.get("filename")),
-            content_type=_as_text(item.get("content_type")),
-        )
-    ]
+    enriched["attachments"] = [item for item in attachments if isinstance(item, dict)]
     enriched["attachment_extraction_status"] = status
     enriched["attachment_preview_available"] = bool(previews)
     enriched["attachment_text_preview"] = merged_preview
@@ -257,6 +278,82 @@ def _extract_event_attachments(
         enriched["attachment_text"] = merged_preview
 
     return enriched, event_items
+
+
+def _extract_disabled_event_attachments(
+    event: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    attachments = event.get("attachments")
+    if not isinstance(attachments, list):
+        attachments = []
+    items = [
+        _metadata_only_attachment_item(
+            event,
+            attachment,
+            event_attachment_id(event.get("event_id"), index),
+        )
+        for index, attachment in enumerate(attachments)
+    ]
+    enriched = dict(event)
+    enriched["attachment_extraction_status"] = "disabled"
+    enriched["attachment_preview_available"] = False
+    enriched["attachment_text_preview"] = ""
+    enriched["attachment_extraction_refs"] = [item["attachment_id"] for item in items]
+    enriched["attachment_refusal_reasons"] = []
+    return enriched, items
+
+
+def _metadata_only_attachment_item(
+    event: dict[str, Any],
+    attachment: Any,
+    attachment_id: str,
+) -> dict[str, Any]:
+    item = {
+        "event_id": _as_text(event.get("event_id")),
+        "event_instance_id": _as_text(event.get("event_instance_id")),
+        "source_id": _as_text(event.get("source_id")),
+        "source_type": _as_text(event.get("source_type")),
+        "source_role": _as_text(event.get("source_role")),
+        "source_display_name": _as_text(event.get("source_display_name")),
+        "client_id": _as_text(event.get("client_id")),
+        "attachment_id": attachment_id,
+        "filename": "",
+        "content_type": "",
+        "size_bytes": None,
+        "extraction_status": "metadata_only",
+        "preview_available": False,
+        "text_preview": "",
+        "preview_chars": 0,
+        "is_supported": False,
+        "is_refused": False,
+        "is_truncated": False,
+        "reason_code": "analysis_disabled",
+        "refusal_reason": None,
+    }
+    if not isinstance(attachment, dict):
+        item.update(
+            {
+                "extraction_status": "failed",
+                "reason_code": "malformed_attachment_metadata",
+                "refusal_reason": "attachment metadata is invalid",
+            }
+        )
+        return item
+    item["filename"] = _as_text(attachment.get("filename"))
+    item["content_type"] = _as_text(attachment.get("content_type"))
+    item["size_bytes"] = _to_int(
+        attachment.get("size_bytes", attachment.get("size"))
+    )
+    if _is_blocked_email_attachment(item["filename"], item["content_type"]):
+        item.update(
+            {
+                "extraction_status": "refused",
+                "is_refused": True,
+                "reason_code": "blocked_email_attachment",
+                "refusal_reason": "email attachments are blocked",
+            }
+        )
+    return item
 
 
 def _extract_attachment_item(

@@ -248,8 +248,7 @@ Consider IAST only for higher-risk changes such as:
 
 ### Lightweight rule
 
-IAST is **not default** for everyday work.
-Use it only when a change is clearly security-sensitive and runtime-observable.
+IAST is **not default** for everyday work. Use it only when a change is clearly security-sensitive and runtime-observable.
 
 ## Fuzzing
 
@@ -270,8 +269,7 @@ Consider fuzzing for code that parses or restores:
 
 ### Lightweight rule
 
-Do not fuzz everything.
-Use fuzzing only for code that can realistically break on malformed input.
+Do not fuzz everything. Use fuzzing only for code that can realistically break on malformed input.
 
 ## Security levels for PRs
 
@@ -427,8 +425,7 @@ When a change affects what the system can do:
 
 ## Bitrix write-back boundary (Iteration 37)
 
-BeeAgent has a disabled-by-default, bounded Bitrix CRM write-back path for ROP events.
-Rules:
+BeeAgent has a disabled-by-default, bounded Bitrix CRM write-back path for ROP events. Rules:
 
 - `BitrixReadonlyClient` stays strictly read-only; its allowlist has no mutation methods and includes `crm.activity.list` only for idempotency reconciliation.
 - Reconciliation email matching uses the exact `EMAIL` filter (not `%EMAIL` substring, which some portals treat as returning all entities) and title search is applied only to entity types that have a `title` field (contacts are skipped), so connector errors are not produced by invalid filters and clean senders are detected reliably as `not_found`. Identity evidence (sender email/phone, Contact/Company and related historical CRM relation) is never an executable target: an exact matched Lead/Deal, an exact Contact/Company and a Deal resolved through the bounded read-only `crm.item.list` (`entityTypeId=2`) `contactId`/`companyId` relation all remain identity/candidate evidence with `safe_to_use_as_target=false` and `needs_manual_review=true`. Title/subject similarity never authorizes a target. After successful bounded Lead and related-Deal searches find no executable target, reconciliation emits `identity_only_no_target` with `suitable_target_search=completed_no_target`, which may enter the configured Lead-create path only for `new_lead` or `irrelevant`.
@@ -440,6 +437,12 @@ Rules:
     (`target_provenance=thread_resolved`) propagates its target to later replies;
   - legacy records without trusted target provenance are never promoted to thread authority (fail closed);
   - matching scope is the same `client_id` (not necessarily the same `source_id`);
+  - run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment;
+  - an independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review;
+  - an exact reply in the same batch whose thread root is only planned (not yet confirmed) is deferred as recoverable `pending_thread_root` and resolved after the root is confirmed.
+- Outbound Bitrix correlation (Iteration 39) is strictly READ ONLY (`bitrix_outbound_correlation.json`):
+  - outbound Bitrix activity (`crm.activity.list`, `TYPE_ID=4`) is used only to observe email Message-IDs of outbound activities; no mutation is performed;
+  - inbound `In-Reply-To` / bounded `References` must contain the exact outbound Message-ID for a candidate bridge; restored bridge evidence is revalidated against the current RFC ancestry;
   - run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment;
   - an independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review;
   - an exact reply in the same batch whose thread root is only planned (not yet confirmed) is deferred as recoverable `pending_thread_root` and resolved after the root is confirmed.
@@ -472,49 +475,20 @@ BeeAgent has a bounded opaque attachment lifecycle for ROP mailbox attachments.
 
 Rules:
 
-- accepted MIME attachment bytes are retained only as opaque blobs in the
-  dedicated bounded store `storage/attachments/<run_id>/`; generated blob ids
-  (`att-<sha256[:24]>`) and manifest ids are used for filesystem/URL identity;
-  original filenames are metadata only and never control filesystem location;
-- raw attachment bytes never appear in `normalized_events.json`, classification
-  artifacts, write-back state/summaries, logs, HTML or JSON APIs; the private
-  `_raw_attachments` event key is stripped before any JSON serialization;
-- storage is durable before mailbox checkpoint advancement; required persistence
-  failure blocks checkpoint advancement (fail closed);
-- configured storage bounds (per-file, per-message aggregate, files count) are
-  enforced before unbounded storage allocation; oversized/count-exceeded/
-  aggregate-exceeded/blocked (`.eml`/`message/rfc822`) files get explicit
-  `storage_status` and are never stored;
-- retention/download/Bitrix delivery are independent from semantic analysis:
-  `rop.attachments.enabled:false` means zero provider calls but files remain
-  stored, downloadable and eligible for Bitrix delivery;
+- accepted MIME attachment bytes are retained only as opaque blobs in the dedicated bounded store `storage/attachments/<run_id>/`; generated blob ids (`att-<sha256[:24]>`) and manifest ids are used for filesystem/URL identity; original filenames are metadata only and never control filesystem location;
+- raw attachment bytes never appear in `normalized_events.json`, classification artifacts, write-back state/summaries, logs, HTML or JSON APIs; the private `_raw_attachments` event key is stripped before any JSON serialization;
+- storage is durable before mailbox checkpoint advancement; required persistence failure blocks checkpoint advancement (fail closed);
+- configured storage bounds (per-file, per-message aggregate, files count) are enforced before decoded payload retention where MIME preflight is available and exactly after decode otherwise; oversized/count-exceeded/ aggregate-exceeded/blocked (`.eml`/`message/rfc822`) files get explicit `storage_status` and are never stored;
+- retention/download/Bitrix delivery are independent from semantic analysis: `rop.attachments.enabled:false` means zero provider calls but files remain stored, downloadable and eligible for Bitrix delivery;
 - AI document understanding is a bounded domain-assist path only:
   - only explicitly supported configured content types/sizes are analyzed;
-  - file egress to a provider happens only through an explicit configured/
-    validated file-capable provider path (binary input requires
-    `rop.attachments.analysis.file_capable:true` and `openai_responses`);
-  - provider failure/timeout/invalid output degrades explicitly and never
-    triggers an unsafe local PDF/Office parser fallback;
-  - document contents are untrusted data: instructions inside a document never
-    grant tool, mailbox, broker or CRM execution authority;
-  - AI output is bounded, schema-validated and only feeds the existing
-    attachment extraction contract (`attachment_text_preview`/status fields);
-- download (`GET /rop/attachments/{attachment_id}/download`) is authenticated and
-  authorized by the existing BeeUI session/auth/scope boundary; lookup is only by
-  safe manifest attachment id (never arbitrary filesystem paths); invalid run/
-  event/attachment ids, path traversal and unrelated scopes fail closed; response
-  uses forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control:
-  no-store` and `application/octet-stream` (no inline rendering, no public cache);
-- Bitrix physical file delivery uses only the already-selected trusted/new CRM
-  target and email activity from the existing write-back authority; delivery never
-  selects a target itself; it is gated by the separate
-  `bitrix.writeback.file_attach` switch, has its own `file_attach_status`/
-  idempotency state, and reads files from the durable local attachment store so a
-  Bitrix temporary failure is retryable without mailbox re-ingestion; replay does
-  not duplicate email activity or files; the write allowlist is extended only with
-  the exact required `crm.activity.update` (FILES/fileData);
-- no credential, webhook URL, raw `.eml` or attachment bytes appear in logs/HTML/
-  JSON APIs; no arbitrary filesystem download route exists.
+  - file egress to a provider happens only through an explicit configured/ validated file-capable provider path (binary input requires `rop.attachments.analysis.file_capable:true` and `openai_responses`); PDF/DOCX use the provider file input contract and JPEG/PNG use the provider image input contract; file capability remains false until controlled smoke evidence validates the configured profile;
+  - provider failure/timeout/invalid output degrades explicitly and never triggers an unsafe local PDF/Office parser fallback;
+  - document contents are untrusted data: instructions inside a document never grant tool, mailbox, broker or CRM execution authority;
+  - AI output is bounded, schema-validated and only feeds the existing attachment extraction contract (`attachment_text_preview`/status fields);
+- download (`GET /rop/attachments/{attachment_id}/download`) is authenticated and authorized by the existing BeeUI session/auth/scope boundary; lookup is only by safe manifest attachment id (never arbitrary filesystem paths); invalid run/ event/attachment ids, path traversal and unrelated scopes fail closed; response uses forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `application/octet-stream` (no inline rendering, no public cache);
+- Bitrix physical file delivery uses only the already-selected trusted/new CRM target and email activity from the existing write-back authority; delivery never selects a target itself; it is gated by the separate `bitrix.writeback.file_attach` switch, has its own `file_attach_status`/ idempotency state, and reads files from the durable local attachment store so a proven unsuccessful Bitrix temporary failure is retryable without mailbox re-ingestion; uncertain file mutations become `reconciliation_required` and are never resent blindly; the write allowlist is extended only with the exact required `crm.activity.update` (FILES/fileData);
+- no credential, webhook URL, raw `.eml` or attachment bytes appear in logs/HTML/ JSON APIs; no arbitrary filesystem download route exists.
 
 ## Security and SDLC integration
 

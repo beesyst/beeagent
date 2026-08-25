@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 from beeagent_module.core.attachment_store import (
     load_attachment_manifest,
@@ -27,6 +28,13 @@ _ANALYSIS_TEXT_MAX = 8000
 _ANALYSIS_PROMPT_MAX = 6000
 _ANALYSIS_PROVIDER_TIMEOUT = 30
 _TEXT_PREVIEW_TYPES = frozenset({"text/plain", "text/csv", "text/html", "text/markdown"})
+_FILE_INPUT_TYPES = frozenset(
+    {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+)
+_IMAGE_INPUT_TYPES = frozenset({"image/jpeg", "image/png"})
 
 
 def _analysis_policy(attachment_settings: dict[str, Any]) -> dict[str, Any]:
@@ -44,7 +52,7 @@ def _analysis_policy(attachment_settings: dict[str, Any]) -> dict[str, Any]:
         "chars_max": int(attachment_settings.get("chars_max") or 0),
         "file_capable": analysis.get("file_capable") is True,
         "provider": str(analysis.get("provider") or "").strip(),
-        "max_chars": int(analysis.get("max_chars") or 2000),
+        "chars_max": int(analysis.get("chars_max") or 0),
     }
 
 
@@ -152,7 +160,7 @@ def _call_text_provider(
             ai_cfg["api_key_env"],
         )
         return None
-    base_url = str(ai_cfg.get("base_url") or "").strip()
+    base_url = _provider_base_url(ai_cfg, logger)
     if not base_url:
         logger.warning("attachment analysis: base_url is missing")
         return None
@@ -164,17 +172,29 @@ def _call_text_provider(
         logger.info("attachment analysis: dry_run=True, skipping API call")
         return json.dumps({"summary": "dry run placeholder", "risk_flags": []})
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.0,
-    }
     if provider == "openai_responses":
-        payload["max_completion_tokens"] = 800
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": prompt}],
+                }
+            ],
+            "max_output_tokens": 800,
+            "store": False,
+        }
+        endpoint = "/responses"
     else:
-        payload["max_tokens"] = 800
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 800,
+        }
+        endpoint = "/chat/completions"
     return _post_json(
-        url=base_url.rstrip("/") + "/chat/completions",
+        url=base_url.rstrip("/") + endpoint,
         payload=payload,
         api_key=api_key,
         timeout=int(ai_cfg.get("request_timeout") or _ANALYSIS_PROVIDER_TIMEOUT),
@@ -187,6 +207,7 @@ def _call_file_provider(
     prompt: str,
     filename: str,
     content: bytes,
+    content_type: str,
     logger: logging.Logger,
 ) -> str | None:
     provider = ai_cfg["provider"]
@@ -204,7 +225,7 @@ def _call_file_provider(
             ai_cfg["api_key_env"],
         )
         return None
-    base_url = str(ai_cfg.get("base_url") or "").strip()
+    base_url = _provider_base_url(ai_cfg, logger)
     if not base_url:
         logger.warning("attachment analysis: base_url is missing")
         return None
@@ -216,21 +237,41 @@ def _call_file_provider(
         logger.info("attachment analysis: file dry_run=True, skipping API call")
         return json.dumps({"summary": "dry run placeholder", "risk_flags": []})
 
+    if content_type in _IMAGE_INPUT_TYPES:
+        content_input = {
+            "type": "input_image",
+            "image_url": (
+                f"data:{content_type};base64,"
+                f"{base64.b64encode(content).decode('ascii')}"
+            ),
+            "detail": "low",
+        }
+    elif content_type in _FILE_INPUT_TYPES:
+        content_input = {
+            "type": "input_file",
+            "filename": filename[:255],
+            "file_data": base64.b64encode(content).decode("ascii"),
+        }
+    else:
+        logger.warning(
+            "attachment analysis: provider does not support content_type=%s",
+            content_type,
+        )
+        return None
+
     payload = {
         "model": model,
         "input": [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "input_file",
-                        "filename": filename[:255],
-                        "file_data": base64.b64encode(content).decode("ascii"),
-                    },
+                    content_input,
                     {"type": "input_text", "text": prompt},
                 ],
             }
         ],
+        "max_output_tokens": 800,
+        "store": False,
     }
     return _post_json(
         url=base_url.rstrip("/") + "/responses",
@@ -245,6 +286,15 @@ def _provider_api_key(ai_cfg: dict[str, Any]) -> str:
     import os
 
     return os.getenv(str(ai_cfg.get("api_key_env") or ""), "").strip()
+
+
+def _provider_base_url(ai_cfg: dict[str, Any], logger: logging.Logger) -> str:
+    base_url = str(ai_cfg.get("base_url") or "").strip()
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        logger.warning("attachment analysis: base_url must be an HTTPS URL")
+        return ""
+    return base_url
 
 
 def _post_json(
@@ -408,10 +458,18 @@ def run_attachment_analysis(
             bounded_text = text[:_ANALYSIS_TEXT_MAX]
             prompt = _analysis_prompt(filename, content_type) + bounded_text
             raw = _call_text_provider(ai_cfg, prompt[: _ANALYSIS_PROMPT_MAX], logger)
+        elif content_type not in _FILE_INPUT_TYPES | _IMAGE_INPUT_TYPES:
+            results[attachment_id] = {
+                "analysis_status": "unsupported",
+                "reason_code": "provider_content_type_unsupported",
+                "analysis_preview": "",
+                "preview_available": False,
+            }
+            continue
         elif policy["file_capable"]:
             prompt = _analysis_prompt(filename, content_type)
             raw = _call_file_provider(
-                ai_cfg, prompt, filename, content, logger
+                ai_cfg, prompt, filename, content, content_type, logger
             )
         else:
             results[attachment_id] = {
@@ -449,7 +507,7 @@ def run_attachment_analysis(
         if isinstance(key_points, list):
             preview_parts.extend(str(point) for point in key_points if point)
         preview = "\n".join(preview_parts)
-        preview = _bounded_text(preview, policy["max_chars"])
+        preview = _bounded_text(preview, policy["chars_max"])
         results[attachment_id] = {
             "analysis_status": "ok",
             "reason_code": "ai_analysis_completed",

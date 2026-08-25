@@ -3176,11 +3176,7 @@ src/beeagent_module/
 - web-triggered extraction;
 - external parser calls from UI;
 - changes to `beeagent-rop`;
-- inline raw attachment rendering. Согласовано с BeeAgent It40: BeeAgent owns
-  authenticated secure download (`GET /rop/attachments/{attachment_id}/download`, safe
-  manifest lookup, forced attachment + nosniff + no-store); UI-10 сам не рендерит raw
-  content и не создаёт arbitrary file-serving routes — download ссылка является safe
-  internal link на BeeAgent-owned contract.
+- inline raw attachment rendering. Согласовано с BeeAgent It40: BeeAgent owns authenticated secure download (`GET /rop/attachments/{attachment_id}/download`, safe manifest lookup, forced attachment + nosniff + no-store); UI-10 сам не рендерит raw content и не создаёт arbitrary file-serving routes — download ссылка является safe internal link на BeeAgent-owned contract.
 
 #### Deliverable
 
@@ -3203,8 +3199,7 @@ src/beeagent_module/
 - attachment status visible and safe;
 - raw content not exposed inline;
 - UI remains artifact-only/read-only;
-- safe BeeAgent-owned download links are rendered when the read-model provides them
-  (authenticated forced-download contract from BeeAgent It40), never inline rendering;
+- safe BeeAgent-owned download links are rendered when the read-model provides them (authenticated forced-download contract from BeeAgent It40), never inline rendering;
 - source artifacts remain traceable.
 
 ### Итерация UI-11 — ROP Bitrix reconciliation detail and filtering

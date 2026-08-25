@@ -205,9 +205,9 @@ def test_attachment_storage_missing_block_fails(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "key",
     [
-        "file_max_bytes",
-        "message_aggregate_max_bytes",
-        "files_max_per_message",
+        "file_max",
+        "message_max",
+        "files_message_max",
     ],
 )
 def test_attachment_storage_invalid_value_fails(monkeypatch, key) -> None:
@@ -237,12 +237,22 @@ def test_attachment_analysis_invalid_file_capable_fails(monkeypatch) -> None:
         validate_settings(changed)
 
 
-def test_attachment_analysis_invalid_max_chars_fails(monkeypatch) -> None:
+@pytest.mark.parametrize("key", ["provider", "file_capable", "chars_max"])
+def test_attachment_analysis_required_keys_fail_fast(monkeypatch, key) -> None:
     _attach_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
-    changed["rop"]["attachments"]["analysis"]["max_chars"] = -1
-    with pytest.raises(RuntimeError, match="analysis.max_chars"):
+    changed["rop"]["attachments"]["analysis"].pop(key)
+    with pytest.raises(RuntimeError, match=f"attachments.analysis.{key}"):
+        validate_settings(changed)
+
+
+def test_attachment_analysis_invalid_chars_max_fails(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["analysis"]["chars_max"] = -1
+    with pytest.raises(RuntimeError, match="analysis.chars_max"):
         validate_settings(changed)
 
 

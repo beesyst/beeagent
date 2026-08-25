@@ -1627,14 +1627,14 @@ class TestCrossRunPeriodAggregation:
             "types": ["text/plain", "application/json"],
             "storage": {
                 "enabled": True,
-                "file_max_bytes": 1048576,
-                "message_aggregate_max_bytes": 2097152,
-                "files_max_per_message": 10,
+                "file_max": 1048576,
+                "message_max": 2097152,
+                "files_message_max": 10,
             },
             "analysis": {
                 "provider": "",
                 "file_capable": False,
-                "max_chars": 2000,
+                "chars_max": 2000,
             },
         }
         self._write_attachment_run(

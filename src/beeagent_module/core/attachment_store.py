@@ -41,11 +41,9 @@ def attachment_storage_policy(attachment_settings: dict[str, Any]) -> dict[str, 
         storage = {}
     return {
         "enabled": storage.get("enabled") is True,
-        "file_max_bytes": int(storage.get("file_max_bytes") or 0),
-        "message_aggregate_max_bytes": int(
-            storage.get("message_aggregate_max_bytes") or 0
-        ),
-        "files_max_per_message": int(storage.get("files_max_per_message") or 0),
+        "file_max": int(storage.get("file_max") or 0),
+        "message_max": int(storage.get("message_max") or 0),
+        "files_message_max": int(storage.get("files_message_max") or 0),
     }
 
 
@@ -100,12 +98,16 @@ def _apply_retention_limits(
             item["reason_code"] = "attachment_storage_disabled"
         return
 
-    count_limit = int(policy.get("files_max_per_message") or 0)
-    file_limit = int(policy.get("file_max_bytes") or 0)
-    aggregate_limit = int(policy.get("message_aggregate_max_bytes") or 0)
+    count_limit = int(policy.get("files_message_max") or 0)
+    file_limit = int(policy.get("file_max") or 0)
+    aggregate_limit = int(policy.get("message_max") or 0)
 
     aggregate_total = 0
     for index, item in enumerate(attachments, start=1):
+        if item.get("storage_status") == "blocked":
+            item["payload"] = None
+            item["reason_code"] = _STORAGE_BLOCKED_REASON
+            continue
         if count_limit > 0 and index > count_limit:
             item["payload"] = None
             item["storage_status"] = "count_exceeded"
@@ -289,9 +291,9 @@ def persist_run_attachments(
         "status": "ok",
         "policy": {
             "enabled": policy["enabled"],
-            "file_max_bytes": policy["file_max_bytes"],
-            "message_aggregate_max_bytes": policy["message_aggregate_max_bytes"],
-            "files_max_per_message": policy["files_max_per_message"],
+            "file_max": policy["file_max"],
+            "message_max": policy["message_max"],
+            "files_message_max": policy["files_message_max"],
         },
         "aggregate": {
             "attachment_count": len(items),
