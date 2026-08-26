@@ -307,11 +307,20 @@ def _unlink_path(path: str) -> None:
 
 def prepare_docling_assets() -> None:
     from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
 
-    snapshot_download(
-        repo_id=_LAYOUT_MODEL_REPO_ID,
-        revision=_LAYOUT_MODEL_REVISION,
-    )
+    try:
+        snapshot_download(
+            repo_id=_LAYOUT_MODEL_REPO_ID,
+            revision=_LAYOUT_MODEL_REVISION,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError:
+        snapshot_download(
+            repo_id=_LAYOUT_MODEL_REPO_ID,
+            revision=_LAYOUT_MODEL_REVISION,
+        )
+
     from beeagent_module.core.docling_reader import prepare_rapidocr_assets
 
     prepare_rapidocr_assets()

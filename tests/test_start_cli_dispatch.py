@@ -138,3 +138,75 @@ def test_main_auth_runs_bootstrap_before_cli_exit(monkeypatch) -> None:
     assert called["bootstrap"] == 1
     assert called["auth"] == 1
     assert called["argv"] == ["rotate", "admin1"]
+
+
+def test_main_prepares_assets_before_default_run(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "ensure_bootstrap_env", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        start_module, "load_settings", lambda *args, **kwargs: _base_settings()
+    )
+    monkeypatch.setattr(start_module, "ensure_dirs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(start_module, "setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "get_app_log_path", lambda *args, **kwargs: Path("logs/app.log")
+    )
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(start_module, "get_logger", lambda *args, **kwargs: _Logger())
+    monkeypatch.setattr(
+        "beeagent_module.core.document_extraction.prepare_docling_assets",
+        lambda: calls.append("prepare_assets"),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.app.run_app",
+        lambda *args, **kwargs: calls.append("run_app"),
+    )
+    monkeypatch.setattr(start_module.sys, "argv", ["start.py"])
+
+    start_module.main()
+
+    assert calls == ["prepare_assets", "run_app"]
+
+
+def test_main_docling_assets_prepare_command_runs_once(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "ensure_bootstrap_env", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        start_module, "load_settings", lambda *args, **kwargs: _base_settings()
+    )
+    monkeypatch.setattr(start_module, "ensure_dirs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(start_module, "setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "get_app_log_path", lambda *args, **kwargs: Path("logs/app.log")
+    )
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(start_module, "get_logger", lambda *args, **kwargs: _Logger())
+    monkeypatch.setattr(
+        "beeagent_module.core.document_extraction.prepare_docling_assets",
+        lambda: calls.append("prepare_assets"),
+    )
+    monkeypatch.setattr(
+        start_module.sys, "argv", ["start.py", "docling-assets-prepare"]
+    )
+
+    start_module.main()
+
+    assert calls == ["prepare_assets"]
