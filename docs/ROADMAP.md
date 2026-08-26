@@ -9039,6 +9039,108 @@ mailbox MIME
 - controlled AI provider smoke для TXT/CSV/PDF/DOCX/JPEG/PNG выполнен на configured production profile: все шесть форматов дают successful bounded analysis и attachment-aware classification; controlled Bitrix test-portal attachment smoke остаётся NOT VERIFIABLE в текущем окружении, потому что доступен только production portal, и остаётся blocker для full DoD;
 - `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены.
 
+### Итерация 41 — Canonical local document extraction and ROP Docling migration v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Зафиксировать BeeAgent-owned `document.extract` contract, принять Docling как canonical local document engine и перевести существующий ROP attachment semantic path с provider-based file reading на локальное bounded text extraction без изменения attachment storage, download, Bitrix delivery или public `beeagent-rop` classification contract.
+
+#### Scope
+
+- добавить стабильный BeeAgent `document.extract` result contract без Docling-specific типов;
+- использовать `docling==2.122.0` как единственный canonical document engine v1;
+- запускать untrusted document conversion через bounded local worker boundary, а не напрямую в ROP domain module;
+- читать только BeeAgent-resolved attachment blobs из existing opaque attachment store;
+- запретить arbitrary URL/path input и использование original filename как filesystem identity;
+- поддержать initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG и PNG;
+- использовать local Docling OCR path для JPEG/PNG и scanned PDF;
+- преобразовывать successful extraction в existing `attachment_extraction.json` / `attachment_text_preview` contract;
+- сохранить `attachment_extraction_status`, preview/status/refusal fields и existing public ROP module payload;
+- заменить `rop.attachments.analysis` provider/file-capable config на explicit local extraction config;
+- сохранить `rop.attachments.enabled`, storage limits, type allowlist и independent retention/download/Bitrix behavior;
+- передавать AI adjudicator только bounded extracted text и existing semantic evidence;
+- сохранить historical It40 artifact readability where compatibility requires it;
+- обновить settings validation, docs, dependency declarations and tests.
+
+#### Excluded
+
+- изменения `beeagent-rop` classification rules или public output shape;
+- изменения BeeUI generic contracts;
+- AI file upload, `input_file`, `input_image` или binary provider fallback;
+- second document engine or Tika/Marker/MarkItDown fallback;
+- full Secure Execution Runtime / execution-node framework;
+- arbitrary shell/converter execution;
+- `.eml` / `message/rfc822` nested parsing;
+- legacy DOC/PPT, broad Docling format enablement, audio/video or email parsing;
+- malware/antivirus verdicts;
+- CRM/Bitrix authority changes;
+- AI eligibility/merge redesign;
+- version bump.
+
+#### Deliverable
+
+ROP attachment pipeline becomes:
+
+`opaque attachment store → document.extract → Docling local text → existing attachment extraction evidence → beeagent-rop deterministic classification → bounded text-only AI adjudicator → existing Bitrix flow`.
+
+No attachment binary is sent to the AI provider for document reading.
+
+#### Acceptance criteria
+
+- TXT, CSV, PDF, DOCX, XLSX, JPEG and PNG sanitized fixtures extract locally through the canonical Docling path;
+- scanned PDF and image fixtures prove local OCR behavior;
+- extraction result is bounded, explainable and contains engine/status/reason/text/truncation metadata;
+- malformed, encrypted, unsupported or failed documents degrade explicitly without crashing ROP;
+- original filenames never control filesystem paths or Docling source paths;
+- `attachment_extraction.json` and public `beeagent-rop` preview/status/refusal fields remain backward-compatible;
+- reviewed RFQ, supplier, finance and existing-deal attachment scenarios keep expected classifications;
+- `rop.attachments.enabled:false` performs zero document parsing while storage/download/Bitrix delivery continue;
+- new runtime makes zero provider file-upload/image-input calls for attachment reading;
+- AI adjudicator receives only bounded extracted text, never raw binary/base64/provider file references;
+- document content cannot create tool/mailbox/CRM authority;
+- existing attachment download and Bitrix file delivery/idempotency regressions remain green;
+- runtime extraction is offline-capable after required local Docling assets are prepared;
+- `beeagent-rop` and `beeui` require no implementation change;
+- `pyproject.toml.version` is unchanged.
+
+#### Checks
+
+- `uv run pytest -q`;
+- targeted document extraction contract and Docling adapter tests;
+- real local sanitized TXT/CSV/PDF/DOCX/XLSX/JPEG/PNG extraction fixtures;
+- scanned PDF/image OCR smoke;
+- malformed/corrupt/unsupported/refused/oversized document tests;
+- ROP attachment extraction and attachment-aware classification regressions;
+- AI adjudicator request tests proving text-only attachment evidence;
+- regression proving no provider Files API / `input_file` / `input_image` attachment path;
+- mailbox checkpoint/storage/download regressions;
+- Bitrix physical attachment delivery/idempotency regressions;
+- controlled ROP batch smoke and artifact/log inspection;
+- Python 3.14 Docling installation/runtime acceptance;
+- `uv run python -B -m compileall -q src tests`;
+- `git diff --check`;
+- SAST;
+- SCA for Docling and its locked transitive dependency surface;
+- bounded malformed/parser stress tests;
+- DAST/IAST not required unless the implementation unexpectedly adds a new network-facing or execution boundary.
+
+#### DoD
+
+- BeeAgent owns a stable product-neutral document extraction contract;
+- Docling is the only canonical document reader in the ROP attachment path;
+- AI is no longer used to read attachment files;
+- AI remains only a bounded semantic adjudication layer over text/evidence;
+- existing ROP domain contract remains unchanged;
+- attachment retention/download/Bitrix delivery behavior remains intact;
+- parser failures do not crash orchestration or lose stored attachments;
+- runtime document extraction does not require customer-file egress;
+- dependency/security review is recorded;
+- docs and config reflect the new source of truth;
+- required tests and controlled smokes are green;
+- `pyproject.toml.version` is not changed.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
