@@ -99,6 +99,7 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 100
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
@@ -115,25 +116,28 @@ rop:
       manual_review:
         bitrix_category: manual_review
   attachments: # настройки для извлечения вложений из событий ROP
-    enabled: true # true/false - включить/выключить semantic analysis вложений (не влияет на retention/download/Bitrix delivery)
-    chars_max: 500 # макс. число символов для извлечения из одного вложения
+    enabled: true # true/false - включить/выключить local document extraction вложений (не влияет на retention/download/Bitrix delivery)
+    chars_max: 1000 # макс. число символов preview для извлечения из одного вложения
     size_max: 1048576 # макс. размер вложения в байтах для попытки извлечения (пример: 1 МБ = 1048576 байт)
     types:
       - "text/plain"
       - "text/csv"
       - "application/pdf"
       - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       - "image/jpeg"
       - "image/png"
-    storage: # bounded opaque retention policy (independent from analysis)
+    storage: # bounded opaque retention policy (independent from extraction)
       enabled: true # true/false - сохранять accepted attachment blobs как opaque files
       file_max: 10485760 # макс. размер одного сохраняемого вложения в байтах (10 МБ)
       message_max: 20971520 # макс. суммарный размер вложений одного письма в байтах (20 МБ)
       files_message_max: 20 # макс. число сохраняемых вложений на одно письмо
-    analysis: # bounded file-capable AI analysis policy
-      provider: "openai" # явный file-capable AI profile; используется только при attachments.enabled=true
-      file_capable: true # true/false - включать только после controlled provider smoke для каждого supported format
-      chars_max: 2000 # макс. число символов bounded attachment context из AI analysis
+    extraction: # canonical local Docling extraction policy (replaces provider-based analysis)
+      engine: "docling" # canonical local document engine (only supported engine v1); OCR backend is RapidOCR on onnxruntime
+      chars_max: 3000 # макс. число символов bounded extracted text контекста из одного вложения
+      pages_max: 20 # bounded page limit на один документ (docling max_num_pages)
+      timeout_seconds: 60 # bounded local worker timeout на один документ (сек)
+      ocr_enabled: true # true/false - использовать local RapidOCR (onnxruntime inference) для JPEG/PNG и scanned PDF; cyrillic assets подготавливаются через docling-assets-prepare
   sources:
     - source_id: "rop_batch_sample"
       source_type: "json_batch" # тип источника (поддерживается: json_batch)

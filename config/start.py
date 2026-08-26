@@ -14,9 +14,9 @@ from beeagent_module.core.cli import (
     handle_rop_evaluate_review,
     handle_rop_export_review,
     handle_rop_mvp_pack,
+    handle_rop_poll,
     handle_rop_recommendations,
     handle_rop_reconcile_bitrix,
-    handle_rop_poll,
     handle_rop_run,
     handle_rop_summary,
     handle_rop_writeback,
@@ -113,9 +113,17 @@ def main() -> None:
         _handle_rop_cli(args[1:], settings=settings, logger=logger)
         return
 
+    if args and args[0] == "docling-assets-prepare":
+        from beeagent_module.core.document_extraction import prepare_docling_assets
+
+        logger.info("Preparing local Docling model assets...")
+        prepare_docling_assets()
+        logger.info("Local Docling model assets prepared")
+        return
+
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, auth, auth-init",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, auth, auth-init, docling-assets-prepare",
         file=sys.stderr,
     )
     sys.exit(2)

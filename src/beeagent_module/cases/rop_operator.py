@@ -8,8 +8,8 @@ from typing import Any
 
 from beeagent_module.adapters.bitrix_client import build_bitrix_client
 from beeagent_module.cases.rop_writeback import load_trusted_targets_by_client
-from beeagent_module.core.attachment_extraction import build_attachment_extraction
 from beeagent_module.core.attachment_analysis import run_attachment_analysis
+from beeagent_module.core.attachment_extraction import build_attachment_extraction
 from beeagent_module.core.attachment_store import (
     ATTACHMENT_STORE_DIRNAME,
     persist_run_attachments,
@@ -834,6 +834,20 @@ def _normalize_optional_iso_datetime(value: Any) -> str | None:
     return cleaned or None
 
 
+def _strip_internal_attachment_text(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    stripped: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            stripped.append(event)
+            continue
+        event = dict(event)
+        event.pop("_attachment_extraction_text", None)
+        stripped.append(event)
+    return stripped
+
+
 def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "attachments",
@@ -872,6 +886,15 @@ def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
         "is_inline",
         "raw_metadata",
         "size_bytes",
+        "extraction_status",
+        "preview_available",
+        "text_preview",
+        "reason_code",
+        "refusal_reason",
+        "is_refused",
+        "is_supported",
+        "is_truncated",
+        "preview_chars",
     }
 
     filtered = {k: v for k, v in event.items() if k in allowed_keys}
@@ -934,6 +957,7 @@ def _attach_classification_trace(
         "attachment_refusal_reasons",
         "attachment_storage_status",
         "attachment_analysis_status",
+        "_attachment_extraction_text",
         "received_at",
         "date",
         "event_date",
@@ -1322,7 +1346,6 @@ def run_rop_batch_case(
             storage_dir=storage_dir,
             run_id=effective_run_id,
             attachment_settings=attachment_settings,
-            ai_settings=settings.get("ai", {}),
             logger=logger,
         )
         if analysis_results:
@@ -1361,7 +1384,11 @@ def run_rop_batch_case(
         }
 
         normalized_path.write_text(
-            json.dumps(normalized_events, indent=2, ensure_ascii=False),
+            json.dumps(
+                _strip_internal_attachment_text(normalized_events),
+                indent=2,
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
         artifact_refs.append(normalized_path.relative_to(storage_dir).as_posix())
@@ -1626,7 +1653,11 @@ def run_rop_batch_case(
 
         classified_path = run_dir / "classified_events.json"
         classified_path.write_text(
-            json.dumps(enriched_classified, indent=2, ensure_ascii=False),
+            json.dumps(
+                _strip_internal_attachment_text(enriched_classified),
+                indent=2,
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
         artifact_refs.append(classified_path.relative_to(storage_dir).as_posix())
@@ -1658,7 +1689,7 @@ def run_rop_batch_case(
 
         payload: dict[str, Any] = {
             "period": intake_metadata.get("period", ""),
-            "events": enriched_classified,
+            "events": _strip_internal_attachment_text(enriched_classified),
         }
 
         result = execute_module_case(

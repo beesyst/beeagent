@@ -129,6 +129,7 @@ def _valid_settings() -> dict:
                     "input_chars_max": 8000,
                     "confidence_accept_min": 0.70,
                     "events_max": 20,
+                    "attachment_chars_max": 2000,
                     "prompt_key": "rop.ai_adjudicator",
                 },
             },
@@ -153,10 +154,12 @@ def _valid_settings() -> dict:
                     "message_max": 2097152,
                     "files_message_max": 10,
                 },
-                "analysis": {
-                    "provider": "",
-                    "file_capable": False,
+                "extraction": {
+                    "engine": "docling",
                     "chars_max": 2000,
+                    "pages_max": 20,
+                    "timeout_seconds": 30,
+                    "ocr_enabled": True,
                 },
             },
             "sources": [],

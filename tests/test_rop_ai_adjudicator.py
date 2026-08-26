@@ -38,6 +38,7 @@ def _minimal_adj_cfg() -> dict:
         "input_chars_max": 8000,
         "confidence_accept_min": 0.70,
         "events_max": 20,
+        "attachment_chars_max": 2000,
         "prompt_key": "rop.ai_adjudicator",
     }
 
@@ -711,6 +712,48 @@ rop:
         assert "CANONICAL-SAFE-PREVIEW" in serialized
         assert "nested raw body here" not in serialized
         assert "arch.pdf" in serialized
+
+    def test_ai_attachment_budget_uses_larger_docling_text(self) -> None:
+        event = _sample_eligible_event()
+        extraction_text = " ".join(f"word{i}" for i in range(3000))
+        event["attachment_extraction_status"] = "preview"
+        event["attachment_preview_available"] = True
+        event["attachment_text_preview"] = extraction_text[:1000]
+        event["_attachment_extraction_text"] = extraction_text
+
+        deterministic_payload = _build_prompt_event_payload(event)
+        deterministic_text = deterministic_payload["attachment_evidence"].get(
+            "text_preview", ""
+        )
+        assert len(deterministic_text) <= 1000
+
+        ai_payload = _build_prompt_event_payload(event, attachment_chars_max=2000)
+        ai_text = ai_payload["attachment_evidence"].get("text_preview", "")
+        assert len(ai_text) <= 2000
+        assert len(ai_text) > len(deterministic_text)
+        assert ai_text.startswith(deterministic_text[:100])
+
+    def test_ai_attachment_budget_never_exposes_raw_or_paths(self) -> None:
+        event = _sample_eligible_event()
+        event["attachment_extraction_status"] = "preview"
+        event["attachment_preview_available"] = True
+        event["attachment_text_preview"] = "safe preview"
+        event["_attachment_extraction_text"] = (
+            "safe extracted text data:application/pdf;base64,"
+            + "JVBERi0xLjQKJcOkw7zDtsOfCg==" * 3
+            + " /var/secret/blob.bin"
+        )
+        prompt = _build_adjudicator_prompt(
+            prompts_cfg=_minimal_prompts_cfg(),
+            event=event,
+            prompt_key="rop.ai_adjudicator",
+            max_chars=8000,
+            attachment_chars_max=2000,
+        )
+        assert "JVBERi0xLjQKJcOkw7zDtsOfCg==" not in prompt
+        assert "data:application/pdf;base64" not in prompt
+        assert "/var/secret/blob.bin" not in prompt
+        assert "safe extracted text" in prompt
 
     def test_thread_context_reaches_ai(self) -> None:
         event = _sample_eligible_event()

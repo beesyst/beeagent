@@ -88,10 +88,12 @@ rop:
       file_max: 10485760
       message_max: 20971520
       files_message_max: 20
-    analysis:
-      provider: ""
-      file_capable: false
+    extraction:
+      engine: "docling"
       chars_max: 2000
+      pages_max: 20
+      timeout_seconds: 60
+      ocr_enabled: true
   dashboard:
     default_period: "7d"
     periods:
@@ -113,6 +115,7 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 20
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
@@ -309,10 +312,12 @@ rop:
       file_max: 10485760
       message_max: 20971520
       files_message_max: 20
-    analysis:
-      provider: ""
-      file_capable: false
+    extraction:
+      engine: "docling"
       chars_max: 2000
+      pages_max: 20
+      timeout_seconds: 60
+      ocr_enabled: true
   dashboard:
     default_period: "7d"
     periods:
@@ -334,6 +339,7 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 20
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
@@ -518,10 +524,12 @@ rop:
       file_max: 10485760
       message_max: 20971520
       files_message_max: 20
-    analysis:
-      provider: ""
-      file_capable: false
+    extraction:
+      engine: "docling"
       chars_max: 2000
+      pages_max: 20
+      timeout_seconds: 60
+      ocr_enabled: true
   dashboard:
     default_period: "7d"
     periods:
@@ -543,6 +551,7 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 20
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
@@ -736,10 +745,12 @@ rop:
       file_max: 10485760
       message_max: 20971520
       files_message_max: 20
-    analysis:
-      provider: ""
-      file_capable: false
+    extraction:
+      engine: "docling"
       chars_max: 2000
+      pages_max: 20
+      timeout_seconds: 60
+      ocr_enabled: true
   dashboard:
     default_period: "7d"
     periods:
@@ -761,6 +772,7 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 20
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
   routing:
     queues:
