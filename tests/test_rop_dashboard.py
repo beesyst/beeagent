@@ -1631,10 +1631,12 @@ class TestCrossRunPeriodAggregation:
                 "message_max": 2097152,
                 "files_message_max": 10,
             },
-            "analysis": {
-                "provider": "",
-                "file_capable": False,
+            "extraction": {
+                "engine": "docling",
                 "chars_max": 2000,
+                "pages_max": 20,
+                "timeout_seconds": 30,
+                "ocr_enabled": True,
             },
         }
         self._write_attachment_run(

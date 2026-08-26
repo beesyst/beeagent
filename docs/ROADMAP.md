@@ -9041,7 +9041,7 @@ mailbox MIME
 
 ### Итерация 41 — Canonical local document extraction and ROP Docling migration v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -9140,6 +9140,20 @@ No attachment binary is sent to the AI provider for document reading.
 - docs and config reflect the new source of truth;
 - required tests and controlled smokes are green;
 - `pyproject.toml.version` is not changed.
+
+#### Реализация (It41)
+
+- Добавлен BeeAgent-owned `document.extract` contract: `DocumentExtractionResult` в `src/beeagent_module/core/document_extraction.py` (status, reason_code, engine, bounded text, text_length, is_truncated, content_type, ocr_used, page_count) без Docling-специфичных типов.
+- Docling `==2.122.0` — единственный canonical document engine v1; добавлен также `onnxruntime==1.29.0` как ONNX inference runtime для local RapidOCR (не второй document engine).
+- Untrusted документы обрабатываются через bounded local subprocess worker (`document_extraction_worker.py`) с таймаутом; Docling падает/зависает изолированно от ROP orchestration.
+- Входы разрешаются только из BeeAgent attachment manifest/store (`resolve_attachment_blob_path`); произвольные URL/path и original filename как filesystem identity запрещены — форматный hint выводится только из allowlisted content type.
+- Initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG; JPEG/PNG и scanned PDF используют local Docling OCR path; OCR backend явно выбран как RapidOCR (`RapidOcrOptions(backend="onnxruntime")` в `docling_reader.py`), а не неявный Docling auto-select; `onnxruntime` — inference runtime RapidOCR; cyrillic/Russian распознавание использует provisioned PP-OCRv5 cyrillic rec/det/dict assets, English regression остаётся зелёным на том же RapidOCR path.
+- Successful extraction feeding в existing `attachment_extraction.json` / `attachment_text_preview` contract; public ROP preview/status/refusal fields сохранены.
+- `rop.attachments.analysis` provider-конфиг заменён на explicit local `rop.attachments.extraction` (engine, chars_max, pages_max, timeout_seconds, ocr_enabled) с fail-fast validation.
+- Итоговый three-budget attachment text contract: `rop.attachments.chars_max=1000` — public/deterministic preview для `beeagent-rop`; `rop.ai_assist.adjudicator.attachment_chars_max=2000` — text-only attachment evidence для AI adjudicator; `rop.attachments.extraction.chars_max=3000` — maximum bounded Docling extracted text. Settings fail-fast валидируют `0 < attachments.chars_max <= ai_assist.adjudicator.attachment_chars_max <= attachments.extraction.chars_max`.
+- Provider Files API / `input_file` / `input_image` / base64 attachment path удалён из runtime; AI adjudicator остаётся text-only.
+- Local Docling model assets (layout model + RapidOCR PP-OCRv5 cyrillic rec/det/dict) подготавливаются явно через `config/start.py docling-assets-prepare`; runtime работает offline (`HF_HUB_OFFLINE=1`) и не скачивает модели молча; missing assets — explicit degraded.
+- `beeagent-rop` и `beeui` не изменялись; `pyproject.toml.version` не изменялся.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 

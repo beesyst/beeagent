@@ -342,6 +342,16 @@ BeeAgent уже прошёл этап **module platform v0**:
 - Bitrix physical file delivery: отдельный opt-in switch `bitrix.writeback.file_attach`, файлы доставляются только в уже выбранный trusted/new CRM target email activity (`crm.activity.update` FILES/fileData — единственное расширение write allowlist), отдельный `file_attach_status`/idempotency, retry из durable store без mailbox re-ingestion; uncertain remote file updates fail closed as `reconciliation_required`, so replay cannot duplicate files; `email_attach` backward-compatible;
 - без изменений `beeagent-rop` и `beeui` (generic renderer), без новых dependencies, `pyproject.toml.version` не менялся.
 
+Итерация 41 реализует (canonical local document extraction + ROP Docling migration v1):
+
+- BeeAgent-owned `document.extract` contract: `DocumentExtractionResult` (status, reason_code, engine, bounded text, text_length, is_truncated, content_type, ocr_used, page_count) — product-neutral, без Docling-специфичных типов; Docling `==2.122.0` — единственный canonical document engine v1 (`onnxruntime==1.29.0` — только ONNX inference runtime для local RapidOCR, не второй document engine);
+- untrusted stored blobs обрабатываются через bounded local subprocess worker с таймаутом (`document_extraction_worker`), парсер crash/timeout изолирован от ROP orchestration; входы — только BeeAgent attachment manifest/store, произвольные URL/path и original filename как filesystem identity запрещены, format hint выводится только из allowlisted content type;
+- initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG; JPEG/PNG и scanned PDF — local Docling OCR path; OCR backend явно выбран как RapidOCR (`RapidOcrOptions(backend="onnxruntime")`), а не неявный Docling auto-select; `onnxruntime` — inference runtime RapidOCR; cyrillic/Russian распознавание использует provisioned PP-OCRv5 cyrillic rec assets; `rop.attachments.analysis` provider-конфиг заменён на explicit local `rop.attachments.extraction.{engine,chars_max,pages_max,timeout_seconds,ocr_enabled}` с fail-fast validation;
+- provider Files API / `input_file` / `input_image` / base64 attachment path удалены из runtime; customer attachment content не уходит во внешний document-reading provider; AI adjudicator остаётся text-only semantic layer;
+- local Docling model assets (layout model + RapidOCR cyrillic rec/det/dict) подготавливаются явно через `config/start.py docling-assets-prepare`; runtime offline (`HF_HUB_OFFLINE=1`), без silent model download; missing assets — explicit degraded, без AI file-reading fallback;
+- successful extraction feeding в existing `attachment_extraction.json` / `attachment_text_preview` / preview/status/refusal contract; `rop.attachments.enabled:false` = zero document parsing при сохранении storage/download/Bitrix delivery;
+- без изменений `beeagent-rop` и `beeui`, `pyproject.toml.version` не менялся.
+
 BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
 
 Текущий фокус:
@@ -1045,8 +1055,8 @@ configured source(s)
 
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
-В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts.
-В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing. Controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default.
+В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts.
+В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions. Controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default.
 
 ## Запуск
 
@@ -1345,8 +1355,17 @@ rop:
       input_chars_max: 8000
       confidence_accept_min: 0.70
       events_max: 100
+      attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
 ```
+
+Для attachment text действуют три независимых bounded budget в `rop`:
+
+- `rop.attachments.chars_max: 1000` — public/deterministic preview budget, передаваемый в `beeagent-rop`;
+- `rop.ai_assist.adjudicator.attachment_chars_max: 2000` — text-only budget attachment evidence для AI adjudicator;
+- `rop.attachments.extraction.chars_max: 3000` — максимум bounded текста, извлекаемого локальным Docling.
+
+Settings валидируются fail-fast: `0 < rop.attachments.chars_max <= rop.ai_assist.adjudicator.attachment_chars_max <= rop.attachments.extraction.chars_max`.
 
 #### Legacy AI assist
 
@@ -1401,7 +1420,7 @@ Write-back в этом path не выполняется.
 - no reply;
 - no mark-as-read;
 - no raw `.eml` persistence;
-- attachment metadata only, без чтения content.
+- BeeAgent transiently получает attachment content из MIME, сохраняет original attachment в bounded opaque store, а local Docling читает только BeeAgent-resolved stored blob; `beeagent-rop` и BeeUI получают лишь bounded safe evidence.
 
 ## Артефакты
 
@@ -1772,8 +1791,8 @@ BeeAgent уже вышел из состояния “только демо”.
 - It32 delivery/readiness layer находится в BeeAgent, а `beeagent-rop` остаётся владельцем domain classification / `ai_assist_merge` boundary;
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
-- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts и Bitrix read-only reconciliation/action drafts уже входят в scope;
-- production listener/stream, UI/widget-triggered CRM/Bitrix write-back, POST actions, OCR и deep attachment parsing всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default;
+- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts уже входят в scope;
+- production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default;
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;

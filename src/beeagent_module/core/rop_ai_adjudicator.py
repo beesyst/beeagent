@@ -463,7 +463,10 @@ def _extract_attachment_metadata(event: dict[str, Any]) -> tuple[list[str], list
     return filenames, mime_types
 
 
-def _attachment_preview_evidence(event: dict[str, Any]) -> dict[str, Any] | None:
+def _attachment_preview_evidence(
+    event: dict[str, Any],
+    attachment_chars_max: int = 800,
+) -> dict[str, Any] | None:
     result: dict[str, Any] = {}
     extraction_status = _sanitize_prompt_text(
         event.get("attachment_extraction_status"), 80
@@ -481,7 +484,11 @@ def _attachment_preview_evidence(event: dict[str, Any]) -> dict[str, Any] | None
     if refusal_reasons:
         result["refusal_reasons"] = refusal_reasons
     if preview_available is True:
-        text_preview = _sanitize_prompt_text(event.get("attachment_text_preview"), 800)
+        text_preview = _sanitize_prompt_text(
+            event.get("_attachment_extraction_text")
+            or event.get("attachment_text_preview"),
+            attachment_chars_max,
+        )
         if text_preview:
             result["text_preview"] = text_preview
 
@@ -823,6 +830,7 @@ def _build_prompt_event_payload(
     event: dict[str, Any],
     *,
     body_chars_max: int = 1200,
+    attachment_chars_max: int = 800,
 ) -> dict[str, Any]:
     attachment_filenames, attachment_mime_types = _extract_attachment_metadata(event)
 
@@ -861,7 +869,9 @@ def _build_prompt_event_payload(
         ),
         "attachment_filenames": attachment_filenames,
         "attachment_mime_types": attachment_mime_types,
-        "attachment_evidence": _attachment_preview_evidence(event),
+        "attachment_evidence": _attachment_preview_evidence(
+            event, attachment_chars_max=attachment_chars_max
+        ),
         "thread_context": _bounded_thread_context_payload(event),
         "conversation_context": _bounded_conversation_context_payload(event),
         "deterministic_case_type": _deterministic_value(event, "case_type", "unknown"),
@@ -1087,10 +1097,15 @@ def _build_event_json_within_budget(
     event: dict[str, Any],
     budget_chars: int,
     body_chars_max: int = 1600,
+    attachment_chars_max: int = 800,
 ) -> str:
     body_chars_max = min(body_chars_max, max(160, budget_chars // 3))
     while body_chars_max >= 160:
-        payload = _build_prompt_event_payload(event, body_chars_max=body_chars_max)
+        payload = _build_prompt_event_payload(
+            event,
+            body_chars_max=body_chars_max,
+            attachment_chars_max=attachment_chars_max,
+        )
         event_json = json.dumps(payload, ensure_ascii=False)
         if len(event_json) <= budget_chars:
             return event_json
@@ -1104,6 +1119,7 @@ def _build_adjudicator_prompt(
     prompt_key: str,
     max_chars: int,
     body_chars_max: int = 1600,
+    attachment_chars_max: int = 800,
 ) -> str:
     system_prompt, user_template = _build_prompt_messages_by_key(
         prompts_path=prompts_cfg["path"],
@@ -1113,7 +1129,10 @@ def _build_adjudicator_prompt(
     base_len = len(f"System:\n{system_prompt}\n\nUser:\n{user_template}")
     event_budget = max(400, max_chars - base_len - 200)
     event_json = _build_event_json_within_budget(
-        event, event_budget, body_chars_max=body_chars_max
+        event,
+        event_budget,
+        body_chars_max=body_chars_max,
+        attachment_chars_max=attachment_chars_max,
     )
 
     system_prompt, user_prompt = _build_prompt_messages_by_key(
@@ -1479,8 +1498,11 @@ def _build_request_artifact(
     adj_cfg: dict[str, Any],
     prompts_cfg: dict[str, Any],
     prompt: str | None,
+    attachment_chars_max: int = 800,
 ) -> dict[str, Any]:
-    safe_payload = _build_prompt_event_payload(event)
+    safe_payload = _build_prompt_event_payload(
+        event, attachment_chars_max=attachment_chars_max
+    )
 
     artifact = {
         "event_id": safe_payload["event_id"],
@@ -1508,6 +1530,7 @@ def run_adjudicator_for_event(
     prompts_cfg: dict[str, Any],
     logger: logging.Logger,
     body_chars_max: int = 1600,
+    attachment_chars_max: int = 800,
 ) -> dict[str, Any]:
     eligible = _is_event_eligible_for_adjudicator(event)
     provider = profile_cfg["provider"]
@@ -1529,6 +1552,7 @@ def run_adjudicator_for_event(
                 prompt_key=adj_cfg["prompt_key"],
                 max_chars=int(adj_cfg["input_chars_max"]),
                 body_chars_max=body_chars_max,
+                attachment_chars_max=attachment_chars_max,
             )
         except ValueError as exc:
             prompt_budget_error = str(exc)
@@ -1541,6 +1565,7 @@ def run_adjudicator_for_event(
         adj_cfg=adj_cfg,
         prompts_cfg=prompts_cfg,
         prompt=prompt,
+        attachment_chars_max=attachment_chars_max,
     )
 
     if not eligible:
@@ -2008,6 +2033,7 @@ def run_adjudicator_batch(
     prompts_cfg = _resolve_ai_prompts_cfg(settings)
     email_preview = settings.get("rop", {}).get("email_preview", {})
     body_chars_max = int(email_preview.get("body_chars_max", 1600))
+    attachment_chars_max = int(adj_cfg.get("attachment_chars_max", 800))
     max_events = int(adj_cfg["events_max"])
     eligible_events = [
         event for event in events if _is_event_eligible_for_adjudicator(event)
@@ -2026,6 +2052,7 @@ def run_adjudicator_batch(
             prompts_cfg=prompts_cfg,
             logger=logger,
             body_chars_max=body_chars_max,
+            attachment_chars_max=attachment_chars_max,
         )
         requests.append(adjudicator_result.get("request", {}))
         decisions.append(adjudicator_result.get("decision", {}))

@@ -7052,6 +7052,7 @@ def _build_full_settings() -> dict:
                     "input_chars_max": 8000,
                     "confidence_accept_min": 0.70,
                     "events_max": 20,
+                    "attachment_chars_max": 2000,
                     "prompt_key": "rop.ai_adjudicator",
                 },
             },
@@ -7076,10 +7077,12 @@ def _build_full_settings() -> dict:
                     "message_max": 2097152,
                     "files_message_max": 10,
                 },
-                "analysis": {
-                    "provider": "",
-                    "file_capable": False,
+                "extraction": {
+                    "engine": "docling",
                     "chars_max": 2000,
+                    "pages_max": 20,
+                    "timeout_seconds": 30,
+                    "ocr_enabled": True,
                 },
             },
             "sources": [],
@@ -7836,9 +7839,7 @@ class TestRopDashboardAggregateReadModel:
         assert row["bot_case_type"] == "existing_deal"
         assert row["semantic_case_type"] == "new_lead"
 
-    def test_independent_event_keeps_new_lead_in_queue(
-        self, tmp_path: Path
-    ) -> None:
+    def test_independent_event_keeps_new_lead_in_queue(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_aggregate_run(
             storage_dir,
@@ -9625,13 +9626,9 @@ def test_attachment_download_invalid_run_id(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _seed_download_attachment(storage_dir, "run-dl")
     client = _client(storage_dir)
-    response = client.get(
-        "/rop/attachments/evt-1-att-0/download?run_id=../escape"
-    )
+    response = client.get("/rop/attachments/evt-1-att-0/download?run_id=../escape")
     assert response.status_code == 400
-    response = client.get(
-        "/rop/attachments/evt-1-att-0/download?run_id="
-    )
+    response = client.get("/rop/attachments/evt-1-att-0/download?run_id=")
     assert response.status_code == 400
 
 
@@ -9639,17 +9636,11 @@ def test_attachment_download_unknown_and_traversal(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _seed_download_attachment(storage_dir, "run-dl")
     client = _client(storage_dir)
-    response = client.get(
-        "/rop/attachments/unknown-id/download?run_id=run-dl"
-    )
+    response = client.get("/rop/attachments/unknown-id/download?run_id=run-dl")
     assert response.status_code == 404
-    response = client.get(
-        "/rop/attachments/..%2F..%2Fsecret/download?run_id=run-dl"
-    )
+    response = client.get("/rop/attachments/..%2F..%2Fsecret/download?run_id=run-dl")
     assert response.status_code in (400, 404)
-    response = client.get(
-        "/rop/attachments/evt-1-att-0/download?run_id=run-other"
-    )
+    response = client.get("/rop/attachments/evt-1-att-0/download?run_id=run-other")
     assert response.status_code == 404
 
 
@@ -9681,14 +9672,18 @@ def _seed_format_attachment(
     blob_id = "att-" + sha256(content).hexdigest()[:24]
     (store_dir / f"{blob_id}.bin").write_bytes(content)
     manifest_path = store_dir / "attachment_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {
-        "run_id": run_id,
-        "version": 1,
-        "status": "ok",
-        "policy": {},
-        "aggregate": {"attachment_count": 0, "stored_count": 0},
-        "items": [],
-    }
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.exists()
+        else {
+            "run_id": run_id,
+            "version": 1,
+            "status": "ok",
+            "policy": {},
+            "aggregate": {"attachment_count": 0, "stored_count": 0},
+            "items": [],
+        }
+    )
     manifest["items"].append(
         {
             "attachment_id": attachment_id,
@@ -9809,9 +9804,7 @@ class TestAttachmentDownloadAuth:
         )
         assert response.status_code in (302, 401)
 
-    def test_authenticated_rop_principal_can_download(
-        self, tmp_path: Path
-    ) -> None:
+    def test_authenticated_rop_principal_can_download(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         _seed_download_attachment(storage_dir, "run-dl")
         client = _auth_client(storage_dir)
@@ -9821,9 +9814,7 @@ class TestAttachmentDownloadAuth:
             follow_redirects=False,
         )
         assert login.status_code in (200, 302)
-        response = client.get(
-            "/rop/attachments/evt-1-att-0/download?run_id=run-dl"
-        )
+        response = client.get("/rop/attachments/evt-1-att-0/download?run_id=run-dl")
         assert response.status_code == 200
         assert response.content == b"%PDF-1.4 download body bytes"
         assert response.headers.get("x-content-type-options") == "nosniff"
@@ -9837,9 +9828,7 @@ class TestAttachmentDownloadAuth:
             data={"user_id": "admin", "token": "admin-test-token"},
             follow_redirects=False,
         )
-        response = client.get(
-            "/rop/attachments/evt-1-att-0/download?run_id=run-dl"
-        )
+        response = client.get("/rop/attachments/evt-1-att-0/download?run_id=run-dl")
         assert response.status_code == 200
 
     def test_authenticated_rop_unknown_attachment_404(self, tmp_path: Path) -> None:
@@ -9851,9 +9840,7 @@ class TestAttachmentDownloadAuth:
             data={"user_id": "rop", "token": "rop-test-token"},
             follow_redirects=False,
         )
-        response = client.get(
-            "/rop/attachments/not-there/download?run_id=run-dl"
-        )
+        response = client.get("/rop/attachments/not-there/download?run_id=run-dl")
         assert response.status_code == 404
 
 
@@ -9956,9 +9943,7 @@ def test_event_detail_attachment_lifecycle_metadata(tmp_path: Path) -> None:
     assert blocked["reason_code"] == "blocked_email_attachment"
 
     client = _client(storage_dir)
-    response = client.get(
-        f"/api/rop/events/{event_id}?run_id=run-detail-lifecycle"
-    )
+    response = client.get(f"/api/rop/events/{event_id}?run_id=run-detail-lifecycle")
     assert response.status_code == 200
     api_att = response.json()["data"]["attachments"][0]
     assert api_att["storage_status"] == "stored"

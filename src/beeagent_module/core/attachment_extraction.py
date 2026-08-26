@@ -7,6 +7,18 @@ from beeagent_module.core.attachment_store import event_attachment_id
 
 _BLOCKED_EMAIL_CONTENT_TYPE = "message/rfc822"
 
+_SAFE_ATTACHMENT_EXTRACTION_KEYS = (
+    "extraction_status",
+    "preview_available",
+    "text_preview",
+    "reason_code",
+    "refusal_reason",
+    "is_refused",
+    "is_supported",
+    "is_truncated",
+    "preview_chars",
+)
+
 
 def build_attachment_extraction(
     run_id: str,
@@ -48,7 +60,9 @@ def build_attachment_extraction(
                 preview_chars_max=preview_chars_max,
             )
             enriched_events.append(
-                _merge_storage_and_analysis_event(enriched_event, merged_items)
+                _merge_storage_and_analysis_event(
+                    enriched_event, merged_items, preview_chars_max
+                )
             )
             items.extend(merged_items)
         artifact = {
@@ -59,9 +73,7 @@ def build_attachment_extraction(
                 "attachment_count": len(items),
                 "preview_available_count": 0,
                 "metadata_only_count": sum(
-                    1
-                    for item in items
-                    if item["extraction_status"] == "metadata_only"
+                    1 for item in items if item["extraction_status"] == "metadata_only"
                 ),
                 "refused_count": 0,
                 "unsupported_count": 0,
@@ -93,6 +105,7 @@ def build_attachment_extraction(
         enriched_event = _merge_storage_and_analysis_event(
             event=enriched_event,
             event_items=merged_items,
+            preview_chars_max=preview_chars_max,
         )
         enriched_events.append(enriched_event)
         items.extend(merged_items)
@@ -169,33 +182,79 @@ def _merge_storage_and_analysis_items(
                 )
         analysis = analysis_results.get(attachment_id)
         if isinstance(analysis, dict):
-            item["analysis_status"] = str(
-                analysis.get("analysis_status") or "unknown"
-            )
+            item["analysis_status"] = str(analysis.get("analysis_status") or "unknown")
             item["analysis_reason_code"] = analysis.get("reason_code")
             analysis_preview = analysis.get("analysis_preview")
             if isinstance(analysis_preview, str) and analysis_preview.strip():
                 item["analysis_preview"] = analysis_preview
-                if not item.get("preview_available"):
+                if not item.get("is_refused") and not item.get("preview_available"):
                     item["preview_available"] = True
                     item["text_preview"] = analysis_preview[:preview_chars_max]
                     item["extraction_status"] = "preview"
-                    item["reason_code"] = "ai_analysis_preview"
+                    item["reason_code"] = "local_extraction_preview"
+            else:
+                _apply_analysis_degradation(item, analysis)
         merged.append(item)
     return merged
+
+
+def _apply_analysis_degradation(
+    item: dict[str, Any],
+    analysis: dict[str, Any],
+) -> None:
+    analysis_status = str(analysis.get("analysis_status") or "unknown")
+    reason_code = str(analysis.get("reason_code") or "")
+    if item.get("is_refused"):
+        return
+    if analysis_status == "failed":
+        item["extraction_status"] = "failed"
+        if not item.get("preview_available"):
+            item["preview_available"] = False
+            item["text_preview"] = ""
+        item["reason_code"] = _canonical_failure_reason(reason_code)
+    elif analysis_status == "unsupported":
+        item["extraction_status"] = "unsupported"
+        item["reason_code"] = _canonical_unsupported_reason(reason_code)
+    elif analysis_status == "disabled":
+        item["extraction_status"] = "disabled"
+        item["reason_code"] = _canonical_unsupported_reason(reason_code)
+
+
+def _canonical_failure_reason(reason_code: str) -> str:
+    if reason_code in (
+        "docling_assets_missing",
+        "docling_model_assets_missing",
+        "docling_dependency_missing",
+        "docling_worker_timeout",
+        "docling_worker_spawn_failed",
+        "docling_worker_no_result",
+        "docling_timeout",
+        "docling_conversion_failed",
+        "docling_extraction_failed",
+        "attachment_blob_unavailable",
+    ):
+        return reason_code
+    return reason_code or "attachment_extraction_failed"
+
+
+def _canonical_unsupported_reason(reason_code: str) -> str:
+    if reason_code in (
+        "unsupported_content_type",
+        "attachment_oversized",
+        "analysis_disabled",
+    ):
+        return reason_code
+    return reason_code or "attachment_extraction_unsupported"
 
 
 def _merge_storage_and_analysis_event(
     event: dict[str, Any],
     event_items: list[dict[str, Any]],
+    preview_chars_max: int,
 ) -> dict[str, Any]:
     enriched = dict(event)
-    storage_statuses = {
-        str(item.get("storage_status") or "") for item in event_items
-    }
-    analysis_statuses = {
-        str(item.get("analysis_status") or "") for item in event_items
-    }
+    storage_statuses = {str(item.get("storage_status") or "") for item in event_items}
+    analysis_statuses = {str(item.get("analysis_status") or "") for item in event_items}
     if storage_statuses:
         if storage_statuses == {"stored"}:
             enriched["attachment_storage_status"] = "stored"
@@ -212,16 +271,69 @@ def _merge_storage_and_analysis_event(
             enriched["attachment_analysis_status"] = "failed"
         else:
             enriched["attachment_analysis_status"] = "partial"
-    if not enriched.get("attachment_text_preview"):
-        analysis_previews = [
-            str(item.get("analysis_preview") or "")
+
+    status = _resolve_event_status(event_items)
+    previews = [
+        str(item.get("text_preview") or "")
+        for item in event_items
+        if item.get("preview_available") and item.get("text_preview")
+    ]
+    merged_preview = _sanitize_text("\n\n".join(previews))
+    merged_preview = merged_preview[:preview_chars_max]
+    refusal_reasons = sorted(
+        {
+            str(item.get("reason_code") or "")
             for item in event_items
-            if item.get("analysis_preview")
-        ]
-        if analysis_previews:
-            merged_preview = _sanitize_text("\n\n".join(analysis_previews))
-            enriched["attachment_text_preview"] = merged_preview
-            enriched["attachment_preview_available"] = bool(merged_preview)
+            if item.get("is_refused") and item.get("reason_code")
+        }
+    )
+
+    enriched["attachment_extraction_status"] = status
+    enriched["attachment_preview_available"] = bool(previews)
+    enriched["attachment_text_preview"] = merged_preview
+    enriched["attachment_refusal_reasons"] = refusal_reasons
+
+    if status == "preview" and not enriched.get("attachment_text"):
+        enriched["attachment_text"] = merged_preview
+
+    extraction_texts = [
+        str(item.get("analysis_preview") or "")
+        for item in event_items
+        if item.get("analysis_preview")
+    ]
+    if extraction_texts:
+        enriched["_attachment_extraction_text"] = _sanitize_text(
+            "\n\n".join(extraction_texts)
+        )
+
+    enriched["attachments"] = _enrich_attachments_with_extraction(
+        enriched.get("attachments"), event_items
+    )
+    return enriched
+
+
+def _enrich_attachments_with_extraction(
+    attachments: Any,
+    event_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(attachments, list):
+        return []
+    by_id = {
+        str(item.get("attachment_id") or ""): item
+        for item in event_items
+        if isinstance(item, dict)
+    }
+    enriched: list[dict[str, Any]] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        attachment = dict(attachment)
+        item = by_id.get(str(attachment.get("attachment_id") or ""))
+        if isinstance(item, dict):
+            for key in _SAFE_ATTACHMENT_EXTRACTION_KEYS:
+                if key in item:
+                    attachment[key] = item[key]
+        enriched.append(attachment)
     return enriched
 
 
@@ -265,7 +377,16 @@ def _extract_event_attachments(
     merged_preview = merged_preview[:preview_chars_max]
 
     enriched = dict(event)
-    enriched["attachments"] = [item for item in attachments if isinstance(item, dict)]
+    enriched_attachments: list[dict[str, Any]] = []
+    for index, attachment in enumerate(attachments):
+        if not isinstance(attachment, dict):
+            continue
+        attachment = dict(attachment)
+        attachment.setdefault(
+            "attachment_id", event_attachment_id(event.get("event_id"), index)
+        )
+        enriched_attachments.append(attachment)
+    enriched["attachments"] = enriched_attachments
     enriched["attachment_extraction_status"] = status
     enriched["attachment_preview_available"] = bool(previews)
     enriched["attachment_text_preview"] = merged_preview
@@ -341,9 +462,7 @@ def _metadata_only_attachment_item(
         return item
     item["filename"] = _as_text(attachment.get("filename"))
     item["content_type"] = _as_text(attachment.get("content_type"))
-    item["size_bytes"] = _to_int(
-        attachment.get("size_bytes", attachment.get("size"))
-    )
+    item["size_bytes"] = _to_int(attachment.get("size_bytes", attachment.get("size")))
     if _is_blocked_email_attachment(item["filename"], item["content_type"]):
         item.update(
             {
@@ -484,6 +603,8 @@ def _resolve_event_status(event_items: list[dict[str, Any]]) -> str:
         return "preview"
     if statuses == {"unsupported"}:
         return "unsupported"
+    if statuses == {"disabled"}:
+        return "disabled"
     if "metadata_only" in statuses:
         return "metadata_only"
     return "none"

@@ -1012,9 +1012,7 @@ def test_mailbox_html_block_boundaries_become_readable_line_breaks(
     )
 
     preview = events[0]["body_preview"]
-    assert preview == (
-        "First paragraph\nSecond block\nItem one\nItem two\nAfter break"
-    )
+    assert preview == ("First paragraph\nSecond block\nItem one\nItem two\nAfter break")
 
 
 def test_mailbox_plain_text_line_breaks_are_preserved(
@@ -1085,9 +1083,7 @@ def test_load_json_batch_doctype_and_markup_removed_with_line_breaks(
             {
                 "event_id": "e-html",
                 "body": (
-                    "<!DOCTYPE html><html><body>"
-                    "<p>Alpha</p><p>Beta</p>"
-                    "</body></html>"
+                    "<!DOCTYPE html><html><body><p>Alpha</p><p>Beta</p></body></html>"
                 ),
             }
         ],
@@ -1186,11 +1182,7 @@ def test_mailbox_html_invisible_filler_characters_removed(
     monkeypatch.setenv("ROP_MAILBOX_USERNAME", "operator@example.com")
     monkeypatch.setenv("ROP_MAIL_BOX_PASSWORD", "secret")
 
-    html_body = (
-        "<p>Line one</p>"
-        "<p>\u200c\xa0\u200c\xa0\u200c\xa0</p>"
-        "<p>Line two</p>"
-    )
+    html_body = "<p>Line one</p><p>\u200c\xa0\u200c\xa0\u200c\xa0</p><p>Line two</p>"
     raw_message = (
         "From: lead@example.com\n"
         "To: hotline@example.com\n"
@@ -2003,10 +1995,12 @@ def _storage_attachment_settings(
             "message_max": message_max,
             "files_message_max": files_message_max,
         },
-        "analysis": {
-            "provider": "",
-            "file_capable": False,
+        "extraction": {
+            "engine": "docling",
             "chars_max": 2000,
+            "pages_max": 20,
+            "timeout_seconds": 30,
+            "ocr_enabled": True,
         },
     }
 

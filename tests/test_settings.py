@@ -151,9 +151,7 @@ def test_routing_old_recipient_email_key_fails(monkeypatch) -> None:
     _base_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
-    changed["rop"]["sources"][1]["routing"] = {
-        "recipient_email": "hotline@welding.kz"
-    }
+    changed["rop"]["sources"][1]["routing"] = {"recipient_email": "hotline@welding.kz"}
     with pytest.raises(RuntimeError, match="recipient_email"):
         validate_settings(changed)
 
@@ -228,32 +226,92 @@ def test_attachment_storage_enabled_must_be_bool(monkeypatch) -> None:
         validate_settings(changed)
 
 
-def test_attachment_analysis_invalid_file_capable_fails(monkeypatch) -> None:
+def test_attachment_extraction_invalid_engine_fails(monkeypatch) -> None:
     _attach_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
-    changed["rop"]["attachments"]["analysis"]["file_capable"] = "yes"
-    with pytest.raises(RuntimeError, match="analysis.file_capable"):
+    changed["rop"]["attachments"]["extraction"]["engine"] = "tika"
+    with pytest.raises(RuntimeError, match="extraction.engine"):
         validate_settings(changed)
 
 
-@pytest.mark.parametrize("key", ["provider", "file_capable", "chars_max"])
-def test_attachment_analysis_required_keys_fail_fast(monkeypatch, key) -> None:
+@pytest.mark.parametrize(
+    "key", ["engine", "chars_max", "pages_max", "timeout_seconds", "ocr_enabled"]
+)
+def test_attachment_extraction_required_keys_fail_fast(monkeypatch, key) -> None:
     _attach_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
-    changed["rop"]["attachments"]["analysis"].pop(key)
-    with pytest.raises(RuntimeError, match=f"attachments.analysis.{key}"):
+    changed["rop"]["attachments"]["extraction"].pop(key)
+    with pytest.raises(RuntimeError, match=f"attachments.extraction.{key}"):
         validate_settings(changed)
 
 
-def test_attachment_analysis_invalid_chars_max_fails(monkeypatch) -> None:
+def test_attachment_extraction_invalid_chars_max_fails(monkeypatch) -> None:
     _attach_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
-    changed["rop"]["attachments"]["analysis"]["chars_max"] = -1
-    with pytest.raises(RuntimeError, match="analysis.chars_max"):
+    changed["rop"]["attachments"]["extraction"]["chars_max"] = -1
+    with pytest.raises(RuntimeError, match="extraction.chars_max"):
         validate_settings(changed)
+
+
+def _attach_env_full(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+
+
+def test_adjudicator_attachment_chars_max_required(monkeypatch) -> None:
+    _attach_env_full(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["ai_assist"]["adjudicator"].pop("attachment_chars_max")
+    with pytest.raises(RuntimeError, match="attachment_chars_max"):
+        validate_settings(changed)
+
+
+def test_adjudicator_attachment_chars_max_invalid_fails(monkeypatch) -> None:
+    _attach_env_full(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["ai_assist"]["adjudicator"]["attachment_chars_max"] = 0
+    with pytest.raises(RuntimeError, match="attachment_chars_max"):
+        validate_settings(changed)
+
+
+def test_attachment_chars_max_must_not_exceed_adjudicator_budget(
+    monkeypatch,
+) -> None:
+    _attach_env_full(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["chars_max"] = 5000
+    with pytest.raises(RuntimeError, match="attachments.chars_max"):
+        validate_settings(changed)
+
+
+def test_adjudicator_attachment_budget_must_not_exceed_extraction(
+    monkeypatch,
+) -> None:
+    _attach_env_full(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["ai_assist"]["adjudicator"]["attachment_chars_max"] = 5000
+    with pytest.raises(RuntimeError, match="attachment_chars_max"):
+        validate_settings(changed)
+
+
+def test_attachment_budget_invariant_valid_passes(monkeypatch) -> None:
+    _attach_env_full(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    validate_settings(settings)
+    assert (
+        settings["rop"]["attachments"]["chars_max"]
+        <= settings["rop"]["ai_assist"]["adjudicator"]["attachment_chars_max"]
+        <= settings["rop"]["attachments"]["extraction"]["chars_max"]
+    )
 
 
 def test_bitrix_writeback_file_attach_required_bool(monkeypatch) -> None:
@@ -270,6 +328,7 @@ def test_attachment_config_valid_passes(monkeypatch) -> None:
     settings = load_settings(_project_root() / "config" / "settings.yml")
     validate_settings(settings)
     assert settings["rop"]["attachments"]["storage"]["enabled"] is True
+    assert settings["rop"]["attachments"]["extraction"]["engine"] == "docling"
     assert settings["bitrix"]["writeback"]["file_attach"] is False
 
 
