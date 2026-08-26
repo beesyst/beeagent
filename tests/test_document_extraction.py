@@ -27,6 +27,7 @@ from beeagent_module.core.document_extraction import (
     DocumentExtractionResult,
     _worker_environment,
     extract_attachment_documents,
+    prepare_docling_assets,
 )
 from beeagent_module.core.document_extraction_worker import _apply_offline_env
 
@@ -630,6 +631,128 @@ class TestOcrBackend:
         assert result["status"] == "failed"
         assert result["reason_code"] == "docling_assets_missing"
         assert result["text"] == ""
+
+
+class TestAssetPreparation:
+    def test_uses_local_layout_snapshot_without_network(self, monkeypatch) -> None:
+        calls: list[dict[str, object] | str] = []
+
+        def snapshot_download(**kwargs):
+            calls.append(kwargs)
+            return "/tmp/layout-model"
+
+        monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+        monkeypatch.setattr(
+            "beeagent_module.core.docling_reader.prepare_rapidocr_assets",
+            lambda: calls.append("rapidocr"),
+        )
+
+        prepare_docling_assets()
+
+        assert calls == [
+            {
+                "repo_id": "docling-project/docling-layout-heron",
+                "revision": "main",
+                "local_files_only": True,
+            },
+            "rapidocr",
+        ]
+
+    def test_downloads_layout_only_when_local_snapshot_is_missing(
+        self, monkeypatch
+    ) -> None:
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        calls: list[dict[str, object] | str] = []
+
+        def snapshot_download(**kwargs):
+            calls.append(kwargs)
+            if kwargs.get("local_files_only") is True:
+                raise LocalEntryNotFoundError("layout model is not cached")
+            return "/tmp/layout-model"
+
+        monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+        monkeypatch.setattr(
+            "beeagent_module.core.docling_reader.prepare_rapidocr_assets",
+            lambda: calls.append("rapidocr"),
+        )
+
+        prepare_docling_assets()
+
+        assert calls == [
+            {
+                "repo_id": "docling-project/docling-layout-heron",
+                "revision": "main",
+                "local_files_only": True,
+            },
+            {
+                "repo_id": "docling-project/docling-layout-heron",
+                "revision": "main",
+            },
+            "rapidocr",
+        ]
+
+    def test_prepares_rapidocr_after_layout_snapshot(self, monkeypatch) -> None:
+        calls: list[str] = []
+
+        def snapshot_download(**kwargs):
+            assert kwargs["local_files_only"] is True
+            calls.append("layout")
+            return "/tmp/layout-model"
+
+        monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+        monkeypatch.setattr(
+            "beeagent_module.core.docling_reader.prepare_rapidocr_assets",
+            lambda: calls.append("rapidocr"),
+        )
+
+        prepare_docling_assets()
+
+        assert calls == ["layout", "rapidocr"]
+
+    def test_rapidocr_downloads_only_missing_assets(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from beeagent_module.core import docling_reader
+
+        existing_name = next(iter(docling_reader._RAPIDOCR_ASSET_URLS))
+        (tmp_path / existing_name).write_bytes(b"cached")
+        calls: list[str] = []
+
+        def urlopen(url: str, timeout: int):
+            calls.append(url)
+            return io.BytesIO(b"downloaded")
+
+        monkeypatch.setattr(docling_reader, "_RAPIDOCR_ASSETS_DIR", tmp_path)
+        monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+        docling_reader.prepare_rapidocr_assets()
+
+        assert calls == [
+            url
+            for name, url in docling_reader._RAPIDOCR_ASSET_URLS.items()
+            if name != existing_name
+        ]
+        assert all(
+            (tmp_path / name).is_file() and (tmp_path / name).stat().st_size > 0
+            for name in docling_reader._RAPIDOCR_ASSET_URLS
+        )
+
+    def test_rapidocr_uses_all_existing_assets_without_download(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from beeagent_module.core import docling_reader
+
+        for name in docling_reader._RAPIDOCR_ASSET_URLS:
+            (tmp_path / name).write_bytes(b"cached")
+
+        def urlopen(*args, **kwargs):
+            raise AssertionError("network download must not be attempted")
+
+        monkeypatch.setattr(docling_reader, "_RAPIDOCR_ASSETS_DIR", tmp_path)
+        monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+        docling_reader.prepare_rapidocr_assets()
 
 
 class TestRealExtraction:

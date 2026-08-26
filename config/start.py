@@ -83,6 +83,11 @@ def main() -> None:
     logger = get_logger("app")
 
     if not args:
+        from beeagent_module.core.document_extraction import prepare_docling_assets
+
+        logger.info("Ensuring local Docling/RapidOCR assets...")
+        prepare_docling_assets()
+
         from beeagent_module.core.app import run_app
 
         logger.info("No CLI args provided, using run.mode from settings")
