@@ -1402,6 +1402,13 @@ Queue toolbar contains:
 
 `columns_open` и `open_dropdowns` не являются частью canonical toolbar contract. Они поддерживаются только в legacy accepted inputs adapter contract для обратной совместимости с существующими ссылками и bookmark.
 
+Queue sets the stable `data_table.id` value `rop-queue` and supplies the released
+BeeUI 0.26.4 pagination/page-size payload. This opts the table into BeeUI's
+generic progressive same-origin GET replacement while keeping BeeAgent's
+server-side query semantics authoritative. BeeAgent supplies safe navigation
+hrefs and the product-owned page-size choices `25`, `50`, and `100`; BeeUI owns
+the live interaction and compact pagination presentation.
+
 Other BeeAgent adapter-backed tables use the canonical `data_table` presentation but do not receive Queue toolbar controls.
 
 ### Adapter-level validation contract

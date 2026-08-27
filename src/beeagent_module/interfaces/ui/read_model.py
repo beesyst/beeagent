@@ -9,6 +9,7 @@ from typing import Any
 
 from beeagent_module.cases.rop_dashboard import (
     ALLOWED_BITRIX_STATUSES,
+    ALLOWED_PAGE_SIZES,
     ALLOWED_QUEUE_IDS,
     DEFAULT_PAGE_SIZE,
     _event_needs_review,
@@ -92,7 +93,7 @@ def _trusted_attach_operational_case_types(
         return result
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
+    except OSError, json.JSONDecodeError, TypeError:
         return result
     if not isinstance(data, dict):
         return result
@@ -3696,7 +3697,7 @@ def _build_queue_toolbar(
                 period=current_period,
                 lang=locale,
                 run_id=run_id,
-                page=page,
+                page=1,
                 page_size=page_size,
                 sort=sort,
                 order=order,
@@ -3814,7 +3815,7 @@ def _build_queue_toolbar(
     if locale != "en":
         hidden["lang"] = locale
     if page > 1:
-        hidden["page"] = str(page)
+        hidden["page"] = "1"
     if page_size != DEFAULT_PAGE_SIZE:
         hidden["page_size"] = str(page_size)
     if sort != "received_at" or order != "desc":
@@ -3871,6 +3872,38 @@ def _sort_href(
         order=new_order,
         filter_params=filter_params,
     )
+
+
+def _queue_page_size_options(
+    *,
+    run_id: str,
+    locale: str,
+    current_period: str,
+    filter_params: dict[str, str],
+    page_size: int,
+    sort: str,
+    order: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "value": str(option_size),
+            "label": str(option_size),
+            "active": option_size == page_size,
+            "href": build_rop_url(
+                tab="queue",
+                run_id=run_id,
+                period=current_period,
+                lang=locale,
+                page=1,
+                page_size=option_size,
+                sort=sort,
+                order=order,
+                filter_params=filter_params,
+                extra={"page_size": str(option_size)},
+            ),
+        }
+        for option_size in ALLOWED_PAGE_SIZES
+    ]
 
 
 def _queue_table(
@@ -4075,11 +4108,7 @@ def _queue_table(
     ]
 
     # Build pagination
-    pagination_label = t("Showing {start}–{end} of {total}", locale).format(
-        start=(page - 1) * page_size + 1 if total_count > 0 else 0,
-        end=min(page * page_size, total_count),
-        total=total_count,
-    )
+    pagination_label = f"/ {total_count}"
 
     pagination_pages: list[dict[str, Any]] = []
     for p in range(1, total_pages + 1):
@@ -4127,8 +4156,18 @@ def _queue_table(
                     "href": row["detail_href"],
                 }
 
+    page_size_options = _queue_page_size_options(
+        run_id=run_id,
+        locale=locale,
+        current_period=current_period,
+        filter_params=filter_params,
+        page_size=page_size,
+        sort=sort,
+        order=order,
+    )
     result: dict[str, Any] = {
         "type": "data_table",
+        "id": "rop-queue",
         "size": "XL",
         "title": title,
         "striped": True,
@@ -4137,7 +4176,15 @@ def _queue_table(
         "rows": rows,
         "pagination": {
             "label": pagination_label,
+            "page": page,
+            "total": total_count,
+            "start": (page - 1) * page_size + 1 if total_count > 0 else 0,
+            "end": min(page * page_size, total_count),
             "pages": pagination_pages,
+            "page_size": {
+                "current": str(page_size),
+                "options": page_size_options,
+            },
         },
     }
     if toolbar:
@@ -4176,6 +4223,7 @@ def _empty_queue_table(
     _, pagination = paginate_items([], page=page, page_size=page_size)
     result: dict[str, Any] = {
         "type": "data_table",
+        "id": "rop-queue",
         "size": "XL",
         "title": t("ROP Work Queue", locale),
         "striped": True,
@@ -4183,7 +4231,11 @@ def _empty_queue_table(
         "columns": columns,
         "rows": [],
         "pagination": {
-            "label": t("Showing 0–0 of 0", locale),
+            "label": "/ 0",
+            "page": pagination["page"],
+            "total": 0,
+            "start": 0,
+            "end": 0,
             "pages": [
                 {
                     "label": "1",
@@ -4201,6 +4253,18 @@ def _empty_queue_table(
                     "active": True,
                 }
             ],
+            "page_size": {
+                "current": str(pagination["page_size"]),
+                "options": _queue_page_size_options(
+                    run_id=run_id,
+                    locale=locale,
+                    current_period=current_period,
+                    filter_params=filter_params,
+                    page_size=pagination["page_size"],
+                    sort=sort,
+                    order=order,
+                ),
+            },
         },
     }
     if toolbar:
