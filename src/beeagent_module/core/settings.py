@@ -368,10 +368,6 @@ def validate_settings(settings: dict) -> None:
         )
 
     extraction_chars_max = extraction_cfg.get("chars_max")
-    if not isinstance(extraction_chars_max, int) or extraction_chars_max <= 0:
-        raise RuntimeError(
-            "Invalid rop.attachments.extraction.chars_max, expected int > 0"
-        )
     adjudicator_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
     adjudicator_attachment_chars_max = (
         adjudicator_cfg.get("attachment_chars_max")

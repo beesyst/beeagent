@@ -1674,6 +1674,31 @@ class TestWritebackPlanner:
         assert record["responsible_status"] == "matched"
         assert record["stage_id"] == "NEW_ASSIGNED"
 
+    @pytest.mark.parametrize("user_id", [None, 0, True, "42"])
+    def test_malformed_matched_responsible_defers_without_create(
+        self, tmp_path: Path, writeback_env: None, user_id: Any
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched", user_id=user_id)],
+        )
+        settings = _writeback_settings(user_id_fallback=1563)
+        plan = build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 0
+        assert "crm.item.add" not in [call["method"] for call in recorder.calls]
+
     def test_fallback_responsible_ignored_for_connector_degraded(
         self, tmp_path: Path
     ) -> None:

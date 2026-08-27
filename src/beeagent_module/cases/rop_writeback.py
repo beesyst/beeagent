@@ -377,6 +377,12 @@ def _create_lead_delivery(
     policy: dict[str, Any],
 ) -> dict[str, Any]:
     responsible = _responsible_from_routing(routing_item)
+    matched_eligible = (
+        responsible["status"] == "matched"
+        and isinstance(responsible["user_id"], int)
+        and not isinstance(responsible["user_id"], bool)
+        and responsible["user_id"] > 0
+    )
     fallback_id = policy.get("user_id_fallback")
     fallback_eligible = (
         responsible["status"] == "not_found"
@@ -384,7 +390,7 @@ def _create_lead_delivery(
         and not isinstance(fallback_id, bool)
         and fallback_id > 0
     )
-    if responsible["status"] != "matched" and not fallback_eligible:
+    if not matched_eligible and not fallback_eligible:
         return {
             "outcome": "deferred",
             "reason_code": "responsible_unresolved",
@@ -392,7 +398,7 @@ def _create_lead_delivery(
             "responsible_reason": responsible["reason"],
         }
     stage_key = case_type
-    if case_type == "new_lead" and responsible["status"] == "matched":
+    if case_type == "new_lead" and matched_eligible:
         stage_key = "new_lead_assigned"
     stage_id = policy["stages"].get(stage_key)
     if not stage_id:
