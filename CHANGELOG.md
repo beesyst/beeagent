@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.55.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.54.0...beeagent-v0.55.0) (2026-08-27)
+
+
+### Features
+
+* **attachments:** migrate document extraction to Docling ([32abc37](https://github.com/beesyst/beeagent/commit/32abc3715365d1dfaa0166b115f01192750fdbb1))
+
+
+### Bug Fixes
+
+* **bootstrap:** auto-prepare Docling assets on startup ([16b3f4f](https://github.com/beesyst/beeagent/commit/16b3f4fe7e217a3ccb77bc7a5587a54246bf72cb))
+
 ## [0.54.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.53.2...beeagent-v0.54.0) (2026-08-25)
 
 
