@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.1...beeagent-v0.56.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **startup:** make config an explicit package ([#220](https://github.com/beesyst/beeagent/issues/220)) ([f559f49](https://github.com/beesyst/beeagent/commit/f559f497d024026b18bb7e0230ab16153db55aec))
+
 ## [0.56.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.0...beeagent-v0.56.1) (2026-08-27)
 
 
