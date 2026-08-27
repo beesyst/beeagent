@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.0...beeagent-v0.56.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **rop:** adopt BeeUI live search and pagination ([#218](https://github.com/beesyst/beeagent/issues/218)) ([f007fa0](https://github.com/beesyst/beeagent/commit/f007fa0fb83f4733464de4315a9e7aab8064d5cb))
+
 ## [0.56.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.55.0...beeagent-v0.56.0) (2026-08-27)
 
 
