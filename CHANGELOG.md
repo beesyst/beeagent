@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.55.0...beeagent-v0.56.0) (2026-08-27)
+
+
+### Features
+
+* **rop:** route matched and fallback new leads to separate bitrix stages ([#216](https://github.com/beesyst/beeagent/issues/216)) ([57caed2](https://github.com/beesyst/beeagent/commit/57caed2b94112d7b946a9a53394ae0aa4f5fd52b))
+
 ## [0.55.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.54.0...beeagent-v0.55.0) (2026-08-27)
 
 
