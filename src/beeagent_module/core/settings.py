@@ -1159,7 +1159,9 @@ def _validate_bitrix_settings(settings: dict) -> None:
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.stages, expected mapping"
             )
-        unsupported_stage_keys = sorted(set(stages_cfg) - {"new_lead", "irrelevant"})
+        unsupported_stage_keys = sorted(
+            set(stages_cfg) - {"new_lead", "new_lead_assigned", "irrelevant"}
+        )
         if unsupported_stage_keys:
             raise RuntimeError(
                 "Unsupported bitrix.writeback.stages keys: "
@@ -1181,7 +1183,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
                     "Invalid bitrix config: bitrix.writeback.enabled requires "
                     "bitrix.reconciliation.enabled: true"
                 )
-            for stage_key in ("new_lead", "irrelevant"):
+            for stage_key in ("new_lead", "new_lead_assigned", "irrelevant"):
                 stage_value = stages_cfg.get(stage_key)
                 if not isinstance(stage_value, str) or not stage_value.strip():
                     raise RuntimeError(
