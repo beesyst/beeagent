@@ -709,7 +709,11 @@ def test_rop_batch_case_degraded_missing_module(tmp_path: Path) -> None:
     ).exists()
 
 
-def test_rop_batch_case_mailbox_missing_credentials_degraded(tmp_path: Path) -> None:
+def test_rop_batch_case_mailbox_missing_credentials_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ROP_MAILBOX_USERNAME", raising=False)
+    monkeypatch.delenv("ROP_MAILBOX_PASSWORD", raising=False)
     settings = _make_mailbox_settings()
 
     result = run_rop_batch_case(

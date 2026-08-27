@@ -78,7 +78,12 @@ def _writeback_settings(
         "email_completed": email_completed,
         "file_attach": file_attach,
         "source_id": source_id,
-        "stages": stages or {"new_lead": "NEW", "irrelevant": "NEW"},
+        "stages": stages
+        or {
+            "new_lead": "NEW",
+            "new_lead_assigned": "NEW_ASSIGNED",
+            "irrelevant": "NEW",
+        },
     }
     if user_id_fallback is not None:
         writeback["user_id_fallback"] = user_id_fallback
@@ -343,6 +348,7 @@ def _default_handler(call: dict[str, Any]) -> bytes:
             {
                 "result": [
                     {"ENTITY_ID": "STATUS", "STATUS_ID": "NEW"},
+                    {"ENTITY_ID": "STATUS", "STATUS_ID": "NEW_ASSIGNED"},
                     {"ENTITY_ID": "STATUS", "STATUS_ID": "IN_PROCESS"},
                 ]
             }
@@ -381,13 +387,15 @@ class TestWritebackSettingsValidation:
     def _load(self) -> dict:
         return load_settings(_PROJECT_ROOT / "config" / "settings.yml")
 
-    def test_writeback_disabled_by_default(self) -> None:
+    def test_writeback_disabled_with_verified_stage_and_fallback(self) -> None:
         settings = self._load()
         writeback = settings["bitrix"]["writeback"]
         assert writeback["enabled"] is False
         assert writeback["webhook_env"] == "BITRIX_WRITEBACK_WEBHOOK_URL"
         assert writeback["attempts_retry_max"] == 3
         assert writeback["email_attach"] is True
+        assert writeback["user_id_fallback"] == 167
+        assert writeback["stages"]["new_lead_assigned"] == "2"
         validate_settings(settings)
 
     def test_env_example_declares_writeback_credential(self) -> None:
@@ -459,10 +467,27 @@ class TestWritebackSettingsValidation:
         monkeypatch.setenv("BITRIX_WRITEBACK_WEBHOOK_URL", "https://x.test/")
         settings = self._load()
         settings["bitrix"]["writeback"]["enabled"] = True
-        settings["bitrix"]["writeback"]["stages"] = {"new_lead": "NEW"}
+        settings["bitrix"]["writeback"]["stages"] = {
+            "new_lead": "NEW",
+            "new_lead_assigned": "NEW_ASSIGNED",
+        }
         with pytest.raises(RuntimeError) as exc_info:
             validate_settings(settings)
         assert "irrelevant" in str(exc_info.value)
+
+    def test_writeback_enabled_requires_new_lead_assigned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BITRIX_WRITEBACK_WEBHOOK_URL", "https://x.test/")
+        settings = self._load()
+        settings["bitrix"]["writeback"]["enabled"] = True
+        settings["bitrix"]["writeback"]["stages"] = {
+            "new_lead": "NEW",
+            "irrelevant": "NEW",
+        }
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_settings(settings)
+        assert "new_lead_assigned" in str(exc_info.value)
 
     def test_writeback_enabled_requires_empty_stage_value(
         self, monkeypatch: pytest.MonkeyPatch
@@ -481,11 +506,12 @@ class TestWritebackSettingsValidation:
     def test_writeback_enabled_requires_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("BITRIX_WRITEBACK_WEBHOOK_URL", raising=False)
         settings = self._load()
+        monkeypatch.delenv("BITRIX_WRITEBACK_WEBHOOK_URL", raising=False)
         settings["bitrix"]["writeback"]["enabled"] = True
         settings["bitrix"]["writeback"]["stages"] = {
             "new_lead": "NEW",
+            "new_lead_assigned": "NEW_ASSIGNED",
             "irrelevant": "NEW",
         }
         with pytest.raises(RuntimeError) as exc_info:
@@ -548,12 +574,15 @@ class TestWritebackSettingsValidation:
     def test_writeback_rejects_same_credential_url(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        settings = self._load()
         monkeypatch.setenv(
             "BITRIX_WRITEBACK_WEBHOOK_URL", "https://same.test/rest/1/x/"
         )
         monkeypatch.setenv("BITRIX_WEBHOOK_URL", "https://same.test/rest/1/x")
-        settings = self._load()
         settings["bitrix"]["writeback"]["enabled"] = True
+        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = (
+            "NEW_ASSIGNED"
+        )
 
         with pytest.raises(RuntimeError) as exc_info:
             validate_settings(settings)
@@ -570,6 +599,9 @@ class TestWritebackSettingsValidation:
         )
         settings = self._load()
         settings["bitrix"]["writeback"]["enabled"] = True
+        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = (
+            "NEW_ASSIGNED"
+        )
 
         validate_settings(settings)
 
@@ -766,7 +798,7 @@ class TestWritebackPlanner:
         )
         record = plan["events"][0]
         assert record["outcome"] == "create_lead"
-        assert record["stage_id"] == "NEW"
+        assert record["stage_id"] == "NEW_ASSIGNED"
         assert record["responsible_user_id"] == 42
         assert record["originator_id"] == "beeagent-rop"
         assert record["origin_id"] == _origin_id(
@@ -1039,9 +1071,10 @@ class TestWritebackPlanner:
             if call["method"] in {"crm.item.add", "crm.activity.add"}
         ]
         if creates_lead:
+            expected_stage = "NEW_ASSIGNED" if case_type == "new_lead" else "NEW"
             assert record["outcome"] == "create_lead"
             assert record["responsible_user_id"] == 42
-            assert record["stage_id"] == "NEW"
+            assert record["stage_id"] == expected_stage
             assert first["writes_performed"] == 2
             assert second["writes_performed"] == 0
             assert [call["method"] for call in mutations] == [
@@ -1050,7 +1083,7 @@ class TestWritebackPlanner:
             ]
             create = mutations[0]["payload"]["fields"]
             assert create["ASSIGNED_BY_ID"] == 42
-            assert create["STAGE_ID"] == "NEW"
+            assert create["STAGE_ID"] == expected_stage
             assert create["fm"][0]["value"] == "client@example.com"
             activity = mutations[1]["payload"]["fields"]
             assert activity["OWNER_TYPE_ID"] == 1
@@ -1590,7 +1623,7 @@ class TestWritebackPlanner:
         )
         record = plan["events"][0]
         assert record["outcome"] == "create_lead"
-        assert record["stage_id"] == "NEW"
+        assert record["stage_id"] == "NEW_ASSIGNED"
         assert record["responsible_user_id"] == 42
         assert record["target_provenance"] is None
 
@@ -1639,6 +1672,7 @@ class TestWritebackPlanner:
         assert record["outcome"] == "create_lead"
         assert record["responsible_user_id"] == 42
         assert record["responsible_status"] == "matched"
+        assert record["stage_id"] == "NEW_ASSIGNED"
 
     def test_fallback_responsible_ignored_for_connector_degraded(
         self, tmp_path: Path
@@ -1703,6 +1737,105 @@ class TestWritebackPlanner:
         record = plan["events"][0]
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "stage_not_configured"
+
+    def test_matched_new_lead_requires_configured_assigned_stage(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched", user_id=42)],
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            _writeback_settings(
+                stages={"new_lead": "NEW", "irrelevant": "NEW"}
+            ),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "stage_not_configured"
+
+    def test_matched_new_lead_uses_assigned_stage_and_exact_user(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched", user_id=42)],
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            _writeback_settings(user_id_fallback=1563),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["stage_id"] == "NEW_ASSIGNED"
+        assert record["responsible_user_id"] == 42
+        assert record["responsible_status"] == "matched"
+
+    def test_fallback_new_lead_keeps_new_stage_with_fallback_user(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "not_found", user_id=None)],
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            _writeback_settings(user_id_fallback=1563),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["stage_id"] == "NEW"
+        assert record["responsible_user_id"] == 1563
+        assert record["responsible_status"] == "fallback"
+
+    def test_irrelevant_keeps_existing_stage_for_matched_responsible(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-1",
+                    "irrelevant",
+                    should_rop_see=False,
+                    message_id="<msg-1@example.test>",
+                )
+            ],
+            decisions=[_decision("evt-1", "irrelevant")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "matched", user_id=42)],
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            _writeback_settings(user_id_fallback=1563),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["stage_id"] == "NEW"
+        assert record["responsible_user_id"] == 42
+        assert record["responsible_status"] == "matched"
 
     def test_exact_reply_attaches_to_created_thread_root(self, tmp_path: Path) -> None:
         _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
@@ -3439,7 +3572,13 @@ class TestWritebackExecutor:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
         )
-        settings = _writeback_settings(stages={"new_lead": "NOPE", "irrelevant": "NEW"})
+        settings = _writeback_settings(
+            stages={
+                "new_lead": "NEW",
+                "new_lead_assigned": "NOPE",
+                "irrelevant": "NEW",
+            }
+        )
         build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
@@ -3555,7 +3694,7 @@ class TestWritebackExecutor:
         )
         assert add_call["payload"]["entityTypeId"] == 1
         fields = add_call["payload"]["fields"]
-        assert fields["STAGE_ID"] == "NEW"
+        assert fields["STAGE_ID"] == "NEW_ASSIGNED"
         assert fields["ASSIGNED_BY_ID"] == 42
         assert fields["ORIGINATOR_ID"] == "beeagent-rop"
         assert fields["ORIGIN_ID"] == _origin_id(
@@ -5219,6 +5358,7 @@ class TestWritebackExecutor:
             call for call in recorder.calls if call["method"] == "crm.item.add"
         )
         assert add_call["payload"]["fields"]["ASSIGNED_BY_ID"] == 1563
+        assert add_call["payload"]["fields"]["STAGE_ID"] == "NEW"
         state = _load_state(tmp_path)
         record = list(state["events"].values())[0]
         assert record["status"] == "created"

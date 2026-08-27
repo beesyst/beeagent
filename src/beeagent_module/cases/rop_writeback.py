@@ -391,7 +391,10 @@ def _create_lead_delivery(
             "responsible_status": responsible["status"],
             "responsible_reason": responsible["reason"],
         }
-    stage_id = policy["stages"].get(case_type)
+    stage_key = case_type
+    if case_type == "new_lead" and responsible["status"] == "matched":
+        stage_key = "new_lead_assigned"
+    stage_id = policy["stages"].get(stage_key)
     if not stage_id:
         return {
             "outcome": "deferred",

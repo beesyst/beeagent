@@ -368,6 +368,10 @@ def validate_settings(settings: dict) -> None:
         )
 
     extraction_chars_max = extraction_cfg.get("chars_max")
+    if not isinstance(extraction_chars_max, int) or extraction_chars_max <= 0:
+        raise RuntimeError(
+            "Invalid rop.attachments.extraction.chars_max, expected int > 0"
+        )
     adjudicator_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
     adjudicator_attachment_chars_max = (
         adjudicator_cfg.get("attachment_chars_max")
@@ -1159,7 +1163,9 @@ def _validate_bitrix_settings(settings: dict) -> None:
             raise RuntimeError(
                 "Invalid type for bitrix.writeback.stages, expected mapping"
             )
-        unsupported_stage_keys = sorted(set(stages_cfg) - {"new_lead", "irrelevant"})
+        unsupported_stage_keys = sorted(
+            set(stages_cfg) - {"new_lead", "new_lead_assigned", "irrelevant"}
+        )
         if unsupported_stage_keys:
             raise RuntimeError(
                 "Unsupported bitrix.writeback.stages keys: "
@@ -1181,7 +1187,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
                     "Invalid bitrix config: bitrix.writeback.enabled requires "
                     "bitrix.reconciliation.enabled: true"
                 )
-            for stage_key in ("new_lead", "irrelevant"):
+            for stage_key in ("new_lead", "new_lead_assigned", "irrelevant"):
                 stage_value = stages_cfg.get(stage_key)
                 if not isinstance(stage_value, str) or not stage_value.strip():
                     raise RuntimeError(

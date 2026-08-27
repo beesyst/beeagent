@@ -226,6 +226,7 @@ class TestBitrixConfigValidation:
         settings = _load_test_settings()
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["reconciliation"]["enabled"] = False
+        settings["bitrix"]["writeback"]["enabled"] = False
 
         assert settings["bitrix"]["enabled"] is False
         assert settings["bitrix"]["webhook_env"] == "BITRIX_WEBHOOK_URL"

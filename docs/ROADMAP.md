@@ -9157,7 +9157,7 @@ No attachment binary is sent to the AI provider for document reading.
 
 ### Итерация 42 — Responsible-aware Bitrix lead stage routing v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -9272,6 +9272,18 @@ Existing executor продолжает выполнять тот же bounded `c
 - docs and tests reflect the actual contract;
 - required security/runtime checks are green;
 - `pyproject.toml.version` is unchanged.
+
+#### Реализация (It42)
+
+- Добавлен explicit config key `bitrix.writeback.stages.new_lead_assigned` (customer stage «Лид назначен»); значение подтверждено read-only Bitrix verification: STATUS_ID `2` = «Лид назначен», `user_id_fallback=167` = активный ROBOT WG (system@welding.kz), без guessing display labels.
+- Планировщик `_create_lead_delivery` в `src/beeagent_module/cases/rop_writeback.py` теперь выбирает stage key детерминированно по уже подтверждённому responsible outcome: `new_lead + matched` → `stages.new_lead_assigned` + exact matched `user_id`; `new_lead + not_found` + valid `user_id_fallback` → existing `stages.new_lead` + fallback user; `irrelevant` → existing `stages.irrelevant`. KISS: прямая ответственная-aware выборка stage key, без generic stage-routing framework.
+- Fail-closed поведение сохранено: `ambiguous`/`connector_degraded`/`unresolved`/`not_attempted`, inactive или malformed responsible evidence остаются `deferred` (`responsible_unresolved`) без create; fallback никогда не override exact matched responsible; trusted `attach_existing` не создаёт Lead и не restage/reassign существующей CRM entity.
+- Executor не менялся: продолжает выполнять тот же bounded `crm.item.add` (`entityTypeId=1`) с planner-provided `STAGE_ID`/`ASSIGNED_BY_ID`; mutation allowlist не расширялся.
+- Settings fail-fast validation (`src/beeagent_module/core/settings.py`) теперь разрешает `new_lead_assigned` как известный stage key и требует непустой `new_lead_assigned` при `bitrix.writeback.enabled=true`; неизвестные stage keys остаются rejected.
+- Stage pre-validation через существующий `crm.status.list` (`_validate_stages_against_bitrix`) теперь охватывает и `new_lead_assigned`; invalid assigned stage → zero mutation; stage-validation outage сохраняет recoverable fail-closed `pending` поведение.
+- Durable state, retry/recovery, checkpoint и idempotency семантика сохранены без изменений.
+- Добавлены focused regressions: settings validation для `new_lead_assigned` (missing/empty при enabled), planner matched/fallback/unresolved/degraded/irrelevant/trusted-attach stage selection, executor exact `STAGE_ID`+`ASSIGNED_BY_ID` для matched и fallback, invalid assigned stage → zero writes, replay/idempotency.
+- `beeagent-rop` и `beeui` не изменялись; новых dependencies нет; `pyproject.toml.version` не изменялся.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
