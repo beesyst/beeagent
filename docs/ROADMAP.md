@@ -1033,7 +1033,7 @@ BeeAgent получает минимальный capability boundary v0: мод�
 
 ---
 
-## Этап 4 — First real client module integration (итерации 15–36)
+## Этап 4 — First real client module integration
 
 ### Purpose of stage
 
@@ -9154,6 +9154,124 @@ No attachment binary is sent to the AI provider for document reading.
 - Provider Files API / `input_file` / `input_image` / base64 attachment path удалён из runtime; AI adjudicator остаётся text-only.
 - Local Docling model assets (layout model + RapidOCR PP-OCRv5 cyrillic rec/det/dict) подготавливаются явно через `config/start.py docling-assets-prepare`; runtime работает offline (`HF_HUB_OFFLINE=1`) и не скачивает модели молча; missing assets — explicit degraded.
 - `beeagent-rop` и `beeui` не изменялись; `pyproject.toml.version` не изменялся.
+
+### Итерация 42 — Responsible-aware Bitrix lead stage routing v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Уточнить существующий BeeAgent-owned Bitrix write-back policy: новый Lead с точно найденным ответственным должен создаваться в customer stage «Лид назначен», а Lead, для которого recipient routing вернул `responsible.status=not_found` и применён configured fallback responsible, должен сохранять stage «Новый».
+
+Изменение должно использовать уже существующее разделение `matched` / `fallback` и не затрагивать classification, recipient matching, trusted CRM target authority, idempotency или BeeUI.
+
+#### Scope
+
+- реализовать изменения только в `beeagent`;
+- сохранить `bitrix.writeback.stages.new_lead` как stage для fallback new Lead (`NEW` / «Новый» в текущем customer config);
+- добавить explicit config key `bitrix.writeback.stages.new_lead_assigned` для customer stage «Лид назначен»;
+- для `case_type=new_lead` и exact active `responsible.status=matched` использовать:
+  - найденный `responsible.user_id`;
+  - `stages.new_lead_assigned`;
+- для `case_type=new_lead` и `responsible.status=not_found` при configured valid `user_id_fallback` использовать:
+  - `user_id_fallback`;
+  - existing `stages.new_lead`;
+- сохранить fail-closed behavior для `ambiguous`, `connector_degraded`, `unresolved`, `not_attempted`, inactive или malformed responsible evidence;
+- сохранить `irrelevant` stage behavior без изменений;
+- сохранить trusted `attach_existing` behavior без stage/reassignment mutation существующей CRM entity;
+- валидировать новый required stage key fail-fast при enabled write-back;
+- проверять configured stage через существующий `crm.status.list` validation path до mutation;
+- сохранить existing durable write-back state, idempotency, retry/recovery и checkpoint semantics;
+- обновить targeted regression tests и contract documentation.
+
+#### Excluded
+
+- изменения `beeagent-rop`;
+- изменения `beeui`;
+- добавление Bitrix write-back settings или CRM controls в ROP Web Console;
+- изменение recipient attribution или responsible matching;
+- изменение eligibility `user_id_fallback`;
+- изменение classification, subtype, duplicate или AI semantics;
+- изменение `irrelevant` / JUNK behavior;
+- изменение стадии или ответственного существующих trusted Lead/Deal;
+- `crm.item.update`, `crm.item.delete` или новые Bitrix mutation methods;
+- hardcoded customer stage IDs, Bitrix user IDs или display labels в Python runtime;
+- новые dependencies;
+- version bump.
+
+#### Deliverable
+
+BeeAgent write-back planner детерминированно выбирает stage нового Lead на основании уже подтверждённого responsible outcome:
+
+```text
+new_lead + matched
+→ configured new_lead_assigned stage
+→ matched Bitrix user
+
+new_lead + not_found + fallback
+→ configured new_lead stage
+→ fallback Bitrix user
+```
+
+Existing executor продолжает выполнять тот же bounded `crm.item.add` contract с planner-provided `STAGE_ID` и `ASSIGNED_BY_ID`.
+
+#### Acceptance criteria
+
+- exact active matched responsible для `new_lead` создаёт Lead с `STAGE_ID=bitrix.writeback.stages.new_lead_assigned`;
+- matched Lead получает exact matched `ASSIGNED_BY_ID`;
+- `responsible.status=not_found` с valid `user_id_fallback` создаёт Lead с `STAGE_ID=bitrix.writeback.stages.new_lead`;
+- fallback Lead получает configured fallback `ASSIGNED_BY_ID`;
+- fallback никогда не overriding exact matched responsible;
+- ambiguous, degraded, unresolved и not-attempted responsible evidence остаётся `deferred` без create;
+- `irrelevant` сохраняет existing configured stage behavior;
+- trusted existing Lead/Deal attachment не вызывает нового Lead create, stage change или responsible reassignment;
+- missing/empty `new_lead_assigned` при enabled write-back rejected fail-fast;
+- unknown stage config keys остаются rejected;
+- invalid configured assigned stage приводит к zero mutation;
+- stage validation outage сохраняет existing recoverable fail-closed behavior;
+- replay/repeated execute не создаёт duplicate Lead и не выполняет повторный stage/responsible mutation;
+- новый Bitrix write method не добавляется;
+- public `beeagent-rop` contract не меняется;
+- BeeUI contract не меняется;
+- actual customer Bitrix STATUS_ID для «Лид назначен» подтверждён до production enablement;
+- configured fallback user ID подтверждён как active customer user `ROBOT WG` до production enablement;
+- `pyproject.toml.version` остаётся без изменений.
+
+#### Checks
+
+- `uv run pytest -q tests/test_rop_writeback.py`;
+- `uv run pytest -q`;
+- `uv run python -B -m compileall -q src tests`;
+- `git diff --check`;
+- targeted planner tests: matched stage, fallback stage, unresolved/degraded responsible, irrelevant stage, trusted attach-existing;
+- targeted executor tests: exact `STAGE_ID` + `ASSIGNED_BY_ID` combinations;
+- settings validation tests for `new_lead_assigned`;
+- invalid assigned-stage regression proving zero mutation;
+- replay/idempotency regression;
+- read-only Bitrix verification of the exact customer STATUS_ID for «Лид назначен»;
+- read-only Bitrix verification that configured `user_id_fallback` is the intended active `ROBOT WG` user;
+- controlled Bitrix smoke with one matched new Lead and one fallback new Lead before production enablement;
+- log and write-back artifact inspection;
+- SAST;
+- DAST-style external connector behavior/error review;
+- SCA only if dependency files unexpectedly change;
+- IAST not required;
+- fuzzing not required because no parser or new serialization surface is introduced.
+
+#### DoD
+
+- matched and fallback new Leads reach different configured customer stages according to the approved rule;
+- existing responsible routing remains the only source of responsible outcome;
+- fallback remains limited to `not_found`;
+- all other unresolved responsible states remain fail closed;
+- existing trusted-target, idempotency, retry and durable-intent guarantees remain intact;
+- existing CRM entities are not restaged or reassigned;
+- configuration is explicit and fail-fast validated;
+- actual customer stage/user identifiers are verified rather than guessed;
+- no `beeagent-rop` or BeeUI implementation change is required;
+- docs and tests reflect the actual contract;
+- required security/runtime checks are green;
+- `pyproject.toml.version` is unchanged.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
