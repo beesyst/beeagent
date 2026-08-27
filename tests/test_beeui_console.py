@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from beeui_module.adapters.envelopes import AdapterErrorResult
@@ -1480,7 +1481,7 @@ def test_rop_queue_tab_shows_empty_table_when_no_data() -> None:
     assert layout[0]["type"] == "data_table"
     assert "toolbar" in layout[0]
     assert len(layout[0]["rows"]) == 0
-    assert layout[0]["pagination"]["label"] == "Showing 0–0 of 0"
+    assert layout[0]["pagination"]["label"] == "/ 0"
 
 
 def test_rop_queue_filter_options_from_queue_data() -> None:
@@ -1778,7 +1779,7 @@ def test_queue_toolbar_hidden_contains_canonical_params() -> None:
     tb = layout[0].get("toolbar", {})
     hidden = tb.get("hidden", {})
     assert hidden.get("tab") == "queue"
-    assert hidden.get("page") == "2"
+    assert hidden.get("page") == "1"
     assert hidden.get("page_size") == "50"
     assert hidden.get("sort") == "sender"
     assert hidden.get("order") == "asc"
@@ -7610,6 +7611,158 @@ def test_queue_pagination_links_keep_canonical_page_size() -> None:
     assert all("page_size=50" in page["href"] for page in pages)
 
 
+def test_queue_filter_control_preserves_query_state_and_resets_page() -> None:
+    layout = build_rop_page_layout(
+        {
+            "run_id": "run-filter-state",
+            "period": "all",
+            "queues": {
+                "high_priority": [
+                    {
+                        "event_id": "evt-1",
+                        "sender": "buyer@example.com",
+                        "subject": "Priority quote",
+                        "case_type": "new_lead",
+                        "priority": "high",
+                        "bitrix_status": "not_found",
+                    }
+                ]
+            },
+            "filter_params": {
+                "q": "buyer & quote",
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+                "case_type": "new_lead",
+                "priority": "high",
+                "bitrix_status": "not_found",
+                "columns": "priority,subject",
+            },
+            "filter_options": {
+                "case_types": ["new_lead"],
+                "priorities": ["high", "medium", "low"],
+                "bitrix_statuses": ["not_found"],
+            },
+            "page": 2,
+            "page_size": 50,
+            "sort": "sender",
+            "order": "asc",
+        },
+        tab="queue",
+        locale="ru",
+    )
+    priority = next(
+        field
+        for field in layout[0]["toolbar"]["fields"]
+        if field.get("name") == "priority"
+    )
+    query = parse_qs(urlparse(priority["choices"][0]["toggle_href"]).query)
+
+    assert query.get("page", ["1"]) == ["1"]
+    assert query["q"] == ["buyer & quote"]
+    assert query["date_from"] == ["2026-07-01"]
+    assert query["date_to"] == ["2026-07-31"]
+    assert query["case_type"] == ["new_lead"]
+    assert "priority" not in query
+    assert query["bitrix_status"] == ["not_found"]
+    assert query["columns"] == ["priority,subject"]
+    assert query["page_size"] == ["50"]
+    assert query["sort"] == ["sender"]
+    assert query["order"] == ["asc"]
+    assert query["run_id"] == ["run-filter-state"]
+    assert query["period"] == ["all"]
+    assert query["lang"] == ["ru"]
+
+
+def test_queue_adopts_beeui_live_table_and_page_size_contract() -> None:
+    from beeui_module.blocks.layout_renderer import render_layout
+
+    rows = [
+        {
+            "event_id": f"evt-{index}",
+            "sender": f"sender-{index}@example.com",
+            "subject": "Queue a@example.com & co item",
+            "case_type": "new_lead",
+            "priority": "high",
+            "bitrix_status": "not_found",
+            "received_at": "2026-07-15T12:00:00Z",
+        }
+        for index in range(154)
+    ]
+    layout = build_rop_page_layout(
+        {
+            "run_id": "run-live-table",
+            "period": "all",
+            "queues": {"high_priority": rows},
+            "filter_params": {
+                "q": "a@example.com & co",
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+                "case_type": "new_lead",
+                "priority": "high",
+                "bitrix_status": "not_found",
+                "columns": "priority,subject",
+            },
+            "page": 1,
+            "page_size": 25,
+            "sort": "sender",
+            "order": "asc",
+        },
+        tab="queue",
+        locale="ru",
+    )
+
+    table = layout[0]
+    assert table["id"] == "rop-queue"
+    assert table["pagination"]["page"] == 1
+    assert table["pagination"]["total"] == 154
+    assert table["pagination"]["start"] == 1
+    assert table["pagination"]["end"] == 25
+    assert table["pagination"]["label"] == "/ 154"
+    assert len(table["pagination"]["pages"]) == 7
+
+    page_size = table["pagination"]["page_size"]
+    assert page_size["current"] == "25"
+    assert [option["value"] for option in page_size["options"]] == [
+        "25",
+        "50",
+        "100",
+    ]
+    for option in page_size["options"]:
+        query = parse_qs(urlparse(option["href"]).query)
+        assert query["page_size"] == [option["value"]]
+        assert query.get("page", ["1"]) == ["1"]
+        assert query["q"] == ["a@example.com & co"]
+        assert query["date_from"] == ["2026-07-01"]
+        assert query["date_to"] == ["2026-07-31"]
+        assert query["case_type"] == ["new_lead"]
+        assert query["priority"] == ["high"]
+        assert query["bitrix_status"] == ["not_found"]
+        assert query["columns"] == ["priority,subject"]
+        assert query["run_id"] == ["run-live-table"]
+        assert query["period"] == ["all"]
+        assert query["lang"] == ["ru"]
+        assert query["sort"] == ["sender"]
+        assert query["order"] == ["asc"]
+
+    rendered_table = render_layout(layout)[0]
+    rendered_pages = rendered_table["pagination"]["pages"]
+    assert [page["label"] for page in rendered_pages if not page.get("ellipsis")] == [
+        "1",
+        "2",
+        "7",
+    ]
+    assert rendered_pages[0]["active"] is True
+    assert any(page.get("ellipsis") for page in rendered_pages)
+    assert [
+        option["value"]
+        for option in rendered_table["pagination"]["page_size"]["options"]
+    ] == [
+        "25",
+        "50",
+        "100",
+    ]
+
+
 def test_queue_uses_all_data_before_validated_date_range(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-queue-all")
@@ -9071,6 +9224,83 @@ def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
         assert "cdnjs.cloudflare.com" not in response.text
         assert "unpkg.com" not in response.text
         assert "googleapis.com" not in response.text
+
+
+def test_queue_direct_short_searches_and_live_table_markup(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-short-search")
+    (run_dir / "rop_current_state.json").write_text(
+        json.dumps(
+            {
+                "queues": {
+                    "high_priority": [
+                        {
+                            "event_id": "evt-alpha",
+                            "sender": "alpha@example.com",
+                            "subject": "Alpha & Co quote",
+                            "priority": "high",
+                        },
+                        {
+                            "event_id": "evt-beta",
+                            "sender": "beta@example.com",
+                            "subject": "Beta quote",
+                            "priority": "medium",
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": "evt-alpha",
+                    "sender": "alpha@example.com",
+                    "subject": "Alpha & Co quote",
+                    "case_type": "new_lead",
+                    "priority": "high",
+                    "received_at": "2026-07-15T12:00:00Z",
+                },
+                {
+                    "event_id": "evt-beta",
+                    "sender": "beta@example.com",
+                    "subject": "Beta quote",
+                    "case_type": "existing_deal",
+                    "priority": "medium",
+                    "received_at": "2026-07-15T12:00:00Z",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    for query in ("a", "ab"):
+        response = client.get(
+            "/rop",
+            params={"tab": "queue", "run_id": "run-short-search", "q": query},
+        )
+        assert response.status_code == 200
+
+    filtered = client.get(
+        "/rop",
+        params={
+            "tab": "queue",
+            "run_id": "run-short-search",
+            "q": "Alpha & Co",
+        },
+    )
+    assert filtered.status_code == 200
+    assert 'value="Alpha &amp; Co"' in filtered.text
+    assert "Alpha &amp; Co quote" in filtered.text
+    assert "Beta quote" not in filtered.text
+    assert 'data-beeui-table-id="rop-queue"' in filtered.text
+    assert "beeui-live-table" in filtered.text
+    assert "data-beeui-table-search" in filtered.text
+    assert "data-beeui-page-size-select" in filtered.text
+    assert "Ctrl+K" not in filtered.text
 
 
 def test_queue_html_and_api_accept_duplicate_case_type_filter(tmp_path: Path) -> None:
