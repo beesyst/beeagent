@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.2...beeagent-v0.57.0) (2026-08-28)
+
+
+### Features
+
+* auto-select Docling CPU/CUDA runtime profile ([#222](https://github.com/beesyst/beeagent/issues/222)) ([479d7ed](https://github.com/beesyst/beeagent/commit/479d7ed31273c336340b31b19c1d81c1ee4922cb))
+
 ## [0.56.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.1...beeagent-v0.56.2) (2026-08-27)
 
 
