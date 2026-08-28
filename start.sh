@@ -14,8 +14,13 @@ if [ ! -f .env ] && [ -f .env.example ]; then
   chmod 600 .env 2>/dev/null || true
 fi
 
-echo "[run] syncing dependencies from uv.lock..."
-uv sync --frozen
+if ! uv run --frozen --no-sync python3 -c "import config.start" >/dev/null 2>&1; then
+  echo "[run] bootstrapping base environment from uv.lock..."
+  uv sync --frozen
+fi
+
+echo "[run] resolving extractor profile and syncing environment..."
+uv run --frozen --no-sync python3 config/start.py bootstrap
 
 echo "[run] starting BeeAgent..."
-uv run --frozen python3 config/start.py "$@"
+uv run --frozen --no-sync python3 config/start.py "$@"

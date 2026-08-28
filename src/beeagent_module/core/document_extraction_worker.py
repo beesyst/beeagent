@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from beeagent_module.core.document_extraction import _WORKER_OFFLINE_ENV
+from beeagent_module.core.document_extractors import worker_converter
 
 
 def _apply_offline_env() -> None:
@@ -27,9 +28,8 @@ def _write_response(response_path: str, payload: dict[str, Any]) -> None:
     Path(response_path).write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _run_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    from beeagent_module.core.docling_reader import convert_blob_item
-
+def _run_items(extractor_id: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    convert_blob_item = worker_converter(extractor_id)
     results: list[dict[str, Any]] = []
     for item in items:
         index = int(item.get("index") or 0)
@@ -50,7 +50,13 @@ def main(argv: list[str]) -> int:
     items = request.get("items")
     if not isinstance(items, list):
         return 2
-    results = _run_items(items)
+    extractor_id = request.get("extractor_id")
+    if not isinstance(extractor_id, str):
+        return 2
+    try:
+        results = _run_items(extractor_id, items)
+    except RuntimeError:
+        return 2
     _write_response(response_path, {"results": results})
     return 0
 

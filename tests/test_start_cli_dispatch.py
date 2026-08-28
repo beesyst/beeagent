@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config.start as start_module
@@ -140,7 +142,7 @@ def test_main_auth_runs_bootstrap_before_cli_exit(monkeypatch) -> None:
     assert called["argv"] == ["rotate", "admin1"]
 
 
-def test_main_prepares_assets_before_default_run(monkeypatch) -> None:
+def test_main_default_run_does_not_prepare_assets(monkeypatch) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
@@ -163,10 +165,6 @@ def test_main_prepares_assets_before_default_run(monkeypatch) -> None:
 
     monkeypatch.setattr(start_module, "get_logger", lambda *args, **kwargs: _Logger())
     monkeypatch.setattr(
-        "beeagent_module.core.document_extraction.prepare_docling_assets",
-        lambda: calls.append("prepare_assets"),
-    )
-    monkeypatch.setattr(
         "beeagent_module.core.app.run_app",
         lambda *args, **kwargs: calls.append("run_app"),
     )
@@ -174,7 +172,7 @@ def test_main_prepares_assets_before_default_run(monkeypatch) -> None:
 
     start_module.main()
 
-    assert calls == ["prepare_assets", "run_app"]
+    assert calls == ["run_app"]
 
 
 def test_main_docling_assets_prepare_command_runs_once(monkeypatch) -> None:
@@ -210,3 +208,162 @@ def test_main_docling_assets_prepare_command_runs_once(monkeypatch) -> None:
     start_module.main()
 
     assert calls == ["prepare_assets"]
+
+
+def _rop_settings(monkeypatch) -> dict[str, Any]:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+    from beeagent_module.core.settings import load_settings as real_load_settings
+
+    root = Path(__file__).resolve().parents[1]
+    return real_load_settings(root / "config" / "settings.yml")
+
+
+def test_bootstrap_command_dispatches_runtime_bootstrap(monkeypatch) -> None:
+    called: dict[str, Any] = {}
+
+    def _fake_bootstrap():
+        called["bootstrap"] = True
+
+    monkeypatch.setattr(start_module, "bootstrap_runtime", _fake_bootstrap)
+    monkeypatch.setattr(start_module.sys, "argv", ["start.py", "bootstrap"])
+
+    start_module.main()
+
+    assert called.get("bootstrap") is True
+
+
+def test_resolve_profile_disabled_attachments_uses_base(monkeypatch) -> None:
+    settings = _rop_settings(monkeypatch)
+    settings["rop"]["attachments"]["enabled"] = False
+    assert start_module._resolve_runtime_profile(settings) == "base"
+
+
+def test_resolve_profile_docling_cpu(monkeypatch) -> None:
+    settings = _rop_settings(monkeypatch)
+    monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cpu")
+    assert start_module._resolve_runtime_profile(settings) == "docling-cpu"
+
+
+def test_resolve_profile_docling_cuda(monkeypatch) -> None:
+    settings = _rop_settings(monkeypatch)
+    monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cuda")
+    assert start_module._resolve_runtime_profile(settings) == "docling-cuda"
+
+
+def test_resolve_profile_unimplemented_engine_fails_fast(monkeypatch) -> None:
+    settings = _rop_settings(monkeypatch)
+    settings["rop"]["attachments"]["extraction"]["engine"] = "xberg"
+    with pytest.raises(RuntimeError, match="not implemented"):
+        start_module._resolve_runtime_profile(settings)
+
+
+def test_sync_profile_rejects_arbitrary_extra(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="Invalid runtime dependency profile"):
+        start_module._sync_runtime_profile("not-an-extra", Path("."))
+
+
+def test_sync_profile_base_uses_frozen_sync(monkeypatch) -> None:
+    calls: list[Any] = []
+
+    class _Completed:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(
+        start_module.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append(argv) or _Completed(),
+    )
+    start_module._sync_runtime_profile("base", Path("."))
+    assert calls == [["uv", "sync", "--frozen"]]
+
+
+def test_sync_profile_docling_cpu_uses_extra(monkeypatch) -> None:
+    calls: list[Any] = []
+
+    class _Completed:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(
+        start_module.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append(argv) or _Completed(),
+    )
+    start_module._sync_runtime_profile("docling-cpu", Path("."))
+    assert calls == [["uv", "sync", "--frozen", "--extra", "docling-cpu"]]
+
+
+def test_sync_profile_failure_raises(monkeypatch) -> None:
+    class _Completed:
+        returncode = 1
+        stderr = "boom"
+
+    monkeypatch.setattr(
+        start_module.subprocess, "run", lambda argv, **kwargs: _Completed()
+    )
+    with pytest.raises(RuntimeError, match="Failed to sync"):
+        start_module._sync_runtime_profile("base", Path("."))
+
+
+def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "ensure_bootstrap_env", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        start_module,
+        "load_settings",
+        lambda *args, **kwargs: _rop_settings(monkeypatch),
+    )
+    monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cpu")
+    monkeypatch.setattr(
+        start_module,
+        "_sync_runtime_profile",
+        lambda profile, root: calls.append(profile),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.document_extraction.prepare_docling_assets",
+        lambda: calls.append("prepare_assets"),
+    )
+
+    start_module.bootstrap_runtime()
+
+    assert calls == ["docling-cpu", "prepare_assets"]
+
+
+def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        start_module, "ensure_bootstrap_env", lambda *args, **kwargs: {}
+    )
+
+    def _disabled_settings(*args, **kwargs):
+        settings = _rop_settings(monkeypatch)
+        settings["rop"]["attachments"]["enabled"] = False
+        return settings
+
+    monkeypatch.setattr(start_module, "load_settings", _disabled_settings)
+    monkeypatch.setattr(
+        start_module,
+        "_sync_runtime_profile",
+        lambda *args, **kwargs: calls.append("sync"),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.document_extraction.prepare_docling_assets",
+        lambda: calls.append("prepare_assets"),
+    )
+
+    start_module.bootstrap_runtime()
+
+    assert calls == ["sync"]

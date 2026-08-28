@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from beeagent_module.core.authorization import SCOPE_WILDCARD
+from beeagent_module.core.document_extractors import validate_selected_extractor
 
 REQUIRED_KEYS = (
     ("app", "name"),
@@ -352,11 +353,16 @@ def validate_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid rop.attachments.extraction.engine, expected non-empty string"
         )
-    if extraction_engine != "docling":
+    try:
+        validate_selected_extractor(extraction_engine)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Invalid rop.attachments.extraction.engine: {exc}") from exc
+    extraction_chars_max = extraction_cfg.get("chars_max")
+    if not isinstance(extraction_chars_max, int) or extraction_chars_max <= 0:
         raise RuntimeError(
-            "Unsupported rop.attachments.extraction.engine, expected 'docling'"
+            "Invalid rop.attachments.extraction.chars_max, expected int > 0"
         )
-    for extraction_key in ("chars_max", "pages_max", "timeout_seconds"):
+    for extraction_key in ("pages_max", "timeout_seconds"):
         extraction_value = extraction_cfg.get(extraction_key)
         if not isinstance(extraction_value, int) or extraction_value <= 0:
             raise RuntimeError(
@@ -367,7 +373,6 @@ def validate_settings(settings: dict) -> None:
             "Invalid type for rop.attachments.extraction.ocr_enabled, expected bool"
         )
 
-    extraction_chars_max = extraction_cfg.get("chars_max")
     adjudicator_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
     adjudicator_attachment_chars_max = (
         adjudicator_cfg.get("attachment_chars_max")

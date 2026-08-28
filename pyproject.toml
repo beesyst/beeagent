@@ -15,8 +15,20 @@ dependencies = [
     "fastapi==0.141.1",
     "uvicorn==0.52.1",
     "beeui==0.26.4",
+]
+
+[project.optional-dependencies]
+docling-cpu = [
     "docling==2.122.0",
     "onnxruntime==1.29.0",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
+]
+docling-cuda = [
+    "docling==2.122.0",
+    "onnxruntime==1.29.0",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
 ]
 
 [dependency-groups]
@@ -54,3 +66,29 @@ filterwarnings = [
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
+torch = [
+    { index = "pytorch-cpu", extra = "docling-cpu" },
+    { index = "pytorch-cu126", extra = "docling-cuda" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "docling-cpu" },
+    { index = "pytorch-cu126", extra = "docling-cuda" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "docling-cpu" },
+        { extra = "docling-cuda" },
+    ],
+]

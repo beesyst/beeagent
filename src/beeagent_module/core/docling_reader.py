@@ -14,6 +14,8 @@ from docling.document_converter import (
 )
 
 _DOCLING_ENGINE = "docling"
+_LAYOUT_MODEL_REPO_ID = "docling-project/docling-layout-heron"
+_LAYOUT_MODEL_REVISION = "main"
 _TEXT_CONTENT_TYPES = frozenset({"text/plain", "text/csv"})
 _PDF_CONTENT_TYPES = frozenset({"application/pdf"})
 _DOCX_CONTENT_TYPES = frozenset(
@@ -121,6 +123,24 @@ def prepare_rapidocr_assets() -> None:
         temporary = destination.with_name(destination.name + ".tmp")
         temporary.write_bytes(payload)
         temporary.replace(destination)
+
+
+def prepare_docling_assets() -> None:
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    try:
+        snapshot_download(
+            repo_id=_LAYOUT_MODEL_REPO_ID,
+            revision=_LAYOUT_MODEL_REVISION,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError:
+        snapshot_download(
+            repo_id=_LAYOUT_MODEL_REPO_ID,
+            revision=_LAYOUT_MODEL_REVISION,
+        )
+    prepare_rapidocr_assets()
 
 
 def _pipeline_converter(ocr_enabled: bool) -> DocumentConverter:

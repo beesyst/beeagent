@@ -11,12 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from beeagent_module.core.attachment_store import resolve_attachment_blob_path
+from beeagent_module.core.document_extractors import validate_selected_extractor
 from beeagent_module.core.paths import get_project_root
 
 DOCLING_ENGINE = "docling"
 _WORKER_MODULE = "beeagent_module.core.document_extraction_worker"
-_LAYOUT_MODEL_REPO_ID = "docling-project/docling-layout-heron"
-_LAYOUT_MODEL_REVISION = "main"
 
 _STATUS_OK = "ok"
 _STATUS_METADATA_ONLY = "metadata_only"
@@ -153,6 +152,8 @@ def extract_attachment_documents(
     if not attachment_items:
         return results
 
+    extractor_id = str(extraction_settings.get("engine") or "").strip()
+    validate_selected_extractor(extractor_id)
     request_items: list[dict[str, Any]] = []
     for item in attachment_items:
         attachment_id = str(item.get("attachment_id") or "")
@@ -194,6 +195,7 @@ def _run_worker_batch(
 ) -> dict[str, dict[str, Any]]:
     per_item_timeout = int(extraction_settings.get("timeout_seconds") or 60)
     request = {
+        "extractor_id": str(extraction_settings.get("engine") or ""),
         "items": [
             {
                 **item,
@@ -202,7 +204,7 @@ def _run_worker_batch(
                 "ocr_enabled": bool(extraction_settings.get("ocr_enabled")),
             }
             for item in request_items
-        ]
+        ],
     }
     total_timeout = max(per_item_timeout, per_item_timeout * len(request_items))
 
@@ -306,21 +308,6 @@ def _unlink_path(path: str) -> None:
 
 
 def prepare_docling_assets() -> None:
-    from huggingface_hub import snapshot_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
+    from beeagent_module.core.docling_reader import prepare_docling_assets as prepare
 
-    try:
-        snapshot_download(
-            repo_id=_LAYOUT_MODEL_REPO_ID,
-            revision=_LAYOUT_MODEL_REVISION,
-            local_files_only=True,
-        )
-    except LocalEntryNotFoundError:
-        snapshot_download(
-            repo_id=_LAYOUT_MODEL_REPO_ID,
-            revision=_LAYOUT_MODEL_REVISION,
-        )
-
-    from beeagent_module.core.docling_reader import prepare_rapidocr_assets
-
-    prepare_rapidocr_assets()
+    prepare()

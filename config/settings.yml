@@ -137,7 +137,7 @@ rop:
       chars_max: 3000 # макс. число символов bounded extracted text контекста из одного вложения
       pages_max: 20 # bounded page limit на один документ (docling max_num_pages)
       timeout_seconds: 60 # bounded local worker timeout на один документ (сек)
-      ocr_enabled: true # true/false - использовать local RapidOCR (onnxruntime inference) для JPEG/PNG и scanned PDF; cyrillic assets подготавливаются через docling-assets-prepare
+      ocr_enabled: true # true/false - использовать local RapidOCR
   sources:
     - source_id: "rop_batch_sample"
       source_type: "json_batch" # тип источника (поддерживается: json_batch)

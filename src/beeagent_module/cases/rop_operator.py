@@ -599,6 +599,8 @@ def _classify_normalized_events(
         if not isinstance(prior_event_id, str) or not prior_event_id:
             continue
         prior_classification = prior_classified_by_event.get(prior_event_id)
+        if not isinstance(prior_classification, dict):
+            continue
         if (
             _is_eligible_canonical_source(prior_classification)
             and prior_classification.get("reason_code") != "classification_error"
