@@ -100,10 +100,7 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
     ],
 )
 def test_mailbox_poll_settings_fail_fast(monkeypatch, mutate, match):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    _base_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
     mutate(changed)
@@ -114,8 +111,9 @@ def test_mailbox_poll_settings_fail_fast(monkeypatch, mutate, match):
 def _base_env(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN1_TOKEN", "admin1-token")
-    monkeypatch.setenv("BEEAGENT_WEB_ADMIN2_TOKEN", "admin2-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
 
 def test_mailbox_poll_sources_all_true_with_enabled_mailbox_passes(
@@ -232,6 +230,15 @@ def test_attachment_extraction_invalid_engine_fails(monkeypatch) -> None:
     changed = deepcopy(settings)
     changed["rop"]["attachments"]["extraction"]["engine"] = "tika"
     with pytest.raises(RuntimeError, match="extraction.engine"):
+        validate_settings(changed)
+
+
+def test_selected_unimplemented_extractor_fails(monkeypatch) -> None:
+    _attach_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["attachments"]["extraction"]["engine"] = "xberg"
+    with pytest.raises(RuntimeError, match="not implemented"):
         validate_settings(changed)
 
 

@@ -210,7 +210,7 @@ def _scanned_pdf_bytes(text: str) -> bytes:
 
 def _read_blob(
     tmp_path: Path, run_id: str, attachment_id: str
-) -> dict[str, object] | None:
+) -> dict[str, str] | None:
     from beeagent_module.core.attachment_store import resolve_attachment_blob_path
 
     path = resolve_attachment_blob_path(tmp_path, run_id, attachment_id)

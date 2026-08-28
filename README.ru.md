@@ -422,6 +422,44 @@ run:
 ./start.sh auth rotate bitrix-widget
 ```
 
+### Публичный CLI surface
+
+Единый canonical entrypoint — `./start.sh`. Для обычной установки отдельная install-команда не существует:
+
+```bash
+git clone <repo>
+cd beeagent
+./start.sh
+```
+
+| Категория            | Команда                                             | Назначение                                                                       |
+| -------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Startup/runtime      | `./start.sh`                                        | Запуск BeeAgent с `run.mode` из `settings.yml`                                   |
+| Startup/runtime      | `./start.sh telegram`                               | Явный Telegram mode                                                              |
+| Startup/runtime      | `./start.sh web`                                    | Явный Web mode (read-only dashboard)                                             |
+| Startup/runtime      | `./start.sh web --host ... --port ... --no-open`    | Web mode с CLI overrides                                                         |
+| Startup/runtime      | `./start.sh routes`                                 | Route listing diagnostic                                                         |
+| Document maintenance | `./start.sh docling-assets-prepare`                 | Manual repair/re-prepare; normal `./start.sh` already ensures required assets.   |
+| Auth                 | `./start.sh auth-init`                              | Manual auth/env bootstrap; normal `./start.sh` performs bootstrap automatically. |
+| Auth                 | `./start.sh auth rotate <principal-id-or-username>` | Rotate principal token                                                           |
+| Auth                 | `./start.sh auth rotate all`                        | Rotate all principal tokens                                                      |
+| Auth                 | `./start.sh auth rotate all --logout-all`           | Rotate all tokens + session secret                                               |
+| Auth                 | `./start.sh auth rotate session`                    | Rotate session secret                                                            |
+| Auth                 | `./start.sh auth rotate bitrix-widget`              | Rotate Bitrix widget token                                                       |
+| ROP                  | `./start.sh rop run ...`                            | Run ROP batch pipeline                                                           |
+| ROP                  | `./start.sh rop poll ...`                           | Poll configured mailbox                                                          |
+| ROP                  | `./start.sh rop summary --run-id ...`               | Display run summary                                                              |
+| ROP                  | `./start.sh rop export-review ...`                  | Export TSV for human review                                                      |
+| ROP                  | `./start.sh rop evaluate-review ...`                | Evaluate classification quality                                                  |
+| ROP                  | `./start.sh rop current ...`                        | Build current-state index                                                        |
+| ROP                  | `./start.sh rop dashboard ...`                      | Build ROP business dashboard                                                     |
+| ROP                  | `./start.sh rop reconcile-bitrix ...`               | Reconcile with Bitrix CRM (read-only)                                            |
+| ROP                  | `./start.sh rop action-drafts ...`                  | Generate action draft artifacts                                                  |
+| ROP                  | `./start.sh rop recommendations ...`                | Build recommendations artifact                                                   |
+| ROP                  | `./start.sh rop mvp-pack ...`                       | Build ROP MVP handoff/readiness pack                                             |
+| ROP                  | `./start.sh rop writeback plan ...`                 | Build authoritative write-back plan (zero writes)                                |
+| ROP                  | `./start.sh rop writeback execute ...`              | Execute pending write-back per policy                                            |
+
 ### Operator Web Console (BeeUI-backed, UI-6/UI-7)
 
 Read-only web console запускается отдельной командой:
@@ -1095,16 +1133,33 @@ Internal secrets генерируются автоматически, если �
 
 ### 2. Запуск
 
-```
-bash start.sh
-```
-
 `start.sh` делает:
 
 - проверку наличия `uv`;
 - инициализацию `.env` из `.env.example`, если `.env` отсутствует;
-- `uv sync --frozen`;
-- `uv run --frozen python3 config/start.py "$@"`.
+- при каждом normal command определяет locked profile enabled consumer extractor и выполняет `uv sync --frozen` для него; `uv` не меняет уже соответствующее lock environment;
+- при активном Docling идемпотентно проверяет/готовит требуемые Docling/RapidOCR assets;
+- затем запускает приложение через тот же provisioned environment без второго sync.
+
+Platform detector автоматически выбирает CUDA только при подтверждённой usable NVIDIA environment, иначе безопасно выбирает CPU. Static allowlist содержит реализованный `docling` и reserved `xberg`; Xberg не устанавливается и не исполняется. ROP выбирает engine через `rop.attachments.extraction.engine`; CPU и CUDA Docling profiles выбираются только через `uv.lock` (`docling-cpu`/`docling-cuda`) и их разные PyTorch indexes.
+
+Обычный запуск приложения:
+
+```bash
+./start.sh
+```
+
+Проверки выполняются отдельно, когда приложение не запущено:
+
+```bash
+uv run --frozen pytest -q
+```
+
+Каждый запуск через `./start.sh ...` проходит общий bootstrap. При активном Docling необходимые Docling/RapidOCR assets проверяются и при отсутствии подготавливаются до запуска запрошенной команды; уже подготовленные assets повторно не скачиваются. Для обычной установки отдельная install-команда не существует. Для явной идемпотентной переподготовки/repair используйте:
+
+```bash
+./start.sh docling-assets-prepare
+```
 
 ## Основные команды
 

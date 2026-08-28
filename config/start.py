@@ -1,10 +1,13 @@
 import logging
+import subprocess
 import sys
 from copy import deepcopy
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from beeagent_module.cli.auth import ensure_auth_env, handle_auth_cli
+from beeagent_module.core.accelerator import detect_accelerator
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -21,10 +24,78 @@ from beeagent_module.core.cli import (
     handle_rop_summary,
     handle_rop_writeback,
 )
+from beeagent_module.core.document_extractors import (
+    DOCLING_EXTRACTOR,
+    validate_selected_extractor,
+)
 from beeagent_module.core.env_sync import ensure_bootstrap_env, sync_env_with_example
 from beeagent_module.core.log import get_logger, setup_logging
 from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_project_root
 from beeagent_module.core.settings import load_settings
+
+_BASE_PROFILE = "base"
+_DOCLING_PROFILES = {
+    "cpu": "docling-cpu",
+    "cuda": "docling-cuda",
+}
+_ALLOWED_PROFILES = frozenset({_BASE_PROFILE, "docling-cpu", "docling-cuda"})
+
+
+def bootstrap_runtime() -> None:
+    project_root = get_project_root()
+    env_path = project_root / ".env"
+    settings_path = project_root / "config" / "settings.yml"
+
+    sync_env_with_example(project_root)
+    load_dotenv(dotenv_path=env_path, override=False)
+    ensure_bootstrap_env(
+        project_root=project_root,
+        settings_path=settings_path,
+        env_path=env_path,
+        quiet=True,
+    )
+    load_dotenv(dotenv_path=env_path, override=False)
+
+    settings = load_settings(settings_path)
+    profile = _resolve_runtime_profile(settings)
+    _sync_runtime_profile(profile, project_root)
+    if profile != _BASE_PROFILE:
+        from beeagent_module.core.document_extraction import prepare_docling_assets
+
+        prepare_docling_assets()
+
+
+def _resolve_runtime_profile(settings: dict) -> str:
+    attachments = settings["rop"]["attachments"]
+    if attachments["enabled"] is not True:
+        return _BASE_PROFILE
+    extraction = attachments["extraction"]
+    engine = str(extraction["engine"]).strip()
+    validate_selected_extractor(engine)
+    if engine == DOCLING_EXTRACTOR:
+        return _DOCLING_PROFILES[detect_accelerator()]
+    raise RuntimeError(
+        f"No locked dependency profile for document extractor '{engine}'"
+    )
+
+
+def _sync_runtime_profile(profile: str, project_root: Path) -> None:
+    if profile not in _ALLOWED_PROFILES:
+        raise RuntimeError(f"Invalid runtime dependency profile '{profile}'")
+    argv = ["uv", "sync", "--frozen"]
+    if profile != _BASE_PROFILE:
+        argv.extend(["--extra", profile])
+    completed = subprocess.run(
+        argv,
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Failed to sync runtime dependency profile '{profile}': "
+            f"{completed.stderr.strip()}"
+        )
 
 
 def main() -> None:
@@ -33,10 +104,9 @@ def main() -> None:
     env_path = project_root / ".env"
     settings_path = project_root / "config" / "settings.yml"
 
-    sync_env_with_example(project_root)
-    load_dotenv(dotenv_path=env_path, override=False)
-
     if args and args[0] == "auth-init":
+        sync_env_with_example(project_root)
+        load_dotenv(dotenv_path=env_path, override=False)
         rotate = _parse_auth_init_args(args[1:])
         if rotate is None:
             ensure_bootstrap_env(
@@ -55,6 +125,12 @@ def main() -> None:
             )
         return
 
+    if args and args[0] == "bootstrap":
+        bootstrap_runtime()
+        return
+
+    sync_env_with_example(project_root)
+    load_dotenv(dotenv_path=env_path, override=False)
     ensure_bootstrap_env(
         project_root=project_root,
         settings_path=settings_path,
@@ -83,11 +159,6 @@ def main() -> None:
     logger = get_logger("app")
 
     if not args:
-        from beeagent_module.core.document_extraction import prepare_docling_assets
-
-        logger.info("Ensuring local Docling/RapidOCR assets...")
-        prepare_docling_assets()
-
         from beeagent_module.core.app import run_app
 
         logger.info("No CLI args provided, using run.mode from settings")
