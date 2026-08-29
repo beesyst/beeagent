@@ -199,7 +199,7 @@ git push
 ```
 cd /opt/beeagent/releases
 readlink -f /opt/beeagent/current
-REL=20260808-002
+REL=20260828-010
 sudo install -d -o bee -g beeagent -m 0750 "$REL"
 ```
 
@@ -228,15 +228,12 @@ cp -a /opt/beeagent/current/beeagent-rop "$REL/beeagent-rop"
 
 ```
 cd "/opt/beeagent/releases/$REL/beeagent"
-uv sync --frozen
-uv run --frozen pytest -q
 ```
 
 **Скопировать production `.env` из текущего release**
 
 ```
 sudo install -o bee -g beeagent -m 0660 /opt/beeagent/current/beeagent/.env .env
-./start.sh auth-init
 ```
 
 **Подключить persistent storage**
@@ -252,6 +249,13 @@ ln -s /var/lib/beeagent/storage storage
 sudo chown -R beeagent:beeagent logs
 sudo chmod 2770 logs
 sudo install -o beeagent -g beeagent -m 0660 /dev/null logs/app.log
+```
+
+**Подготовить environment**
+
+```
+./start.sh
+uv run --frozen --no-sync pytest -q
 ```
 
 **Активировать новый release**
@@ -305,7 +309,7 @@ ls -lah /opt/beeagent/releases
 Удалить:
 
 ```
-sudo rm -rf /opt/beeagent/releases/20260808-001
+sudo rm -rf /opt/beeagent/releases/20260812-007
 ls -lah /opt/beeagent/releases
 ```
 
