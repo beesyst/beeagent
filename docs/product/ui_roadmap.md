@@ -2970,6 +2970,137 @@ resource access = scopes
 - rollout documentation requires session invalidation;
 - `pyproject.toml.version` is unchanged.
 
+### Итерация UI-8.7 — Fast ROP Web console: bounded reads and progressive navigation v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Сделать BeeUI-backed ROP Web Console bounded и быстро откликающейся: убрать historical reconstruction из normal HTTP read path и подключить выпущенный BeeUI responsive page-tabs contract, сохранив существующие ROP URLs, query semantics, authorization и Bitrix embedding.
+
+#### Scope
+
+- использовать existing ROP artifacts как canonical product source of truth;
+- создать или переиспользовать product-owned materialized Web projection для expensive historical aggregates;
+- обновлять projection при изменении relevant ROP state;
+- обеспечить regeneration projection для существующих production runs через supported BeeAgent runtime/build path;
+- удалить `aggregate_runs=True` historical reconstruction из normal `/rop` HTTP GET path;
+- не перечислять и не перечитывать все historical runs на каждом Web request;
+- строить только requested ROP tab;
+- не строить unrelated heavy tab projections;
+- Queue filtering, sorting и pagination выполнять один раз;
+- сохранить server-side query authority;
+- сохранить existing Queue parameters и filtering semantics;
+- сохранить existing Overview period semantics;
+- сохранить current artifact/evidence links;
+- после release BeeUI Iteration 13.15 обновить BeeUI registry dependency до реально доступной revision;
+- включить `progressive: true` для ROP page tabs;
+- использовать supported `fill_icons` или эквивалентный released icon-tabs contract;
+- назначить controlled BeeUI icons всем ROP tabs;
+- сохранить canonical `/rop?tab=...` hrefs;
+- сохранить `period`, `run_id` и `lang`;
+- сохранить direct links, refresh и Back/Forward;
+- проверить Overview charts после progressive transition;
+- проверить Queue Datepicker/live table после progressive transition;
+- проверить Bitrix iframe;
+- добавить deterministic performance regressions;
+- обновить product UI documentation.
+
+#### Excluded
+
+- изменения в `beeagent-rop`;
+- ROP classification/business-rule changes;
+- product-owned JavaScript;
+- product-owned BeeUI templates;
+- SPA;
+- React/Vue/Svelte;
+- Redis;
+- PostgreSQL;
+- Elasticsearch;
+- generic cache inside BeeUI;
+- client-side ROP dataset filtering;
+- infinite scroll;
+- server hardware upgrade как primary solution;
+- auth/scopes redesign;
+- Bitrix write-back;
+- version bump.
+
+#### Deliverable
+
+ROP Web Console больше не реконструирует historical ROP state при каждом GET и использует released BeeUI progressive navigation.
+
+Оператор получает bounded server-side reads и application-like tab navigation без второго frontend.
+
+#### Acceptance criteria
+
+- normal `/rop` GET не вызывает historical `_aggregate_period_events()` path;
+- normal ROP Web request не выполняет O(number-of-runs) artifact parsing;
+- рост числа historical runs не вызывает пропорциональный рост количества файлов, читаемых одним request;
+- requested tab не строит unrelated tab projections;
+- Queue filtering/sorting/pagination выполняется один раз;
+- existing filter/search/sort/page/date semantics сохраняются;
+- existing tab IDs и canonical URLs сохраняются;
+- existing API/read-model semantics сохраняются where practical;
+- materialized projection является derived state, а не новым business source of truth;
+- projection можно regenerate из canonical artifacts;
+- missing/malformed derived state обрабатывается явно и recoverably;
+- BeeAgent использует реально выпущенный BeeUI 13.15 contract;
+- successful ROP tab transition не reload-ит полный document;
+- refresh/direct links работают;
+- Back/Forward работают;
+- Overview charts работают после transition;
+- Queue Datepicker, search, filters, sorting и pagination работают после transition;
+- RU/EN работают;
+- Bitrix embedded console работает;
+- progressive failure fallback-ится на canonical GET;
+- GET routes остаются read-only;
+- authorization остается server-side;
+- no BeeAgent-owned navigation JavaScript;
+- `beeagent-rop` unchanged.
+
+#### Checks
+
+- full `uv run pytest -q`;
+- targeted ROP read-model tests;
+- synthetic many-run performance regression;
+- no historical-run enumeration regression;
+- per-tab builder isolation tests;
+- Queue filter/search/sort/page parity;
+- projection refresh/regeneration tests;
+- missing/malformed projection tests;
+- dependency/SCA review for BeeUI update;
+- ROP tab config tests;
+- RU/EN;
+- route-prefix;
+- Bitrix iframe;
+- Overview → Queue;
+- Queue → Overview;
+- Queue → Threads;
+- Back/Forward;
+- refresh/direct link;
+- Datepicker after transition;
+- live table after transition;
+- chart after transition;
+- local and production before/after TTFB measurements;
+- SAST;
+- DAST-style route/query/navigation misuse checks.
+
+#### DoD
+
+- expensive historical reconstruction removed from normal HTTP read path;
+- product Web projection lifecycle deterministic and documented;
+- ROP GET cost bounded by requested view rather than total historical run count;
+- ROP tabs use released BeeUI progressive contract;
+- controlled tab icons configured;
+- existing URLs/query/auth behavior preserved;
+- Bitrix embedding verified;
+- performance regressions covered;
+- no second frontend introduced;
+- no external DB/cache service introduced;
+- `beeagent-rop` unchanged;
+- tests and production smoke green;
+- `pyproject.toml.version` unchanged.
+
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
 **Статус:** PLANNED
