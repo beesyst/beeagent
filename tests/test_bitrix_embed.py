@@ -64,10 +64,21 @@ def _full_settings(monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 def _build_app(storage_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    from beeagent_module.cases.rop_dashboard import (
+        build_rop_web_projection,
+        write_rop_web_projection,
+    )
     from beeagent_module.interfaces.ui.app import build_beeui_app
 
+    settings = _full_settings(monkeypatch)
+    projection = build_rop_web_projection(
+        storage_dir=storage_dir,
+        periods=settings["rop"]["dashboard"]["periods"],
+        logger=_logger(),
+    )
+    write_rop_web_projection(storage_dir, projection, _logger())
     return build_beeui_app(
-        settings=_full_settings(monkeypatch),
+        settings=settings,
         logger=_logger(),
         storage_dir=storage_dir,
     )

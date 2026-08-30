@@ -441,8 +441,8 @@ class TestRopCliRun:
 
         handle_rop_run(args, settings=settings, logger=_null_logger())
 
-        routing_path = tmp_path / "runs" / "test-cli-run-routing" / (
-            "rop_recipient_routing.json"
+        routing_path = (
+            tmp_path / "runs" / "test-cli-run-routing" / ("rop_recipient_routing.json")
         )
         assert routing_path.exists()
         artifact = json.loads(routing_path.read_text(encoding="utf-8"))
@@ -657,6 +657,7 @@ class TestRopCliRun:
             "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
             lambda *a, **k: {"read_only": True},
         )
+
         def reconciliation(*_args: object, **_kwargs: object) -> dict:
             calls.append("reconciliation")
             if phase_failure == "reconciliation":
@@ -810,6 +811,160 @@ class TestRopCliRun:
             "drafts",
             "execute",
         ]
+
+    def test_rop_run_final_projection_refresh_after_writeback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+        from beeagent_module.cases.rop_dashboard import (
+            rop_web_projection_entry_path,
+            rop_web_projection_index,
+        )
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = True
+        settings["bitrix"]["reconciliation"]["enabled"] = True
+        settings["bitrix"]["writeback"]["enabled"] = True
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-wb-final",
+                    "sender": "client@example.com",
+                    "subject": "Final projection refresh",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "wb_final_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+
+        def reconciliation(*_args: object, **_kwargs: object) -> dict:
+            run_dir = tmp_path / "runs" / "test-cli-run-wb-final"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "bitrix_reconciliation.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "test-cli-run-wb-final",
+                        "status": "ok",
+                        "aggregate": {"matched_count": 1},
+                        "items": [
+                            {
+                                "event_id": "evt-wb-final",
+                                "bitrix_match_status": "matched_lead",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"status": "ok"}
+
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
+            reconciliation,
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_action_drafts.build_action_drafts",
+            lambda *a, **k: None,
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.build_writeback_plan",
+            lambda **k: None,
+        )
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_writeback.execute_writeback_pending",
+            lambda **k: {"status": "executed", "writes_performed": 1},
+        )
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id="test-cli-run-wb-final",
+        )
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        index = rop_web_projection_index(tmp_path)
+        assert index is not None
+        assert index["latest_run_id"] == "test-cli-run-wb-final"
+        entry_path = rop_web_projection_entry_path(tmp_path, "test-cli-run-wb-final")
+        entry = json.loads(entry_path.read_text(encoding="utf-8"))
+        dash = entry["dashboards"]["all"]
+        assert dash["business_kpi"]["matched_in_bitrix"] == 1
+
+    def test_rop_run_final_projection_refresh_when_writeback_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+        from beeagent_module.cases.rop_dashboard import (
+            rop_web_projection_entry_path,
+            rop_web_projection_index,
+        )
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = True
+        settings["bitrix"]["reconciliation"]["enabled"] = True
+        settings["bitrix"]["writeback"]["enabled"] = False
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-wb-off",
+                    "sender": "client@example.com",
+                    "subject": "No writeback",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "wb_off_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id="test-cli-run-wb-off",
+        )
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        index = rop_web_projection_index(tmp_path)
+        assert index is not None
+        assert index["latest_run_id"] == "test-cli-run-wb-off"
+        entry_path = rop_web_projection_entry_path(tmp_path, "test-cli-run-wb-off")
+        assert entry_path.exists()
 
 
 class TestRopCliSummary:

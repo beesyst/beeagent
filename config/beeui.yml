@@ -85,7 +85,8 @@ pages:
       en: Inbound leads, review queue and Bitrix reconciliation
       ru: Входящие лиды, очередь проверки и сверка с Битрикс
     tabs:
-      variant: fill
+      variant: fill_icons
+      progressive: true
       active_param: tab
       items:
         - id: overview
@@ -93,46 +94,63 @@ pages:
             en: Overview
             ru: Обзор
           href: /rop?tab=overview
+          icon: dashboard
+
         - id: queue
           title:
             en: Queue
             ru: Очередь
           href: /rop?tab=queue
+          icon: queue
+
         - id: threads
           title:
             en: Threads
             ru: Цепочки
           href: /rop?tab=threads
+          icon: messages
+
         - id: ai_assist
           title:
             en: AI Assist
             ru: AI ассистент
           href: /rop?tab=ai_assist
+          icon: ai
+
         - id: sources
           title:
             en: Sources
             ru: Источники
           href: /rop?tab=sources
+          icon: source
+
         - id: attachments
           title:
             en: Attachments
             ru: Вложения
           href: /rop?tab=attachments
+          icon: attachment
+
         - id: evidence
           title:
             en: Evidence
             ru: Доказательства
           href: /rop?tab=evidence
+          icon: evidence
+
         - id: bitrix
           title:
             en: Bitrix
             ru: Битрикс
           href: /rop?tab=bitrix
+          icon: integration
+
         - id: recommendations
           title:
             en: Recommendations
             ru: Рекомендации
           href: /rop?tab=recommendations
+          icon: recommendation
     blocks: []
 
   - id: runs

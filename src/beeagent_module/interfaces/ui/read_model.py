@@ -17,6 +17,7 @@ from beeagent_module.cases.rop_dashboard import (
     apply_queue_filters,
     build_rop_dashboard,
     paginate_items,
+    rop_web_projection_entry_path,
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
@@ -383,7 +384,7 @@ def _list_run_ids(runs_dir: Path) -> list[str]:
 
 def _build_kpis(
     run_id: str,
-    run_ids: list[str],
+    total_runs: int,
     summary: dict | None,
     source_diag: dict | None,
     intake: dict | None,
@@ -394,7 +395,7 @@ def _build_kpis(
 ) -> dict[str, Any]:
     kpis: dict[str, Any] = {
         "selected_run_id": run_id,
-        "total_runs": len(run_ids),
+        "total_runs": total_runs,
         "run_status": (summary or {}).get("status", "unknown"),
     }
 
@@ -2077,7 +2078,7 @@ def build_rop_dashboard_read_model(
 
     kpis = _build_kpis(
         run_id=run_id,
-        run_ids=run_ids,
+        total_runs=len(run_ids),
         summary=summary if isinstance(summary, dict) else None,
         source_diag=source_diag if isinstance(source_diag, dict) else None,
         intake=intake if isinstance(intake, dict) else None,
@@ -2433,6 +2434,427 @@ def build_rop_dashboard_read_model(
     result["fallback_count"] = kpis.get("fallback_count", 0)
     result["normalized_count"] = kpis.get("normalized_count", 0)
     result["has_attachment_extraction"] = attachment_extraction is not None
+
+    return result
+
+
+def build_rop_tab_read_model(
+    storage_dir: Path,
+    tab: str,
+    run_id: str | None = None,
+    period: str | None = None,
+    default_period: str | None = None,
+    configured_periods: list[str] | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
+) -> dict[str, Any]:
+    requested_tab = "overview" if tab == "api" else tab
+    runs_dir = storage_dir / "runs"
+    if not runs_dir.is_dir():
+        return {"error": "no_runs", "message": "No runs directory"}
+
+    warnings: list[dict[str, Any]] = []
+    projection = _read_json(storage_dir / "interfaces" / "rop_web_projection.json")
+    if not isinstance(projection, dict) or projection.get("schema_version") != 1:
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection is missing or malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+
+    latest_run_id = projection.get("latest_run_id")
+    projection_runs = projection.get("run_ids")
+    total_runs = projection.get("total_runs")
+    if (
+        not isinstance(latest_run_id, str)
+        or not latest_run_id
+        or not isinstance(projection_runs, list)
+        or not all(isinstance(value, str) and value for value in projection_runs)
+        or not isinstance(total_runs, int)
+    ):
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection index is malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+
+    if run_id is None:
+        run_id = latest_run_id
+
+    run_dir, error = _resolve_run_dir(storage_dir, run_id)
+    if run_dir is None:
+        return {"error": error, "run_id": run_id}
+
+    effective_period = period or default_period
+    allowed_periods = set(configured_periods or [])
+    if effective_period not in allowed_periods:
+        warnings.append({"code": "invalid_period", "period": effective_period})
+        effective_period = default_period
+    if filter_params and (
+        filter_params.get("date_from") or filter_params.get("date_to")
+    ):
+        effective_period = "all"
+
+    dashboard_payload: dict[str, Any] = {}
+    projection_entry = _read_json(rop_web_projection_entry_path(storage_dir, run_id))
+    if (
+        not isinstance(projection_entry, dict)
+        or projection_entry.get("schema_version") != 1
+        or projection_entry.get("run_id") != run_id
+    ):
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection entry is missing or malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+
+    entries = projection_entry.get("dashboards")
+    entry = entries.get(effective_period) if isinstance(entries, dict) else None
+    if not isinstance(entry, dict):
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection period is unavailable; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+
+    dashboard_payload = entry
+
+    for warning in dashboard_payload.get("warnings", []):
+        if isinstance(warning, dict):
+            warnings.append(warning)
+
+    queues = dashboard_payload.get("queues", {})
+    if not isinstance(queues, dict):
+        queues = {}
+    attach_overrides = _trusted_attach_operational_case_types(storage_dir)
+    if attach_overrides:
+        for queue_items in queues.values():
+            if not isinstance(queue_items, list):
+                continue
+            for item in queue_items:
+                if not isinstance(item, dict) or item.get("semantic_case_type"):
+                    continue
+                key = (
+                    str(item.get("run_id") or ""),
+                    str(item.get("source_id") or ""),
+                    str(item.get("event_id") or ""),
+                    str(item.get("event_instance_id") or ""),
+                )
+                operational = attach_overrides.get(key)
+                if operational:
+                    item["semantic_case_type"] = str(
+                        item.get("bot_case_type") or item.get("case_type") or ""
+                    )
+                    item["case_type"] = operational
+                    item["bot_case_type"] = operational
+    business_kpi = dashboard_payload.get("business_kpi", {})
+    if not isinstance(business_kpi, dict):
+        business_kpi = {}
+    series = dashboard_payload.get("series", {})
+    if not isinstance(series, dict):
+        series = {}
+
+    result: dict[str, Any] = {
+        "run_id": run_id,
+        "selected_run_id": run_id,
+        "available_runs": projection_runs or [run_id],
+        "total_runs": total_runs,
+        "status": "ok",
+        "warnings": warnings,
+        "business_kpi": business_kpi,
+        "series": series,
+        "queues": queues,
+        "rop_recommendations": dashboard_payload.get("rop_recommendations", []),
+        "configured_periods": list(configured_periods or []),
+        "default_period": default_period,
+        "updated_at": dashboard_payload.get("generated_at_utc"),
+        "period": dashboard_payload.get("period"),
+        "period_start_utc": dashboard_payload.get("period_start_utc"),
+        "period_end_utc": dashboard_payload.get("period_end_utc"),
+        "time_basis": dashboard_payload.get("time_basis", "unknown"),
+        "filter_params": dict(filter_params or {}),
+        "page": page,
+        "page_size": page_size,
+        "sort": sort,
+        "order": order,
+    }
+
+    if requested_tab in {"overview", "queue", "bitrix"}:
+        current_state = _read_json(run_dir / "rop_current_state.json")
+        if isinstance(current_state, dict):
+            result["current_state_kpi"] = current_state.get("kpi", {})
+            result["current_state_queues"] = current_state.get("queues", {})
+        if requested_tab == "overview":
+            summary = _read_json(run_dir / "operator_summary.json")
+            source_diag = _read_json(run_dir / "source_diagnostics.json")
+            intake = _read_json(run_dir / "intake_metadata.json")
+            normalized = _read_json(run_dir / "normalized_events.json")
+            classified = _read_json(run_dir / "classified_events.json")
+            extraction = _read_json(run_dir / "attachment_extraction.json")
+            result["kpis"] = _build_kpis(
+                run_id=run_id,
+                total_runs=total_runs,
+                summary=summary if isinstance(summary, dict) else None,
+                source_diag=source_diag if isinstance(source_diag, dict) else None,
+                intake=intake if isinstance(intake, dict) else None,
+                normalized=normalized if isinstance(normalized, list) else None,
+                classified=classified if isinstance(classified, list) else None,
+                attachment_extraction=extraction
+                if isinstance(extraction, dict)
+                else None,
+                run_dir=run_dir,
+            )
+            result["funnel"] = _build_funnel(
+                source_diag if isinstance(source_diag, dict) else None,
+                intake if isinstance(intake, dict) else None,
+                normalized if isinstance(normalized, list) else None,
+                classified if isinstance(classified, list) else None,
+                result["kpis"],
+            )
+            result["source_health"] = _build_source_health(
+                source_diag if isinstance(source_diag, dict) else None,
+                intake if isinstance(intake, dict) else None,
+                classified if isinstance(classified, list) else None,
+            )
+            sources = []
+            if isinstance(source_diag, dict):
+                for source in source_diag.get("sources", []):
+                    if isinstance(source, dict):
+                        sources.append(
+                            {
+                                "source_id": source.get("source_id", ""),
+                                "source_type": source.get("source_type", ""),
+                                "source_role": source.get("source_role", ""),
+                                "display_name": source.get(
+                                    "source_display_name",
+                                    source.get("display_name", ""),
+                                ),
+                                "status": source.get("status", ""),
+                            }
+                        )
+            result["sources"] = sources
+            result["classification_distribution"] = _build_classification_distribution(
+                classified if isinstance(classified, list) else None
+            )
+            result["classified_count"] = result["kpis"].get("classified_count", 0)
+            result["case_type_counts"] = result["classification_distribution"].get(
+                "case_type_counts", {}
+            )
+            result["priority_counts"] = result["classification_distribution"].get(
+                "priority_counts", {}
+            )
+            result["fallback_count"] = result["kpis"].get("fallback_count", 0)
+            result["normalized_count"] = result["kpis"].get("normalized_count", 0)
+            adjudicator = _read_json(run_dir / "rop_ai_adjudicator_results.json")
+            result["ai_adjudicator_summary"] = _build_ai_adjudicator_summary(
+                adjudicator if isinstance(adjudicator, dict) else None
+            )
+            final_decisions, final_source = load_or_build_final_decisions(run_dir)
+            result["final_decisions"] = final_decisions
+            result["final_decision_summary"] = final_decisions["summary"]
+            if final_source == "computed":
+                warnings.append(
+                    {
+                        "code": "missing_or_malformed_artifact",
+                        "artifact": "rop_final_decisions.json",
+                    }
+                )
+            result["attachment_summary"] = _build_attachment_summary(
+                extraction if isinstance(extraction, dict) else None
+            )
+            result["recommendations"] = _build_recommendations(result["kpis"])
+            result["attention_events"] = _build_attention_events(
+                classified if isinstance(classified, list) else None,
+                normalized if isinstance(normalized, list) else None,
+                result["source_health"],
+                locale="en",
+                run_id=run_id,
+            )
+            selection = _read_json(run_dir / "mailbox_selection.json")
+            result["latest_selection"] = _build_latest_selection(
+                selection if isinstance(selection, dict) else None
+            )
+            evidence_links = _build_evidence_links(run_id)
+            from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
+
+            for link in evidence_links:
+                link["available"] = (
+                    resolve_artifact_path(storage_dir, run_id, link["artifact_id"])
+                    is not None
+                )
+            result["evidence_links"] = evidence_links
+    if requested_tab == "bitrix":
+        reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
+        if isinstance(reconciliation, dict):
+            aggregate = reconciliation.get("aggregate", {})
+            result["bitrix"] = {
+                "status": reconciliation.get("status", "unknown"),
+                "matched_count": _int(aggregate.get("matched_count", 0)),
+                "not_found_count": _int(aggregate.get("not_found_count", 0)),
+                "ambiguous_count": _int(aggregate.get("ambiguous_count", 0)),
+                "connector_error_count": _int(
+                    aggregate.get("connector_error_count", 0)
+                ),
+            }
+
+        bitrix_link = next(
+            link
+            for link in _build_evidence_links(run_id)
+            if link["artifact_id"] == "bitrix_reconciliation_json"
+        )
+        bitrix_link["available"] = isinstance(reconciliation, dict)
+        result["evidence_links"] = [bitrix_link]
+
+    if tab == "api":
+        classified = _read_json(run_dir / "classified_events.json")
+        normalized = _read_json(run_dir / "normalized_events.json")
+        thread_index = _read_json(run_dir / "mail_thread_index.json")
+        thread_context = _read_json(run_dir / "mail_thread_context.json")
+        result["thread_summary"] = _build_thread_summary(
+            thread_index if isinstance(thread_index, dict) else None,
+            thread_context if isinstance(thread_context, dict) else None,
+            classified if isinstance(classified, list) else None,
+        )
+        result["threads"] = _build_threads(
+            thread_index if isinstance(thread_index, dict) else None,
+            thread_context if isinstance(thread_context, dict) else None,
+            classified if isinstance(classified, list) else None,
+            normalized if isinstance(normalized, list) else None,
+        )
+        requests = _read_json(run_dir / "rop_ai_assist_requests.json")
+        decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
+        ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
+        result["ai_assist_summary"] = _build_ai_assist_summary(
+            requests if isinstance(requests, dict) else None,
+            decisions if isinstance(decisions, dict) else None,
+            ai_results if isinstance(ai_results, dict) else None,
+        )
+        result["ai_assist_events"] = _build_ai_assist_events(
+            classified if isinstance(classified, list) else None,
+            normalized if isinstance(normalized, list) else None,
+            requests if isinstance(requests, dict) else None,
+            decisions if isinstance(decisions, dict) else None,
+            ai_results if isinstance(ai_results, dict) else None,
+        )
+        delivery = _read_json(run_dir / "rop_recommendations.json")
+        result["delivery_recommendations"] = (
+            delivery if isinstance(delivery, dict) else {}
+        )
+
+    if requested_tab == "queue" or tab == "api":
+        attention_events: list[dict[str, Any]] = []
+        if not queues:
+            classified = _read_json(run_dir / "classified_events.json")
+            normalized = _read_json(run_dir / "normalized_events.json")
+            attention_events = _build_attention_events(
+                classified if isinstance(classified, list) else None,
+                normalized if isinstance(normalized, list) else None,
+                [],
+                locale="en",
+                run_id=run_id,
+            )
+        canonical_rows = _canonical_queue_rows(
+            queues, attention_events, filter_params or {}
+        )
+        filtered_rows = apply_queue_filters(canonical_rows, None, filter_params or {})
+        sorted_rows = sort_queue_items(filtered_rows, sort=sort, order=order)
+        queue_rows, pagination = paginate_items(
+            sorted_rows, page=page, page_size=page_size
+        )
+        pagination["total_items"] = pagination["total"]
+        pagination["showing_from"] = pagination["start"]
+        pagination["showing_to"] = pagination["end"]
+        result["queue_rows"] = queue_rows
+        result["pagination"] = pagination
+        result["filter_options"] = _build_filter_options(canonical_rows)
+        result["page"] = pagination["page"]
+        result["page_size"] = pagination["page_size"]
+
+    if requested_tab == "sources":
+        source_diag = _read_json(run_dir / "source_diagnostics.json")
+        intake = _read_json(run_dir / "intake_metadata.json")
+        classified = _read_json(run_dir / "classified_events.json")
+        result["source_health"] = _build_source_health(
+            source_diag if isinstance(source_diag, dict) else None,
+            intake if isinstance(intake, dict) else None,
+            classified if isinstance(classified, list) else None,
+        )
+
+    if requested_tab == "attachments":
+        extraction = _read_json(run_dir / "attachment_extraction.json")
+        result["attachment_summary"] = _build_attachment_summary(
+            extraction if isinstance(extraction, dict) else None
+        )
+
+    if requested_tab == "evidence":
+        evidence_links = _build_evidence_links(run_id)
+        from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
+
+        for link in evidence_links:
+            link["available"] = (
+                resolve_artifact_path(storage_dir, run_id, link["artifact_id"])
+                is not None
+            )
+        result["evidence_links"] = evidence_links
+
+    if requested_tab == "threads":
+        thread_index = _read_json(run_dir / "mail_thread_index.json")
+        thread_context = _read_json(run_dir / "mail_thread_context.json")
+        classified = _read_json(run_dir / "classified_events.json")
+        normalized = _read_json(run_dir / "normalized_events.json")
+        result["thread_summary"] = _build_thread_summary(
+            thread_index if isinstance(thread_index, dict) else None,
+            thread_context if isinstance(thread_context, dict) else None,
+            classified if isinstance(classified, list) else None,
+        )
+        result["threads"] = _build_threads(
+            thread_index if isinstance(thread_index, dict) else None,
+            thread_context if isinstance(thread_context, dict) else None,
+            classified if isinstance(classified, list) else None,
+            normalized if isinstance(normalized, list) else None,
+        )
+
+    if requested_tab == "ai_assist":
+        requests = _read_json(run_dir / "rop_ai_assist_requests.json")
+        decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
+        results = _read_json(run_dir / "rop_ai_assist_results.json")
+        adjudicator = _read_json(run_dir / "rop_ai_adjudicator_results.json")
+        classified = _read_json(run_dir / "classified_events.json")
+        normalized = _read_json(run_dir / "normalized_events.json")
+        final_decisions, _ = load_or_build_final_decisions(run_dir)
+        result["ai_assist_summary"] = _build_ai_assist_summary(
+            requests if isinstance(requests, dict) else None,
+            decisions if isinstance(decisions, dict) else None,
+            results if isinstance(results, dict) else None,
+        )
+        result["ai_adjudicator_summary"] = _build_ai_adjudicator_summary(
+            adjudicator if isinstance(adjudicator, dict) else None
+        )
+        result["ai_assist_events"] = _build_ai_assist_events(
+            classified if isinstance(classified, list) else None,
+            normalized if isinstance(normalized, list) else None,
+            requests if isinstance(requests, dict) else None,
+            decisions if isinstance(decisions, dict) else None,
+            results if isinstance(results, dict) else None,
+        )
+        result["final_decisions"] = final_decisions
+
+    if requested_tab == "recommendations":
+        recommendations = _read_json(run_dir / "rop_recommendations.json")
+        result["delivery_recommendations"] = (
+            recommendations if isinstance(recommendations, dict) else {}
+        )
 
     return result
 
@@ -3584,7 +4006,9 @@ def _build_rop_queue_layout(
     if not isinstance(filter_options, dict):
         filter_options = {}
 
-    queue_rows = _canonical_queue_rows(queues, attention_events, filter_params)
+    queue_rows = data.get("queue_rows")
+    if not isinstance(queue_rows, list):
+        queue_rows = _canonical_queue_rows(queues, attention_events, filter_params)
 
     toolbar = _build_queue_toolbar(
         filter_params=filter_params,
@@ -3613,16 +4037,16 @@ def _build_rop_queue_layout(
             ),
         ]
 
-    # Apply filters
-    filtered_rows = apply_queue_filters(queue_rows, None, filter_params)
-
-    # Apply sorting
-    filtered_rows = sort_queue_items(filtered_rows, sort=sort, order=order)
-
-    # Apply pagination
-    paginated_rows, pagination_info = paginate_items(
-        filtered_rows, page=page, page_size=page_size
-    )
+    pagination_info = data.get("pagination")
+    if not isinstance(pagination_info, dict):
+        filtered_rows = apply_queue_filters(queue_rows, None, filter_params)
+        filtered_rows = sort_queue_items(filtered_rows, sort=sort, order=order)
+        paginated_rows, pagination_info = paginate_items(
+            filtered_rows, page=page, page_size=page_size
+        )
+    else:
+        paginated_rows = queue_rows
+        filtered_rows = queue_rows
 
     return [
         _queue_table(
@@ -3630,7 +4054,7 @@ def _build_rop_queue_layout(
             paginated_rows,
             run_id=run_id,
             locale=locale,
-            total_count=len(filtered_rows),
+            total_count=_int(pagination_info.get("total", len(filtered_rows))),
             page=pagination_info["page"],
             page_size=pagination_info["page_size"],
             total_pages=pagination_info["total_pages"],

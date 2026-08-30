@@ -36,8 +36,8 @@ from beeagent_module.interfaces.ui.read_model import (
     build_dashboard,
     build_modules_list,
     build_modules_page_layout,
-    build_rop_dashboard_read_model,
     build_rop_page_layout,
+    build_rop_tab_read_model,
     build_run_detail,
     build_runs_list,
     normalize_rop_recommendation_hrefs,
@@ -334,6 +334,7 @@ class BeeAgentUiAdapter:
 
     def get_rop_dashboard(
         self,
+        tab: str = "overview",
         run_id: str | None = None,
         period: str | None = None,
         filter_params: dict[str, str] | None = None,
@@ -351,9 +352,10 @@ class BeeAgentUiAdapter:
 
             default_period = self._settings["rop"]["dashboard"]["default_period"]
             configured_periods = self._settings["rop"]["dashboard"]["periods"]
-            data = build_rop_dashboard_read_model(
+            data = build_rop_tab_read_model(
                 self._storage_dir,
-                run_id,
+                tab=tab,
+                run_id=run_id,
                 period=period,
                 default_period=default_period,
                 configured_periods=configured_periods,
@@ -364,7 +366,10 @@ class BeeAgentUiAdapter:
                 order=order,
             )
             if "error" in data:
-                return error_result("not_found", data.get("message", "Not found"))
+                return error_result(
+                    str(data.get("error") or "error"),
+                    str(data.get("message") or "ROP read-model unavailable"),
+                )
             return ok_result(data)
         except Exception as exc:
             return error_result_from_exception(exc)
@@ -415,9 +420,10 @@ class BeeAgentUiAdapter:
 
                 default_period = self._settings["rop"]["dashboard"]["default_period"]
                 configured_periods = self._settings["rop"]["dashboard"]["periods"]
-                data = build_rop_dashboard_read_model(
+                data = build_rop_tab_read_model(
                     self._storage_dir,
-                    run_id,
+                    tab=tab,
+                    run_id=run_id,
                     period=period,
                     default_period=default_period,
                     configured_periods=configured_periods,
@@ -428,7 +434,10 @@ class BeeAgentUiAdapter:
                     order=pagination_params["order"],
                 )
                 if "error" in data:
-                    return error_result("not_found", data.get("message", "Not found"))
+                    return error_result(
+                        str(data.get("error") or "error"),
+                        str(data.get("message") or "ROP read-model unavailable"),
+                    )
 
                 locale = resolve_locale(query.get("lang"))
                 data["rop_recommendations"] = normalize_rop_recommendation_hrefs(

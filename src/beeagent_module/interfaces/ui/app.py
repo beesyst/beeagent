@@ -19,7 +19,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from beeagent_module.cases.rop_dashboard import _list_rop_run_ids
+from beeagent_module.cases.rop_dashboard import (
+    rop_web_projection_entry_path,
+    rop_web_projection_index,
+)
+from beeagent_module.core.attachment_store import (
+    lookup_attachment,
+    read_attachment_blob,
+)
 from beeagent_module.core.authorization import (
     EXTERNAL_PRINCIPAL_SCOPES,
     SCOPE_WILDCARD,
@@ -29,10 +36,6 @@ from beeagent_module.core.authorization import (
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
-)
-from beeagent_module.core.attachment_store import (
-    lookup_attachment,
-    read_attachment_blob,
 )
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
@@ -486,13 +489,42 @@ def _request_scopes(request: Request) -> frozenset[str] | None:
     return _principal_scopes(settings, session.user_id)
 
 
-def _rop_run_ids(storage_dir: Path | None) -> frozenset[str]:
+def _rop_projection_run_ids(storage_dir: Path | None) -> frozenset[str]:
     if storage_dir is None:
         return frozenset()
-    try:
-        return frozenset(_list_rop_run_ids(storage_dir / "runs"))
-    except OSError:
+    index = rop_web_projection_index(storage_dir)
+    if index is None:
         return frozenset()
+    return frozenset(index.get("run_ids", []))
+
+
+def _rop_projection_entry_valid(storage_dir: Path | None, run_id: str) -> bool:
+    if storage_dir is None:
+        return False
+    entry_path = rop_web_projection_entry_path(storage_dir, run_id)
+    try:
+        data = json_mod.loads(entry_path.read_text(encoding="utf-8"))
+    except OSError, json_mod.JSONDecodeError, TypeError:
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("schema_version") == 1
+        and data.get("run_id") == run_id
+    )
+
+
+def _artifact_path_run_id(path: str) -> str | None:
+    parts = path.split("/")
+    if len(parts) >= 5 and parts[1] == "runs" and parts[3] == "artifacts":
+        return parts[2]
+    if (
+        len(parts) >= 6
+        and parts[1] == "api"
+        and parts[2] == "runs"
+        and parts[4] == "artifacts"
+    ):
+        return parts[3]
+    return None
 
 
 def _beeagent_navigation_visibility(
@@ -596,12 +628,30 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
             )
         else:
             storage_dir = getattr(request.app.state, "beeagent_storage_dir", None)
+            requested_run_id = request.query_params.get("run_id")
+            if requested_run_id is None:
+                requested_run_id = _artifact_path_run_id(path)
+            if requested_run_id is not None:
+                try:
+                    from beeui_module.adapters.ids import validate_run_id
+
+                    validate_run_id(requested_run_id)
+                except Exception:
+                    requested_run_id = None
+            if requested_run_id is not None:
+                rop_run_ids = (
+                    frozenset({requested_run_id})
+                    if _rop_projection_entry_valid(storage_dir, requested_run_id)
+                    else frozenset()
+                )
+            else:
+                rop_run_ids = _rop_projection_run_ids(storage_dir)
             allowed = is_resource_allowed(
                 scopes,
                 path,
                 rop_evidence_artifact_ids=ROP_EVIDENCE_IDS,
-                rop_run_ids=_rop_run_ids(storage_dir),
-                requested_run_id=request.query_params.get("run_id"),
+                rop_run_ids=rop_run_ids,
+                requested_run_id=requested_run_id,
             )
         if allowed:
             return await call_next(request)
@@ -801,6 +851,7 @@ def _register_custom_routes(
             )
 
         result = adapter.get_rop_dashboard(
+            tab=request.query_params.get("tab", "api"),
             run_id=run_id,
             period=period,
             filter_params=filter_params,
@@ -811,7 +862,13 @@ def _register_custom_routes(
         )
         if isinstance(result, AdapterErrorResult):
             code = result.error.get("code", "error")
-            status = 404 if code == "not_found" else 400
+            status = (
+                404
+                if code == "not_found"
+                else 503
+                if code == "web_projection_unavailable"
+                else 400
+            )
             return _error_json(code, status_code=status, error=result.error)
 
         data = _result_data(result, {})
@@ -984,9 +1041,7 @@ def _register_custom_routes(
 
         storage_dir = getattr(app.state, "beeagent_storage_dir", None)
         if storage_dir is None:
-            return _error_json(
-                "server_error", "Storage unavailable", status_code=503
-            )
+            return _error_json("server_error", "Storage unavailable", status_code=503)
 
         item = lookup_attachment(storage_dir, run_id, attachment_id)
         if item is None:

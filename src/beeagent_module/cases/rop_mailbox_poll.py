@@ -19,7 +19,12 @@ from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
 )
-from beeagent_module.cases.rop_dashboard import build_rop_dashboard, write_rop_dashboard
+from beeagent_module.cases.rop_dashboard import (
+    build_rop_dashboard,
+    build_rop_web_projection,
+    write_rop_dashboard,
+    write_rop_web_projection,
+)
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.cases.rop_recipient_routing import build_recipient_routing_artifact
 from beeagent_module.cases.rop_recommendations import (
@@ -160,9 +165,7 @@ def _select_poll_sources(
             if source.get("source_id") != source_id:
                 continue
             if not source.get("enabled", False):
-                raise MailboxPollError(
-                    f"mailbox poll source '{source_id}' is disabled"
-                )
+                raise MailboxPollError(f"mailbox poll source '{source_id}' is disabled")
             if not _is_poll_mailbox_source(source):
                 raise MailboxPollError(
                     f"mailbox poll source '{source_id}' must be read-only mailbox source"
@@ -188,9 +191,7 @@ def _select_poll_sources(
     for source in input_sources:
         if source.get("source_id") == poll_source_id:
             return [source]
-    raise MailboxPollError(
-        "rop.mailbox_poll.source_id not found in rop.sources"
-    )
+    raise MailboxPollError("rop.mailbox_poll.source_id not found in rop.sources")
 
 
 def handle_mailbox_poll(
@@ -244,15 +245,18 @@ def handle_mailbox_poll(
     for source in selected:
         source_key = str(source.get("source_id", "unknown"))
         try:
-            processed_any = _poll_single_source(
-                settings=settings,
-                storage_dir=storage_dir,
-                project_root=project_root,
-                logger=logger,
-                source=source,
-                rebaseline=rebaseline,
-                require_checkpoint_source=False,
-            ) or processed_any
+            processed_any = (
+                _poll_single_source(
+                    settings=settings,
+                    storage_dir=storage_dir,
+                    project_root=project_root,
+                    logger=logger,
+                    source=source,
+                    rebaseline=rebaseline,
+                    require_checkpoint_source=False,
+                )
+                or processed_any
+            )
             successes.append(source_key)
         except Exception as exc:
             failures.append(source_key)
@@ -264,8 +268,7 @@ def handle_mailbox_poll(
 
     if failures and not successes:
         raise MailboxPollError(
-            "mailbox poll failed for all selected sources: "
-            + ", ".join(failures)
+            "mailbox poll failed for all selected sources: " + ", ".join(failures)
         )
     if failures:
         logger.warning(
@@ -331,7 +334,9 @@ def _poll_single_source(
             f"Missing required mailbox environment for poll source: source_id={source_id}"
         )
     if host.lower().startswith(("http://", "https://")) or "/" in host:
-        raise MailboxPollError(f"Invalid IMAP host for poll source: source_id={source_id}")
+        raise MailboxPollError(
+            f"Invalid IMAP host for poll source: source_id={source_id}"
+        )
     client = ImapReadonlyMailboxClient(
         host, mailbox["port"], mailbox["use_ssl"], username, password
     )
@@ -470,6 +475,16 @@ def _poll_single_source(
         aggregate_runs=True,
     )
     write_rop_dashboard(storage_dir, dashboard, logger)
+    projection = build_rop_web_projection(
+        storage_dir=storage_dir,
+        periods=list(
+            settings["rop"]["dashboard"].get(
+                "periods", [settings["rop"]["dashboard"]["default_period"]]
+            )
+        ),
+        logger=logger,
+    )
+    write_rop_web_projection(storage_dir, projection, logger)
     data["sources"][source_id] = _entry(folder, uidvalidity, selected[-1])
     _write_checkpoint(path, data)
     if writeback_enabled:

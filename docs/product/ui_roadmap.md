@@ -2972,7 +2972,7 @@ resource access = scopes
 
 ### Итерация UI-8.7 — Fast ROP Web console: bounded reads and progressive navigation v1
 
-**Статус:** PLANNED
+**Статус:** IMPLEMENTED
 
 #### Goal
 

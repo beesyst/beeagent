@@ -137,7 +137,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", specifier = "==0.27.0" },
+    { name = "beeui", specifier = "==0.28.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
     { name = "fastapi", specifier = "==0.141.1" },
@@ -175,7 +175,7 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "beeui"
-version = "0.27.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -185,9 +185,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/b8/11e9e052297314ea556655649d4c67b5329ba6b6d484e609b58cd4df271b/beeui-0.27.0.tar.gz", hash = "sha256:20b7d917033efa8d92083fab0d0b18b02578416e4ca95c747db64a8e89ec184d", size = 527577, upload-time = "2026-08-29T15:51:35.916Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/ae/d22d616444cce07878a1dc2153c25f34a7107f59a8ee4996fe39706d10a7/beeui-0.28.0.tar.gz", hash = "sha256:04dab368a308bd2a829eef5c7c39253680d32b461f04c22ee856c7283a9bb952", size = 530425, upload-time = "2026-08-30T09:11:53.958Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/a4/1968ca6ac0df2f42097f6b09027b80f65145102af7f5234e01b39d3852a2/beeui-0.27.0-py3-none-any.whl", hash = "sha256:6cf7bea52a930c9f4cf6312538248214041888e9c23d93c86ac87e17a71b343e", size = 437456, upload-time = "2026-08-29T15:51:30.03Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/92/28a5b174f7800a2ba43cfaf6c1beb5fac07a449f2f933eaafebd9a3bd36b/beeui-0.28.0-py3-none-any.whl", hash = "sha256:d18d4c8b64ecda7ee2f27608691c7d752404033b9414668bedff3b676530bedc", size = 438646, upload-time = "2026-08-30T09:11:47.848Z" },
 ]
 
 [[package]]
