@@ -65,6 +65,9 @@
   - a normal `/rop` or `/api/rop/dashboard` request reads only the index and the selected run projection entry;
   - explicit `?run_id=<id>` validates the requested id and reads only the matching hashed per-run entry (schema + exact run_id match);
 - both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
+- normal ROP lifecycle refresh updates only the changed run entry and the existing bounded index; it does not bootstrap an absent projection or reconstruct the complete historical Web catalog;
+- explicit bootstrap/regeneration for an upgraded storage tree without a projection is `./start.sh rop dashboard --period 7d`; it enumerates canonical historical ROP data once per bounded materialized run, derives configured periods from that materialization, writes required entries atomically and publishes the index last;
+- an interrupted bootstrap leaves an existing valid index usable; without a prior index it leaves the Web console explicitly unavailable rather than publishing partial derived state;
 - missing or malformed index, selected-run entry or period entry fails explicitly and recoverably and can be repaired through the supported `rop dashboard` regeneration path;
 - canonical ROP run artifacts remain the business source of truth.
 

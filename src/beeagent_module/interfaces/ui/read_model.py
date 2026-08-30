@@ -18,6 +18,7 @@ from beeagent_module.cases.rop_dashboard import (
     build_rop_dashboard,
     paginate_items,
     rop_web_projection_entry_path,
+    rop_web_projection_index,
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
@@ -2457,33 +2458,19 @@ def build_rop_tab_read_model(
         return {"error": "no_runs", "message": "No runs directory"}
 
     warnings: list[dict[str, Any]] = []
-    projection = _read_json(storage_dir / "interfaces" / "rop_web_projection.json")
-    if not isinstance(projection, dict) or projection.get("schema_version") != 1:
+    projection = rop_web_projection_index(storage_dir)
+    if projection is None:
         return {
             "error": "web_projection_unavailable",
             "message": (
-                "ROP Web projection is missing or malformed; "
+                "ROP Web projection index is missing or malformed; "
                 "regenerate it with the supported ROP dashboard command"
             ),
         }
 
-    latest_run_id = projection.get("latest_run_id")
-    projection_runs = projection.get("run_ids")
-    total_runs = projection.get("total_runs")
-    if (
-        not isinstance(latest_run_id, str)
-        or not latest_run_id
-        or not isinstance(projection_runs, list)
-        or not all(isinstance(value, str) and value for value in projection_runs)
-        or not isinstance(total_runs, int)
-    ):
-        return {
-            "error": "web_projection_unavailable",
-            "message": (
-                "ROP Web projection index is malformed; "
-                "regenerate it with the supported ROP dashboard command"
-            ),
-        }
+    latest_run_id = projection["latest_run_id"]
+    projection_runs = projection["run_ids"]
+    total_runs = projection["total_runs"]
 
     if run_id is None:
         run_id = latest_run_id

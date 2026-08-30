@@ -21,9 +21,8 @@ from beeagent_module.cases.rop_current_state import (
 )
 from beeagent_module.cases.rop_dashboard import (
     build_rop_dashboard,
-    build_rop_web_projection,
+    refresh_rop_web_projection,
     write_rop_dashboard,
-    write_rop_web_projection,
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.cases.rop_recipient_routing import build_recipient_routing_artifact
@@ -475,16 +474,17 @@ def _poll_single_source(
         aggregate_runs=True,
     )
     write_rop_dashboard(storage_dir, dashboard, logger)
-    projection = build_rop_web_projection(
+    refresh_rop_web_projection(
         storage_dir=storage_dir,
         periods=list(
             settings["rop"]["dashboard"].get(
                 "periods", [settings["rop"]["dashboard"]["default_period"]]
             )
         ),
+        run_id=run_id,
         logger=logger,
+        is_new_run=True,
     )
-    write_rop_web_projection(storage_dir, projection, logger)
     data["sources"][source_id] = _entry(folder, uidvalidity, selected[-1])
     _write_checkpoint(path, data)
     if writeback_enabled:

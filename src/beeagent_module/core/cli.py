@@ -62,19 +62,23 @@ def _dashboard_periods(settings: dict) -> list[str]:
 
 
 def _refresh_rop_web_projection(
-    storage_dir: Path, settings: dict, logger: logging.Logger
+    storage_dir: Path,
+    settings: dict,
+    run_id: str,
+    logger: logging.Logger,
+    is_new_run: bool = False,
 ) -> None:
     from beeagent_module.cases.rop_dashboard import (
-        build_rop_web_projection,
-        write_rop_web_projection,
+        refresh_rop_web_projection,
     )
 
-    projection = build_rop_web_projection(
+    refresh_rop_web_projection(
         storage_dir=storage_dir,
         periods=_dashboard_periods(settings),
+        run_id=run_id,
         logger=logger,
+        is_new_run=is_new_run,
     )
-    write_rop_web_projection(storage_dir, projection, logger)
 
 
 def handle_rop_run(
@@ -96,6 +100,7 @@ def handle_rop_run(
     _validate_mailbox_env_for_sources(effective_settings)
 
     run_id = args.run_id
+    run_existed_before = bool(run_id and (storage_dir / "runs" / run_id).is_dir())
 
     logger.info(
         "ROP CLI: starting run with overrides source_id=%s items_max=%s",
@@ -295,7 +300,13 @@ def handle_rop_run(
                 )
 
         try:
-            _refresh_rop_web_projection(storage_dir, settings, logger)
+            _refresh_rop_web_projection(
+                storage_dir,
+                settings,
+                effective_run_id,
+                logger,
+                is_new_run=not run_existed_before,
+            )
         except Exception as exc:
             logger.warning(
                 "ROP CLI: Web projection refresh failed after run: %s",
@@ -468,7 +479,7 @@ def handle_rop_reconcile_bitrix(
                 dashboard=dashboard,
                 logger=logger,
             )
-            _refresh_rop_web_projection(storage_dir, settings, logger)
+            _refresh_rop_web_projection(storage_dir, settings, run_id, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after reconciliation: %s",
@@ -949,7 +960,7 @@ def handle_rop_recommendations(
                 dashboard=dashboard,
                 logger=logger,
             )
-            _refresh_rop_web_projection(storage_dir, settings, logger)
+            _refresh_rop_web_projection(storage_dir, settings, run_id, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after recommendations: %s",
@@ -1023,7 +1034,7 @@ def handle_rop_current(
                 dashboard=dashboard,
                 logger=logger,
             )
-            _refresh_rop_web_projection(storage_dir, settings, logger)
+            _refresh_rop_web_projection(storage_dir, settings, run_id, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after current-state: %s",
@@ -1062,7 +1073,9 @@ def handle_rop_dashboard(
 
     from beeagent_module.cases.rop_dashboard import (
         build_rop_dashboard,
+        build_rop_web_projection,
         write_rop_dashboard,
+        write_rop_web_projection,
     )
 
     try:
@@ -1079,7 +1092,12 @@ def handle_rop_dashboard(
             dashboard=dashboard,
             logger=logger,
         )
-        _refresh_rop_web_projection(storage_dir, settings, logger)
+        projection = build_rop_web_projection(
+            storage_dir=storage_dir,
+            periods=_dashboard_periods(settings),
+            logger=logger,
+        )
+        write_rop_web_projection(storage_dir, projection, logger)
 
         status = dashboard.get("status", "?")
         bkpi = dashboard.get("business_kpi", {})
