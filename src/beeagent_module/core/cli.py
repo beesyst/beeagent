@@ -61,6 +61,22 @@ def _dashboard_periods(settings: dict) -> list[str]:
     return list(settings["rop"]["dashboard"]["periods"])
 
 
+def _refresh_rop_web_projection(
+    storage_dir: Path, settings: dict, logger: logging.Logger
+) -> None:
+    from beeagent_module.cases.rop_dashboard import (
+        build_rop_web_projection,
+        write_rop_web_projection,
+    )
+
+    projection = build_rop_web_projection(
+        storage_dir=storage_dir,
+        periods=_dashboard_periods(settings),
+        logger=logger,
+    )
+    write_rop_web_projection(storage_dir, projection, logger)
+
+
 def handle_rop_run(
     args: argparse.Namespace,
     settings: dict,
@@ -198,9 +214,7 @@ def handle_rop_run(
             )
 
         writeback_enabled = (
-            effective_settings.get("bitrix", {})
-            .get("writeback", {})
-            .get("enabled")
+            effective_settings.get("bitrix", {}).get("writeback", {}).get("enabled")
             is True
         )
         if writeback_enabled:
@@ -279,6 +293,14 @@ def handle_rop_run(
                     effective_run_id,
                     exc,
                 )
+
+        try:
+            _refresh_rop_web_projection(storage_dir, settings, logger)
+        except Exception as exc:
+            logger.warning(
+                "ROP CLI: Web projection refresh failed after run: %s",
+                exc,
+            )
 
         logger.info(
             "ROP CLI: run completed successfully: run_id=%s status=%s",
@@ -446,6 +468,7 @@ def handle_rop_reconcile_bitrix(
                 dashboard=dashboard,
                 logger=logger,
             )
+            _refresh_rop_web_projection(storage_dir, settings, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after reconciliation: %s",
@@ -926,6 +949,7 @@ def handle_rop_recommendations(
                 dashboard=dashboard,
                 logger=logger,
             )
+            _refresh_rop_web_projection(storage_dir, settings, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after recommendations: %s",
@@ -999,6 +1023,7 @@ def handle_rop_current(
                 dashboard=dashboard,
                 logger=logger,
             )
+            _refresh_rop_web_projection(storage_dir, settings, logger)
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after current-state: %s",
@@ -1054,6 +1079,7 @@ def handle_rop_dashboard(
             dashboard=dashboard,
             logger=logger,
         )
+        _refresh_rop_web_projection(storage_dir, settings, logger)
 
         status = dashboard.get("status", "?")
         bkpi = dashboard.get("business_kpi", {})
@@ -1302,8 +1328,12 @@ def handle_rop_writeback(
         raise RopCliError(str(exc)) from exc
 
     aggregate = result.get("aggregate", {})
-    outcome_counts = aggregate.get("outcome_counts", {}) if isinstance(aggregate, dict) else {}
-    status_counts = aggregate.get("status_counts", {}) if isinstance(aggregate, dict) else {}
+    outcome_counts = (
+        aggregate.get("outcome_counts", {}) if isinstance(aggregate, dict) else {}
+    )
+    status_counts = (
+        aggregate.get("status_counts", {}) if isinstance(aggregate, dict) else {}
+    )
     print(
         f"\nROP write-back {action}: status={result.get('status')} "
         f"writes={result.get('writes_performed', 0)}\n"

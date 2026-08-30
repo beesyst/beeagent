@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any
 
 DASHBOARD_ARTIFACT = "rop_dashboard.json"
+WEB_PROJECTION_ARTIFACT = "rop_web_projection.json"
+ROP_WEB_PROJECTION_RUNS_MAX = 20
 ALLOWED_PERIODS: tuple[str, ...] = (
     "today",
     "yesterday",
@@ -721,6 +724,128 @@ def write_rop_dashboard(
         dashboard.get("run_id", "?"),
     )
     return artifact_path
+
+
+def build_rop_web_projection(
+    storage_dir: Path,
+    periods: list[str],
+    logger: logging.Logger,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    selected_periods = list(dict.fromkeys(periods))
+    for period in selected_periods:
+        validate_period(period)
+
+    runs_dir = storage_dir / "runs"
+    if run_id is None:
+        run_ids = _list_rop_run_ids(runs_dir) if runs_dir.is_dir() else []
+    else:
+        run_ids = [run_id]
+
+    dashboards: dict[str, dict[str, dict[str, Any]]] = {}
+    for candidate_run_id in run_ids:
+        entries: dict[str, dict[str, Any]] = {}
+        for period in selected_periods:
+            entries[period] = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=period,
+                logger=logger,
+                run_id=candidate_run_id,
+                aggregate_runs=True,
+            )
+        dashboards[candidate_run_id] = entries
+
+    return {
+        "schema_version": 1,
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "run_ids": run_ids,
+        "dashboards": dashboards,
+    }
+
+
+def write_rop_web_projection(
+    storage_dir: Path,
+    projection: dict[str, Any],
+    logger: logging.Logger,
+) -> Path:
+    interfaces_dir = (storage_dir / "interfaces").resolve()
+    interfaces_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = interfaces_dir / WEB_PROJECTION_ARTIFACT
+    projection_dir = interfaces_dir / "rop_web_projection"
+    projection_dir.mkdir(parents=True, exist_ok=True)
+    dashboards = projection.get("dashboards", {})
+    if isinstance(dashboards, dict):
+        for run_id, dashboard_entries in dashboards.items():
+            if not isinstance(run_id, str) or not isinstance(dashboard_entries, dict):
+                continue
+            entry_path = rop_web_projection_entry_path(storage_dir, run_id)
+            entry_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": run_id,
+                        "dashboards": dashboard_entries,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+    run_ids = [
+        run_id
+        for run_id in projection.get("run_ids", [])
+        if isinstance(run_id, str) and run_id
+    ]
+    total_runs = len(run_ids)
+    bounded_run_ids = run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]
+    index = {
+        "schema_version": 1,
+        "generated_at_utc": projection.get("generated_at_utc"),
+        "latest_run_id": bounded_run_ids[0] if bounded_run_ids else None,
+        "run_ids": bounded_run_ids,
+        "total_runs": total_runs,
+    }
+    temporary_path = artifact_path.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(index, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temporary_path.replace(artifact_path)
+    logger.info(
+        "ROP Web projection written: path=%s runs=%d",
+        str(artifact_path.relative_to(storage_dir)),
+        len(dashboards) if isinstance(dashboards, dict) else 0,
+    )
+    return artifact_path
+
+
+def rop_web_projection_index(
+    storage_dir: Path,
+) -> dict[str, Any] | None:
+    path = storage_dir / "interfaces" / WEB_PROJECTION_ARTIFACT
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError, OSError:
+        return None
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        return None
+    latest_run_id = data.get("latest_run_id")
+    run_ids = data.get("run_ids")
+    if (
+        not isinstance(latest_run_id, str)
+        or not latest_run_id
+        or not isinstance(run_ids, list)
+        or not all(isinstance(value, str) and value for value in run_ids)
+    ):
+        return None
+    return data
+
+
+def rop_web_projection_entry_path(storage_dir: Path, run_id: str) -> Path:
+    digest = sha256(run_id.encode("utf-8")).hexdigest()
+    return storage_dir / "interfaces" / "rop_web_projection" / f"{digest}.json"
 
 
 def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:

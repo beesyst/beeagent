@@ -54,6 +54,19 @@
   - source for AI adjudicator evidence in AI tab and event detail
 - `storage/interfaces/rop_routing_map.json`
   - source for routing map evidence / routing contract
+- `storage/interfaces/rop_web_projection.json`
+  - derived, rebuildable ROP Web projection index;
+  - stores projection schema metadata, latest run id, the bounded recent run-id catalog (`run_ids`, fixed window) and the scalar `total_runs` materialized during rebuild;
+  - `available_runs` — bounded recent window из index `run_ids` (фиксированный bound, не весь historical catalog);
+  - `kpis.total_runs` / `total_runs` — scalar materialized value из index, не вычисляется через filesystem scan при GET;
+  - ordinary protected `/rop` и `/api/rop/dashboard` читают только index + selected-run entry, без перечисления `storage/runs`;
+- `storage/interfaces/rop_web_projection/<sha256(run_id)>.json`
+  - derived per-run materialized period dashboard entries;
+  - a normal `/rop` or `/api/rop/dashboard` request reads only the index and the selected run projection entry;
+  - explicit `?run_id=<id>` validates the requested id and reads only the matching hashed per-run entry (schema + exact run_id match);
+- both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
+- missing or malformed index, selected-run entry or period entry fails explicitly and recoverably and can be repaired through the supported `rop dashboard` regeneration path;
+- canonical ROP run artifacts remain the business source of truth.
 
 UI не хранит отдельный runtime state и не создаёт второй source of truth.
 
@@ -88,6 +101,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 - локализация UI: en по умолчанию, ru через `?lang=ru` или persistent cookie `beeui_lang` (query параметр имеет приоритет), конфигурация в `config/beeui.yml`;
 - product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
 - `/rop` рендерится как BeeUI generic adapter custom page;
+- ROP page tabs use BeeUI progressive navigation with canonical SSR `href` values and controlled BeeUI icons; BeeAgent does not add tab-navigation JavaScript;
 - browser artifact routes и shell принадлежат BeeUI;
 - `/api/runs/{run_id}/artifacts/{artifact_id}` остаётся JSON envelope.
 
@@ -1038,9 +1052,10 @@ HTML `/rop` использует BeeUI tabs:
 Возвращаемые данные (UI-6 enriched payload):
 
 - `selected_run_id` — выбранный run ID;
-- `available_runs` — список всех run ID;
+- `available_runs` — bounded recent run-id window из `rop_web_projection.json` index (`run_ids`, фиксированный bound), не результат сканирования `storage/runs` при GET;
+- `total_runs` — scalar materialized total run count из projection index (не длина `available_runs`);
 - `kpis` — сводные KPI:
-  - `total_runs`, `selected_run_id`, `run_status`;
+  - `total_runs` — scalar materialized total run count из projection index;
   - `source_count`, `loaded_source_count`, `degraded_source_count`;
   - `fetched_count`, `loaded_count`, `malformed_count`;
   - `normalized_count`, `classified_count`, `classification_failed_count`, `fallback_count`;
