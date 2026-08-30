@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.0...beeagent-v0.57.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **rop:** harden projection lifecycle ([#226](https://github.com/beesyst/beeagent/issues/226)) ([4f4aaa5](https://github.com/beesyst/beeagent/commit/4f4aaa507e779529bb69b21db2e26cb994f4faf2))
+
 ## [0.57.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.56.2...beeagent-v0.57.0) (2026-08-28)
 
 
