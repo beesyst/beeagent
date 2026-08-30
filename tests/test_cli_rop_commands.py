@@ -812,7 +812,7 @@ class TestRopCliRun:
             "execute",
         ]
 
-    def test_rop_run_final_projection_refresh_after_writeback(
+    def test_rop_run_requires_explicit_projection_bootstrap_after_writeback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import argparse
@@ -902,6 +902,15 @@ class TestRopCliRun:
         handle_rop_run(args, settings=settings, logger=_null_logger())
 
         index = rop_web_projection_index(tmp_path)
+        assert index is None
+
+        handle_rop_dashboard(
+            argparse.Namespace(period="7d", run_id=None),
+            settings=settings,
+            logger=_null_logger(),
+        )
+
+        index = rop_web_projection_index(tmp_path)
         assert index is not None
         assert index["latest_run_id"] == "test-cli-run-wb-final"
         entry_path = rop_web_projection_entry_path(tmp_path, "test-cli-run-wb-final")
@@ -909,14 +918,13 @@ class TestRopCliRun:
         dash = entry["dashboards"]["all"]
         assert dash["business_kpi"]["matched_in_bitrix"] == 1
 
-    def test_rop_run_final_projection_refresh_when_writeback_disabled(
+    def test_rop_run_does_not_publish_partial_projection_when_writeback_disabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import argparse
 
         import beeagent_module.core.cli as cli_module
         from beeagent_module.cases.rop_dashboard import (
-            rop_web_projection_entry_path,
             rop_web_projection_index,
         )
 
@@ -961,10 +969,160 @@ class TestRopCliRun:
         handle_rop_run(args, settings=settings, logger=_null_logger())
 
         index = rop_web_projection_index(tmp_path)
-        assert index is not None
-        assert index["latest_run_id"] == "test-cli-run-wb-off"
-        entry_path = rop_web_projection_entry_path(tmp_path, "test-cli-run-wb-off")
-        assert entry_path.exists()
+        assert index is None
+
+    def test_rop_run_rerun_existing_run_id_preserves_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+        from beeagent_module.cases.rop_dashboard import (
+            rop_web_projection_entry_path,
+            rop_web_projection_index,
+        )
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = False
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-rerun-001",
+                    "sender": "client@example.com",
+                    "subject": "Rerun explicit run id",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "rerun_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+
+        run_id = "test-cli-run-rerun"
+        args = argparse.Namespace(
+            source_id="rop_batch_sample",
+            all_sources=False,
+            items_max=1,
+            period="2026-05",
+            run_id=run_id,
+        )
+
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+        assert (tmp_path / "runs" / run_id).is_dir()
+
+        handle_rop_dashboard(
+            argparse.Namespace(period="7d", run_id=None),
+            settings=settings,
+            logger=_null_logger(),
+        )
+
+        before = rop_web_projection_index(tmp_path)
+        assert before is not None
+        assert before["run_ids"].count(run_id) == 1
+        total_before = before["total_runs"]
+
+        handle_rop_run(args, settings=settings, logger=_null_logger())
+
+        after = rop_web_projection_index(tmp_path)
+        assert after is not None
+        assert after["run_ids"].count(run_id) == 1
+        assert after["total_runs"] == total_before
+        assert rop_web_projection_entry_path(tmp_path, run_id).exists()
+
+    def test_rop_run_new_run_id_increments_catalog_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import argparse
+
+        import beeagent_module.core.cli as cli_module
+        from beeagent_module.cases.rop_dashboard import (
+            rop_web_projection_entry_path,
+            rop_web_projection_index,
+        )
+
+        settings = load_settings(_project_root() / "config" / "settings.yml")
+        monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
+        settings["bitrix"]["enabled"] = False
+
+        batch_data = {
+            "period": "2026-05",
+            "items": [
+                {
+                    "event_id": "evt-newrun-001",
+                    "sender": "client@example.com",
+                    "subject": "New explicit run id",
+                    "to": ["manager@welding.kz"],
+                }
+            ],
+        }
+        batch_path = tmp_path / "newrun_batch.json"
+        batch_path.write_text(json.dumps(batch_data), encoding="utf-8")
+        for source in settings["rop"]["sources"]:
+            if source["source_id"] == "rop_batch_sample":
+                source["enabled"] = True
+                source["batch"]["path"] = str(batch_path)
+
+        monkeypatch.setattr(cli_module, "get_storage_dir", lambda: tmp_path)
+        monkeypatch.setattr(cli_module, "get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "beeagent_module.cases.rop_recipient_routing.build_recipient_routing_artifact",
+            lambda *a, **k: {"read_only": True},
+        )
+
+        first_run_id = "test-cli-run-newrun-first"
+        handle_rop_run(
+            argparse.Namespace(
+                source_id="rop_batch_sample",
+                all_sources=False,
+                items_max=1,
+                period="2026-05",
+                run_id=first_run_id,
+            ),
+            settings=settings,
+            logger=_null_logger(),
+        )
+        handle_rop_dashboard(
+            argparse.Namespace(period="7d", run_id=None),
+            settings=settings,
+            logger=_null_logger(),
+        )
+
+        before = rop_web_projection_index(tmp_path)
+        assert before is not None
+        total_before = before["total_runs"]
+
+        second_run_id = "test-cli-run-newrun-second"
+        handle_rop_run(
+            argparse.Namespace(
+                source_id="rop_batch_sample",
+                all_sources=False,
+                items_max=1,
+                period="2026-05",
+                run_id=second_run_id,
+            ),
+            settings=settings,
+            logger=_null_logger(),
+        )
+
+        after = rop_web_projection_index(tmp_path)
+        assert after is not None
+        assert after["total_runs"] == total_before + 1
+        assert after["run_ids"].count(second_run_id) == 1
+        assert after["run_ids"].count(first_run_id) == 1
+        assert rop_web_projection_entry_path(tmp_path, second_run_id).exists()
 
 
 class TestRopCliSummary:

@@ -2633,6 +2633,374 @@ class TestWriteRopDashboard:
         assert loaded["read_only"] is True
 
 
+class TestRopWebProjectionLifecycle:
+    def _storage_with_runs(self, source: Path, target: Path, count: int) -> Path:
+        storage_dir = target / "storage"
+        runs_dir = storage_dir / "runs"
+        runs_dir.mkdir(parents=True)
+        for index in range(count):
+            shutil.copytree(source, runs_dir / f"run-many-{index:03d}")
+        return storage_dir
+
+    def test_full_regeneration_reuses_history_for_all_periods(
+        self, run_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "many", 12)
+        aggregate_calls = 0
+        run_enumerations = 0
+        original_aggregate = rop_dashboard_module._aggregate_period_events
+        original_list_runs = rop_dashboard_module._list_run_ids
+
+        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+            nonlocal aggregate_calls
+            aggregate_calls += 1
+            return original_aggregate(*args, **kwargs)
+
+        def counted_list_runs(*args: object, **kwargs: object) -> list[str]:
+            nonlocal run_enumerations
+            run_enumerations += 1
+            return original_list_runs(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rop_dashboard_module, "_aggregate_period_events", counted_aggregate
+        )
+        monkeypatch.setattr(rop_dashboard_module, "_list_run_ids", counted_list_runs)
+
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            _null_logger(),
+        )
+
+        assert aggregate_calls == 12
+        assert run_enumerations == 13
+        assert projection["total_runs"] == 12
+        assert len(projection["run_ids"]) == 12
+        assert set(projection["dashboards"][projection["run_ids"][0]]) == set(
+            rop_dashboard_module.ALLOWED_PERIODS
+        )
+
+    def test_full_regeneration_scales_linearly_with_historical_runs(
+        self, run_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        small_storage = self._storage_with_runs(run_dir, tmp_path / "small", 8)
+        large_storage = self._storage_with_runs(run_dir, tmp_path / "large", 16)
+        read_calls = 0
+        aggregate_calls = 0
+        original_read_dict = rop_dashboard_module._read_json_dict
+        original_read_list = rop_dashboard_module._read_json_list
+        original_aggregate = rop_dashboard_module._aggregate_period_events
+
+        def counted_read_dict(*args: object, **kwargs: object) -> dict | None:
+            nonlocal read_calls
+            read_calls += 1
+            return original_read_dict(*args, **kwargs)
+
+        def counted_read_list(*args: object, **kwargs: object) -> list[dict] | None:
+            nonlocal read_calls
+            read_calls += 1
+            return original_read_list(*args, **kwargs)
+
+        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+            nonlocal aggregate_calls
+            aggregate_calls += 1
+            return original_aggregate(*args, **kwargs)
+
+        monkeypatch.setattr(rop_dashboard_module, "_read_json_dict", counted_read_dict)
+        monkeypatch.setattr(rop_dashboard_module, "_read_json_list", counted_read_list)
+        monkeypatch.setattr(
+            rop_dashboard_module, "_aggregate_period_events", counted_aggregate
+        )
+
+        rop_dashboard_module.build_rop_web_projection(
+            small_storage, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+        )
+        small_reads = read_calls
+        rop_dashboard_module.build_rop_web_projection(
+            large_storage, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+        )
+        large_reads = read_calls - small_reads
+
+        assert aggregate_calls == 24
+        assert large_reads <= small_reads * 4
+
+    def test_configured_periods_reuse_loaded_projection_artifacts(
+        self, run_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "periods", 6)
+        read_calls = 0
+        aggregate_calls = 0
+        original_read_dict = rop_dashboard_module._read_json_dict
+        original_read_list = rop_dashboard_module._read_json_list
+        original_aggregate = rop_dashboard_module._aggregate_period_events
+
+        def counted_read_dict(*args: object, **kwargs: object) -> dict | None:
+            nonlocal read_calls
+            read_calls += 1
+            return original_read_dict(*args, **kwargs)
+
+        def counted_read_list(*args: object, **kwargs: object) -> list[dict] | None:
+            nonlocal read_calls
+            read_calls += 1
+            return original_read_list(*args, **kwargs)
+
+        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+            nonlocal aggregate_calls
+            aggregate_calls += 1
+            return original_aggregate(*args, **kwargs)
+
+        monkeypatch.setattr(rop_dashboard_module, "_read_json_dict", counted_read_dict)
+        monkeypatch.setattr(rop_dashboard_module, "_read_json_list", counted_read_list)
+        monkeypatch.setattr(
+            rop_dashboard_module, "_aggregate_period_events", counted_aggregate
+        )
+
+        rop_dashboard_module.build_rop_web_projection(
+            storage_dir, ["all"], _null_logger()
+        )
+        one_period_reads = read_calls
+        rop_dashboard_module.build_rop_web_projection(
+            storage_dir, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+        )
+        all_period_reads = read_calls - one_period_reads
+
+        assert aggregate_calls == 12
+        assert all_period_reads <= one_period_reads + 2
+
+    def test_normal_refresh_updates_one_entry_without_catalog_rebuild(
+        self, run_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "incremental", 3)
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+        )
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir, projection, _null_logger()
+        )
+        shutil.copytree(run_dir, storage_dir / "runs" / "run-new")
+        aggregate_calls = 0
+        original_aggregate = rop_dashboard_module._aggregate_period_events
+
+        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+            nonlocal aggregate_calls
+            aggregate_calls += 1
+            return original_aggregate(*args, **kwargs)
+
+        def fail_catalog_enumeration(*_args: object, **_kwargs: object) -> list[str]:
+            raise AssertionError("normal refresh must not rebuild the full catalog")
+
+        monkeypatch.setattr(
+            rop_dashboard_module, "_aggregate_period_events", counted_aggregate
+        )
+        monkeypatch.setattr(
+            rop_dashboard_module, "_list_rop_run_ids", fail_catalog_enumeration
+        )
+
+        refreshed = rop_dashboard_module.refresh_rop_web_projection(
+            storage_dir,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            "run-new",
+            _null_logger(),
+        )
+
+        index = rop_dashboard_module.rop_web_projection_index(storage_dir)
+        assert refreshed is True
+        assert aggregate_calls == 1
+        assert index is not None
+        assert index["latest_run_id"] == "run-new"
+        assert index["total_runs"] == 4
+        assert rop_dashboard_module.rop_web_projection_entry_path(
+            storage_dir, "run-new"
+        ).exists()
+
+    def test_missing_projection_stays_unavailable_until_bootstrap(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "missing", 3)
+
+        refreshed = rop_dashboard_module.refresh_rop_web_projection(
+            storage_dir,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            "run-many-000",
+            _null_logger(),
+        )
+
+        assert refreshed is False
+        assert rop_dashboard_module.rop_web_projection_index(storage_dir) is None
+
+    @pytest.mark.parametrize(
+        "malformed_index",
+        (
+            {"total_runs": None},
+            {"total_runs": True},
+            {"total_runs": "3"},
+            {"run_ids": []},
+            {"run_ids": ["run-many-000"] * 21},
+        ),
+    )
+    def test_malformed_index_prevents_refresh_without_artifact_mutation(
+        self,
+        run_dir: Path,
+        tmp_path: Path,
+        malformed_index: dict[str, object],
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "malformed", 1)
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir, ["7d"], _null_logger()
+        )
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir, projection, _null_logger()
+        )
+        index_path = storage_dir / "interfaces" / "rop_web_projection.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index.update(malformed_index)
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+        entry_path = rop_dashboard_module.rop_web_projection_entry_path(
+            storage_dir, "run-many-000"
+        )
+        before_index = index_path.read_bytes()
+        before_entry = entry_path.read_bytes()
+
+        assert rop_dashboard_module.rop_web_projection_index(storage_dir) is None
+        assert (
+            rop_dashboard_module.refresh_rop_web_projection(
+                storage_dir,
+                ["7d"],
+                "run-many-000",
+                _null_logger(),
+                is_new_run=False,
+            )
+            is False
+        )
+        assert index_path.read_bytes() == before_index
+        assert entry_path.read_bytes() == before_entry
+
+    def test_existing_run_refresh_preserves_catalog_scalar(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "existing", 3)
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir, ["7d"], _null_logger()
+        )
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir, projection, _null_logger()
+        )
+        before = rop_dashboard_module.rop_web_projection_index(storage_dir)
+
+        refreshed = rop_dashboard_module.refresh_rop_web_projection(
+            storage_dir,
+            ["7d"],
+            "run-many-000",
+            _null_logger(),
+            is_new_run=False,
+        )
+
+        after = rop_dashboard_module.rop_web_projection_index(storage_dir)
+        assert refreshed is True
+        assert before is not None
+        assert after is not None
+        assert after["run_ids"] == before["run_ids"]
+        assert after["total_runs"] == before["total_runs"]
+
+    def test_failed_publication_keeps_previous_index_valid(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "atomic", 1)
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir, ["7d"], _null_logger()
+        )
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir, projection, _null_logger()
+        )
+        before = rop_dashboard_module.rop_web_projection_index(storage_dir)
+
+        with pytest.raises(ValueError):
+            rop_dashboard_module.write_rop_web_projection(
+                storage_dir,
+                {
+                    "schema_version": 1,
+                    "run_ids": ["run-missing"],
+                    "total_runs": 1,
+                    "dashboards": {},
+                },
+                _null_logger(),
+            )
+
+        assert rop_dashboard_module.rop_web_projection_index(storage_dir) == before
+
+    def test_full_projection_preserves_selected_run_anchor_semantics(
+        self, run_dir: Path, tmp_path: Path
+    ) -> None:
+        storage_dir = self._storage_with_runs(run_dir, tmp_path / "anchors", 2)
+        first = storage_dir / "runs" / "run-many-000"
+        second = storage_dir / "runs" / "run-many-001"
+
+        for path, generated_at, priority, case_type, bitrix_status in (
+            (first, "2026-01-01T00:00:00Z", "high", "new_lead", "matched_lead"),
+            (second, "2026-01-02T00:00:00Z", "low", "existing_deal", "not_found"),
+        ):
+            normalized = json.loads((path / "normalized_events.json").read_text())
+            normalized[0]["message_id"] = "<tied@example.test>"
+            (path / "normalized_events.json").write_text(json.dumps(normalized))
+            classified = json.loads((path / "classified_events.json").read_text())
+            classified[0]["priority"] = priority
+            classified[0]["case_type"] = case_type
+            (path / "classified_events.json").write_text(json.dumps(classified))
+            reconciliation = json.loads(
+                (path / "bitrix_reconciliation.json").read_text()
+            )
+            reconciliation["items"] = [
+                {"event_id": "evt-001", "bitrix_match_status": bitrix_status}
+            ]
+            (path / "bitrix_reconciliation.json").write_text(json.dumps(reconciliation))
+            current_state = json.loads((path / "rop_current_state.json").read_text())
+            current_state["generated_at_utc"] = generated_at
+            (path / "rop_current_state.json").write_text(json.dumps(current_state))
+
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir, ["all"], _null_logger()
+        )
+
+        assert projection["run_ids"] == ["run-many-001", "run-many-000"]
+
+        for candidate_run_id in projection["run_ids"]:
+            entry = projection["dashboards"][candidate_run_id]["all"]
+            direct = build_rop_dashboard(
+                storage_dir,
+                "all",
+                _null_logger(),
+                run_id=candidate_run_id,
+                aggregate_runs=True,
+            )
+            assert entry["business_kpi"] == direct["business_kpi"]
+            assert entry["queues"] == direct["queues"]
+            assert entry["series"] == direct["series"]
+            assert entry["evidence_links"] == direct["evidence_links"]
+            assert entry["run_id"] == candidate_run_id
+
+        first_entry = projection["dashboards"]["run-many-000"]["all"]
+        tied = [
+            item
+            for item in first_entry["queues"]["high_priority"]
+            if item["event_id"] == "evt-001"
+        ]
+        assert len(tied) == 1
+        assert tied[0]["run_id"] == "run-many-000"
+        assert tied[0]["priority"] == "high"
+        assert tied[0]["case_type"] == "new_lead"
+
+        second_entry = projection["dashboards"]["run-many-001"]["all"]
+        lost = [
+            item
+            for item in second_entry["queues"]["lost_in_bitrix"]
+            if item["event_id"] == "evt-001"
+        ]
+        assert len(lost) == 1
+        assert lost[0]["run_id"] == "run-many-001"
+        assert lost[0]["priority"] == "low"
+        assert lost[0]["case_type"] == "existing_deal"
+
+
 class TestSettingsValidation:
     def test_settings_has_rop_dashboard(self) -> None:
         settings = load_settings(_project_root() / "config" / "settings.yml")

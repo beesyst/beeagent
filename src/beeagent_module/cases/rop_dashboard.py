@@ -518,6 +518,8 @@ def build_rop_dashboard(
     logger: logging.Logger,
     run_id: str | None = None,
     aggregate_runs: bool = False,
+    aggregate: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_period(period)
     period_info = parse_period(period)
@@ -541,18 +543,17 @@ def build_rop_dashboard(
     if not run_dir.is_dir():
         return _empty_dashboard(period, "run_not_found")
 
-    normalized_events = _read_json_list(run_dir / "normalized_events.json")
-    classified_events = _read_json_list(run_dir / "classified_events.json")
-    source_diag = _read_json_dict(run_dir / "source_diagnostics.json")
-    intake = _read_json_dict(run_dir / "intake_metadata.json")
-    current_state = _read_json_dict(run_dir / "rop_current_state.json")
-    bitrix_reconciliation = _read_json_dict(run_dir / "bitrix_reconciliation.json")
-    attachment_extraction = _read_json_dict(run_dir / "attachment_extraction.json")
-    operator_summary = _read_json_dict(run_dir / "operator_summary.json")
-    ai_assist_results = _read_json_dict(run_dir / "rop_ai_assist_results.json")
-    ai_adjudicator_results = _read_json_dict(
-        run_dir / "rop_ai_adjudicator_results.json"
-    )
+    artifact_data = artifacts or _load_rop_dashboard_artifacts(run_dir)
+    normalized_events = artifact_data["normalized_events"]
+    classified_events = artifact_data["classified_events"]
+    source_diag = artifact_data["source_diag"]
+    intake = artifact_data["intake"]
+    current_state = artifact_data["current_state"]
+    bitrix_reconciliation = artifact_data["bitrix_reconciliation"]
+    attachment_extraction = artifact_data["attachment_extraction"]
+    operator_summary = artifact_data["operator_summary"]
+    ai_assist_results = artifact_data["ai_assist_results"]
+    ai_adjudicator_results = artifact_data["ai_adjudicator_results"]
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)
@@ -567,12 +568,13 @@ def build_rop_dashboard(
     )
 
     if aggregate_runs:
-        aggregate = _aggregate_period_events(
-            runs_dir=runs_dir,
-            anchor_run_id=run_id,
-            anchor_client_id=client_id,
-            logger=logger,
-        )
+        if aggregate is None:
+            aggregate = _aggregate_period_events(
+                runs_dir=runs_dir,
+                anchor_run_id=run_id,
+                anchor_client_id=client_id,
+                logger=logger,
+            )
         warnings.extend(aggregate["warnings"])
         if aggregate["safe"]:
             classified_list = aggregate["classified"]
@@ -738,12 +740,28 @@ def build_rop_web_projection(
 
     runs_dir = storage_dir / "runs"
     if run_id is None:
-        run_ids = _list_rop_run_ids(runs_dir) if runs_dir.is_dir() else []
+        all_run_ids = _list_rop_run_ids(runs_dir) if runs_dir.is_dir() else []
+        run_ids = all_run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]
     else:
+        all_run_ids = [run_id]
         run_ids = [run_id]
 
     dashboards: dict[str, dict[str, dict[str, Any]]] = {}
     for candidate_run_id in run_ids:
+        candidate_dir = runs_dir / candidate_run_id
+        artifacts = _load_rop_dashboard_artifacts(candidate_dir)
+        source_diag = artifacts["source_diag"]
+        intake = artifacts["intake"]
+        current_state = artifacts["current_state"]
+        client_id = _resolve_client_id(source_diag, intake, current_state)
+
+        aggregate = _aggregate_period_events(
+            runs_dir=runs_dir,
+            anchor_run_id=candidate_run_id,
+            anchor_client_id=client_id,
+            logger=logger,
+        )
+
         entries: dict[str, dict[str, Any]] = {}
         for period in selected_periods:
             entries[period] = build_rop_dashboard(
@@ -752,6 +770,8 @@ def build_rop_web_projection(
                 logger=logger,
                 run_id=candidate_run_id,
                 aggregate_runs=True,
+                aggregate=aggregate,
+                artifacts=artifacts,
             )
         dashboards[candidate_run_id] = entries
 
@@ -759,6 +779,7 @@ def build_rop_web_projection(
         "schema_version": 1,
         "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "run_ids": run_ids,
+        "total_runs": len(all_run_ids),
         "dashboards": dashboards,
     }
 
@@ -774,30 +795,42 @@ def write_rop_web_projection(
     projection_dir = interfaces_dir / "rop_web_projection"
     projection_dir.mkdir(parents=True, exist_ok=True)
     dashboards = projection.get("dashboards", {})
-    if isinstance(dashboards, dict):
-        for run_id, dashboard_entries in dashboards.items():
-            if not isinstance(run_id, str) or not isinstance(dashboard_entries, dict):
-                continue
-            entry_path = rop_web_projection_entry_path(storage_dir, run_id)
-            entry_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "run_id": run_id,
-                        "dashboards": dashboard_entries,
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+    if not isinstance(dashboards, dict):
+        raise ValueError("ROP Web projection dashboards must be an object")
     run_ids = [
         run_id
         for run_id in projection.get("run_ids", [])
         if isinstance(run_id, str) and run_id
     ]
-    total_runs = len(run_ids)
     bounded_run_ids = run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]
+    total_runs = projection.get("total_runs")
+    if not isinstance(total_runs, int) or total_runs < len(bounded_run_ids):
+        total_runs = len(run_ids)
+    for run_id, dashboard_entries in dashboards.items():
+        if not isinstance(run_id, str) or not isinstance(dashboard_entries, dict):
+            raise ValueError("ROP Web projection entry is malformed")
+        entry_path = rop_web_projection_entry_path(storage_dir, run_id)
+        temporary_entry_path = entry_path.with_suffix(".json.tmp")
+        temporary_entry_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "dashboards": dashboard_entries,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        temporary_entry_path.replace(entry_path)
+    for run_id in bounded_run_ids:
+        if run_id not in dashboards and not _rop_web_projection_entry_valid(
+            storage_dir, run_id
+        ):
+            raise ValueError(
+                f"ROP Web projection entry is unavailable for run_id={run_id}"
+            )
     index = {
         "schema_version": 1,
         "generated_at_utc": projection.get("generated_at_utc"),
@@ -819,6 +852,38 @@ def write_rop_web_projection(
     return artifact_path
 
 
+def refresh_rop_web_projection(
+    storage_dir: Path,
+    periods: list[str],
+    run_id: str,
+    logger: logging.Logger,
+    is_new_run: bool = True,
+) -> bool:
+    index = rop_web_projection_index(storage_dir)
+    if index is None:
+        logger.warning(
+            "ROP Web projection refresh skipped: explicit dashboard regeneration is required"
+        )
+        return False
+
+    projection = build_rop_web_projection(
+        storage_dir=storage_dir,
+        periods=periods,
+        logger=logger,
+        run_id=run_id,
+    )
+    existing_run_ids = [
+        value for value in index["run_ids"] if isinstance(value, str) and value
+    ]
+    if not is_new_run:
+        projection["run_ids"] = existing_run_ids
+    else:
+        projection["run_ids"] = [run_id] + existing_run_ids
+    projection["total_runs"] = index["total_runs"] + (1 if is_new_run else 0)
+    write_rop_web_projection(storage_dir, projection, logger)
+    return True
+
+
 def rop_web_projection_index(
     storage_dir: Path,
 ) -> dict[str, Any] | None:
@@ -833,11 +898,17 @@ def rop_web_projection_index(
         return None
     latest_run_id = data.get("latest_run_id")
     run_ids = data.get("run_ids")
+    total_runs = data.get("total_runs")
     if (
         not isinstance(latest_run_id, str)
         or not latest_run_id
         or not isinstance(run_ids, list)
+        or not run_ids
+        or len(run_ids) > ROP_WEB_PROJECTION_RUNS_MAX
         or not all(isinstance(value, str) and value for value in run_ids)
+        or not isinstance(total_runs, int)
+        or isinstance(total_runs, bool)
+        or total_runs < len(run_ids)
     ):
         return None
     return data
@@ -846,6 +917,41 @@ def rop_web_projection_index(
 def rop_web_projection_entry_path(storage_dir: Path, run_id: str) -> Path:
     digest = sha256(run_id.encode("utf-8")).hexdigest()
     return storage_dir / "interfaces" / "rop_web_projection" / f"{digest}.json"
+
+
+def _rop_web_projection_entry_valid(storage_dir: Path, run_id: str) -> bool:
+    path = rop_web_projection_entry_path(storage_dir, run_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError, OSError:
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("schema_version") == 1
+        and data.get("run_id") == run_id
+        and isinstance(data.get("dashboards"), dict)
+    )
+
+
+def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
+    return {
+        "normalized_events": _read_json_list(run_dir / "normalized_events.json"),
+        "classified_events": _read_json_list(run_dir / "classified_events.json"),
+        "source_diag": _read_json_dict(run_dir / "source_diagnostics.json"),
+        "intake": _read_json_dict(run_dir / "intake_metadata.json"),
+        "current_state": _read_json_dict(run_dir / "rop_current_state.json"),
+        "bitrix_reconciliation": _read_json_dict(
+            run_dir / "bitrix_reconciliation.json"
+        ),
+        "attachment_extraction": _read_json_dict(
+            run_dir / "attachment_extraction.json"
+        ),
+        "operator_summary": _read_json_dict(run_dir / "operator_summary.json"),
+        "ai_assist_results": _read_json_dict(run_dir / "rop_ai_assist_results.json"),
+        "ai_adjudicator_results": _read_json_dict(
+            run_dir / "rop_ai_adjudicator_results.json"
+        ),
+    }
 
 
 def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:

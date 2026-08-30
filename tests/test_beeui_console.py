@@ -10292,6 +10292,53 @@ def test_rop_projection_malformed_root_index_fails_explicitly(
     assert response.json()["error"]["code"] == "web_projection_unavailable"
 
 
+@pytest.mark.parametrize(
+    "malformed_index",
+    (
+        {"total_runs": None},
+        {"total_runs": True},
+        {"total_runs": "1"},
+        {"run_ids": ["run-invalid-index"] * 21},
+    ),
+)
+def test_rop_projection_invalid_index_fails_closed_without_read_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_index: dict[str, object],
+) -> None:
+    from beeagent_module.cases import rop_dashboard as rop_dashboard_module
+    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-invalid-index")
+    _write_rop_web_projection(storage_dir)
+    index_path = storage_dir / "interfaces" / "rop_web_projection.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index.update(malformed_index)
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    entry_path = rop_web_projection_entry_path(storage_dir, "run-invalid-index")
+    before_index = index_path.read_bytes()
+    before_entry = entry_path.read_bytes()
+
+    def fail_historical_read(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("historical aggregation must not run on GET")
+
+    client = TestClient(_build_rop_app(storage_dir))
+    monkeypatch.setattr(
+        rop_dashboard_module, "_aggregate_period_events", fail_historical_read
+    )
+    monkeypatch.setattr(rop_dashboard_module, "_list_rop_run_ids", fail_historical_read)
+
+    html = client.get("/rop")
+    api = client.get("/api/rop/dashboard")
+
+    assert html.status_code == 503
+    assert api.status_code == 503
+    assert api.json()["error"]["code"] == "web_projection_unavailable"
+    assert index_path.read_bytes() == before_index
+    assert entry_path.read_bytes() == before_entry
+
+
 def test_rop_projection_missing_selected_run_entry_fails_explicitly(
     tmp_path: Path,
 ) -> None:
@@ -10602,7 +10649,7 @@ def test_rop_auth_get_no_historical_scan_with_many_runs(
     assert payload["total_runs"] == 40
 
 
-def test_rop_auth_explicit_old_run_id_uses_single_projection_entry(
+def test_rop_auth_explicit_old_run_id_outside_bounded_catalog_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -10629,10 +10676,8 @@ def test_rop_auth_explicit_old_run_id_uses_single_projection_entry(
     html = client.get(f"/rop?run_id={old_run_id}", follow_redirects=False)
     api = client.get(f"/api/rop/dashboard?run_id={old_run_id}")
 
-    assert html.status_code == 200
-    assert api.status_code == 200
-    payload = api.json()["data"]
-    assert payload["selected_run_id"] == old_run_id
+    assert html.status_code == 403
+    assert api.status_code == 403
 
 
 def test_rop_auth_unknown_run_id_fails_closed(
