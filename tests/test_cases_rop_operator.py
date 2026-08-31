@@ -1915,7 +1915,7 @@ def test_duplicate_candidates_exclude_only_the_same_processing_item() -> None:
             "event_id": "<same-message@example.test>",
             "thread_id": None,
             "message_id": None,
-            "raw_metadata": {},
+            "raw_metadata": {"body_is_complete": False},
         }
     ]
 
@@ -2352,6 +2352,201 @@ def test_rop_batch_duplicate_candidates_use_bounded_preview_body(
     assert result["status"] == "ok"
     assert candidate_body != oversized_body
     assert len(candidate_body) <= 64
+
+
+def test_rop_batch_recipient_personalized_duplicates_use_complete_body_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.cases import rop_operator as rop_operator_module
+
+    stable_body = (
+        "Please submit a quotation for welding materials by 15 October. "
+        "Delivery terms and quantities are unchanged."
+    )
+    captured_payloads: list[dict] = []
+    original_execute = rop_operator_module.execute_module_case
+
+    def _capture_execute(**kwargs):
+        if kwargs["case_type"] == "lead_classification":
+            captured_payloads.append(kwargs["payload"])
+        return original_execute(**kwargs)
+
+    monkeypatch.setattr(rop_operator_module, "execute_module_case", _capture_execute)
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "copy-north",
+                "source": "email",
+                "sender": "notices@example.test",
+                "subject": "Procurement notice: welding materials",
+                "body": f"Dear North Procurement,\n{stable_body}",
+                "message_id": "<copy-north@example.test>",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "copy-central",
+                "source": "email",
+                "sender": "notices@example.test",
+                "subject": "Procurement notice: welding materials",
+                "body": f"Dear Central Procurement,\n{stable_body}",
+                "message_id": "<copy-central@example.test>",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+            {
+                "event_id": "copy-south",
+                "source": "email",
+                "sender": "notices@example.test",
+                "subject": "Procurement notice: welding materials",
+                "body": f"Dear South Procurement,\n{stable_body}",
+                "message_id": "<copy-south@example.test>",
+                "received_at": "2026-08-03T10:00:00Z",
+            },
+        ],
+    )
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-recipient-personalized",
+        session_id="session-recipient-personalized",
+    )
+
+    classified = json.loads(
+        (
+            tmp_path / "runs" / "run-recipient-personalized" / "classified_events.json"
+        ).read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert result["status"] == "ok"
+    assert [event["case_type"] for event in classified] == [
+        "new_lead",
+        "duplicate",
+        "duplicate",
+    ]
+    assert all(
+        payload["raw_metadata"]["body_is_complete"] is True
+        for payload in captured_payloads
+    )
+    assert all(
+        candidate["raw_metadata"]["body_is_complete"] is True
+        for payload in captured_payloads[1:]
+        for candidate in payload["duplicate_candidates"]
+    )
+    assert (
+        by_id["copy-central"]["duplicate"]["reason_code"]
+        == "recipient_personalized_exact_copy"
+    )
+    assert (
+        by_id["copy-south"]["duplicate"]["reason_code"]
+        == "recipient_personalized_exact_copy"
+    )
+
+
+def test_rop_batch_changed_personalized_copy_is_not_confirmed_duplicate(
+    tmp_path: Path,
+) -> None:
+    stable_body = (
+        "Please submit a quotation for welding materials by 15 October. "
+        "Delivery terms and quantities are unchanged."
+    )
+    changed_body = (
+        "Please submit a quotation for welding materials by 22 October. "
+        "Delivery terms and quantities are unchanged."
+    )
+    batch_path = _write_raw_events_batch(
+        tmp_path,
+        [
+            {
+                "event_id": "copy-original",
+                "source": "email",
+                "sender": "notices@example.test",
+                "subject": "Procurement notice: welding materials",
+                "body": f"Dear North Procurement,\n{stable_body}",
+                "message_id": "<copy-original@example.test>",
+                "received_at": "2026-08-01T10:00:00Z",
+            },
+            {
+                "event_id": "copy-changed",
+                "source": "email",
+                "sender": "notices@example.test",
+                "subject": "Procurement notice: welding materials",
+                "body": f"Dear Central Procurement,\n{changed_body}",
+                "message_id": "<copy-changed@example.test>",
+                "received_at": "2026-08-02T10:00:00Z",
+            },
+        ],
+    )
+    settings = _make_raw_batch_settings(str(batch_path.relative_to(tmp_path)))
+    registry = ModuleRegistry(
+        config=[_rop_registry_entry_from_settings()], logger=_null_logger()
+    )
+
+    result = run_rop_batch_case(
+        settings=settings,
+        storage_dir=tmp_path,
+        project_root=tmp_path,
+        logger=_null_logger(),
+        registry=registry,
+        run_id="run-recipient-personalized-changed",
+        session_id="session-recipient-personalized-changed",
+    )
+
+    classified = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "run-recipient-personalized-changed"
+            / "classified_events.json"
+        ).read_text(encoding="utf-8")
+    )
+    by_id = {event["event_id"]: event for event in classified}
+
+    assert result["status"] == "ok"
+    assert by_id["copy-original"]["case_type"] == "new_lead"
+    assert by_id["copy-changed"]["case_type"] != "duplicate"
+    assert by_id["copy-changed"]["duplicate"]["is_duplicate"] is False
+    assert (
+        by_id["copy-changed"]["duplicate"]["reason_code"]
+        != "recipient_personalized_exact_copy"
+    )
+
+
+def test_duplicate_body_completeness_handoff_fails_closed() -> None:
+    from beeagent_module.cases.rop_operator import _duplicate_candidate_from_event
+
+    body = "Please submit a quotation for welding materials by 15 October."
+    complete_event = {
+        "body_preview": body,
+        "body_preview_chars": len(body),
+        "body_preview_truncated": False,
+        "body_preview_source": "text_plain",
+    }
+    truncated_event = dict(complete_event, body_preview_truncated=True)
+    missing_event = {"body_preview": body}
+    ambiguous_event = dict(complete_event, body_preview_source="existing")
+    attachment_event = {"attachment_text_preview": body}
+
+    for event, expected in (
+        (complete_event, True),
+        (truncated_event, False),
+        (missing_event, False),
+        (ambiguous_event, False),
+        (attachment_event, False),
+    ):
+        current = _filter_event_for_module(event)
+        candidate = _duplicate_candidate_from_event(event, "candidate")
+        assert current["raw_metadata"]["body_is_complete"] is expected
+        assert candidate["raw_metadata"]["body_is_complete"] is expected
 
 
 @pytest.mark.parametrize(

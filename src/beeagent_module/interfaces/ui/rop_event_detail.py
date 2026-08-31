@@ -577,6 +577,7 @@ def build_rop_event_detail_read_model(
                     matched_adjudicator.get("merge_reason", ""),
                     _MAX_REASON_CODE_LENGTH,
                 ),
+                "ai_reason_code" in matched_adjudicator,
             )
             if ai_reason_warn:
                 warnings.append(ai_reason_warn)
@@ -759,9 +760,7 @@ def build_rop_event_detail_read_model(
                         "attachment_id": _str(att.get("attachment_id")),
                         "filename": _str(att.get("filename")),
                         "content_type": _str(att.get("content_type")),
-                        "size_bytes": _int(
-                            att.get("size_bytes", att.get("size", 0))
-                        ),
+                        "size_bytes": _int(att.get("size_bytes", att.get("size", 0))),
                         "extraction_status": _str(att.get("extraction_status")),
                         "storage_status": _str(att.get("storage_status")),
                         "reason_code": _str(att.get("reason_code")),

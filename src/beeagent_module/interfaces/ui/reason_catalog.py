@@ -349,6 +349,7 @@ def get_ai_reason_display(
     lang: str,
     ai_status: str | None = None,
     merge_reason: str | None = None,
+    reason_present: bool = False,
 ) -> tuple[str, str | None]:
     if reason_code:
         entry = _AI_REASON_DISPLAY.get(reason_code)
@@ -358,6 +359,8 @@ def get_ai_reason_display(
             _display(_UNKNOWN, lang),
             f"unknown ai_reason_code: {_warning_code(reason_code)}",
         )
+    if reason_present:
+        return _display(_UNKNOWN, lang), "missing or invalid ai_reason_code"
     if isinstance(merge_reason, str) and merge_reason in _ATTENTION_REASON_DISPLAY:
         return (
             _display(_ATTENTION_REASON_DISPLAY[merge_reason], lang),
