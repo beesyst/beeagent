@@ -594,6 +594,7 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     from beeagent_module.core.rop_final_decision import build_final_decisions
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
     )
 
     storage_dir = _make_storage(tmp_path)
@@ -703,6 +704,30 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     (unknown_dir / "rop_final_decisions.json").write_text(
         json.dumps(unknown_final), encoding="utf-8"
     )
+    empty_dir = _write_rop_event_detail_artifacts(storage_dir, "run-reason-empty")
+    (empty_dir / "rop_ai_adjudicator_results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "event_id": "evt-1",
+                        "ai_reason_code": "",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty_classified = json.loads(
+        (empty_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    empty_adjudicator = json.loads(
+        (empty_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
+    )
+    (empty_dir / "rop_final_decisions.json").write_text(
+        json.dumps(build_final_decisions(empty_classified, empty_adjudicator)),
+        encoding="utf-8",
+    )
     legacy_status_dir = _write_rop_event_detail_artifacts(
         storage_dir,
         "run-reason-legacy-status",
@@ -740,6 +765,8 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         legacy_dir / "rop_final_decisions.json",
         unknown_dir / "rop_ai_adjudicator_results.json",
         unknown_dir / "rop_final_decisions.json",
+        empty_dir / "rop_ai_adjudicator_results.json",
+        empty_dir / "rop_final_decisions.json",
         legacy_status_dir / "rop_ai_adjudicator_results.json",
         legacy_status_dir / "rop_final_decisions.json",
     ]
@@ -758,6 +785,12 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     unknown_api = client.get("/api/rop/events/evt-1?run_id=run-reason-unknown&lang=ru")
     unknown_api_en = client.get(
         "/api/rop/events/evt-1?run_id=run-reason-unknown&lang=en"
+    )
+    empty_data = build_rop_event_detail_read_model(
+        storage_dir,
+        "run-reason-empty",
+        "evt-1",
+        lang="en",
     )
     unknown_html_ru = client.get("/rop/events/evt-1?run_id=run-reason-unknown&lang=ru")
     unknown_html_en = client.get("/rop/events/evt-1?run_id=run-reason-unknown&lang=en")
@@ -837,6 +870,10 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert any(
         "legacy ai_reason_code missing" in warning
         for warning in legacy_api.json()["data"]["warnings"]
+    )
+    assert "missing or invalid ai_reason_code" in empty_data["warnings"]
+    assert not any(
+        "legacy ai_reason_code missing" in warning for warning in empty_data["warnings"]
     )
     assert (
         "Старый формат итогового решения: код причины внимания отсутствует. "

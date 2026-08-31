@@ -103,6 +103,7 @@ _NORMALIZED_EVENT_CONTEXT_KEYS = (
     "original_recipient",
     "original_message_date",
     "date_source",
+    "body_is_complete",
     "x_email_id",
     "in_reply_to",
     "references",
@@ -136,12 +137,24 @@ _DUPLICATE_CANDIDATE_RAW_METADATA_KEYS = (
     "original_recipient",
     "original_message_date",
     "date_source",
+    "body_is_complete",
     "x_email_id",
 )
 
 
 _PRIOR_RUN_MAX = 10
 _PRIOR_EVENT_MAX = 300
+
+
+def _body_is_complete(event: dict[str, Any], body: str) -> bool:
+    return (
+        isinstance(event.get("body_preview"), str)
+        and body == event["body_preview"]
+        and isinstance(event.get("body_preview_chars"), int)
+        and event["body_preview_chars"] == len(body)
+        and event.get("body_preview_truncated") is False
+        and event.get("body_preview_source") in {"text_plain", "html_text"}
+    )
 
 
 def _read_run_artifact_json(path: Path) -> Any:
@@ -441,6 +454,8 @@ def _duplicate_candidate_from_event(
     raw_metadata = event.get("raw_metadata")
     if not isinstance(raw_metadata, dict):
         raw_metadata = {}
+    raw_metadata = dict(raw_metadata)
+    raw_metadata["body_is_complete"] = _body_is_complete(event, body)
 
     return {
         "existing_lead_id": existing_lead_id,
@@ -924,6 +939,16 @@ def _filter_event_for_module(event: dict[str, Any]) -> dict[str, Any]:
             if isinstance(preview_value, str) and preview_value.strip():
                 filtered["body"] = preview_value
                 break
+
+    body = filtered.get("body")
+    raw_metadata = filtered.get("raw_metadata")
+    if not isinstance(raw_metadata, dict):
+        raw_metadata = {}
+    raw_metadata = dict(raw_metadata)
+    raw_metadata["body_is_complete"] = _body_is_complete(
+        event, body if isinstance(body, str) else ""
+    )
+    filtered["raw_metadata"] = raw_metadata
 
     if "received_at" in filtered:
         filtered["received_at"] = _normalize_optional_iso_datetime(

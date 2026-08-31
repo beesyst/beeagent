@@ -434,7 +434,7 @@ The Event Detail read-model and JSON API expose new localized display fields:
 
 Raw reason fields (`reason`, `ai_reason`, `attention_reason`) and structured codes remain available in the API for audit and backward compatibility.
 
-Legacy artifacts without structured codes render a localized generic fallback and emit an explicit warning. Unknown codes render a localized unavailable explanation and a warning.
+Historical artifacts without an `ai_reason_code` key render a localized legacy fallback and warning. Present empty or invalid codes and unknown non-empty codes render explicit bounded diagnostics.
 
 Locale switching remains a read-only artifact projection and does not call the AI provider, mailbox, Bitrix, module or capability.
 
