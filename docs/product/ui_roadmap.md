@@ -3109,6 +3109,93 @@ ROP Web Console больше не реконструирует historical ROP st
 - tests and production smoke green;
 - `pyproject.toml.version` unchanged.
 
+### Итерация UI-8.8 — Request-ready ROP Web projection v2
+
+**Status:** PLANNED
+
+#### Goal
+
+Довести ROP Web read path после UI-8.7 до request-ready materialized read model, чтобы обычные `/rop` и `/api/rop/dashboard` GET не читали лишние periods, global writeback state или raw run artifacts и обеспечивали субсекундный операторский отклик на production-like объёме.
+
+#### Scope
+
+- ввести derived ROP Web projection schema v2;
+- сохранить маленький bounded manifest/index для `latest_run_id`, `run_ids`, `total_runs` и generation/revision metadata;
+- разрешать scoped `run_id` access только через validated manifest, без чтения view payload;
+- materialize отдельные bounded request-ready views для ROP tabs и dashboard API;
+- хранить только реально необходимые period variants;
+- materialize canonical Queue rows до HTTP request;
+- применять trusted writeback overlay до публикации projection, а не во время GET;
+- убрать из normal Web GET повторную агрегацию Overview и tab-specific raw artifact reads;
+- normal GET должен читать только manifest и requested view;
+- normal lifecycle refresh должен обновлять только affected run generation/views;
+- explicit `rop dashboard` сохраняется как bootstrap/regeneration path;
+- publication остаётся atomic: immutable view files first, manifest/index last;
+- canonical ROP run artifacts остаются source of truth;
+- сохранить существующие `/rop`, query parameters, BeeUI layout semantics и public dashboard API shape;
+- обновить Web/projection documentation и performance verification contract.
+
+#### Excluded
+
+- изменения `beeagent-rop` domain contracts;
+- изменения BeeUI progressive navigation;
+- SPA/React/HTMX/Turbo;
+- Redis, PostgreSQL, Elasticsearch или отдельный cache service;
+- обязательный process-local cache;
+- pre-rendered HTML projection;
+- client-side ROP dataset filtering;
+- hardware scaling как основное решение;
+- изменение ROP classification/business semantics.
+
+#### Deliverable
+
+BeeAgent Web runtime использует validated request-ready projection v2, где один ROP GET разрешает run через маленький manifest и читает ровно один соответствующий semantic view без historical reconstruction, global writeback scan или unrelated raw run-artifact reads.
+
+#### Acceptance criteria
+
+- `/rop` GET не enumerates historical runs и не строит dashboard;
+- scoped auth не читает large per-run view payload для проверки `run_id`;
+- requested tab/period не требует parsing других periods/views;
+- normal GET не читает `rop_writeback_state.json`;
+- Overview не восстанавливает presentation KPI/series/source summaries из raw run artifacts;
+- Queue использует один pre-canonicalized row set и сохраняет current filter/sort/pagination semantics;
+- malformed/missing manifest or view fails closed without projection mutation;
+- failed publication preserves the previous valid generation;
+- existing selected-run anchor semantics remain unchanged;
+- no public URL, BeeUI layout or dashboard API compatibility regression;
+- production-like warm LOCAL p50 <= 300 ms and p95 <= 500 ms for Overview, Queue first page and dashboard API;
+- HTTPS p95 <= 1.0 s for the same primary routes under normal production load;
+- browser progressive tab transition warm p95 < 1.0 s after server-side acceptance is met.
+
+#### Checks
+
+- targeted projection lifecycle and read-model unit/integration tests;
+- full `pytest -q`;
+- tests proving GET does not read history, global writeback or unrelated raw artifacts;
+- scoped principal/auth tests for explicit and implicit `run_id`;
+- malformed manifest/view and unsafe identifier tests;
+- atomic publication/recovery tests;
+- runtime bootstrap and incremental-refresh smoke;
+- LOCAL and HTTPS p50/p95 production benchmark;
+- browser Back/Forward/F5/filter/sort/pagination/date/locale smoke;
+- Bitrix Local App iframe smoke;
+- SAST and targeted DAST-style route/auth checks;
+- malformed-input/fuzz-style projection parser coverage;
+- log review without raw payload or secret leakage.
+
+#### DoD
+
+- request-ready projection v2 is the normal ROP Web read path;
+- HTTP GET remains read-only and never regenerates projection state;
+- incremental refresh and explicit bootstrap publish valid generations atomically;
+- scoped authorization uses only bounded manifest metadata;
+- current ROP public contracts remain compatible;
+- performance acceptance is demonstrated with recorded LOCAL and HTTPS measurements;
+- tests and required security checks pass;
+- docs describe v2 lifecycle, migration and operational verification;
+- UI-8.7 remains DONE and stale IN PROGRESS wording is removed;
+- UI-9 follows the completed UI-8.8 performance gate.
+
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
 **Статус:** PLANNED
