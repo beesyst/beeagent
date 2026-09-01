@@ -1173,7 +1173,7 @@ def build_writeback_plan(
         sender = str(record.get("sender_email") or "").lower().strip()
         subject = str(record.get("subject") or "").lower().strip()
         client_id = str(record.get("client_id") or "").lower().strip()
-        if not sender or not subject:
+        if not client_id or not sender or not subject:
             continue
         key = (client_id, sender, subject)
         if key not in sender_subject_groups:
@@ -2009,7 +2009,10 @@ def execute_writeback_pending(
             writes_performed += 1
         record["updated_at_utc"] = _utc_now()
 
-    sender_subject_roots: dict[tuple[str, str, str], dict[str, Any]] = {}
+    sender_subject_roots: dict[
+        tuple[str, str, str, str], dict[str, Any]
+    ] = {}
+
     for record in events.values():
         if not isinstance(record, dict):
             continue
@@ -2019,11 +2022,16 @@ def execute_writeback_pending(
             continue
         if not _positive_int(record.get("remote_entity_id")):
             continue
+
+        origin_run_id = str(record.get("last_run_id") or "").strip()
         sender = str(record.get("sender_email") or "").lower().strip()
         subject = str(record.get("subject") or "").lower().strip()
         client_id = str(record.get("client_id") or "").lower().strip()
-        if sender and subject:
-            sender_subject_roots[(client_id, sender, subject)] = record
+
+        if origin_run_id and client_id and sender and subject:
+            sender_subject_roots[
+                (origin_run_id, client_id, sender, subject)
+            ] = record
 
     if sender_subject_roots:
         for record in events.values():
@@ -2033,10 +2041,14 @@ def execute_writeback_pending(
                 continue
             if record.get("reason_code") != _PENDING_SENDER_SUBJECT_REASON:
                 continue
+            origin_run_id = str(record.get("last_run_id") or "").strip()
             sender = str(record.get("sender_email") or "").lower().strip()
             subject = str(record.get("subject") or "").lower().strip()
             client_id = str(record.get("client_id") or "").lower().strip()
-            root = sender_subject_roots.get((client_id, sender, subject))
+
+            root = sender_subject_roots.get(
+                (origin_run_id, client_id, sender, subject)
+            )
             if root is None:
                 continue
             record["outcome"] = "attach_existing"

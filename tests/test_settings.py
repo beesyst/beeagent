@@ -336,7 +336,7 @@ def test_attachment_config_valid_passes(monkeypatch) -> None:
     validate_settings(settings)
     assert settings["rop"]["attachments"]["storage"]["enabled"] is True
     assert settings["rop"]["attachments"]["extraction"]["engine"] == "docling"
-    assert settings["bitrix"]["writeback"]["file_attach"] is False
+    assert settings["bitrix"]["writeback"]["file_attach"] is True
 
 
 def test_attachment_analysis_requires_storage_enabled(monkeypatch) -> None:

@@ -1103,7 +1103,7 @@ configured source(s)
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
 В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts.
-В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions. Controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default.
+В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions. Controlled server-side write-back через `rop run` / `rop poll` существует и включён в tracked production profile; explicit disabled и dry-run режимы сохраняют zero-write control.
 
 ## Запуск
 
@@ -1345,6 +1345,10 @@ rop:
 - action drafts и Event Detail показывают bounded recipient/responsible evidence без CRM/mailbox write-back.
 - deliberate human reassignment by forwarding cannot be reliably distinguished from ordinary transport forwarding from email headers alone; It36 preserves `original_recipient` precedence, so this edge case may require operator correction.
 - automatic reassignment inference and a responsible override/reassignment workflow are outside It36 and require a separate explicit workflow/policy contract.
+
+### Controlled Bitrix write-back
+
+Sender+subject does not authorize an arbitrary historical CRM target and `sender_subject_match` is thread evidence, not semantic duplicate proof. Only same-run `create_lead` siblings with the same `client_id`, normalized sender and normalized subject may attach after a BeeAgent-created/recovered root is confirmed; the sibling records `target_provenance=sender_subject_resolved` and never reassigns an existing CRM entity. The planner-local unresolved/missing CLI routing path may use configured positive `bitrix.writeback.user_id_fallback`; ambiguous, `connector_degraded`, `not_attempted`, malformed and conflicting evidence remains fail closed.
 
 ### ROP email preview
 
@@ -1856,7 +1860,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
 - controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts уже входят в scope;
-- production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует, но disabled by default;
+- production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует и включён в tracked production profile; explicit disabled и dry-run режимы сохраняют zero-write control.
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;
