@@ -53,12 +53,14 @@ _RECOVERABLE_PREREQUISITE_REASONS = frozenset(
         "reconciliation_connector_degraded",
         "reconciliation_error",
         "pending_thread_root",
+        "pending_sender_subject_root",
     }
 )
 _TRUSTED_TARGET_PROVENANCES: frozenset[str] = frozenset(
-    {"beeagent_created", "thread_resolved", "bitrix_outbound_exact"}
+    {"beeagent_created", "thread_resolved", "bitrix_outbound_exact", "sender_subject_resolved"}
 )
 _PENDING_THREAD_ROOT_REASON = "pending_thread_root"
+_PENDING_SENDER_SUBJECT_REASON = "pending_sender_subject_root"
 _MAX_THREAD_REFERENCES = 50
 _MAX_THREAD_HEADER_LENGTH = 1000
 
@@ -385,7 +387,7 @@ def _create_lead_delivery(
     )
     fallback_id = policy.get("user_id_fallback")
     fallback_eligible = (
-        responsible["status"] == "not_found"
+        responsible["status"] in ("not_found", "unresolved")
         and isinstance(fallback_id, int)
         and not isinstance(fallback_id, bool)
         and fallback_id > 0
@@ -1163,6 +1165,33 @@ def build_writeback_plan(
                 record["reason_code"] = _PENDING_THREAD_ROOT_REASON
                 record["email_attachment_required"] = False
                 record["email_attachment_status"] = "not_required"
+
+    sender_subject_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for record in planned_by_identity.values():
+        if not isinstance(record, dict) or record.get("outcome") != "create_lead":
+            continue
+        sender = str(record.get("sender_email") or "").lower().strip()
+        subject = str(record.get("subject") or "").lower().strip()
+        client_id = str(record.get("client_id") or "").lower().strip()
+        if not sender or not subject:
+            continue
+        key = (client_id, sender, subject)
+        if key not in sender_subject_groups:
+            sender_subject_groups[key] = []
+        sender_subject_groups[key].append(record)
+
+    for key, group in sender_subject_groups.items():
+        if len(group) < 2:
+            continue
+        group.sort(
+            key=lambda r: str(r.get("created_at_utc") or ""),
+        )
+        for record in group[1:]:
+            record["outcome"] = "deferred"
+            record["status"] = "pending"
+            record["reason_code"] = _PENDING_SENDER_SUBJECT_REASON
+            record["email_attachment_required"] = False
+            record["email_attachment_status"] = "not_required"
 
     for identity, planned in planned_by_identity.items():
         existing = state["events"].get(identity)
@@ -1979,6 +2008,50 @@ def execute_writeback_pending(
         ):
             writes_performed += 1
         record["updated_at_utc"] = _utc_now()
+
+    sender_subject_roots: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for record in events.values():
+        if not isinstance(record, dict):
+            continue
+        if record.get("outcome") != "create_lead":
+            continue
+        if record.get("status") not in ("created", "recovered"):
+            continue
+        if not _positive_int(record.get("remote_entity_id")):
+            continue
+        sender = str(record.get("sender_email") or "").lower().strip()
+        subject = str(record.get("subject") or "").lower().strip()
+        client_id = str(record.get("client_id") or "").lower().strip()
+        if sender and subject:
+            sender_subject_roots[(client_id, sender, subject)] = record
+
+    if sender_subject_roots:
+        for record in events.values():
+            if not isinstance(record, dict):
+                continue
+            if record.get("outcome") != "deferred":
+                continue
+            if record.get("reason_code") != _PENDING_SENDER_SUBJECT_REASON:
+                continue
+            sender = str(record.get("sender_email") or "").lower().strip()
+            subject = str(record.get("subject") or "").lower().strip()
+            client_id = str(record.get("client_id") or "").lower().strip()
+            root = sender_subject_roots.get((client_id, sender, subject))
+            if root is None:
+                continue
+            record["outcome"] = "attach_existing"
+            record["status"] = "pending"
+            record["reason_code"] = None
+            record["target_entity_type"] = "lead"
+            record["target_entity_type_id"] = root.get("remote_entity_type_id")
+            record["target_entity_id"] = root.get("remote_entity_id")
+            record["target_responsible_user_id"] = root.get("responsible_user_id")
+            record["target_provenance"] = "sender_subject_resolved"
+            record["email_attachment_required"] = policy.get("email_attach", False)
+            record["email_attachment_status"] = (
+                "pending" if policy.get("email_attach", False) else "not_required"
+            )
+            record["updated_at_utc"] = _utc_now()
 
     for record in events.values():
         if record.get("outcome") == "attach_existing":

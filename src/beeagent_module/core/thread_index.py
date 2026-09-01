@@ -95,6 +95,7 @@ def build_thread_index(
     mid_to_thread: dict[tuple[str, str], int] = {}
     ref_to_thread: dict[tuple[str, str], list[int]] = {}
     subject_threads: dict[tuple[str, str, str], list[int]] = {}
+    sender_subject_threads: dict[tuple[str, str, str, str], list[int]] = {}
     thread_data: list[dict[str, Any]] = []
 
     for idx, event in enumerate(events):
@@ -113,6 +114,7 @@ def build_thread_index(
             "message_id_link": False,
             "references_link": False,
             "subject_fallback": False,
+            "sender_subject_match": False,
         }
 
         if norm_message_id and (client_id, norm_message_id) in mid_to_thread:
@@ -143,6 +145,16 @@ def build_thread_index(
                 if candidates:
                     matched_thread = candidates[-1]
                     evidence["subject_fallback"] = True
+
+        if matched_thread is None and norm_subject:
+            sender = str(event.get("sender") or "").lower().strip()
+            if sender:
+                source_scope, client_scope = _thread_scope_key(event)
+                sender_subject_key = (source_scope, client_scope, sender, norm_subject)
+                candidates = sender_subject_threads.get(sender_subject_key, [])
+                if candidates:
+                    matched_thread = candidates[-1]
+                    evidence["sender_subject_match"] = True
 
         if matched_thread is None:
             thread_id = f"{THREAD_ID_PREFIX}_{len(thread_data) + 1:03d}"
@@ -203,6 +215,16 @@ def build_thread_index(
             if matched_thread not in subject_threads[subject_key]:
                 subject_threads[subject_key].append(matched_thread)
 
+        if matched_thread is not None and norm_subject:
+            sender = str(event.get("sender") or "").lower().strip()
+            if sender:
+                source_scope, client_scope = _thread_scope_key(event)
+                sender_subject_key = (source_scope, client_scope, sender, norm_subject)
+                if sender_subject_key not in sender_subject_threads:
+                    sender_subject_threads[sender_subject_key] = []
+                if matched_thread not in sender_subject_threads[sender_subject_key]:
+                    sender_subject_threads[sender_subject_key].append(matched_thread)
+
         thread["evidence"]["message_id_link"] = (
             thread["evidence"]["message_id_link"] or evidence["message_id_link"]
         )
@@ -211,6 +233,9 @@ def build_thread_index(
         )
         thread["evidence"]["subject_fallback"] = (
             thread["evidence"]["subject_fallback"] or evidence["subject_fallback"]
+        )
+        thread["evidence"]["sender_subject_match"] = (
+            thread["evidence"]["sender_subject_match"] or evidence["sender_subject_match"]
         )
 
         if (
@@ -245,6 +270,7 @@ def build_thread_index(
                         "message_id_link": False,
                         "references_link": False,
                         "subject_fallback": False,
+                        "sender_subject_match": False,
                     },
                 }
             )
@@ -451,6 +477,17 @@ def build_thread_context(
                     for previous_event in previous_events
                 )
             ),
+            "sender_subject_match": bool(
+                current_subject_key
+                and any(
+                    _normalized_subject_key(previous_event) == current_subject_key
+                    and str(previous_event.get("sender") or "").lower().strip()
+                    == str(event.get("sender") or "").lower().strip()
+                    and str(previous_event.get("client_id") or "")
+                    == str(event.get("client_id") or "")
+                    for previous_event in previous_events
+                )
+            ),
         }
 
         if prev_case_type and not cross_prev_case_type and continuation is None:
@@ -470,6 +507,8 @@ def build_thread_context(
             reason_codes.append("references_chain")
         if local_evidence["subject_fallback"]:
             reason_codes.append("subject_match")
+        if local_evidence["sender_subject_match"]:
+            reason_codes.append("sender_subject_match")
         if is_reply:
             reason_codes.append("reply_or_forward")
         if prev_case_type:
@@ -572,6 +611,8 @@ def _compute_confidence(
         score += 0.20
     if evidence.get("subject_fallback"):
         score += 0.10
+    if evidence.get("sender_subject_match"):
+        score += 0.15
     if prev_case_type:
         score += 0.15
 
