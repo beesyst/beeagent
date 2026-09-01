@@ -387,10 +387,10 @@ class TestWritebackSettingsValidation:
     def _load(self) -> dict:
         return load_settings(_PROJECT_ROOT / "config" / "settings.yml")
 
-    def test_writeback_disabled_with_verified_stage_and_fallback(self) -> None:
+    def test_writeback_enabled_with_verified_stage_and_fallback(self) -> None:
         settings = self._load()
         writeback = settings["bitrix"]["writeback"]
-        assert writeback["enabled"] is False
+        assert writeback["enabled"] is True
         assert writeback["webhook_env"] == "BITRIX_WRITEBACK_WEBHOOK_URL"
         assert writeback["attempts_retry_max"] == 3
         assert writeback["email_attach"] is True
@@ -1651,6 +1651,29 @@ class TestWritebackPlanner:
         assert record["responsible_status"] == "fallback"
         assert record["responsible_reason"] == "fallback_responsible_user"
 
+    def test_fallback_responsible_assigned_when_routing_unresolved(
+        self, tmp_path: Path
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[_routing_item("evt-1", "unresolved", user_id=None)],
+        )
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            _writeback_settings(user_id_fallback=1563),
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["stage_id"] == "NEW"
+        assert record["responsible_user_id"] == 1563
+        assert record["responsible_status"] == "fallback"
+
     def test_fallback_responsible_ignored_when_routing_matched(
         self, tmp_path: Path
     ) -> None:
@@ -1720,7 +1743,7 @@ class TestWritebackPlanner:
         assert record["outcome"] == "deferred"
         assert record["reason_code"] == "responsible_unresolved"
 
-    @pytest.mark.parametrize("status", ["ambiguous", "unresolved", "not_attempted"])
+    @pytest.mark.parametrize("status", ["ambiguous", "not_attempted"])
     def test_fallback_responsible_is_not_used_for_non_not_found_status(
         self, tmp_path: Path, status: str
     ) -> None:
@@ -5561,6 +5584,100 @@ class TestWritebackExecutor:
         assert b_record["target_entity_id"] == 1001
         assert b_record["target_provenance"] == "thread_resolved"
 
+    def test_same_run_sender_subject_siblings_attach_to_confirmed_root(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        settings = _writeback_settings(email_attach=True)
+        run_id = "run-sender-subject"
+        run_dir = tmp_path / "runs" / run_id
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender=" Client@Example.com ",
+                    subject=" RFQ ",
+                    body_preview="First RFQ body.",
+                ),
+                _classified_event(
+                    "evt-b",
+                    "new_lead",
+                    message_id="<msg-b@example.test>",
+                    sender="client@example.com",
+                    subject="rfq",
+                    body_preview="Different RFQ body.",
+                ),
+            ],
+            decisions=[_decision("evt-a", "new_lead"), _decision("evt-b", "new_lead")],
+            reconciliation=[
+                _recon_item("evt-a", "not_found"),
+                _recon_item("evt-b", "not_found"),
+            ],
+            routing=[
+                _routing_item("evt-a", "matched"),
+                _routing_item("evt-b", "matched"),
+            ],
+        )
+        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
+
+        assert [call["method"] for call in recorder.calls].count("crm.item.add") == 1
+        state = _load_state(tmp_path)
+        by_event = {record["event_id"]: record for record in state["events"].values()}
+        assert by_event["evt-a"]["status"] == "created"
+        assert by_event["evt-b"]["outcome"] == "attach_existing"
+        assert by_event["evt-b"]["status"] == "attached"
+        assert by_event["evt-b"]["target_entity_id"] == 1001
+        assert by_event["evt-b"]["target_provenance"] == "sender_subject_resolved"
+
+    @pytest.mark.parametrize(
+        ("sender", "subject"),
+        [("other@example.com", "RFQ"), ("client@example.com", "Other RFQ")],
+    )
+    def test_same_run_different_sender_or_subject_is_not_grouped(
+        self, tmp_path: Path, sender: str, subject: str
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-sender-subject-negative"
+        _write_artifacts(
+            run_dir,
+            classified=[
+                _classified_event(
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender="client@example.com",
+                    subject="RFQ",
+                ),
+                _classified_event(
+                    "evt-b",
+                    "new_lead",
+                    message_id="<msg-b@example.test>",
+                    sender=sender,
+                    subject=subject,
+                ),
+            ],
+            decisions=[_decision("evt-a", "new_lead"), _decision("evt-b", "new_lead")],
+            reconciliation=[
+                _recon_item("evt-a", "not_found"),
+                _recon_item("evt-b", "not_found"),
+            ],
+            routing=[
+                _routing_item("evt-a", "matched"),
+                _routing_item("evt-b", "matched"),
+            ],
+        )
+        plan = build_writeback_plan(
+            tmp_path, "run-sender-subject-negative", _writeback_settings(), _null_logger()
+        )
+        assert [record["outcome"] for record in plan["events"]] == [
+            "create_lead",
+            "create_lead",
+        ]
+
     def test_conflicting_thread_references_execute_zero_mutation(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
@@ -6118,3 +6235,110 @@ def test_email_activity_uses_fallback_subject_when_empty(
     record = list(state["events"].values())[0]
     assert record["email_activity_id"] == 9001
     assert record["email_attachment_status"] == "attached"
+
+
+def test_sender_subject_pending_sibling_does_not_use_previous_run_root(
+    tmp_path: Path,
+    writeback_env: None,
+) -> None:
+    historical = _created_lead_record(
+        "<old-root@example.test>",
+        remote_entity_id=1001,
+    )
+    historical.update(
+        {
+            "last_run_id": "run-old",
+            "sender_email": "client@example.com",
+            "subject": "RFQ",
+        }
+    )
+    _seed_state(tmp_path, [historical])
+
+    run_id = "run-new"
+    run_dir = tmp_path / "runs" / run_id
+    _write_artifacts(
+        run_dir,
+        classified=[
+            _classified_event(
+                "evt-a",
+                "new_lead",
+                message_id="<new-a@example.test>",
+                sender="client@example.com",
+                subject="RFQ",
+            ),
+            _classified_event(
+                "evt-b",
+                "new_lead",
+                message_id="<new-b@example.test>",
+                sender="client@example.com",
+                subject="RFQ",
+            ),
+        ],
+        decisions=[
+            _decision("evt-a", "new_lead"),
+            _decision("evt-b", "new_lead"),
+        ],
+        reconciliation=[
+            _recon_item("evt-a", "not_found"),
+            _recon_item("evt-b", "not_found"),
+        ],
+        routing=[
+            _routing_item("evt-a", "matched"),
+            _routing_item("evt-b", "matched"),
+        ],
+    )
+
+    settings = _writeback_settings(email_attach=True)
+    plan = build_writeback_plan(
+        tmp_path,
+        run_id,
+        settings,
+        _null_logger(),
+    )
+    by_event = {
+        record["event_id"]: record
+        for record in plan["events"]
+    }
+    assert by_event["evt-b"]["reason_code"] == (
+        "pending_sender_subject_root"
+    )
+
+    def fail_new_root(call: dict[str, Any]) -> bytes:
+        if call["method"] == "crm.item.add":
+            raise HTTPError(
+                url=call["url"],
+                code=400,
+                msg="Bad Request",
+                hdrs=Message(),
+                fp=None,
+            )
+        return _default_handler(call)
+
+    recorder = _HttpRecorder(fail_new_root)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(
+            tmp_path,
+            run_id,
+            settings,
+            _null_logger(),
+        )
+
+    state = _load_state(tmp_path)
+    by_event = {
+        record["event_id"]: record
+        for record in state["events"].values()
+    }
+
+    assert by_event["evt-b"]["outcome"] == "deferred"
+    assert by_event["evt-b"]["reason_code"] == (
+        "pending_sender_subject_root"
+    )
+    assert by_event["evt-b"].get("target_entity_id") is None
+    assert by_event["evt-b"].get("target_provenance") != (
+        "sender_subject_resolved"
+    )
+    assert not [
+        call
+        for call in recorder.calls
+        if call["method"] == "crm.activity.add"
+    ]

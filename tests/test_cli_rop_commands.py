@@ -408,6 +408,7 @@ class TestRopCliRun:
         settings = load_settings(_project_root() / "config" / "settings.yml")
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
+        settings["bitrix"]["writeback"]["enabled"] = False
 
         batch_data = {
             "period": "2026-05",
@@ -985,6 +986,7 @@ class TestRopCliRun:
         settings = load_settings(_project_root() / "config" / "settings.yml")
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
+        settings["bitrix"]["writeback"]["enabled"] = False
 
         batch_data = {
             "period": "2026-05",
@@ -1056,6 +1058,7 @@ class TestRopCliRun:
         settings = load_settings(_project_root() / "config" / "settings.yml")
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
+        settings["bitrix"]["writeback"]["enabled"] = False
 
         batch_data = {
             "period": "2026-05",
