@@ -25,6 +25,7 @@ _PUBLIC_THREAD_REASON_CODES = frozenset(
         "participant_overlap",
         "weak_continuation",
         "thread_id_present",
+        "sender_subject_match",
     }
 )
 
@@ -61,6 +62,8 @@ def build_public_thread_context(
         reason_codes.append("participant_overlap")
     if "subject_match" in _strings(context.get("reason_codes")):
         reason_codes.append("weak_continuation")
+    if "sender_subject_match" in _strings(context.get("reason_codes")):
+        reason_codes.append("sender_subject_match")
     if thread_id:
         reason_codes.append("thread_id_present")
 
