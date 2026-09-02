@@ -10332,6 +10332,8 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
     html = response.text
     assert 'data-beeui-page-tabs-progressive="true"' in html
     assert 'data-beeui-page-tab="true"' in html
+    assert 'beeui-tabs-compact' in html
+    assert 'beeui-tabs-compact' in html
 
     expected_icons = {
         "overview": "dashboard",

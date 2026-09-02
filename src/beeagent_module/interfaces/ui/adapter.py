@@ -457,7 +457,10 @@ class BeeAgentUiAdapter:
                                 {
                                     "action_id": "rop_sender_blacklist_remove",
                                     "label": t("Remove", locale),
-                                    "confirmation": t("Remove sender from blacklist?", locale),
+                                    "description": t(
+                                        "New messages from this sender will be processed normally.",
+                                        locale,
+                                    ),
                                     "args": {"email": email},
                                 }
                             ],
@@ -476,7 +479,10 @@ class BeeAgentUiAdapter:
                                             {
                                                 "action_id": "rop_sender_blacklist_add",
                                                 "label": t("Add email", locale),
-                                                "confirmation": t("Add sender to blacklist?", locale),
+                                                "description": t(
+                                                    "Messages from this sender will be classified as Irrelevant.",
+                                                    locale,
+                                                ),
                                                 "fields": [{"name": "email", "type": "email", "label": t("Email", locale)}],
                                             }
                                         ]

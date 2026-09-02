@@ -85,7 +85,7 @@ pages:
       en: Inbound leads, review queue and Bitrix reconciliation
       ru: Входящие лиды, очередь проверки и сверка с Битрикс
     tabs:
-      variant: fill_icons
+      variant: compact_fill_icons
       progressive: true
       active_param: tab
       items:
