@@ -673,6 +673,12 @@ def build_rop_event_detail_read_model(
             "final_decision_source": _str(
                 final_decision.get("final_decision_source", "")
             ),
+            "classification_override_reason": (
+                t("Sender blacklisted", lang)
+                if final_decision.get("policy_override_reason")
+                == "sender_blacklisted"
+                else None
+            ),
             "needs_attention": needs_attention,
             "attention_reason": attention_reason or None,
             "attention_reason_code": attention_reason_code or None,
@@ -1274,6 +1280,18 @@ def build_rop_event_detail_page_model(
                         final_decision.get("final_decision_source"),
                         variant="badge",
                         tone="muted",
+                    ),
+                    *(
+                        [
+                            _kv(
+                                t("Classification override reason", lang),
+                                final_decision.get("classification_override_reason"),
+                                variant="badge",
+                                tone="warning",
+                            )
+                        ]
+                        if final_decision.get("classification_override_reason")
+                        else []
                     ),
                     _kv(
                         t("Needs attention", lang),

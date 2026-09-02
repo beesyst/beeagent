@@ -33,6 +33,8 @@ def _classify_path(path: str) -> tuple[str, str | None]:
             return SURFACE_DASHBOARD, None
         if api_name == "rop":
             return SURFACE_ROP, None
+        if api_name == "actions":
+            return SURFACE_ROP, None
         if api_name == "modules":
             return SURFACE_MODULES, None
         if api_name == "runs":

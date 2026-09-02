@@ -3806,6 +3806,64 @@ def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
     client.close()
 
 
+def test_rop_event_detail_shows_blacklist_override_reason_in_ru(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-detail-blacklist")
+    for artifact_name in ("normalized_events.json", "classified_events.json"):
+        artifact_path = run_dir / artifact_name
+        events = json.loads(artifact_path.read_text(encoding="utf-8"))
+        events[0]["event_instance_id"] = "event-000001"
+        artifact_path.write_text(json.dumps(events), encoding="utf-8")
+    (run_dir / "rop_final_decisions.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "total_events": 1,
+                    "decision_source_counts": {"policy_override": 1},
+                    "attention_count": 0,
+                },
+                "events": [
+                    {
+                        "event_id": "evt-1",
+                            "event_instance_id": "event-000001",
+                            "final_case_type": "irrelevant",
+                            "final_case_subtype": None,
+                            "final_queue": "irrelevant",
+                            "final_action": "no_action",
+                            "final_decision_source": "policy_override",
+                            "final_confidence": 1.0,
+                            "needs_attention": False,
+                            "attention_reason": None,
+                            "automation_allowed": False,
+                            "bitrix_write_allowed": False,
+                            "policy_override_reason": "sender_blacklisted",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    page = build_rop_event_detail_page_model(
+        storage_dir,
+        "run-detail-blacklist",
+        "evt-1",
+        event_instance_id="event-000001",
+        lang="ru",
+    )
+    items = _find_section_items(page, "Итоговое решение")
+
+    assert _item_by_label(items, "Причина изменения классификации")["value"] == (
+        "Отправитель в чёрном списке"
+    )
+
+
 def test_rop_event_detail_without_attention_omits_attention_reason(
     tmp_path: Path,
 ) -> None:
@@ -10285,10 +10343,11 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         "evidence": "evidence",
         "bitrix": "integration",
         "recommendations": "recommendation",
+        "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 9
-    assert html.count('data-beeui-tab-icon="') == 9
+    assert len(set(expected_icons.values())) == 10
+    assert html.count('data-beeui-tab-icon="') == 10
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"

@@ -38,6 +38,7 @@ class TestClassifyPath:
             ("/api/dashboard", ("dashboard", None)),
             ("/api/rop/dashboard", ("rop", None)),
             ("/api/rop/events/evt-1", ("rop", None)),
+            ("/api/actions/execute", ("rop", None)),
             ("/api/modules", ("modules", None)),
             ("/api/runs", ("runs", None)),
             ("/api/runs/run-1", ("runs", None)),
@@ -75,6 +76,7 @@ class TestIsResourceAllowed:
         assert is_resource_allowed(["rop"], "/rop/events/evt-1")
         assert is_resource_allowed(["rop"], "/api/rop/dashboard")
         assert is_resource_allowed(["rop"], "/api/rop/events/evt-1")
+        assert is_resource_allowed(["rop"], "/api/actions/execute")
 
     def test_rop_scope_denies_other_surfaces(self) -> None:
         for path in [

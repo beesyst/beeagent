@@ -233,7 +233,7 @@ def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
             "browser_artifact": True,
             "config_preview": False,
             "config_apply": False,
-            "operator_actions": False,
+            "operator_actions": True,
             "api": False,
         },
         "product": {

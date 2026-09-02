@@ -239,17 +239,16 @@ class TestSettingsValidation:
                 ),
             )
 
-    def test_enabled_requires_viewer_role(
+    def test_enabled_allows_operator_role(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        with pytest.raises(RuntimeError, match="viewer"):
-            self._validate(
-                monkeypatch,
-                lambda s: s["bitrix"]["embedded_app"].update(
-                    {"default_role": "operator"}
-                ),
-            )
+        self._validate(
+            monkeypatch,
+            lambda s: s["bitrix"]["embedded_app"].update(
+                {"default_role": "operator"}
+            ),
+        )
 
     def test_invalid_default_role_rejected(
         self,

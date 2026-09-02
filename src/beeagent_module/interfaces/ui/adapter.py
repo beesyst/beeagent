@@ -31,6 +31,14 @@ from beeagent_module.interfaces.ui.artifacts import (
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
+from beeagent_module.core.rop_sender_blacklist import (
+    SenderBlacklistError,
+    add_sender_blacklist_email,
+    load_sender_blacklist,
+    normalize_sender_email,
+    remove_sender_blacklist_email,
+    write_sender_blacklist_audit,
+)
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
@@ -195,7 +203,7 @@ class BeeAgentUiAdapter:
             product_id="beeagent",
             title="BeeAgent",
             version=_product_version(),
-            capabilities=("read_only",),
+            capabilities=("bounded_actions", "read_only"),
             supported_pages=("/", "/runs", "/rop", "/modules"),
         )
 
@@ -309,10 +317,16 @@ class BeeAgentUiAdapter:
     def preview_action(
         self, action_id: str, payload: dict[str, Any]
     ) -> AdapterResult | AdapterErrorResult:
-        return error_result(
-            "unavailable",
-            "Operator actions are unavailable in BeeAgent UI-4 read-only mode",
-        )
+        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"}:
+            return error_result("permission_denied", "Unknown operator action")
+        try:
+            if set(payload) != {"email"}:
+                raise SenderBlacklistError("Action payload is invalid")
+            return ok_result(
+                {"action_id": action_id, "email": normalize_sender_email(payload.get("email"))}
+            )
+        except SenderBlacklistError as exc:
+            return error_result("invalid_input", str(exc))
 
     def execute_action(
         self,
@@ -320,10 +334,43 @@ class BeeAgentUiAdapter:
         payload: dict[str, Any],
         actor: dict[str, str] | None = None,
     ) -> AdapterResult | AdapterErrorResult:
-        return error_result(
-            "permission_denied",
-            "Operator actions execution is disabled in BeeAgent UI-4 read-only mode",
-        )
+        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"}:
+            return error_result("permission_denied", "Unknown operator action")
+        actor_id = actor.get("user_id") if isinstance(actor, dict) else None
+        if not isinstance(actor, dict) or actor.get("role") not in {"operator", "admin"}:
+            return error_result(
+                "permission_denied", "ROP operator or admin role is required"
+            )
+        principals = self._settings.get("web", {}).get("auth", {}).get("principals", [])
+        scopes = next((item.get("scopes", []) for item in principals if isinstance(item, dict) and item.get("id") == actor_id), [])
+        if "rop" not in scopes and "*" not in scopes:
+            return error_result("permission_denied", "ROP scope is required")
+        email: str | None = None
+        try:
+            if set(payload) != {"email"}:
+                raise SenderBlacklistError("Action payload is invalid")
+            email = normalize_sender_email(payload.get("email"))
+            if action_id == "rop_sender_blacklist_add":
+                email, changed = add_sender_blacklist_email(self._storage_dir, email)
+            else:
+                email, changed = remove_sender_blacklist_email(self._storage_dir, email)
+            write_sender_blacklist_audit(
+                self._storage_dir,
+                action_id=action_id,
+                actor_id=actor_id if isinstance(actor_id, str) else None,
+                outcome="changed" if changed else "unchanged",
+                email=email,
+            )
+            return ok_result({"action_id": action_id, "email": email, "changed": changed})
+        except SenderBlacklistError as exc:
+            write_sender_blacklist_audit(
+                self._storage_dir,
+                action_id=action_id,
+                actor_id=actor_id if isinstance(actor_id, str) else None,
+                outcome="invalid_input",
+                email=email,
+            )
+            return error_result("invalid_input", str(exc))
 
     def get_modules_dashboard(self) -> AdapterResult | AdapterErrorResult:
         try:
@@ -391,10 +438,58 @@ class BeeAgentUiAdapter:
                         "threads",
                         "ai_assist",
                         "recommendations",
+                        "blacklist",
                     }
                 )
                 if tab not in allowed_tabs:
                     tab = "overview"
+
+                if tab == "blacklist":
+                    locale = resolve_locale(query.get("lang"))
+                    try:
+                        emails = load_sender_blacklist(self._storage_dir)
+                    except SenderBlacklistError as exc:
+                        return error_result("state_malformed", str(exc))
+                    rows = [
+                        {
+                            "email": {"label": email},
+                            "actions": [
+                                {
+                                    "action_id": "rop_sender_blacklist_remove",
+                                    "label": t("Remove", locale),
+                                    "confirmation": t("Remove sender from blacklist?", locale),
+                                    "args": {"email": email},
+                                }
+                            ],
+                        }
+                        for email in emails
+                    ]
+                    return ok_result(
+                        {
+                            "layout": [
+                                {
+                                    "type": "data_table",
+                                    "title": t("Sender blacklist", locale),
+                                    "description": t("All emails from these senders will be classified as Irrelevant.", locale),
+                                    "toolbar": {
+                                        "actions": [
+                                            {
+                                                "action_id": "rop_sender_blacklist_add",
+                                                "label": t("Add email", locale),
+                                                "confirmation": t("Add sender to blacklist?", locale),
+                                                "fields": [{"name": "email", "type": "email", "label": t("Email", locale)}],
+                                            }
+                                        ]
+                                    },
+                                    "columns": [
+                                        {"key": "email", "label": t("Email", locale), "cell": "text"},
+                                        {"key": "actions", "label": "", "cell": "actions"},
+                                    ],
+                                    "rows": rows,
+                                }
+                            ]
+                        }
+                    )
 
                 run_id = query.get("run_id")
                 period = query.get("period")

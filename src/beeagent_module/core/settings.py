@@ -1336,10 +1336,10 @@ def _validate_bitrix_embedded_app_settings(settings: dict) -> None:
             "Invalid bitrix.embedded_app.portal_origin, "
             "expected exact HTTPS origin when enabled"
         )
-    if default_role != "viewer":
+    if default_role not in {"viewer", "operator"}:
         raise RuntimeError(
             "Invalid bitrix.embedded_app.default_role, "
-            "only 'viewer' is supported in the current scope"
+            "expected 'viewer' or 'operator'"
         )
     if _get_nested_value(settings, ("web", "auth", "enabled")) is not True:
         raise RuntimeError(

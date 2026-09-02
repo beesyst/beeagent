@@ -136,7 +136,8 @@ CLI overrides:
 - `/health` — health check
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
-- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, ai_assist, sources, attachments, evidence, bitrix, recommendations)
+- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, ai_assist, sources, attachments, evidence, bitrix, recommendations, blacklist)
+- `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires `operator` role, `rop` scope and BeeUI CSRF confirmation. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
 - `/rop?tab=recommendations` — read-only, artifact-backed ROP recommendations tab
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
