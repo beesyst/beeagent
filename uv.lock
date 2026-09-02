@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.57.1"
+version = "0.57.2"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -165,7 +165,7 @@ dev = [
 
 [[package]]
 name = "beeagent-rop"
-version = "0.19.7"
+version = "0.19.8"
 source = { editable = "../beeagent-rop" }
 
 [package.metadata]

@@ -347,9 +347,11 @@ class TestBitrixConfigValidation:
             validate_settings(settings)
         assert "bitrix.enabled" in str(exc_info.value)
 
-    def test_bitrix_enabled_without_env_fails_fast(self) -> None:
-        if "BITRIX_WEBHOOK_URL" in os.environ:
-            pytest.skip("BITRIX_WEBHOOK_URL is set in env, cannot test missing env")
+    def test_bitrix_enabled_without_env_fails_fast(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("BITRIX_WEBHOOK_URL", raising=False)
 
         settings = _load_test_settings()
         settings["bitrix"]["enabled"] = True
