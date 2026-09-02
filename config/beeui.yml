@@ -151,6 +151,13 @@ pages:
             ru: Рекомендации
           href: /rop?tab=recommendations
           icon: recommendation
+
+        - id: blacklist
+          title:
+            en: Blacklist
+            ru: Чёрный список
+          href: /rop?tab=blacklist
+          icon: ban
     blocks: []
 
   - id: runs

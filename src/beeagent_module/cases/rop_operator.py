@@ -40,6 +40,7 @@ from beeagent_module.core.rop_conversation import (
     write_conversation_artifacts,
 )
 from beeagent_module.core.rop_final_decision import build_final_decisions
+from beeagent_module.core.rop_sender_blacklist import apply_sender_blacklist_policy
 from beeagent_module.core.rop_outbound_correlation import (
     collect_outbound_correlation_evidence,
     resolve_outbound_bridge,
@@ -1677,6 +1678,12 @@ def run_rop_batch_case(
         classification_diagnostics["ai_adjudicator_used_count"] = adj_used_count
         classification_diagnostics["ai_adjudicator_degraded_count"] = adj_degraded_count
         _apply_ai_adjudicator_results(enriched_classified, adj_results)
+        sender_blacklist_applied = apply_sender_blacklist_policy(
+            enriched_classified, storage_dir
+        )
+        classification_diagnostics["sender_blacklist_applied_count"] = (
+            sender_blacklist_applied
+        )
 
         classified_path = run_dir / "classified_events.json"
         classified_path.write_text(

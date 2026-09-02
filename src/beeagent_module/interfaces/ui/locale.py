@@ -7,6 +7,13 @@ from typing import Any
 import yaml
 
 _LABELS_EN: dict[str, str] = {
+    "Sender blacklist": "Sender blacklist",
+    "All emails from these senders will be classified as Irrelevant.": "All emails from these senders will be classified as Irrelevant.",
+    "Add email": "Add email",
+    "Add sender to blacklist?": "Add sender to blacklist?",
+    "Remove": "Remove",
+    "Remove sender from blacklist?": "Remove sender from blacklist?",
+    "Email": "Email",
     "Dashboard": "Dashboard",
     "BeeAgent Dashboard": "BeeAgent Dashboard",
     "Read-only operator dashboard": "Read-only operator dashboard",
@@ -260,6 +267,8 @@ _LABELS_EN: dict[str, str] = {
     "Final action": "Final action",
     "Final confidence": "Final confidence",
     "Decision source": "Decision source",
+    "Classification override reason": "Classification override reason",
+    "Sender blacklisted": "Sender blacklisted",
     "Automation allowed": "Automation allowed",
     "Bitrix write allowed": "Bitrix write allowed",
     # ── Queue page labels ───────────────────────────────────────────────
@@ -381,6 +390,13 @@ _LABELS_EN: dict[str, str] = {
     "To": "To",
 }
 _LABELS_RU: dict[str, str] = {
+    "Sender blacklist": "Чёрный список отправителей",
+    "All emails from these senders will be classified as Irrelevant.": "Все письма с этих адресов будут классифицированы как «Нерелевантно».",
+    "Add email": "Добавить e-mail",
+    "Add sender to blacklist?": "Добавить отправителя в чёрный список?",
+    "Remove": "Удалить",
+    "Remove sender from blacklist?": "Удалить отправителя из чёрного списка?",
+    "Email": "E-mail",
     "Dashboard": "Дашборд",
     "BeeAgent Dashboard": "Дашборд BeeAgent",
     "Read-only operator dashboard": "Read-only дашборд оператора",
@@ -640,6 +656,8 @@ _LABELS_RU: dict[str, str] = {
     "Final action": "Итоговое действие",
     "Final confidence": "Итоговая уверенность",
     "Decision source": "Источник решения",
+    "Classification override reason": "Причина изменения классификации",
+    "Sender blacklisted": "Отправитель в чёрном списке",
     "Automation allowed": "Автоматизация разрешена",
     "Bitrix write allowed": "Запись в Bitrix разрешена",
     # ── Queue page labels ───────────────────────────────────────────────

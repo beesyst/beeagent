@@ -35,6 +35,7 @@ _FINAL_DECISION_EVENT_KEYS = frozenset(
         "attention_evidence_codes",
         "automation_allowed",
         "bitrix_write_allowed",
+        "policy_override_reason",
         "base_classification",
         "duplicate",
     }
@@ -404,6 +405,13 @@ def build_final_decisions(
             attention_reason = attention_reason_code
             final_decision_source = "deterministic_preserved"
 
+        policy_override_reason = event.get("policy_override_reason")
+        if policy_override_reason == "sender_blacklisted":
+            final_case_type = "irrelevant"
+            final_queue = "irrelevant"
+            final_action = "no_action"
+            final_decision_source = "policy_override"
+
         normalized_queue, normalized_action, normalized_attention = (
             _normalize_terminal_routing(final_queue, final_action)
         )
@@ -451,6 +459,11 @@ def build_final_decisions(
                 "attention_evidence_codes": attention_evidence_codes,
                 "automation_allowed": False,
                 "bitrix_write_allowed": False,
+                "policy_override_reason": (
+                    policy_override_reason
+                    if policy_override_reason == "sender_blacklisted"
+                    else None
+                ),
                 "base_classification": _sanitize_base_classification(
                     event.get("base_classification")
                 ),
