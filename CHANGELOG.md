@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.57.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.1...beeagent-v0.57.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* harden ROP duplicate evidence diagnostics ([5cd6292](https://github.com/beesyst/beeagent/commit/5cd629263d8efa8abbca9ee26a5e33b0925550d1))
+* **rop:** detect ROP duplicates and attach same-subject emails ([cdd5295](https://github.com/beesyst/beeagent/commit/cdd5295141dd7c1aaa0163073800a856e25686b7))
+* **rop:** harden duplicate handoff and Bitrix writeback ([90910bd](https://github.com/beesyst/beeagent/commit/90910bd92739e0c61b7269e8bdc6fa3f24863ba7))
+* **rop:** reuse trusted lead for sender-subject follow-ups ([7049e92](https://github.com/beesyst/beeagent/commit/7049e929fc828c36dd03d715e6a367391121eb60))
+
 ## [0.57.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.0...beeagent-v0.57.1) (2026-08-30)
 
 
