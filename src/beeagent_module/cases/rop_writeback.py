@@ -377,6 +377,7 @@ def _create_lead_delivery(
     case_type: str,
     routing_item: dict[str, Any] | None,
     policy: dict[str, Any],
+    allow_missing_routing_fallback: bool,
 ) -> dict[str, Any]:
     responsible = _responsible_from_routing(routing_item)
     matched_eligible = (
@@ -387,7 +388,15 @@ def _create_lead_delivery(
     )
     fallback_id = policy.get("user_id_fallback")
     fallback_eligible = (
-        responsible["status"] in ("not_found", "unresolved")
+        (
+            responsible["status"] == "not_found"
+            or (
+                allow_missing_routing_fallback
+                and routing_item is None
+                and responsible["status"] == "unresolved"
+                and responsible["reason"] == "no_routing_evidence"
+            )
+        )
         and isinstance(fallback_id, int)
         and not isinstance(fallback_id, bool)
         and fallback_id > 0
@@ -436,6 +445,7 @@ def _decide_delivery(
     recon_item: dict[str, Any] | None,
     routing_item: dict[str, Any] | None,
     policy: dict[str, Any],
+    allow_missing_routing_fallback: bool,
     thread_target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if recon_item is None:
@@ -478,11 +488,21 @@ def _decide_delivery(
 
     if recon_status in ("weak_match", "ambiguous"):
         if case_type in CREATE_CASE_TYPES:
-            return _create_lead_delivery(case_type, routing_item, policy)
+            return _create_lead_delivery(
+                case_type,
+                routing_item,
+                policy,
+                allow_missing_routing_fallback,
+            )
         return {"outcome": "deferred", "reason_code": "ambiguous_target"}
     if recon_status == "duplicate_candidate":
         if case_type in CREATE_CASE_TYPES:
-            return _create_lead_delivery(case_type, routing_item, policy)
+            return _create_lead_delivery(
+                case_type,
+                routing_item,
+                policy,
+                allow_missing_routing_fallback,
+            )
         return {"outcome": "deferred", "reason_code": "duplicate_target"}
 
     target_absent = recon_status == "not_found" or (
@@ -491,12 +511,22 @@ def _decide_delivery(
     )
     if target_absent:
         if case_type in CREATE_CASE_TYPES:
-            return _create_lead_delivery(case_type, routing_item, policy)
+            return _create_lead_delivery(
+                case_type,
+                routing_item,
+                policy,
+                allow_missing_routing_fallback,
+            )
         return {"outcome": "deferred", "reason_code": "case_type_not_create_eligible"}
 
     if recon_status.startswith("matched_"):
         if case_type in CREATE_CASE_TYPES:
-            return _create_lead_delivery(case_type, routing_item, policy)
+            return _create_lead_delivery(
+                case_type,
+                routing_item,
+                policy,
+                allow_missing_routing_fallback,
+            )
         return {"outcome": "deferred", "reason_code": "unsafe_target"}
 
     return {"outcome": "deferred", "reason_code": "delivery_not_applicable"}
@@ -509,6 +539,7 @@ def _build_planned_record(
     routing_item: dict[str, Any] | None,
     policy: dict[str, Any],
     run_id: str,
+    allow_missing_routing_fallback: bool,
     thread_target: dict[str, Any] | None = None,
     attachment_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
@@ -524,7 +555,12 @@ def _build_planned_record(
     should_rop_see = event.get("should_rop_see") is True
 
     delivery = _decide_delivery(
-        case_type, recon_item, routing_item, policy, thread_target
+        case_type,
+        recon_item,
+        routing_item,
+        policy,
+        allow_missing_routing_fallback,
+        thread_target,
     )
 
     operational_case_type = case_type
@@ -774,6 +810,70 @@ def delivery_completion_status(record: dict[str, Any]) -> str:
 
 def _positive_int(value: Any) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _sender_subject_key(record: dict[str, Any]) -> tuple[str, str, str] | None:
+    values = []
+    for field in ("client_id", "sender_email", "subject"):
+        value = record.get(field)
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        values.append(normalized)
+    return values[0], values[1], values[2]
+
+
+def _trusted_sender_subject_root(
+    record: dict[str, Any],
+) -> tuple[int, int, int] | None:
+    if (
+        record.get("outcome") != "create_lead"
+        or record.get("status") not in ("created", "recovered")
+        or record.get("target_provenance") != "beeagent_created"
+    ):
+        return None
+    entity_type_id = record.get("remote_entity_type_id")
+    entity_id = record.get("remote_entity_id")
+    responsible_id = record.get("responsible_user_id")
+    if not (
+        _positive_int(entity_type_id)
+        and _positive_int(entity_id)
+        and _positive_int(responsible_id)
+    ):
+        return None
+    return entity_type_id, entity_id, responsible_id
+
+
+def _apply_sender_subject_target(
+    record: dict[str, Any],
+    target: tuple[int, int, int],
+    policy: dict[str, Any],
+    status: str,
+) -> None:
+    entity_type_id, entity_id, responsible_id = target
+    email_attachment_required = policy["email_attach"] is True
+    file_attach_required = email_attachment_required and policy["file_attach"] is True
+    record["outcome"] = "attach_existing"
+    record["status"] = status
+    record["reason_code"] = None
+    record["case_type"] = "existing_deal"
+    record["stage_id"] = None
+    record["responsible_user_id"] = None
+    record["responsible_status"] = ""
+    record["responsible_reason"] = None
+    record["target_entity_type"] = "lead"
+    record["target_entity_type_id"] = entity_type_id
+    record["target_entity_id"] = entity_id
+    record["target_responsible_user_id"] = responsible_id
+    record["target_provenance"] = "sender_subject_resolved"
+    record["email_attachment_required"] = email_attachment_required
+    record["email_attachment_status"] = (
+        "pending" if email_attachment_required else "not_required"
+    )
+    record["file_attach_required"] = file_attach_required
+    record["file_attach_status"] = "pending" if file_attach_required else "not_required"
 
 
 def _normalize_message_id(value: Any) -> str:
@@ -1049,6 +1149,8 @@ def build_writeback_plan(
     reconciliation = _read_json_dict(
         run_dir, "bitrix_reconciliation.json", required=True
     )
+    routing_path = run_dir / "rop_recipient_routing.json"
+    allow_missing_routing_fallback = not routing_path.exists()
     routing = _read_json_dict(run_dir, "rop_recipient_routing.json", required=False)
     normalized_events = _read_json_list(
         run_dir, "normalized_events.json", required=False
@@ -1090,12 +1192,19 @@ def build_writeback_plan(
         record for record in state["events"].values() if isinstance(record, dict)
     ]
     trusted_by_client: dict[str, set[tuple[str, int, int, int]]] = {}
+    sender_subject_targets: dict[
+        tuple[str, str, str], set[tuple[int, int, int]]
+    ] = {}
     for record in state_records:
         client_id = _bounded_text(record.get("client_id"))
         if client_id and client_id not in trusted_by_client:
             trusted_by_client[client_id] = _canonical_trusted_targets(
                 state_records, client_id
             )
+        key = _sender_subject_key(record)
+        target = _trusted_sender_subject_root(record)
+        if key is not None and target is not None:
+            sender_subject_targets.setdefault(key, set()).add(target)
 
     planned_records: list[dict[str, Any]] = []
     planned_by_identity: dict[str, dict[str, Any]] = {}
@@ -1124,6 +1233,7 @@ def build_writeback_plan(
             routing_item=routing_by_id.get(identity_key),
             policy=policy,
             run_id=run_id,
+            allow_missing_routing_fallback=allow_missing_routing_fallback,
             thread_target=thread_target,
             attachment_refs=attachment_refs_by_identity.get(identity_key, []),
         )
@@ -1139,6 +1249,29 @@ def build_writeback_plan(
         existing_planned = planned_by_identity.get(identity)
         if existing_planned is None or _occurrence_preferred(planned, existing_planned):
             planned_by_identity[identity] = planned
+
+    for record in planned_by_identity.values():
+        if not isinstance(record, dict) or record.get("outcome") != "create_lead":
+            continue
+        key = _sender_subject_key(record)
+        if key is None:
+            continue
+        targets = sender_subject_targets.get(key, set())
+        if len(targets) == 1:
+            _apply_sender_subject_target(
+                record,
+                next(iter(targets)),
+                policy,
+                status="planned",
+            )
+        elif len(targets) > 1:
+            record["outcome"] = "deferred"
+            record["status"] = "planned"
+            record["reason_code"] = "ambiguous_sender_subject_target"
+            record["email_attachment_required"] = False
+            record["email_attachment_status"] = "not_required"
+            record["file_attach_required"] = False
+            record["file_attach_status"] = "not_required"
 
     prospective_roots = {
         _normalize_message_id(record.get("message_id"))
@@ -1170,12 +1303,9 @@ def build_writeback_plan(
     for record in planned_by_identity.values():
         if not isinstance(record, dict) or record.get("outcome") != "create_lead":
             continue
-        sender = str(record.get("sender_email") or "").lower().strip()
-        subject = str(record.get("subject") or "").lower().strip()
-        client_id = str(record.get("client_id") or "").lower().strip()
-        if not client_id or not sender or not subject:
+        key = _sender_subject_key(record)
+        if key is None:
             continue
-        key = (client_id, sender, subject)
         if key not in sender_subject_groups:
             sender_subject_groups[key] = []
         sender_subject_groups[key].append(record)
@@ -2009,29 +2139,19 @@ def execute_writeback_pending(
             writes_performed += 1
         record["updated_at_utc"] = _utc_now()
 
-    sender_subject_roots: dict[
-        tuple[str, str, str, str], dict[str, Any]
-    ] = {}
+    sender_subject_roots: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
     for record in events.values():
         if not isinstance(record, dict):
             continue
-        if record.get("outcome") != "create_lead":
-            continue
-        if record.get("status") not in ("created", "recovered"):
-            continue
-        if not _positive_int(record.get("remote_entity_id")):
-            continue
-
         origin_run_id = str(record.get("last_run_id") or "").strip()
-        sender = str(record.get("sender_email") or "").lower().strip()
-        subject = str(record.get("subject") or "").lower().strip()
-        client_id = str(record.get("client_id") or "").lower().strip()
-
-        if origin_run_id and client_id and sender and subject:
-            sender_subject_roots[
-                (origin_run_id, client_id, sender, subject)
-            ] = record
+        key = _sender_subject_key(record)
+        if (
+            origin_run_id
+            and key is not None
+            and _trusted_sender_subject_root(record) is not None
+        ):
+            sender_subject_roots[(origin_run_id, *key)] = record
 
     if sender_subject_roots:
         for record in events.values():
@@ -2042,27 +2162,16 @@ def execute_writeback_pending(
             if record.get("reason_code") != _PENDING_SENDER_SUBJECT_REASON:
                 continue
             origin_run_id = str(record.get("last_run_id") or "").strip()
-            sender = str(record.get("sender_email") or "").lower().strip()
-            subject = str(record.get("subject") or "").lower().strip()
-            client_id = str(record.get("client_id") or "").lower().strip()
-
-            root = sender_subject_roots.get(
-                (origin_run_id, client_id, sender, subject)
-            )
+            key = _sender_subject_key(record)
+            if not origin_run_id or key is None:
+                continue
+            root = sender_subject_roots.get((origin_run_id, *key))
             if root is None:
                 continue
-            record["outcome"] = "attach_existing"
-            record["status"] = "pending"
-            record["reason_code"] = None
-            record["target_entity_type"] = "lead"
-            record["target_entity_type_id"] = root.get("remote_entity_type_id")
-            record["target_entity_id"] = root.get("remote_entity_id")
-            record["target_responsible_user_id"] = root.get("responsible_user_id")
-            record["target_provenance"] = "sender_subject_resolved"
-            record["email_attachment_required"] = policy.get("email_attach", False)
-            record["email_attachment_status"] = (
-                "pending" if policy.get("email_attach", False) else "not_required"
-            )
+            target = _trusted_sender_subject_root(root)
+            if target is None:
+                continue
+            _apply_sender_subject_target(record, target, policy, status="pending")
             record["updated_at_utc"] = _utc_now()
 
     for record in events.values():
