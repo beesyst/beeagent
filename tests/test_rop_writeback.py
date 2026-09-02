@@ -1651,8 +1651,42 @@ class TestWritebackPlanner:
         assert record["responsible_status"] == "fallback"
         assert record["responsible_reason"] == "fallback_responsible_user"
 
-    def test_fallback_responsible_assigned_when_routing_unresolved(
-        self, tmp_path: Path
+    def test_missing_routing_artifact_keeps_legacy_fallback(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=None,
+        )
+        settings = _writeback_settings(user_id_fallback=1563)
+        plan = build_writeback_plan(
+            tmp_path,
+            "run-wb",
+            settings,
+            _null_logger(),
+        )
+        record = plan["events"][0]
+        assert record["outcome"] == "create_lead"
+        assert record["stage_id"] == "NEW"
+        assert record["responsible_user_id"] == 1563
+        assert record["responsible_status"] == "fallback"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 1
+        add_call = next(
+            call for call in recorder.calls if call["method"] == "crm.item.add"
+        )
+        assert add_call["payload"]["fields"]["ASSIGNED_BY_ID"] == 1563
+
+    def test_explicit_unresolved_routing_defers_without_create(
+        self, tmp_path: Path, writeback_env: None
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
@@ -1662,17 +1696,66 @@ class TestWritebackPlanner:
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "unresolved", user_id=None)],
         )
-        plan = build_writeback_plan(
-            tmp_path,
-            "run-wb",
-            _writeback_settings(user_id_fallback=1563),
-            _null_logger(),
-        )
+        settings = _writeback_settings(user_id_fallback=1563)
+        plan = build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
         record = plan["events"][0]
-        assert record["outcome"] == "create_lead"
-        assert record["stage_id"] == "NEW"
-        assert record["responsible_user_id"] == 1563
-        assert record["responsible_status"] == "fallback"
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 0
+        assert "crm.item.add" not in [call["method"] for call in recorder.calls]
+
+    def test_malformed_routing_artifact_defers_without_create(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+        )
+        (run_dir / "rop_recipient_routing.json").write_text("[", encoding="utf-8")
+        settings = _writeback_settings(user_id_fallback=1563)
+        plan = build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 0
+        assert "crm.item.add" not in [call["method"] for call in recorder.calls]
+
+    def test_present_routing_without_event_defers_without_create(
+        self, tmp_path: Path, writeback_env: None
+    ) -> None:
+        run_dir = tmp_path / "runs" / "run-wb"
+        _write_artifacts(
+            run_dir,
+            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            decisions=[_decision("evt-1", "new_lead")],
+            reconciliation=[_recon_item("evt-1", "not_found")],
+            routing=[],
+        )
+        settings = _writeback_settings(user_id_fallback=1563)
+        plan = build_writeback_plan(tmp_path, "run-wb", settings, _null_logger())
+        record = plan["events"][0]
+        assert record["outcome"] == "deferred"
+        assert record["reason_code"] == "responsible_unresolved"
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+            result = execute_writeback_pending(
+                tmp_path, "run-wb", settings, _null_logger()
+            )
+        assert result["writes_performed"] == 0
+        assert "crm.item.add" not in [call["method"] for call in recorder.calls]
 
     def test_fallback_responsible_ignored_when_routing_matched(
         self, tmp_path: Path
@@ -6237,108 +6320,214 @@ def test_email_activity_uses_fallback_subject_when_empty(
     assert record["email_attachment_status"] == "attached"
 
 
-def test_sender_subject_pending_sibling_does_not_use_previous_run_root(
+def test_sender_subject_confirmed_historical_root_attaches_changed_body(
     tmp_path: Path,
     writeback_env: None,
 ) -> None:
+    settings = _writeback_settings(email_attach=True, file_attach=True)
+    run_one = "run-one"
+    _write_artifacts(
+        tmp_path / "runs" / run_one,
+        classified=[
+            _classified_event(
+                "evt-one",
+                "new_lead",
+                message_id="<run-one@example.test>",
+                sender="noreply@procurement.example.test",
+                subject="Конкурс DEMO-001",
+                body_preview="Original business text.",
+            )
+        ],
+        decisions=[_decision("evt-one", "new_lead")],
+        reconciliation=[_recon_item("evt-one", "not_found")],
+        routing=[_routing_item("evt-one", "matched")],
+    )
+    build_writeback_plan(tmp_path, run_one, settings, _null_logger())
+
+    def create_lead_101(call: dict[str, Any]) -> bytes:
+        if call["method"] == "crm.item.add":
+            return json.dumps({"result": {"item": {"id": 101}}}).encode("utf-8")
+        return _default_handler(call)
+
+    recorder = _HttpRecorder(create_lead_101)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(tmp_path, run_one, settings, _null_logger())
+
+    run_two = "run-two"
+    _write_artifacts(
+        tmp_path / "runs" / run_two,
+        classified=[
+            _classified_event(
+                "evt-two",
+                "new_lead",
+                message_id="<run-two@example.test>",
+                sender="noreply@procurement.example.test",
+                subject="Конкурс DEMO-001",
+                body_preview="A materially different request with new business terms.",
+            ),
+        ],
+        decisions=[_decision("evt-two", "new_lead")],
+        reconciliation=[_recon_item("evt-two", "not_found")],
+        routing=[_routing_item("evt-two", "matched")],
+    )
+    plan = build_writeback_plan(tmp_path, run_two, settings, _null_logger())
+    record = plan["events"][0]
+    assert record["outcome"] == "attach_existing"
+    assert record["case_type"] == "existing_deal"
+    assert record["semantic_case_type"] == "new_lead"
+    assert record["target_entity_id"] == 101
+    assert record["target_provenance"] == "sender_subject_resolved"
+    assert record["email_attachment_required"] is True
+    assert record["file_attach_required"] is True
+
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(
+            tmp_path,
+            run_two,
+            settings,
+            _null_logger(),
+        )
+    assert [call["method"] for call in recorder.calls].count("crm.item.add") == 1
+    activity_call = [
+        call for call in recorder.calls if call["method"] == "crm.activity.add"
+    ][-1]
+    assert activity_call["payload"]["fields"]["OWNER_ID"] == 101
+    state = _load_state(tmp_path)
+    record = next(
+        r for r in state["events"].values() if r["event_id"] == "evt-two"
+    )
+    assert record["status"] == "attached"
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "client_id"),
+    [
+        ("noreply@procurement.example.test", "Other subject", "welding"),
+        ("other@procurement.example.test", "Конкурс DEMO-001", "welding"),
+        ("noreply@procurement.example.test", "Конкурс DEMO-001", "other-client"),
+    ],
+)
+def test_sender_subject_historical_root_does_not_cross_exact_key(
+    tmp_path: Path,
+    sender: str,
+    subject: str,
+    client_id: str,
+) -> None:
     historical = _created_lead_record(
-        "<old-root@example.test>",
-        remote_entity_id=1001,
+        "<old-root@example.test>", remote_entity_id=101
     )
     historical.update(
         {
             "last_run_id": "run-old",
-            "sender_email": "client@example.com",
-            "subject": "RFQ",
+            "sender_email": "noreply@procurement.example.test",
+            "subject": "Конкурс DEMO-001",
         }
     )
     _seed_state(tmp_path, [historical])
-
     run_id = "run-new"
-    run_dir = tmp_path / "runs" / run_id
     _write_artifacts(
-        run_dir,
+        tmp_path / "runs" / run_id,
         classified=[
             _classified_event(
-                "evt-a",
+                "evt-new",
                 "new_lead",
-                message_id="<new-a@example.test>",
-                sender="client@example.com",
-                subject="RFQ",
-            ),
-            _classified_event(
-                "evt-b",
-                "new_lead",
-                message_id="<new-b@example.test>",
-                sender="client@example.com",
-                subject="RFQ",
-            ),
-        ],
-        decisions=[
-            _decision("evt-a", "new_lead"),
-            _decision("evt-b", "new_lead"),
-        ],
-        reconciliation=[
-            _recon_item("evt-a", "not_found"),
-            _recon_item("evt-b", "not_found"),
-        ],
-        routing=[
-            _routing_item("evt-a", "matched"),
-            _routing_item("evt-b", "matched"),
-        ],
-    )
-
-    settings = _writeback_settings(email_attach=True)
-    plan = build_writeback_plan(
-        tmp_path,
-        run_id,
-        settings,
-        _null_logger(),
-    )
-    by_event = {
-        record["event_id"]: record
-        for record in plan["events"]
-    }
-    assert by_event["evt-b"]["reason_code"] == (
-        "pending_sender_subject_root"
-    )
-
-    def fail_new_root(call: dict[str, Any]) -> bytes:
-        if call["method"] == "crm.item.add":
-            raise HTTPError(
-                url=call["url"],
-                code=400,
-                msg="Bad Request",
-                hdrs=Message(),
-                fp=None,
+                client_id=client_id,
+                message_id="<new@example.test>",
+                sender=sender,
+                subject=subject,
             )
-        return _default_handler(call)
+        ],
+        decisions=[_decision("evt-new", "new_lead")],
+        reconciliation=[_recon_item("evt-new", "not_found")],
+        routing=[_routing_item("evt-new", "matched")],
+    )
+    plan = build_writeback_plan(
+        tmp_path, run_id, _writeback_settings(), _null_logger()
+    )
+    assert plan["events"][0]["outcome"] == "create_lead"
 
-    recorder = _HttpRecorder(fail_new_root)
-    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
-        execute_writeback_pending(
-            tmp_path,
-            run_id,
-            settings,
-            _null_logger(),
+
+def test_sender_subject_ambiguous_historical_roots_defer_without_mutation(
+    tmp_path: Path,
+    writeback_env: None,
+) -> None:
+    roots = []
+    for message_id, entity_id in (
+        ("<old-a@example.test>", 101),
+        ("<old-b@example.test>", 102),
+    ):
+        root = _created_lead_record(message_id, remote_entity_id=entity_id)
+        root.update(
+            {
+                "last_run_id": "run-old",
+                "sender_email": "noreply@procurement.example.test",
+                "subject": "Конкурс DEMO-001",
+            }
         )
-
-    state = _load_state(tmp_path)
-    by_event = {
-        record["event_id"]: record
-        for record in state["events"].values()
-    }
-
-    assert by_event["evt-b"]["outcome"] == "deferred"
-    assert by_event["evt-b"]["reason_code"] == (
-        "pending_sender_subject_root"
+        roots.append(root)
+    _seed_state(tmp_path, roots)
+    run_id = "run-new"
+    _write_artifacts(
+        tmp_path / "runs" / run_id,
+        classified=[
+            _classified_event(
+                "evt-new",
+                "new_lead",
+                message_id="<new@example.test>",
+                sender="noreply@procurement.example.test",
+                subject="Конкурс DEMO-001",
+            )
+        ],
+        decisions=[_decision("evt-new", "new_lead")],
+        reconciliation=[_recon_item("evt-new", "not_found")],
+        routing=[_routing_item("evt-new", "matched")],
     )
-    assert by_event["evt-b"].get("target_entity_id") is None
-    assert by_event["evt-b"].get("target_provenance") != (
-        "sender_subject_resolved"
-    )
+    settings = _writeback_settings(email_attach=True)
+    plan = build_writeback_plan(tmp_path, run_id, settings, _null_logger())
+    assert plan["events"][0]["outcome"] == "deferred"
+    assert plan["events"][0]["reason_code"] == "ambiguous_sender_subject_target"
+    recorder = _HttpRecorder(_default_handler)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
     assert not [
         call
         for call in recorder.calls
-        if call["method"] == "crm.activity.add"
+        if call["method"] in {"crm.item.add", "crm.activity.add"}
     ]
+
+
+def test_sender_subject_untrusted_historical_root_does_not_authorize_attachment(
+    tmp_path: Path,
+) -> None:
+    historical = _created_lead_record(
+        "<old-root@example.test>", remote_entity_id=101
+    )
+    historical.update(
+        {
+            "last_run_id": "run-old",
+            "sender_email": "noreply@procurement.example.test",
+            "subject": "Конкурс DEMO-001",
+            "target_provenance": "thread_resolved",
+        }
+    )
+    _seed_state(tmp_path, [historical])
+    run_id = "run-new"
+    _write_artifacts(
+        tmp_path / "runs" / run_id,
+        classified=[
+            _classified_event(
+                "evt-new",
+                "new_lead",
+                message_id="<new@example.test>",
+                sender="noreply@procurement.example.test",
+                subject="Конкурс DEMO-001",
+            )
+        ],
+        decisions=[_decision("evt-new", "new_lead")],
+        reconciliation=[_recon_item("evt-new", "not_found")],
+        routing=[_routing_item("evt-new", "matched")],
+    )
+    plan = build_writeback_plan(
+        tmp_path, run_id, _writeback_settings(), _null_logger()
+    )
+    assert plan["events"][0]["outcome"] == "create_lead"

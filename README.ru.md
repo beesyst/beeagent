@@ -1348,7 +1348,7 @@ rop:
 
 ### Controlled Bitrix write-back
 
-Sender+subject does not authorize an arbitrary historical CRM target and `sender_subject_match` is thread evidence, not semantic duplicate proof. Only same-run `create_lead` siblings with the same `client_id`, normalized sender and normalized subject may attach after a BeeAgent-created/recovered root is confirmed; the sibling records `target_provenance=sender_subject_resolved` and never reassigns an existing CRM entity. The planner-local unresolved/missing CLI routing path may use configured positive `bitrix.writeback.user_id_fallback`; ambiguous, `connector_degraded`, `not_attempted`, malformed and conflicting evidence remains fail closed.
+Sender+subject does not authorize an arbitrary historical CRM target and `sender_subject_match` is thread evidence, not semantic duplicate proof. A confirmed BeeAgent-created/recovered Lead root from canonical write-back state may be reused across runs only for the exact normalized `client_id` + sender + subject key; multiple distinct historical roots fail closed. Same-run `create_lead` siblings still wait for pending root resolution, then record `target_provenance=sender_subject_resolved`; this never reassigns an existing CRM entity. The normal configured `bitrix.writeback.user_id_fallback` is limited to `not_found`; only a genuinely absent legacy/manual routing artifact may use it for missing routing evidence. Present malformed, incomplete or conflicting routing evidence remains fail closed.
 
 ### ROP email preview
 
