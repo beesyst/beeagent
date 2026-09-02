@@ -3109,7 +3109,193 @@ ROP Web Console больше не реконструирует historical ROP st
 - tests and production smoke green;
 - `pyproject.toml.version` unchanged.
 
-### Итерация UI-8.8 — Request-ready ROP Web projection v2
+### Итерация UI-8.8 — ROP sender blacklist management v1
+
+**Статус:** PLANNED
+
+#### Goal
+
+Добавить управляемый оператором чёрный список e-mail отправителей в ROP Web Console и Bitrix embedded console, чтобы новые сообщения от указанных исходных отправителей детерминированно получали effective classification `irrelevant`, сохраняя semantic classification evidence и используя существующий Bitrix write-back path.
+
+#### Scope
+
+- добавить canonical durable state `storage/interfaces/rop_sender_blacklist.json`;
+- реализовать bounded load/list/add/remove/match contract;
+- использовать exact normalized sender e-mail;
+- использовать existing forwarded-mail normalization и original sender precedence;
+- не повторять MIME/forward-wrapper parsing;
+- применить explicit BeeAgent sender-policy override после semantic/AI classification;
+- при match выставлять effective `case_type=irrelevant`;
+- сохранять base classification evidence отдельно от policy override;
+- закрепить auditable reason `sender_blacklisted`;
+- обеспечить использование effective result downstream UI/write-back paths;
+- добавить ROP tab `blacklist` / `Чёрный список`;
+- показать description:
+  `Все письма с этих ящиков будут отправлены в классификацию «Irrelevant».`;
+- показать canonical e-mail table;
+- добавить `Добавить e-mail`;
+- добавить bounded remove action с confirmation;
+- viewer сохраняется read-only;
+- blacklist mutations требуют `operator` + `rop` scope;
+- включить BeeUI bounded operator actions только вместе с product callbacks/authorization;
+- разрешить Bitrix embedded `default_role=operator`;
+- сохранить external Bitrix principal scope `rop`;
+- настроить deployment на operator only where Bitrix Local App audience is trusted;
+- создавать bounded audit evidence для mutation attempts;
+- использовать existing `irrelevant` Bitrix delivery/write-back path;
+- обновить relevant Web UI/security/config/product-roadmap docs;
+- обновить BeeUI dependency до фактически выпущенного release, содержащего BeeUI Iteration 13.16.
+
+#### Excluded
+
+- изменения `beeagent-rop`;
+- hardcoded sender/domain rules в domain module;
+- domain blacklist;
+- subject keyword blacklist;
+- regex/wildcards;
+- native Bitrix Lead/card button;
+- bulk import/export;
+- checkbox `send/do not send to Bitrix`;
+- silent drop before Bitrix;
+- changing/deleting historical Bitrix entities;
+- retroactive reclassification of historical runs;
+- viewer write authority;
+- embedded admin role;
+- arbitrary config editing;
+- DB introduction;
+- per-Bitrix-user/per-group role mapping;
+- general Operator Control Panel UI-14;
+- unrelated UI-8.8 performance work.
+
+#### Deliverable
+
+ROP Web Console и тот же console внутри Bitrix Local App имеют новую вкладку `Чёрный список`, где authorized ROP operator может добавить или удалить exact sender e-mail.
+
+Новые сообщения от blacklisted effective/original sender получают:
+
+```text
+effective case_type = irrelevant
+policy reason = sender_blacklisted
+```
+
+при сохранении исходной semantic classification evidence.
+
+Existing Bitrix irrelevant/JUNK write-back behavior используется без нового delivery branch.
+
+#### Acceptance criteria
+
+- missing blacklist state initializes as empty state;
+- malformed existing state does not silently become empty;
+- blacklist writes are atomic/concurrency-safe;
+- email normalization is deterministic;
+- invalid email is rejected;
+- duplicate add is idempotent;
+- remove of existing entry succeeds;
+- remove requires explicit confirmation in UI;
+- direct sender match produces effective `irrelevant`;
+- forwarded message matches original sender rather than technical forwarder when canonical original-sender evidence exists;
+- test scenario George → Kevin → automatic forward → `parsales@welding.kz` matches George;
+- malformed/missing original-sender evidence safely falls back to canonical current sender;
+- no raw MIME reparsing is introduced;
+- base semantic classification remains auditable;
+- `sender_blacklisted` override has precedence over AI result;
+- downstream UI and Bitrix write-back consume the same effective classification;
+- blacklist affects future/new processing only;
+- historical run artifacts are not rewritten;
+- existing Bitrix entities are not retroactively changed;
+- `irrelevant` follows existing configured write-back path;
+- blacklist tab is available in ordinary Web Console;
+- blacklist tab is available through the existing Bitrix embedded console;
+- viewer can read but cannot mutate;
+- viewer POST attempt is denied server-side;
+- operator without `rop` scope is denied;
+- operator with `rop` scope and valid CSRF can execute only known blacklist actions;
+- unknown action id is denied;
+- enabling `/api/actions/*` does not accidentally grant ROP authority to unrelated future actions;
+- external Bitrix principal remains ROP-scoped;
+- embedded `admin` is not introduced;
+- each mutation attempt produces bounded audit evidence;
+- auth tokens, session cookies, raw e-mail body and Bitrix credentials are absent from audit/logs;
+- RU/EN labels work;
+- existing ROP tabs remain backward-compatible.
+
+#### Checks
+
+```text
+uv run pytest -q
+```
+
+Targeted tests:
+
+- blacklist state missing/valid/malformed;
+- deterministic normalization;
+- duplicate add;
+- remove;
+- atomic/lost-update safety;
+- direct sender match;
+- forwarded original sender match;
+- fallback current sender;
+- base classification preservation;
+- policy override precedence;
+- AI cannot promote blacklisted sender;
+- downstream classification/write-back consistency;
+- existing `irrelevant` Bitrix plan;
+- Web blacklist read-model;
+- add/remove action preview;
+- add/remove action execute;
+- viewer denial;
+- operator + wrong scope denial;
+- operator + `rop` scope success;
+- unknown action denial;
+- CSRF failure;
+- Bitrix embedded viewer/operator config validation;
+- external principal remains `rop` scoped;
+- route-prefix/iframe smoke;
+- RU/EN rendering;
+- existing ROP route regression;
+- existing Bitrix write-back regression.
+
+Security checks:
+
+- SAST review for state mutation/action/auth paths;
+- DAST-style POST route checks;
+- malformed input;
+- XSS/email display escaping;
+- no raw MIME/body/token leakage;
+- state path is fixed/controlled;
+- no arbitrary filesystem path;
+- dependency SCA after BeeUI dependency update.
+
+Full integration smoke:
+
+```text
+blacklist sender
+→ new mailbox run
+→ semantic classification executes
+→ policy override records sender_blacklisted
+→ effective irrelevant
+→ ROP UI reflects irrelevant
+→ Bitrix delivery plan uses existing irrelevant path
+```
+
+#### DoD
+
+- BeeUI prerequisite released and consumed by BeeAgent;
+- blacklist state has one canonical source of truth;
+- forwarded original sender is respected;
+- no second forwarding parser exists;
+- no `beeagent-rop` changes required;
+- Web and Bitrix embedded console share the same blacklist UI;
+- viewer remains read-only;
+- Bitrix external operator remains ROP-scoped;
+- effective `irrelevant` reaches existing Bitrix write-back;
+- no delivery toggle/domain/keyword scope creep;
+- automated and integration checks pass;
+- docs/ROADMAP contracts reconciled;
+- no manual BeeAgent package version bump;
+- PR reviewed and merged.
+
+### Итерация UI-8.9 — Request-ready ROP Web projection v2
 
 **Status:** PLANNED
 
@@ -3194,7 +3380,7 @@ BeeAgent Web runtime использует validated request-ready projection v2,
 - tests and required security checks pass;
 - docs describe v2 lifecycle, migration and operational verification;
 - UI-8.7 remains DONE and stale IN PROGRESS wording is removed;
-- UI-9 follows the completed UI-8.8 performance gate.
+- UI-9 follows the completed UI-8.9 performance gate.
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
