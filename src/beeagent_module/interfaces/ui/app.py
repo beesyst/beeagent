@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json as json_mod
 import logging
 import os
@@ -37,6 +39,10 @@ from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
 )
+from beeagent_module.core.rop_sender_blacklist import (
+    SenderBlacklistError,
+    load_sender_blacklist_entries,
+)
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
@@ -68,6 +74,10 @@ def _result_data(
     if isinstance(result, AdapterErrorResult):
         return default
     return result.data
+
+
+def _csv_cell(value: str) -> str:
+    return "'" + value if value[:1] in {"=", "+", "-", "@"} else value
 
 
 def _result_warnings(
@@ -835,6 +845,24 @@ def _register_custom_routes(
         result = adapter.get_modules_dashboard()
         data = _result_data(result, {})
         return _ok_json(data)
+
+    @app.get("/rop/blacklist.csv", include_in_schema=False)
+    async def rop_blacklist_csv(request: Request) -> Response:
+        try:
+            query = request.query_params.get("q", "").strip().lower()
+            if len(query) > 254:
+                return _error_json("invalid_params", "Search query is invalid", status_code=400)
+            entries = load_sender_blacklist_entries(app.state.beeagent_storage_dir)
+        except SenderBlacklistError as exc:
+            return _error_json("state_malformed", str(exc), status_code=400)
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow(["Name", "Title", "Email", "Role"])
+        for entry in entries:
+            if query and query not in entry["email"]:
+                continue
+            writer.writerow([_csv_cell(entry[key]) for key in ("name", "title", "email", "role")])
+        return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=rop-sender-blacklist.csv", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     @app.get("/api/rop/dashboard", include_in_schema=False)
     async def api_rop_dashboard(request: Request) -> JSONResponse:

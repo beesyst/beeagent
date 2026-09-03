@@ -1,5 +1,7 @@
 # WEB UI — BeeAgent Web Console contract
 
+ROP sender blacklist uses a bounded management table with Name, Title, Email and Role, e-mail-only search, canonical pagination, CSV download, and protected direct Add, inline Save and Delete actions. The product continues to enforce authorization, CSRF, validation and audit; CSV import is not supported.
+
 ## Назначение
 
 Этот документ фиксирует актуальный реализованный контракт для BeeUI-backed Operator Web Console в BeeAgent.
@@ -94,7 +96,7 @@ UI не хранит отдельный runtime state и не создаёт в�
 - `config/start.py` вызывает `beeagent_module.cli.web.run_web`;
 - legacy `src/beeagent_module/web` заморожен;
 - auth boundary реализован через BeeUI session/role layer;
-- нет non-auth operator POST/write actions и runtime control endpoints;
+- GET/read surfaces remain read-only by default; UI-8.8 blacklist Add/Update/Delete are explicit protected bounded POST exceptions, not runtime control endpoints;
 - Queue `date_range` filter (UI-8.2) использует generic BeeUI Tabler Datepicker contract (Iteration 13.10) через `beeui>=0.23.0`;
 - Queue toolbar (UI-8.3) использует canonical BeeUI Tabler toolbar contract (Iteration 13.11) через `beeui>=0.24.0`;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
@@ -137,7 +139,7 @@ CLI overrides:
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
 - `/rop` — ROP operator dashboard (tabs: overview, queue, threads, ai_assist, sources, attachments, evidence, bitrix, recommendations, blacklist)
-- `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires `operator` role, `rop` scope and BeeUI CSRF confirmation. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
+- `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires a known action, `operator`/`admin` authority, `rop` scope, CSRF validation/protection, product validation and audit. It grants no general runtime, CRM or mailbox execution authority. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
 - `/rop?tab=recommendations` — read-only, artifact-backed ROP recommendations tab
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
@@ -504,7 +506,7 @@ bitrix:
 
 - `bitrix.embedded_app.enabled=true` требует `web.auth.enabled=true`;
 - `portal_origin` — точный HTTPS origin (без path, query, trailing slash);
-- launch input не выбирает role: verified Bitrix user всегда получает configured `default_role` (`viewer` в текущем scope);
+- launch input не выбирает role: verified Bitrix user получает configured `default_role` (`viewer` by default; configured `operator` is limited to a trusted Local App audience; embedded `admin` is not allowed);
 - при `enabled=true` BeeUI получает `security.frame_ancestors=[portal_origin]`, `auth.cookie_samesite="none"`, `auth.cookie_secure=true` и canonical `auth.session_age_max`;
 - BeeAgent не содержит Bitrix user-ID allowlist: доступ управляется Bitrix24.
 
@@ -542,7 +544,7 @@ Launch handler для application open context. Только POST; GET на `/bi
 - проверяет текущего пользователя официальным Bitrix REST `user.current` только против configured portal; для этого у приложения в Bitrix должно быть право **`user`** (Пользователи) — иначе Bitrix отклоняет вызов с `insufficient_scope`;
 - отклоняет invalid/rejected token, inactive user, timeout и malformed REST response; при отказе возвращается `reason` (например `token_rejected`) и bounded `bitrix_error` (например `insufficient_scope`, `invalid_token`) без значений токена;
 - не сохраняет и не логирует `AUTH_ID`/`REFRESH_ID`;
-- создаёт BeeUI principal session для verified Bitrix user с configured `viewer` role;
+- создаёт BeeUI principal session для verified Bitrix user с configured `viewer` or `operator` role; browser input cannot select the role and embedded `admin` is not allowed;
 - устанавливает `HttpOnly; Secure; SameSite=None` cookie через BeeUI public helper;
 - возвращает `303 See Other` на `/rop` с `no-store` и `Referrer-Policy: no-referrer`.
 
@@ -662,7 +664,7 @@ Server-side authorization выполняется центральным BeeAgent
 - unknown protected surface → default-deny;
 - navigation visibility отражает authorization, но не заменяет server-side enforcement;
 - ROP-only principal после login попадает на `/rop` (landing redirect);
-- verified Bitrix external principal (user_id не в `web.auth.principals`) остаётся bounded ROP-only viewer.
+- verified Bitrix external principal (user_id не в `web.auth.principals`) remains bounded ROP-only with its configured `viewer` or trusted Local App `operator` role; embedded `admin` is not allowed.
 
 ### Unauthenticated / forbidden response
 
@@ -690,7 +692,7 @@ Session управляется BeeUI через подписанную cookie `b
 - `operator` — operator-level доступ (future)
 - `admin` — admin-level доступ (future config/actions)
 
-Поддерживаются `viewer` / `operator` / `admin`. Role не определяет resource scope: resource access определяется только `scopes`. Все текущие business/operator routes Web Console остаются read-only.
+Поддерживаются `viewer` / `operator` / `admin`. Role не определяет resource scope: resource access определяется только `scopes`. GET/read routes остаются read-only; UI-8.8 blacklist actions являются explicit bounded POST exception с server-side authority, CSRF, validation и audit.
 
 ### Rollout
 
@@ -1239,7 +1241,7 @@ BeeAgent не держит manual HTML builders/templates для `/rop`.
 Web Console должен соблюдать:
 
 - no GET mutation;
-- no non-auth operator POST/write actions;
+- no non-auth operator POST/write actions except explicit UI-8.8 protected blacklist mutations;
 - BeeUI auth POST endpoints допустимы только для authentication/session flow;
 - no mailbox/CRM/module/capability execution from GET routes;
 - no web-triggered module/capability/mailbox/CRM execution;

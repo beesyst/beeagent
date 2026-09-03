@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
@@ -33,10 +34,12 @@ from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
 from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
-    add_sender_blacklist_email,
+    add_sender_blacklist_entry,
+    load_sender_blacklist_entries,
     load_sender_blacklist,
     normalize_sender_email,
     remove_sender_blacklist_email,
+    update_sender_blacklist_entry,
     write_sender_blacklist_audit,
 )
 from beeagent_module.interfaces.ui.read_model import (
@@ -60,6 +63,55 @@ def _product_version() -> str:
         return version("beeagent")
     except PackageNotFoundError:
         return "unknown"
+
+
+def _blacklist_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload.get(key, "User" if key == "role" else "") for key in ("name", "title", "email", "role")}
+
+
+def _blacklist_audit_email(payload: dict[str, Any]) -> str | None:
+    try:
+        return normalize_sender_email(payload.get("email"))
+    except SenderBlacklistError:
+        return None
+
+
+def _validate_blacklist_payload(action_id: str, payload: dict[str, Any]) -> None:
+    expected = {"email"} if action_id in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"} else {"name", "title", "email", "role"}
+    if action_id == "rop_sender_blacklist_update":
+        expected = {"original_email", *expected}
+    if not isinstance(payload, dict) or (set(payload) != expected and not (action_id == "rop_sender_blacklist_add" and set(payload) == {"name", "title", "email", "role"})):
+        raise SenderBlacklistError("Action payload is invalid")
+    normalize_sender_email(payload.get("email"))
+    if action_id == "rop_sender_blacklist_update":
+        normalize_sender_email(payload.get("original_email"))
+
+
+def _blacklist_fields(locale: str, entry: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    entry = entry or {"name": "", "title": "", "email": "", "role": "User"}
+    return [
+        {"name": "name", "type": "text", "label": t("Name", locale), "required": False, "max_length": 128, "value": entry["name"]},
+        {"name": "title", "type": "text", "label": t("Title", locale), "required": False, "max_length": 128, "value": entry["title"]},
+        {"name": "email", "type": "email", "label": t("Email", locale), "required": True, "max_length": 254, "value": entry["email"]},
+        {"name": "role", "type": "text", "label": t("Role", locale), "required": False, "max_length": 64, "value": entry["role"]},
+    ]
+
+
+def _blacklist_pagination(query: Mapping[str, str], page: int, pages: int, page_size: int, count: int, locale: str) -> dict[str, Any]:
+    def href(target_page: int, target_size: int = page_size) -> str:
+        values = {"tab": "blacklist", "page": str(target_page), "page_size": str(target_size)}
+        if query.get("lang"):
+            values["lang"] = query["lang"]
+        if query.get("q"):
+            values["q"] = query["q"]
+        return "/rop?" + urlencode(values)
+    return {
+        "label": f"{count} " + ("записей" if locale == "ru" else "entries"),
+        "pages": [{"number": number, "label": str(number), "href": href(number), "active": number == page} for number in range(1, pages + 1)],
+        "previous": {"href": href(page - 1)} if page > 1 else None,
+        "next": {"href": href(page + 1)} if page < pages else None,
+        "page_size": {"label": "", "current": str(page_size), "options": [{"value": str(size), "label": str(size), "href": href(1, size)} for size in (25, 50, 100)]},
+    }
 
 
 def extract_rop_query_params(
@@ -317,14 +369,11 @@ class BeeAgentUiAdapter:
     def preview_action(
         self, action_id: str, payload: dict[str, Any]
     ) -> AdapterResult | AdapterErrorResult:
-        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"}:
+        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_update", "rop_sender_blacklist_remove"}:
             return error_result("permission_denied", "Unknown operator action")
         try:
-            if set(payload) != {"email"}:
-                raise SenderBlacklistError("Action payload is invalid")
-            return ok_result(
-                {"action_id": action_id, "email": normalize_sender_email(payload.get("email"))}
-            )
+            _validate_blacklist_payload(action_id, payload)
+            return ok_result({})
         except SenderBlacklistError as exc:
             return error_result("invalid_input", str(exc))
 
@@ -334,24 +383,41 @@ class BeeAgentUiAdapter:
         payload: dict[str, Any],
         actor: dict[str, str] | None = None,
     ) -> AdapterResult | AdapterErrorResult:
-        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"}:
+        if action_id not in {"rop_sender_blacklist_add", "rop_sender_blacklist_update", "rop_sender_blacklist_remove"}:
             return error_result("permission_denied", "Unknown operator action")
         actor_id = actor.get("user_id") if isinstance(actor, dict) else None
+        email = _blacklist_audit_email(payload)
         if not isinstance(actor, dict) or actor.get("role") not in {"operator", "admin"}:
+            write_sender_blacklist_audit(
+                self._storage_dir,
+                action_id=action_id,
+                actor_id=actor_id if isinstance(actor_id, str) else None,
+                outcome="permission_denied",
+                email=email,
+            )
             return error_result(
                 "permission_denied", "ROP operator or admin role is required"
             )
         principals = self._settings.get("web", {}).get("auth", {}).get("principals", [])
         scopes = next((item.get("scopes", []) for item in principals if isinstance(item, dict) and item.get("id") == actor_id), [])
         if "rop" not in scopes and "*" not in scopes:
+            write_sender_blacklist_audit(
+                self._storage_dir,
+                action_id=action_id,
+                actor_id=actor_id if isinstance(actor_id, str) else None,
+                outcome="permission_denied",
+                email=email,
+            )
             return error_result("permission_denied", "ROP scope is required")
-        email: str | None = None
         try:
-            if set(payload) != {"email"}:
-                raise SenderBlacklistError("Action payload is invalid")
+            _validate_blacklist_payload(action_id, payload)
             email = normalize_sender_email(payload.get("email"))
             if action_id == "rop_sender_blacklist_add":
-                email, changed = add_sender_blacklist_email(self._storage_dir, email)
+                entry, changed = add_sender_blacklist_entry(self._storage_dir, _blacklist_entry_payload(payload))
+                email = entry["email"]
+            elif action_id == "rop_sender_blacklist_update":
+                entry, changed = update_sender_blacklist_entry(self._storage_dir, payload["original_email"], _blacklist_entry_payload(payload))
+                email = entry["email"]
             else:
                 email, changed = remove_sender_blacklist_email(self._storage_dir, email)
             write_sender_blacklist_audit(
@@ -361,7 +427,7 @@ class BeeAgentUiAdapter:
                 outcome="changed" if changed else "unchanged",
                 email=email,
             )
-            return ok_result({"action_id": action_id, "email": email, "changed": changed})
+            return ok_result({"changed": changed})
         except SenderBlacklistError as exc:
             write_sender_blacklist_audit(
                 self._storage_dir,
@@ -447,25 +513,38 @@ class BeeAgentUiAdapter:
                 if tab == "blacklist":
                     locale = resolve_locale(query.get("lang"))
                     try:
-                        emails = load_sender_blacklist(self._storage_dir)
+                        entries = load_sender_blacklist_entries(self._storage_dir)
                     except SenderBlacklistError as exc:
                         return error_result("state_malformed", str(exc))
+                    query_text = query.get("q", "").strip().lower()
+                    if len(query_text) > 254:
+                        return error_result("invalid_params", "Search query is invalid")
+                    entries = [entry for entry in entries if query_text in entry["email"]]
+                    page_size = query.get("page_size", "25")
+                    if page_size not in {"25", "50", "100"}:
+                        return error_result("invalid_params", "Page size is invalid")
+                    requested_page = query.get("page", "1")
+                    if not requested_page.isdecimal() or int(requested_page) < 1:
+                        return error_result("invalid_params", "Page is invalid")
+                    page_size_int = int(page_size)
+                    page_count = max(1, (len(entries) + page_size_int - 1) // page_size_int)
+                    current_page = min(int(requested_page), page_count)
+                    page_entries = entries[(current_page - 1) * page_size_int:current_page * page_size_int]
                     rows = [
                         {
-                            "email": {"label": email},
+                            "name": {"label": entry["name"]},
+                            "title": {"label": entry["title"]},
+                            "email": {"label": entry["email"]},
+                            "role": {"label": entry["role"]},
                             "actions": [
                                 {
-                                    "action_id": "rop_sender_blacklist_remove",
-                                    "label": t("Remove", locale),
-                                    "description": t(
-                                        "New messages from this sender will be processed normally.",
-                                        locale,
-                                    ),
-                                    "args": {"email": email},
-                                }
+                                    "action_id": "rop_sender_blacklist_update", "label": t("Edit", locale), "icon": "edit", "flow": "direct_execute", "inline_edit": True,
+                                    "args": {"original_email": entry["email"]}, "fields": _blacklist_fields(locale, entry),
+                                },
+                                {"action_id": "rop_sender_blacklist_remove", "label": t("Remove", locale), "icon": "trash", "flow": "direct_execute", "args": {"email": entry["email"]}},
                             ],
                         }
-                        for email in emails
+                        for entry in page_entries
                     ]
                     return ok_result(
                         {
@@ -473,25 +552,31 @@ class BeeAgentUiAdapter:
                                 {
                                     "type": "data_table",
                                     "title": t("Sender blacklist", locale),
-                                    "description": t("All emails from these senders will be classified as Irrelevant.", locale),
+                                    "description": t("All messages from these addresses will be sent to the Irrelevant classification.", locale),
+                                    "id": "rop-blacklist",
                                     "toolbar": {
+                                        "hidden": {
+                                            "tab": "blacklist",
+                                            "page_size": page_size,
+                                            **({"lang": query["lang"]} if query.get("lang") else {}),
+                                        },
+                                        "fields": [{"name": "q", "type": "text", "label": t("Email", locale), "value": query_text, "placeholder": t("Search", locale)}],
                                         "actions": [
+                                            {"href": "/rop/blacklist.csv" + ("?" + urlencode({"q": query_text}) if query_text else ""), "label": t("Downloads", locale)},
                                             {
-                                                "action_id": "rop_sender_blacklist_add",
-                                                "label": t("Add email", locale),
-                                                "description": t(
-                                                    "Messages from this sender will be classified as Irrelevant.",
-                                                    locale,
-                                                ),
-                                                "fields": [{"name": "email", "type": "email", "label": t("Email", locale)}],
+                                                "action_id": "rop_sender_blacklist_add", "label": t("Add", locale), "flow": "direct_execute", "fields": _blacklist_fields(locale),
                                             }
                                         ]
                                     },
                                     "columns": [
+                                        {"key": "name", "label": t("Name", locale), "cell": "text"},
+                                        {"key": "title", "label": t("Title", locale), "cell": "text"},
                                         {"key": "email", "label": t("Email", locale), "cell": "text"},
+                                        {"key": "role", "label": t("Role", locale), "cell": "text"},
                                         {"key": "actions", "label": "", "cell": "actions"},
                                     ],
                                     "rows": rows,
+                                    "pagination": _blacklist_pagination(query, current_page, page_count, page_size_int, len(entries), locale),
                                 }
                             ]
                         }

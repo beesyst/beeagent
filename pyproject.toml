@@ -66,6 +66,7 @@ filterwarnings = [
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
+beeui = { path = "../beeui-pr127", editable = true }
 torch = [
     { index = "pytorch-cpu", extra = "docling-cpu" },
     { index = "pytorch-cu126", extra = "docling-cuda" },
