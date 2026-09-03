@@ -2834,7 +2834,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 
 - BeeUI prerequisite выпущен и подключён;
 - Local Application installation и launch flow реализован в `beeagent`;
-- verified Bitrix user получает bounded BeeUI viewer session;
+- verified Bitrix user получает bounded BeeUI session with configured `viewer` or trusted Local App `operator` role; embedded `admin` is excluded;
 - вся существующая ROP console работает внутри Bitrix iframe;
 - user access управляется Bitrix24, а не duplicated BeeAgent user list;
 - OAuth secrets не сохраняются и не раскрываются;
@@ -2855,7 +2855,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - на startup отклоняются разные principals с одинаковым resolved token value без раскрытия secret;
 - server-side authorization применяется для HTML/API/resource routes: unauthenticated HTML → login redirect, unauthenticated API → 401, authenticated unauthorized → 403, unknown protected surface → default-deny;
 - ROP-only principal видит только `/rop`, Event Detail, `/api/rop/*` и bounded ROP-owned evidence; navigation visibility отражает authorization через BeeUI `navigation_visibility_resolver`;
-- ROP-only principal после login попадает на `/rop`; verified Bitrix external principal остаётся bounded ROP-only viewer;
+- ROP-only principal после login попадает на `/rop`; verified Bitrix external principal remains bounded ROP-only with configured `viewer` or trusted Local App `operator` role; embedded `admin` is excluded;
 - **dependency blocker**: BeeUI Iteration 13.14 контракт `navigation_visibility_resolver` содержится в `beeui 0.26.0`, но release пока не опубликован в PyPI (доступно только `<=0.25.1`), а `beeagent-rop` не опубликован в registry; registry lock update невозможен до публикации обоих пакетов. Реализация и verification выполнены на локальном beeui 0.26.0 (venv, не в pyproject). Для production rollout обязательна публикация `beeui 0.26.0` и `beeagent-rop` в registry, после чего `beeui>=0.26.0,<0.30` + registry `beeagent-rop` lock;
 - rollout требует invalidation/rotation старых sessions/credentials (`./start.sh auth rotate all --logout-all` / principal token rotation);
 - `pyproject.toml.version` unchanged.
@@ -2884,7 +2884,7 @@ Other BeeAgent tables use the same canonical table presentation without receivin
 - использовать generic BeeUI request-scoped navigation visibility contract;
 - скрывать недоступные navigation items;
 - направлять ROP-only principal после login на разрешённую ROP surface;
-- сохранить Bitrix verified external-principal flow как ROP-only viewer access;
+- сохранить Bitrix verified external-principal flow как ROP-only configured viewer/operator access, without browser-controlled role or embedded admin;
 - сохранить auth-disabled loopback development mode;
 - обновить tests и documentation.
 
@@ -3109,7 +3109,7 @@ ROP Web Console больше не реконструирует historical ROP st
 - tests and production smoke green;
 - `pyproject.toml.version` unchanged.
 
-### Итерация UI-8.8 — ROP sender blacklist management v1
+### Итерация UI-8.8 — ROP sender blacklist management v2
 
 **Статус:** DONE
 
@@ -3134,7 +3134,7 @@ ROP Web Console больше не реконструирует historical ROP st
   `Все письма с этих ящиков будут отправлены в классификацию «Irrelevant».`;
 - показать canonical e-mail table;
 - добавить `Добавить e-mail`;
-- добавить bounded remove action с confirmation;
+- добавить structured Name/Title/Email/Role CRUD с inline edit, direct bounded Add/Save/Delete, e-mail search, canonical pagination и CSV export; CSV import excluded;
 - viewer сохраняется read-only;
 - blacklist mutations требуют `operator` + `rop` scope;
 - включить BeeUI bounded operator actions только вместе с product callbacks/authorization;
@@ -3154,7 +3154,7 @@ ROP Web Console больше не реконструирует historical ROP st
 - subject keyword blacklist;
 - regex/wildcards;
 - native Bitrix Lead/card button;
-- bulk import/export;
+- CSV import and unrelated bulk import/export;
 - checkbox `send/do not send to Bitrix`;
 - silent drop before Bitrix;
 - changing/deleting historical Bitrix entities;
@@ -3191,7 +3191,7 @@ Existing Bitrix irrelevant/JUNK write-back behavior используется б�
 - invalid email is rejected;
 - duplicate add is idempotent;
 - remove of existing entry succeeds;
-- remove requires explicit confirmation in UI;
+- direct blacklist mutations use the protected product action boundary and do not require a browser preview or confirmation;
 - direct sender match produces effective `irrelevant`;
 - forwarded message matches original sender rather than technical forwarder when canonical original-sender evidence exists;
 - test scenario George → Kevin → automatic forward → `parsales@welding.kz` matches George;
