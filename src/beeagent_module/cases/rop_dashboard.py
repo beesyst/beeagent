@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -11,6 +14,8 @@ from typing import Any
 
 DASHBOARD_ARTIFACT = "rop_dashboard.json"
 WEB_PROJECTION_ARTIFACT = "rop_web_projection.json"
+WEB_PROJECTION_V2_ARTIFACT = "rop_web_projection_v2.json"
+WEB_PROJECTION_V2_DIRECTORY = "rop_web_projection_v2"
 ROP_WEB_PROJECTION_RUNS_MAX = 20
 ALLOWED_PERIODS: tuple[str, ...] = (
     "today",
@@ -60,6 +65,21 @@ ALLOWED_SORT_FIELDS: tuple[str, ...] = (
 )
 ALLOWED_PAGE_SIZES: tuple[int, ...] = (25, 50, 100)
 DEFAULT_PAGE_SIZE = 25
+
+ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
+    "overview",
+    "queue",
+    "threads",
+    "ai_assist",
+    "sources",
+    "attachments",
+    "evidence",
+    "bitrix",
+    "recommendations",
+    "api",
+)
+_SAFE_PROJECTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_SAFE_PROJECTION_REVISION_RE = re.compile(r"^[gr]_[a-f0-9]{32}$")
 
 ALLOWED_QUEUE_IDS: tuple[str, ...] = (
     "high_priority",
@@ -844,6 +864,18 @@ def write_rop_web_projection(
         encoding="utf-8",
     )
     temporary_path.replace(artifact_path)
+    periods_by_run = {
+        run_id: list(dashboard_entries)
+        for run_id, dashboard_entries in dashboards.items()
+        if isinstance(run_id, str) and isinstance(dashboard_entries, dict)
+    }
+    write_rop_web_projection_v2(
+        storage_dir=storage_dir,
+        run_ids=bounded_run_ids,
+        total_runs=total_runs,
+        periods_by_run=periods_by_run,
+        logger=logger,
+    )
     logger.info(
         "ROP Web projection written: path=%s runs=%d",
         str(artifact_path.relative_to(storage_dir)),
@@ -882,6 +914,597 @@ def refresh_rop_web_projection(
     projection["total_runs"] = index["total_runs"] + (1 if is_new_run else 0)
     write_rop_web_projection(storage_dir, projection, logger)
     return True
+
+
+def _projection_identifier(value: object) -> str | None:
+    if not isinstance(value, str) or not _SAFE_PROJECTION_ID_RE.fullmatch(value):
+        return None
+    return value
+
+
+def _projection_revision(value: object) -> str | None:
+    if not isinstance(value, str) or not _SAFE_PROJECTION_REVISION_RE.fullmatch(value):
+        return None
+    return value
+
+
+def _v2_view_key(view_id: str, period: str | None = None) -> str:
+    if view_id not in ROP_WEB_PROJECTION_V2_VIEW_IDS:
+        raise ValueError("ROP Web projection view is invalid")
+    if view_id in {"overview", "bitrix", "api"}:
+        if period is None:
+            raise ValueError("ROP Web projection period is required")
+        validate_period(period)
+        return f"{view_id}.{period}"
+    if period is not None:
+        raise ValueError("ROP Web projection period is not supported for this view")
+    return view_id
+
+
+def _v2_view_file_name(view_key: str) -> str:
+    return sha256(view_key.encode("utf-8")).hexdigest() + ".json"
+
+
+def rop_web_projection_v2_view_path(
+    storage_dir: Path,
+    generation: str,
+    run_id: str,
+    revision: str,
+    view_key: str,
+) -> Path | None:
+    safe_generation = _projection_revision(generation)
+    safe_run_id = _projection_identifier(run_id)
+    safe_revision = _projection_revision(revision)
+    if safe_generation is None or safe_run_id is None or safe_revision is None:
+        return None
+    try:
+        _v2_view_key(*view_key.split(".", 1)) if "." in view_key else _v2_view_key(
+            view_key
+        )
+    except ValueError:
+        return None
+    root = (storage_dir / "interfaces" / WEB_PROJECTION_V2_DIRECTORY).resolve()
+    path = (
+        root
+        / safe_generation
+        / sha256(safe_run_id.encode("utf-8")).hexdigest()
+        / safe_revision
+        / _v2_view_file_name(view_key)
+    )
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
+def rop_web_projection_v2_manifest(storage_dir: Path) -> dict[str, Any] | None:
+    path = storage_dir / "interfaces" / WEB_PROJECTION_V2_ARTIFACT
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError, TypeError:
+        return None
+    if not isinstance(data, dict) or data.get("schema_version") != 2:
+        return None
+    generation = _projection_revision(data.get("generation"))
+    latest_run_id = _projection_identifier(data.get("latest_run_id"))
+    run_ids = data.get("run_ids")
+    total_runs = data.get("total_runs")
+    runs = data.get("runs")
+    if (
+        generation is None
+        or latest_run_id is None
+        or not isinstance(run_ids, list)
+        or not run_ids
+        or len(run_ids) > ROP_WEB_PROJECTION_RUNS_MAX
+        or not isinstance(total_runs, int)
+        or isinstance(total_runs, bool)
+        or total_runs < len(run_ids)
+        or not isinstance(runs, dict)
+    ):
+        return None
+    normalized_run_ids: list[str] = []
+    for run_id in run_ids:
+        safe_run_id = _projection_identifier(run_id)
+        entry = runs.get(run_id) if isinstance(run_id, str) else None
+        if safe_run_id is None or not isinstance(entry, dict):
+            return None
+        revision = _projection_revision(entry.get("revision"))
+        entry_generation = _projection_revision(entry.get("generation"))
+        view_keys = entry.get("view_keys")
+        if (
+            revision is None
+            or entry_generation is None
+            or not isinstance(view_keys, list)
+            or not view_keys
+            or not all(isinstance(value, str) for value in view_keys)
+        ):
+            return None
+        for view_key in view_keys:
+            try:
+                _v2_view_key(
+                    *view_key.split(".", 1)
+                ) if "." in view_key else _v2_view_key(view_key)
+            except ValueError:
+                return None
+        normalized_run_ids.append(safe_run_id)
+    if latest_run_id != normalized_run_ids[0] or len(set(normalized_run_ids)) != len(
+        normalized_run_ids
+    ):
+        return None
+    return data
+
+
+def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
+    required_types: dict[str, dict[str, type]] = {
+        "queue": {"queue_rows": list, "filter_options": dict},
+        "threads": {"thread_summary": dict, "threads": list},
+        "ai_assist": {"ai_assist_summary": dict, "ai_assist_events": list},
+        "sources": {"source_health": list},
+        "attachments": {"attachment_summary": dict},
+        "evidence": {"evidence_links": list},
+        "recommendations": {"delivery_recommendations": dict},
+    }
+    if view_key.startswith("overview."):
+        required = {
+            "business_kpi": dict,
+            "series": dict,
+            "priority_preview": dict,
+            "action_required_count": int,
+        }
+    elif view_key.startswith("bitrix."):
+        required = {"business_kpi": dict, "queues": dict, "bitrix": dict}
+    elif view_key.startswith("api."):
+        required = {
+            "business_kpi": dict,
+            "series": dict,
+            "queues": dict,
+            "canonical_queue_rows": list,
+        }
+    else:
+        required = required_types.get(view_key)
+    if required is None:
+        return False
+    if not all(
+        isinstance(payload.get(name), expected) for name, expected in required.items()
+    ):
+        return False
+    action_required_count = payload.get("action_required_count")
+    return not isinstance(action_required_count, bool) and (
+        not view_key.startswith("overview.")
+        or isinstance(action_required_count, int)
+        and action_required_count >= 0
+    )
+
+
+def read_rop_web_projection_v2_view(
+    storage_dir: Path,
+    manifest: dict[str, Any],
+    run_id: str,
+    view_id: str,
+    period: str | None = None,
+) -> dict[str, Any] | None:
+    safe_run_id = _projection_identifier(run_id)
+    if safe_run_id is None:
+        return None
+    try:
+        view_key = _v2_view_key(view_id, period)
+    except ValueError:
+        return None
+    entry = manifest.get("runs", {}).get(safe_run_id)
+    if not isinstance(entry, dict) or view_key not in entry.get("view_keys", []):
+        return None
+    path = rop_web_projection_v2_view_path(
+        storage_dir,
+        str(entry.get("generation", "")),
+        safe_run_id,
+        str(entry.get("revision", "")),
+        view_key,
+    )
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError, TypeError:
+        return None
+    if (
+        not isinstance(data, dict)
+        or data.get("schema_version") != 2
+        or data.get("run_id") != safe_run_id
+        or data.get("generation") != entry.get("generation")
+        or data.get("revision") != entry.get("revision")
+        or data.get("view_key") != view_key
+        or not isinstance(data.get("payload"), dict)
+        or not _v2_view_payload_valid(view_key, data["payload"])
+    ):
+        return None
+    return data["payload"]
+
+
+def _v2_payload_fields(data: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+    return {name: data[name] for name in names if name in data}
+
+
+def _v2_event_identity(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("run_id") or ""),
+        str(item.get("source_id") or ""),
+        str(item.get("event_id") or ""),
+        str(item.get("event_instance_id") or ""),
+    )
+
+
+def _v2_canonical_queue_rows(
+    queues: dict[str, Any],
+    attention_events: list[dict[str, Any]],
+    canonical_rows_builder: Any,
+) -> list[dict[str, Any]]:
+    rows = canonical_rows_builder(queues, attention_events, {})
+    attention_by_identity = {
+        _v2_event_identity(item): item
+        for item in attention_events
+        if isinstance(item, dict)
+    }
+    memberships: dict[tuple[str, str, str, str], list[str]] = {}
+    for queue_id, items in queues.items():
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            identity = _v2_event_identity(item)
+            memberships.setdefault(identity, []).append(str(queue_id))
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        copied = dict(row)
+        identity = _v2_event_identity(copied)
+        attention = attention_by_identity.get(identity, {})
+        if isinstance(attention, dict):
+            for field in ("sender", "subject", "date", "source_display_name"):
+                if not copied.get(field) and attention.get(field):
+                    copied[field] = attention[field]
+        copied["queue_memberships"] = sorted(memberships.get(identity, []))[:8]
+        result.append(copied)
+    return result
+
+
+def build_rop_web_projection_v2_views(
+    storage_dir: Path,
+    run_id: str,
+    periods: list[str],
+) -> dict[str, dict[str, Any]]:
+    from beeagent_module.interfaces.ui.read_model import (
+        _build_rop_tab_read_model_legacy,
+        _canonical_queue_rows,
+    )
+
+    selected_periods = list(dict.fromkeys(periods))
+    for period in selected_periods:
+        validate_period(period)
+    data_by_period: dict[str, dict[str, Any]] = {}
+    for period in selected_periods:
+        data_by_period[period] = _build_rop_tab_read_model_legacy(
+            storage_dir=storage_dir,
+            tab="api",
+            run_id=run_id,
+            period=period,
+            default_period=period,
+            configured_periods=selected_periods,
+        )
+    if not data_by_period or any("error" in value for value in data_by_period.values()):
+        raise ValueError("ROP Web projection source data is unavailable")
+
+    overview_fields = (
+        "warnings",
+        "business_kpi",
+        "series",
+        "rop_recommendations",
+        "updated_at",
+        "period",
+        "period_start_utc",
+        "period_end_utc",
+        "time_basis",
+        "kpis",
+        "funnel",
+        "source_health",
+        "classification_distribution",
+        "attachment_summary",
+        "recommendations",
+        "attention_events",
+        "evidence_links",
+        "latest_selection",
+        "sources",
+        "classified_count",
+        "case_type_counts",
+        "priority_counts",
+        "fallback_count",
+        "normalized_count",
+        "ai_adjudicator_summary",
+        "final_decisions",
+        "final_decision_summary",
+        "current_state_kpi",
+        "current_state_queues",
+    )
+    views: dict[str, dict[str, Any]] = {}
+    for period, data in data_by_period.items():
+        bitrix_data = _build_rop_tab_read_model_legacy(
+            storage_dir=storage_dir,
+            tab="bitrix",
+            run_id=run_id,
+            period=period,
+            default_period=period,
+            configured_periods=selected_periods,
+        )
+        if "error" in bitrix_data:
+            raise ValueError("ROP Web projection Bitrix source data is unavailable")
+        overview_payload = _v2_payload_fields(data, overview_fields)
+        queues = data.get("queues", {})
+        overview_payload["action_required_count"] = 0
+        if isinstance(queues, dict):
+            overview_payload["priority_preview"] = {
+                queue_id: [item for item in rows if isinstance(item, dict)][:25]
+                for queue_id, rows in queues.items()
+                if isinstance(rows, list)
+            }
+            action_required_identities = {
+                _v2_event_identity(item)
+                for queue_id in ALLOWED_QUEUE_IDS
+                for rows in (queues.get(queue_id, []),)
+                if isinstance(rows, list)
+                for item in rows
+                if isinstance(item, dict) and str(item.get("event_id") or "").strip()
+            }
+            overview_payload["action_required_count"] = len(action_required_identities)
+        views[_v2_view_key("overview", period)] = overview_payload
+        bitrix_payload = _v2_payload_fields(
+            bitrix_data,
+            (
+                "warnings",
+                "business_kpi",
+                "queues",
+                "current_state_kpi",
+                "current_state_queues",
+                "bitrix",
+                "evidence_links",
+                "updated_at",
+                "period",
+                "period_start_utc",
+                "period_end_utc",
+                "time_basis",
+            ),
+        )
+        bitrix_payload["bitrix"] = (
+            bitrix_data.get("bitrix")
+            if isinstance(bitrix_data.get("bitrix"), dict)
+            else {}
+        )
+        views[_v2_view_key("bitrix", period)] = bitrix_payload
+        api_payload = {
+            name: value
+            for name, value in data.items()
+            if name
+            not in {
+                "filter_params",
+                "page",
+                "page_size",
+                "pagination",
+                "sort",
+                "order",
+                "queue_rows",
+            }
+        }
+        api_queues = data.get("queues", {})
+        api_attention_events = data.get("attention_events", [])
+        api_payload["canonical_queue_rows"] = _v2_canonical_queue_rows(
+            api_queues if isinstance(api_queues, dict) else {},
+            api_attention_events if isinstance(api_attention_events, list) else [],
+            _canonical_queue_rows,
+        )
+        views[_v2_view_key("api", period)] = api_payload
+
+    all_data = data_by_period.get("all") or next(iter(data_by_period.values()))
+    queues = all_data.get("queues", {})
+    attention_events = all_data.get("attention_events", [])
+    canonical_rows = _v2_canonical_queue_rows(
+        queues if isinstance(queues, dict) else {},
+        attention_events if isinstance(attention_events, list) else [],
+        _canonical_queue_rows,
+    )
+    views[_v2_view_key("queue")] = {
+        "queue_rows": canonical_rows,
+        "filter_options": all_data.get("filter_options", {}),
+        "period": "all",
+        "updated_at": all_data.get("updated_at"),
+    }
+    for view_id, fields in {
+        "threads": ("thread_summary", "threads", "warnings"),
+        "ai_assist": (
+            "ai_assist_summary",
+            "ai_assist_events",
+            "ai_adjudicator_summary",
+            "final_decisions",
+            "warnings",
+        ),
+        "sources": ("source_health", "sources", "warnings"),
+        "attachments": ("attachment_summary", "warnings"),
+        "evidence": ("evidence_links", "warnings"),
+        "recommendations": ("delivery_recommendations", "warnings"),
+    }.items():
+        views[_v2_view_key(view_id)] = _v2_payload_fields(all_data, fields)
+    return views
+
+
+def _v2_required_view_keys(periods: list[str]) -> set[str]:
+    selected_periods = list(dict.fromkeys(periods))
+    for period in selected_periods:
+        validate_period(period)
+    required = {
+        _v2_view_key(view_id)
+        for view_id in (
+            "queue",
+            "threads",
+            "ai_assist",
+            "sources",
+            "attachments",
+            "evidence",
+            "recommendations",
+        )
+    }
+    for period in selected_periods:
+        required.update(
+            {
+                _v2_view_key("overview", period),
+                _v2_view_key("bitrix", period),
+                _v2_view_key("api", period),
+            }
+        )
+    return required
+
+
+def write_rop_web_projection_v2(
+    storage_dir: Path,
+    run_ids: list[str],
+    total_runs: int,
+    periods_by_run: dict[str, list[str]],
+    logger: logging.Logger,
+) -> Path:
+    existing = rop_web_projection_v2_manifest(storage_dir)
+    interfaces_dir = storage_dir / "interfaces"
+    if not run_ids:
+        return interfaces_dir / WEB_PROJECTION_V2_ARTIFACT
+    root = interfaces_dir / WEB_PROJECTION_V2_DIRECTORY
+    root.mkdir(parents=True, exist_ok=True)
+    generation = "g_" + uuid.uuid4().hex
+    temporary_root = root / ("." + generation + ".tmp")
+    final_root = root / generation
+    if temporary_root.exists() or final_root.exists():
+        raise ValueError("ROP Web projection generation collision")
+    next_runs: dict[str, dict[str, Any]] = {}
+    if existing is not None:
+        next_runs.update(existing.get("runs", {}))
+    pending_views: list[tuple[str, str, dict[str, dict[str, Any]]]] = []
+    for run_id, periods in periods_by_run.items():
+        safe_run_id = _projection_identifier(run_id)
+        if safe_run_id is None:
+            raise ValueError("ROP Web projection run_id is invalid")
+        revision = "r_" + uuid.uuid4().hex
+        views = build_rop_web_projection_v2_views(storage_dir, safe_run_id, periods)
+        required_view_keys = _v2_required_view_keys(periods)
+        if set(views) != required_view_keys:
+            raise ValueError("ROP Web projection views are incomplete or uncontrolled")
+        if not all(
+            isinstance(payload, dict) and _v2_view_payload_valid(view_key, payload)
+            for view_key, payload in views.items()
+        ):
+            raise ValueError("ROP Web projection view payload is malformed")
+        pending_views.append((safe_run_id, revision, views))
+    try:
+        temporary_root.mkdir(parents=True, exist_ok=False)
+        for safe_run_id, revision, views in pending_views:
+            run_root = (
+                temporary_root
+                / sha256(safe_run_id.encode("utf-8")).hexdigest()
+                / revision
+            )
+            run_root.mkdir(parents=True, exist_ok=False)
+            for view_key, payload in views.items():
+                target = run_root / _v2_view_file_name(view_key)
+                target.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 2,
+                            "generation": generation,
+                            "revision": revision,
+                            "run_id": safe_run_id,
+                            "view_key": view_key,
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+            next_runs[safe_run_id] = {
+                "generation": generation,
+                "revision": revision,
+                "view_keys": sorted(views),
+            }
+        temporary_root.replace(final_root)
+    except Exception:
+        raise
+
+    bounded_run_ids = []
+    for run_id in run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]:
+        if _projection_identifier(run_id) is None or run_id not in next_runs:
+            raise ValueError("ROP Web projection manifest run is unavailable")
+        bounded_run_ids.append(run_id)
+    manifest = {
+        "schema_version": 2,
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generation": generation,
+        "latest_run_id": bounded_run_ids[0] if bounded_run_ids else None,
+        "run_ids": bounded_run_ids,
+        "total_runs": total_runs,
+        "runs": {run_id: next_runs[run_id] for run_id in bounded_run_ids},
+    }
+    if rop_web_projection_v2_manifest_data(manifest) is None:
+        raise ValueError("ROP Web projection manifest is malformed")
+    manifest_path = interfaces_dir / WEB_PROJECTION_V2_ARTIFACT
+    temporary_manifest = manifest_path.with_suffix(".json.tmp")
+    temporary_manifest.write_text(
+        json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.replace(temporary_manifest, manifest_path)
+    logger.info("ROP Web projection v2 published: runs=%d", len(bounded_run_ids))
+    return manifest_path
+
+
+def rop_web_projection_v2_manifest_data(data: dict[str, Any]) -> dict[str, Any] | None:
+    return _validate_rop_web_projection_v2_manifest_data(data)
+
+
+def _validate_rop_web_projection_v2_manifest_data(
+    data: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    return data if _v2_manifest_fields_valid(data) else None
+
+
+def _v2_manifest_fields_valid(data: dict[str, Any]) -> bool:
+    if (
+        data.get("schema_version") != 2
+        or _projection_revision(data.get("generation")) is None
+    ):
+        return False
+    run_ids = data.get("run_ids")
+    runs = data.get("runs")
+    if not isinstance(run_ids, list) or not run_ids or not isinstance(runs, dict):
+        return False
+    if (
+        len(run_ids) > ROP_WEB_PROJECTION_RUNS_MAX
+        or data.get("latest_run_id") != run_ids[0]
+    ):
+        return False
+    total_runs = data.get("total_runs")
+    if (
+        not isinstance(total_runs, int)
+        or isinstance(total_runs, bool)
+        or total_runs < len(run_ids)
+    ):
+        return False
+    return all(
+        _projection_identifier(run_id) is not None
+        and isinstance(runs.get(run_id), dict)
+        and _projection_revision(runs[run_id].get("generation")) is not None
+        and _projection_revision(runs[run_id].get("revision")) is not None
+        and isinstance(runs[run_id].get("view_keys"), list)
+        and bool(runs[run_id]["view_keys"])
+        for run_id in run_ids
+    )
 
 
 def rop_web_projection_index(

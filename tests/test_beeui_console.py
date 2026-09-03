@@ -3831,20 +3831,20 @@ def test_rop_event_detail_shows_blacklist_override_reason_in_ru(
                 "events": [
                     {
                         "event_id": "evt-1",
-                            "event_instance_id": "event-000001",
-                            "final_case_type": "irrelevant",
-                            "final_case_subtype": None,
-                            "final_queue": "irrelevant",
-                            "final_action": "no_action",
-                            "final_decision_source": "policy_override",
-                            "final_confidence": 1.0,
-                            "needs_attention": False,
-                            "attention_reason": None,
-                            "automation_allowed": False,
-                            "bitrix_write_allowed": False,
-                            "policy_override_reason": "sender_blacklisted",
+                        "event_instance_id": "event-000001",
+                        "final_case_type": "irrelevant",
+                        "final_case_subtype": None,
+                        "final_queue": "irrelevant",
+                        "final_action": "no_action",
+                        "final_decision_source": "policy_override",
+                        "final_confidence": 1.0,
+                        "needs_attention": False,
+                        "attention_reason": None,
+                        "automation_allowed": False,
+                        "bitrix_write_allowed": False,
+                        "policy_override_reason": "sender_blacklisted",
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -7941,13 +7941,6 @@ def test_fallback_queue_rows_share_html_and_api_pagination(
         json.dumps(classified), encoding="utf-8"
     )
     _write_rop_web_projection(storage_dir)
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
-
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-fallback-queue")
-    entry = json.loads(entry_path.read_text(encoding="utf-8"))
-    for period in entry["dashboards"]:
-        entry["dashboards"][period]["queues"] = {}
-    entry_path.write_text(json.dumps(entry), encoding="utf-8")
     client = _client(storage_dir)
 
     html = client.get(
@@ -10332,8 +10325,8 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
     html = response.text
     assert 'data-beeui-page-tabs-progressive="true"' in html
     assert 'data-beeui-page-tab="true"' in html
-    assert 'beeui-tabs-compact' in html
-    assert 'beeui-tabs-compact' in html
+    assert "beeui-tabs-compact" in html
+    assert "beeui-tabs-compact" in html
 
     expected_icons = {
         "overview": "dashboard",
@@ -10371,7 +10364,7 @@ def test_rop_projection_missing_root_index_fails_explicitly(tmp_path: Path) -> N
     body = response.json()
     assert body["error"]["code"] == "web_projection_unavailable"
     assert "regenerate" in body["error"]["message"]
-    assert not (storage_dir / "interfaces" / "rop_web_projection.json").exists()
+    assert not (storage_dir / "interfaces" / "rop_web_projection_v2.json").exists()
 
 
 def test_rop_projection_malformed_root_index_fails_explicitly(
@@ -10379,7 +10372,7 @@ def test_rop_projection_malformed_root_index_fails_explicitly(
 ) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-malformed-index")
-    (storage_dir / "interfaces" / "rop_web_projection.json").write_text(
+    (storage_dir / "interfaces" / "rop_web_projection_v2.json").write_text(
         "{bad json", encoding="utf-8"
     )
     client = TestClient(_build_rop_app(storage_dir))
@@ -10405,18 +10398,16 @@ def test_rop_projection_invalid_index_fails_closed_without_read_mutation(
     malformed_index: dict[str, object],
 ) -> None:
     from beeagent_module.cases import rop_dashboard as rop_dashboard_module
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import rop_web_projection_v2_manifest
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-invalid-index")
     _write_rop_web_projection(storage_dir)
-    index_path = storage_dir / "interfaces" / "rop_web_projection.json"
+    index_path = storage_dir / "interfaces" / "rop_web_projection_v2.json"
     index = json.loads(index_path.read_text(encoding="utf-8"))
     index.update(malformed_index)
     index_path.write_text(json.dumps(index), encoding="utf-8")
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-invalid-index")
     before_index = index_path.read_bytes()
-    before_entry = entry_path.read_bytes()
 
     def fail_historical_read(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("historical aggregation must not run on GET")
@@ -10434,18 +10425,32 @@ def test_rop_projection_invalid_index_fails_closed_without_read_mutation(
     assert api.status_code == 503
     assert api.json()["error"]["code"] == "web_projection_unavailable"
     assert index_path.read_bytes() == before_index
-    assert entry_path.read_bytes() == before_entry
+    assert rop_web_projection_v2_manifest(storage_dir) is None
 
 
 def test_rop_projection_missing_selected_run_entry_fails_explicitly(
     tmp_path: Path,
 ) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-missing-entry")
     _write_rop_web_projection(storage_dir)
-    rop_web_projection_entry_path(storage_dir, "run-missing-entry").unlink()
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    entry = manifest["runs"]["run-missing-entry"]
+    path = rop_web_projection_v2_view_path(
+        storage_dir,
+        entry["generation"],
+        "run-missing-entry",
+        entry["revision"],
+        "api.7d",
+    )
+    assert path is not None
+    path.unlink()
     client = TestClient(_build_rop_app(storage_dir))
 
     response = client.get("/api/rop/dashboard?run_id=run-missing-entry")
@@ -10455,12 +10460,25 @@ def test_rop_projection_missing_selected_run_entry_fails_explicitly(
 
 
 def test_rop_projection_wrong_run_entry_fails_explicitly(tmp_path: Path) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-wrong-entry")
     _write_rop_web_projection(storage_dir)
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-wrong-entry")
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-wrong-entry"]
+    entry_path = rop_web_projection_v2_view_path(
+        storage_dir,
+        metadata["generation"],
+        "run-wrong-entry",
+        metadata["revision"],
+        "api.7d",
+    )
+    assert entry_path is not None
     entry = json.loads(entry_path.read_text(encoding="utf-8"))
     entry["run_id"] = "other-run"
     entry_path.write_text(json.dumps(entry), encoding="utf-8")
@@ -10472,15 +10490,61 @@ def test_rop_projection_wrong_run_entry_fails_explicitly(tmp_path: Path) -> None
     assert response.json()["error"]["code"] == "web_projection_unavailable"
 
 
+def test_rop_projection_malformed_view_payload_fails_explicitly(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-malformed-view")
+    _write_rop_web_projection(storage_dir)
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-malformed-view"]
+    view_path = rop_web_projection_v2_view_path(
+        storage_dir,
+        metadata["generation"],
+        "run-malformed-view",
+        metadata["revision"],
+        "api.7d",
+    )
+    assert view_path is not None
+    view = json.loads(view_path.read_text(encoding="utf-8"))
+    view["payload"] = {}
+    view_path.write_text(json.dumps(view), encoding="utf-8")
+    client = TestClient(_build_rop_app(storage_dir))
+
+    response = client.get("/api/rop/dashboard?run_id=run-malformed-view")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "web_projection_unavailable"
+
+
 def test_rop_projection_missing_period_entry_fails_explicitly(tmp_path: Path) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-missing-period")
     _write_rop_web_projection(storage_dir)
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-missing-period")
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-missing-period"]
+    entry_path = rop_web_projection_v2_view_path(
+        storage_dir,
+        metadata["generation"],
+        "run-missing-period",
+        metadata["revision"],
+        "api.7d",
+    )
+    assert entry_path is not None
     entry = json.loads(entry_path.read_text(encoding="utf-8"))
-    entry["dashboards"].pop("7d", None)
+    entry["view_key"] = "api.all"
     entry_path.write_text(json.dumps(entry), encoding="utf-8")
     client = TestClient(_build_rop_app(storage_dir))
 
@@ -10493,13 +10557,23 @@ def test_rop_projection_missing_period_entry_fails_explicitly(tmp_path: Path) ->
 def test_rop_projection_get_never_falls_back_to_run_enumeration(
     tmp_path: Path,
 ) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-a")
     _write_run_artifacts(storage_dir, "run-b")
     _write_rop_web_projection(storage_dir)
-    rop_web_projection_entry_path(storage_dir, "run-a").unlink()
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-a"]
+    path = rop_web_projection_v2_view_path(
+        storage_dir, metadata["generation"], "run-a", metadata["revision"], "api.7d"
+    )
+    assert path is not None
+    path.unlink()
     client = TestClient(_build_rop_app(storage_dir))
 
     response = client.get("/api/rop/dashboard?run_id=run-a")
@@ -10516,8 +10590,8 @@ def test_rop_projection_get_never_regenerates_or_writes(tmp_path: Path) -> None:
     response = client.get("/api/rop/dashboard")
 
     assert response.status_code == 503
-    assert not (storage_dir / "interfaces" / "rop_web_projection.json").exists()
-    assert not (storage_dir / "interfaces" / "rop_web_projection").exists()
+    assert not (storage_dir / "interfaces" / "rop_web_projection_v2.json").exists()
+    assert not (storage_dir / "interfaces" / "rop_web_projection_v2").exists()
 
 
 def test_rop_projection_error_is_stable_api_error(tmp_path: Path) -> None:
@@ -10554,15 +10628,28 @@ def test_rop_available_runs_and_total_runs_from_bounded_catalog(
 
 
 def test_rop_web_read_consumes_only_projection_artifacts(tmp_path: Path) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
 
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-read-a")
     _write_run_artifacts(storage_dir, "run-read-b")
     _write_rop_web_projection(storage_dir)
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-read-b")
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-read-b"]
+    entry_path = rop_web_projection_v2_view_path(
+        storage_dir,
+        metadata["generation"],
+        "run-read-b",
+        metadata["revision"],
+        "api.all",
+    )
+    assert entry_path is not None
     entry = json.loads(entry_path.read_text(encoding="utf-8"))
-    entry["dashboards"]["all"]["queues"] = {
+    entry["payload"]["queues"] = {
         "high_priority": [
             {
                 "event_id": "evt-proj",
@@ -10587,29 +10674,19 @@ def test_rop_web_read_consumes_only_projection_artifacts(tmp_path: Path) -> None
 
 
 def test_rop_trusted_attach_existing_overlay_in_tab_path(tmp_path: Path) -> None:
-    from beeagent_module.cases.rop_dashboard import rop_web_projection_entry_path
-
     storage_dir = _make_storage(tmp_path)
-    _write_run_artifacts(storage_dir, "run-attach")
-    _write_rop_web_projection(storage_dir)
-    entry_path = rop_web_projection_entry_path(storage_dir, "run-attach")
-    entry = json.loads(entry_path.read_text(encoding="utf-8"))
-    entry["dashboards"]["all"]["queues"] = {
-        "high_priority": [
-            {
-                "event_id": "evt-attach",
-                "event_instance_id": "inst-1",
-                "source_id": "hotline_mailbox",
-                "sender": "client@example.com",
-                "subject": "Attach existing",
-                "case_type": "new_lead",
-                "bot_case_type": "new_lead",
-                "priority": "high",
-                "run_id": "run-attach",
-            }
-        ]
-    }
-    entry_path.write_text(json.dumps(entry), encoding="utf-8")
+    run_dir = _write_run_artifacts(storage_dir, "run-attach")
+    classified = json.loads((run_dir / "classified_events.json").read_text())
+    classified[0].update(
+        {
+            "event_id": "evt-attach",
+            "event_instance_id": "inst-1",
+            "source_id": "hotline_mailbox",
+            "sender": "client@example.com",
+            "subject": "Attach existing",
+        }
+    )
+    (run_dir / "classified_events.json").write_text(json.dumps(classified))
     (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
         json.dumps(
             {
@@ -10628,6 +10705,7 @@ def test_rop_trusted_attach_existing_overlay_in_tab_path(tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
+    _write_rop_web_projection(storage_dir)
     client = _client(storage_dir)
 
     response = client.get("/api/rop/dashboard?run_id=run-attach&period=all&tab=queue")
@@ -10818,7 +10896,7 @@ def test_rop_auth_missing_projection_fails_closed(
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-no-proj")
     client = _scoped_auth_client(storage_dir)
-    (storage_dir / "interfaces" / "rop_web_projection.json").unlink()
+    (storage_dir / "interfaces" / "rop_web_projection_v2.json").unlink()
     login = client.post(
         "/auth/login",
         data={"user_id": "ropviewer", "token": "ropviewer-test-token"},
@@ -10849,7 +10927,7 @@ def test_rop_auth_malformed_projection_fails_closed(
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-malformed-proj")
     client = _scoped_auth_client(storage_dir)
-    (storage_dir / "interfaces" / "rop_web_projection.json").write_text(
+    (storage_dir / "interfaces" / "rop_web_projection_v2.json").write_text(
         "{bad json}", encoding="utf-8"
     )
     login = client.post(
@@ -10907,3 +10985,69 @@ def test_rop_projection_index_has_bounded_catalog_and_scalar_total(
     assert len(index["run_ids"]) == ROP_WEB_PROJECTION_RUNS_MAX
     assert index["total_runs"] == ROP_WEB_PROJECTION_RUNS_MAX + 5
     assert index["latest_run_id"] == index["run_ids"][0]
+
+
+def test_api_v2_uses_all_view_for_date_range_and_preserves_request_state(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-api-date-range")
+    classified = json.loads((run_dir / "classified_events.json").read_text())
+    classified.append(
+        {
+            "event_id": "evt-explicit-range",
+            "event_instance_id": "instance-explicit-range",
+            "source_id": "hotline_mailbox",
+            "sender": "range@example.com",
+            "subject": "Explicit date range",
+            "case_type": "new_lead",
+            "priority": "high",
+            "event_date": "2020-01-15T12:00:00Z",
+        }
+    )
+    (run_dir / "classified_events.json").write_text(json.dumps(classified))
+    _write_rop_web_projection(storage_dir)
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-api-date-range"]
+    api_view_path = rop_web_projection_v2_view_path(
+        storage_dir,
+        metadata["generation"],
+        "run-api-date-range",
+        metadata["revision"],
+        "api.all",
+    )
+    assert api_view_path is not None
+    api_snapshot = json.loads(api_view_path.read_text())
+    assert not {
+        "filter_params",
+        "page",
+        "page_size",
+        "pagination",
+        "sort",
+        "order",
+        "queue_rows",
+    }.intersection(api_snapshot["payload"])
+
+    client = _client(storage_dir)
+    response = client.get(
+        "/api/rop/dashboard?run_id=run-api-date-range&date_from=2020-01-01&"
+        "date_to=2020-01-31&page=1&page_size=50&sort=sender&order=asc"
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["filter_params"] == {
+        "date_from": "2020-01-01",
+        "date_to": "2020-01-31",
+    }
+    assert data["page"] == 1
+    assert data["page_size"] == 50
+    assert data["sort"] == "sender"
+    assert data["order"] == "asc"
+    assert "evt-explicit-range" in {row["event_id"] for row in data["queue_rows"]}

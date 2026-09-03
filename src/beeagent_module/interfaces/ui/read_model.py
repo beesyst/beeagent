@@ -17,8 +17,10 @@ from beeagent_module.cases.rop_dashboard import (
     apply_queue_filters,
     build_rop_dashboard,
     paginate_items,
+    read_rop_web_projection_v2_view,
     rop_web_projection_entry_path,
     rop_web_projection_index,
+    rop_web_projection_v2_manifest,
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
@@ -2453,6 +2455,156 @@ def build_rop_tab_read_model(
     order: str = "desc",
 ) -> dict[str, Any]:
     requested_tab = "overview" if tab == "api" else tab
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    if manifest is None:
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection manifest is missing or malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+    latest_run_id = manifest["latest_run_id"]
+    projection_runs = manifest["run_ids"]
+    total_runs = manifest["total_runs"]
+    selected_run_id = run_id or latest_run_id
+    if selected_run_id not in projection_runs:
+        return {"error": "not_found", "run_id": selected_run_id}
+
+    request_filter_params = dict(filter_params or {})
+    request_page = page
+    request_page_size = page_size
+    request_sort = sort
+    request_order = order
+    effective_period = period or default_period
+    if tab == "api" and (
+        request_filter_params.get("date_from") or request_filter_params.get("date_to")
+    ):
+        effective_period = "all"
+    allowed_periods = set(configured_periods or [])
+    warnings: list[dict[str, Any]] = []
+    if effective_period not in allowed_periods:
+        warnings.append({"code": "invalid_period", "period": effective_period})
+        effective_period = default_period
+    if requested_tab == "queue":
+        view_id = "queue"
+        view_period = None
+    elif tab == "api":
+        view_id = "api"
+        view_period = effective_period
+    elif requested_tab in {"overview", "bitrix"}:
+        view_id = requested_tab
+        view_period = effective_period
+    elif requested_tab in {
+        "threads",
+        "ai_assist",
+        "sources",
+        "attachments",
+        "evidence",
+        "recommendations",
+    }:
+        view_id = requested_tab
+        view_period = None
+    else:
+        return {
+            "error": "web_projection_unavailable",
+            "message": "ROP view is unavailable",
+        }
+
+    payload = read_rop_web_projection_v2_view(
+        storage_dir=storage_dir,
+        manifest=manifest,
+        run_id=selected_run_id,
+        view_id=view_id,
+        period=view_period,
+    )
+    if payload is None:
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection view is missing or malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+
+    result: dict[str, Any] = {
+        "run_id": selected_run_id,
+        "selected_run_id": selected_run_id,
+        "available_runs": projection_runs,
+        "total_runs": total_runs,
+        "status": "ok",
+        "configured_periods": list(configured_periods or []),
+        "default_period": default_period,
+        "filter_params": request_filter_params,
+        "page": request_page,
+        "page_size": request_page_size,
+        "sort": request_sort,
+        "order": request_order,
+    }
+    result.update(payload)
+    result.update(
+        {
+            "filter_params": request_filter_params,
+            "page": request_page,
+            "page_size": request_page_size,
+            "sort": request_sort,
+            "order": request_order,
+        }
+    )
+    existing_warnings = result.get("warnings", [])
+    if isinstance(existing_warnings, list):
+        warnings.extend(item for item in existing_warnings if isinstance(item, dict))
+    result["warnings"] = warnings
+
+    if requested_tab == "queue" or tab == "api":
+        canonical_rows = (
+            result.get("queue_rows", [])
+            if requested_tab == "queue"
+            else result.get("canonical_queue_rows", [])
+        )
+        if not isinstance(canonical_rows, list):
+            return {
+                "error": "web_projection_unavailable",
+                "message": "ROP Web projection queue view is malformed",
+            }
+        queue_filter = str((filter_params or {}).get("queue", "")).strip()
+        if queue_filter:
+            canonical_rows = [
+                row
+                for row in canonical_rows
+                if isinstance(row, dict)
+                and queue_filter in row.get("queue_memberships", [])
+            ]
+        filtered_rows = apply_queue_filters(canonical_rows, None, filter_params or {})
+        sorted_rows = sort_queue_items(filtered_rows, sort=sort, order=order)
+        queue_rows, pagination = paginate_items(
+            sorted_rows, page=page, page_size=page_size
+        )
+        pagination["total_items"] = pagination["total"]
+        pagination["showing_from"] = pagination["start"]
+        pagination["showing_to"] = pagination["end"]
+        result["queue_rows"] = queue_rows
+        result["pagination"] = pagination
+        result["page"] = pagination["page"]
+        result["page_size"] = pagination["page_size"]
+        result.pop("canonical_queue_rows", None)
+    return result
+
+
+def _build_rop_tab_read_model_legacy(
+    storage_dir: Path,
+    tab: str,
+    run_id: str | None = None,
+    period: str | None = None,
+    default_period: str | None = None,
+    configured_periods: list[str] | None = None,
+    filter_params: dict[str, str] | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort: str = "received_at",
+    order: str = "desc",
+) -> dict[str, Any]:
+    requested_tab = "overview" if tab == "api" else tab
     runs_dir = storage_dir / "runs"
     if not runs_dir.is_dir():
         return {"error": "no_runs", "message": "No runs directory"}
@@ -2472,12 +2624,19 @@ def build_rop_tab_read_model(
     projection_runs = projection["run_ids"]
     total_runs = projection["total_runs"]
 
-    if run_id is None:
-        run_id = latest_run_id
+    if not isinstance(latest_run_id, str) or not latest_run_id:
+        return {
+            "error": "web_projection_unavailable",
+            "message": (
+                "ROP Web projection index is missing or malformed; "
+                "regenerate it with the supported ROP dashboard command"
+            ),
+        }
+    selected_run_id = run_id if run_id is not None else latest_run_id
 
-    run_dir, error = _resolve_run_dir(storage_dir, run_id)
+    run_dir, error = _resolve_run_dir(storage_dir, selected_run_id)
     if run_dir is None:
-        return {"error": error, "run_id": run_id}
+        return {"error": error, "run_id": selected_run_id}
 
     effective_period = period or default_period
     allowed_periods = set(configured_periods or [])
@@ -2490,11 +2649,13 @@ def build_rop_tab_read_model(
         effective_period = "all"
 
     dashboard_payload: dict[str, Any] = {}
-    projection_entry = _read_json(rop_web_projection_entry_path(storage_dir, run_id))
+    projection_entry = _read_json(
+        rop_web_projection_entry_path(storage_dir, selected_run_id)
+    )
     if (
         not isinstance(projection_entry, dict)
         or projection_entry.get("schema_version") != 1
-        or projection_entry.get("run_id") != run_id
+        or projection_entry.get("run_id") != selected_run_id
     ):
         return {
             "error": "web_projection_unavailable",
@@ -2553,9 +2714,9 @@ def build_rop_tab_read_model(
         series = {}
 
     result: dict[str, Any] = {
-        "run_id": run_id,
-        "selected_run_id": run_id,
-        "available_runs": projection_runs or [run_id],
+        "run_id": selected_run_id,
+        "selected_run_id": selected_run_id,
+        "available_runs": projection_runs or [selected_run_id],
         "total_runs": total_runs,
         "status": "ok",
         "warnings": warnings,
@@ -2590,7 +2751,7 @@ def build_rop_tab_read_model(
             classified = _read_json(run_dir / "classified_events.json")
             extraction = _read_json(run_dir / "attachment_extraction.json")
             result["kpis"] = _build_kpis(
-                run_id=run_id,
+                run_id=selected_run_id,
                 total_runs=total_runs,
                 summary=summary if isinstance(summary, dict) else None,
                 source_diag=source_diag if isinstance(source_diag, dict) else None,
@@ -2666,18 +2827,20 @@ def build_rop_tab_read_model(
                 normalized if isinstance(normalized, list) else None,
                 result["source_health"],
                 locale="en",
-                run_id=run_id,
+                run_id=selected_run_id,
             )
             selection = _read_json(run_dir / "mailbox_selection.json")
             result["latest_selection"] = _build_latest_selection(
                 selection if isinstance(selection, dict) else None
             )
-            evidence_links = _build_evidence_links(run_id)
+            evidence_links = _build_evidence_links(selected_run_id)
             from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 
             for link in evidence_links:
                 link["available"] = (
-                    resolve_artifact_path(storage_dir, run_id, link["artifact_id"])
+                    resolve_artifact_path(
+                        storage_dir, selected_run_id, link["artifact_id"]
+                    )
                     is not None
                 )
             result["evidence_links"] = evidence_links
@@ -2697,7 +2860,7 @@ def build_rop_tab_read_model(
 
         bitrix_link = next(
             link
-            for link in _build_evidence_links(run_id)
+            for link in _build_evidence_links(selected_run_id)
             if link["artifact_id"] == "bitrix_reconciliation_json"
         )
         bitrix_link["available"] = isinstance(reconciliation, dict)
@@ -2749,7 +2912,7 @@ def build_rop_tab_read_model(
                 normalized if isinstance(normalized, list) else None,
                 [],
                 locale="en",
-                run_id=run_id,
+                run_id=selected_run_id,
             )
         canonical_rows = _canonical_queue_rows(
             queues, attention_events, filter_params or {}
@@ -2785,12 +2948,12 @@ def build_rop_tab_read_model(
         )
 
     if requested_tab == "evidence":
-        evidence_links = _build_evidence_links(run_id)
+        evidence_links = _build_evidence_links(selected_run_id)
         from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
 
         for link in evidence_links:
             link["available"] = (
-                resolve_artifact_path(storage_dir, run_id, link["artifact_id"])
+                resolve_artifact_path(storage_dir, selected_run_id, link["artifact_id"])
                 is not None
             )
         result["evidence_links"] = evidence_links
@@ -3531,7 +3694,7 @@ def _build_rop_overview_layout(
     series = data.get("series", {})
     if not isinstance(series, dict):
         series = {}
-    queues = data.get("queues", {})
+    queues = data.get("priority_preview", data.get("queues", {}))
     if not isinstance(queues, dict):
         queues = {}
     source_health = data.get("source_health", [])
@@ -3590,29 +3753,30 @@ def _build_rop_overview_layout(
     if current_period == "today":
         todays_emails = period_emails
 
-    action_event_ids: set[tuple[str, str, str]] = set()
-    anchor_run_id = str(data.get("run_id", ""))
-
-    for queue_id in ALLOWED_QUEUE_IDS:
-        queue_items = queues.get(queue_id, [])
-        if not isinstance(queue_items, list):
-            continue
-
-        for item in queue_items:
-            if not isinstance(item, dict):
+    action_required_value = data.get("action_required_count")
+    if isinstance(action_required_value, int) and not isinstance(
+        action_required_value, bool
+    ):
+        action_required_count = action_required_value
+    else:
+        action_event_ids: set[tuple[str, str, str, str]] = set()
+        anchor_run_id = str(data.get("run_id", ""))
+        for queue_id in ALLOWED_QUEUE_IDS:
+            queue_items = queues.get(queue_id, [])
+            if not isinstance(queue_items, list):
                 continue
-
-            event_id = str(item.get("event_id", "")).strip()
-            if event_id:
+            for item in queue_items:
+                if not isinstance(item, dict):
+                    continue
                 action_event_ids.add(
                     (
-                        str(item.get("run_id") or anchor_run_id or ""),
+                        str(item.get("run_id") or anchor_run_id),
                         str(item.get("source_id") or ""),
-                        event_id,
+                        str(item.get("event_id") or ""),
+                        str(item.get("event_instance_id") or ""),
                     )
                 )
-
-    action_required_count = len(action_event_ids)
+        action_required_count = len(action_event_ids)
     action_required_ratio = int(
         min(100, round((action_required_count / max(_int(total_leads), 1)) * 100))
     )
