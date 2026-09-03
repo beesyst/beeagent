@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.2...beeagent-v0.58.0) (2026-09-03)
+
+
+### Features
+
+* add bounded table actions and ROP sender blacklist ([3294958](https://github.com/beesyst/beeagent/commit/3294958180a3411cccd29d585c672c9ee50c806d))
+* **tables:** add bounded table actions ([2e3dac6](https://github.com/beesyst/beeagent/commit/2e3dac6aa62d7331c05baed8dda1f9b449a18842))
+
+
+### Bug Fixes
+
+* polish ROP blacklist UI ([3540ebc](https://github.com/beesyst/beeagent/commit/3540ebc3688e81eaa2bc5444bfc8db9a7fa7ac52))
+
 ## [0.57.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.1...beeagent-v0.57.2) (2026-09-02)
 
 
