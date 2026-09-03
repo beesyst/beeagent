@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.58.0...beeagent-v0.59.0) (2026-09-03)
+
+
+### Features
+
+* **rop:** add request-ready ROP Web projection v2 ([#235](https://github.com/beesyst/beeagent/issues/235)) ([6f6e401](https://github.com/beesyst/beeagent/commit/6f6e40185df35a06832c1f1997e50c55dc197f07))
+
 ## [0.58.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.57.2...beeagent-v0.58.0) (2026-09-03)
 
 
