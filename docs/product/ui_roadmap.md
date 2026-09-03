@@ -3111,7 +3111,7 @@ ROP Web Console больше не реконструирует historical ROP st
 
 ### Итерация UI-8.8 — ROP sender blacklist management v1
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
