@@ -3297,90 +3297,104 @@ blacklist sender
 
 ### Итерация UI-8.9 — Request-ready ROP Web projection v2
 
-**Status:** PLANNED
+**Статус:** PLANNED
 
 #### Goal
 
-Довести ROP Web read path после UI-8.7 до request-ready materialized read model, чтобы обычные `/rop` и `/api/rop/dashboard` GET не читали лишние periods, global writeback state или raw run artifacts и обеспечивали субсекундный операторский отклик на production-like объёме.
+Довести ROP Web read path после UI-8.7 до request-ready materialized read model, чтобы обычные `/rop` и `/api/rop/dashboard` GET читали только bounded manifest и один requested semantic view, не парсили многопериодную projection v1, global writeback state или unrelated raw run artifacts и обеспечивали субсекундный операторский отклик на production-like объёме.
 
 #### Scope
 
 - ввести derived ROP Web projection schema v2;
-- сохранить маленький bounded manifest/index для `latest_run_id`, `run_ids`, `total_runs` и generation/revision metadata;
-- разрешать scoped `run_id` access только через validated manifest, без чтения view payload;
-- materialize отдельные bounded request-ready views для ROP tabs и dashboard API;
-- хранить только реально необходимые period variants;
-- materialize canonical Queue rows до HTTP request;
-- применять trusted writeback overlay до публикации projection, а не во время GET;
-- убрать из normal Web GET повторную агрегацию Overview и tab-specific raw artifact reads;
-- normal GET должен читать только manifest и requested view;
-- normal lifecycle refresh должен обновлять только affected run generation/views;
-- explicit `rop dashboard` сохраняется как bootstrap/regeneration path;
-- publication остаётся atomic: immutable view files first, manifest/index last;
-- canonical ROP run artifacts остаются source of truth;
-- сохранить существующие `/rop`, query parameters, BeeUI layout semantics и public dashboard API shape;
-- обновить Web/projection documentation и performance verification contract.
+- сохранить маленький bounded manifest для `latest_run_id`, `run_ids`, `total_runs` и generation/revision metadata;
+- разрешать scoped `run_id` access только через validated manifest membership, без чтения semantic view payload;
+- materialize request-ready semantic views для `overview`, `queue`, `threads`, `ai_assist`, `sources`, `attachments`, `evidence`, `bitrix`, `recommendations` и dashboard API;
+- разделять projection по semantic view, а period variants хранить только там, где period является частью public behavior;
+- materialize Queue как один canonical compact row set без физического дублирования одного event между overlapping queue buckets;
+- сохранять queue membership как bounded row metadata и текущие filter/sort/pagination semantics;
+- materialize для Overview необходимые totals, series и bounded priority preview без передачи full Queue collections;
+- применять trusted writeback overlay до публикации affected projection generation, а не во время normal GET;
+- убрать из normal GET raw run-artifact reconstruction для tab-specific summaries;
+- HTML `get_page("rop", ...)` должен возвращать BeeUI presentation-minimal payload после построения `layout[]`, а не полный multi-megabyte semantic read-model;
+- dashboard API сохраняет текущую public response semantics, а synchronous read-model work выполняется вне async event loop;
+- normal GET должен читать только validated manifest и один requested view;
+- normal lifecycle refresh обновляет только affected run generation/views;
+- explicit `rop dashboard` сохраняется как supported bootstrap/regeneration path;
+- publication остаётся atomic: immutable validated views first, manifest last;
+- failed projection publication сохраняет предыдущую valid generation;
+- projection остаётся derived и не меняет authority/durability canonical run artifacts или `rop_writeback_state.json`;
+- normal GET не выполняет implicit migration, repair, regeneration или fallback к historical reconstruction;
+- сохранить существующие `/rop` URLs, query parameters, BeeUI `layout[]` semantics и dashboard API compatibility;
+- обновить Web/projection lifecycle, migration и performance verification documentation.
 
 #### Excluded
 
-- изменения `beeagent-rop` domain contracts;
-- изменения BeeUI progressive navigation;
+- изменения `beeagent-rop` domain contracts или classification semantics;
+- изменения generic BeeUI или `beeui.js`;
+- frontend prefetch/cache как способ скрыть server latency;
 - SPA/React/HTMX/Turbo;
-- Redis, PostgreSQL, Elasticsearch или отдельный cache service;
-- обязательный process-local cache;
+- Redis, PostgreSQL, SQLite, Elasticsearch или отдельный cache service;
+- обязательный process-local parsed-view cache;
+- Nginx response caching;
 - pre-rendered HTML projection;
 - client-side ROP dataset filtering;
-- hardware scaling как основное решение;
-- изменение ROP classification/business semantics.
+- увеличение Uvicorn worker count как основной performance fix;
+- dependency или package version changes.
 
 #### Deliverable
 
-BeeAgent Web runtime использует validated request-ready projection v2, где один ROP GET разрешает run через маленький manifest и читает ровно один соответствующий semantic view без historical reconstruction, global writeback scan или unrelated raw run-artifact reads.
+BeeAgent Web runtime использует validated request-ready projection v2, где один ROP Web/API GET разрешает run через маленький manifest, читает ровно один required semantic view и выполняет только bounded request-specific filtering/layout work без historical reconstruction, global writeback scan или unrelated raw artifact reads.
 
 #### Acceptance criteria
 
-- `/rop` GET не enumerates historical runs и не строит dashboard;
-- scoped auth не читает large per-run view payload для проверки `run_id`;
-- requested tab/period не требует parsing других periods/views;
-- normal GET не читает `rop_writeback_state.json`;
-- Overview не восстанавливает presentation KPI/series/source summaries из raw run artifacts;
-- Queue использует один pre-canonicalized row set и сохраняет current filter/sort/pagination semantics;
-- malformed/missing manifest or view fails closed without projection mutation;
-- failed publication preserves the previous valid generation;
-- existing selected-run anchor semantics remain unchanged;
-- no public URL, BeeUI layout or dashboard API compatibility regression;
-- production-like warm LOCAL p50 <= 300 ms and p95 <= 500 ms for Overview, Queue first page and dashboard API;
-- HTTPS p95 <= 1.0 s for the same primary routes under normal production load;
-- browser progressive tab transition warm p95 < 1.0 s after server-side acceptance is met.
+- `/rop` и `/api/rop/dashboard` GET не enumerates historical runs и не строят dashboard;
+- explicit scoped `run_id` authorization читает только bounded manifest metadata;
+- один requested tab/period не требует parsing других periods или semantic views;
+- normal GET не читает `rop_writeback_state.json`, v1 multi-period per-run projection или unrelated raw run artifacts;
+- Overview не читает full Queue dataset ради totals или preview;
+- Queue использует один canonical deduplicated row set и сохраняет current search/filter/sort/pagination/date/columns behavior;
+- Threads и другие tabs читают только собственный request-ready view;
+- BeeAgent HTML adapter не передаёт BeeUI unused multi-megabyte semantic collections;
+- malformed/missing manifest или requested view fail closed без projection mutation;
+- failed publication сохраняет previous valid generation и не меняет canonical artifacts/writeback state;
+- selected-run anchor semantics остаются compatible с UI-8.7;
+- warm production-like LOCAL p50 <= 300 ms и p95 <= 500 ms для Overview, Queue first page, Threads и dashboard API;
+- production HTTPS p95 <= 1.0 s для тех же primary routes;
+- первый authenticated LOCAL primary ROP request после Web process restart <= 1.5 s и не запускает reconstruction;
+- warm browser progressive tab transition p95 < 1.0 s после прохождения server-side gate.
 
 #### Checks
 
-- targeted projection lifecycle and read-model unit/integration tests;
-- full `pytest -q`;
-- tests proving GET does not read history, global writeback or unrelated raw artifacts;
-- scoped principal/auth tests for explicit and implicit `run_id`;
-- malformed manifest/view and unsafe identifier tests;
-- atomic publication/recovery tests;
-- runtime bootstrap and incremental-refresh smoke;
-- LOCAL and HTTPS p50/p95 production benchmark;
+- targeted projection lifecycle, manifest/view parser и read-model tests;
+- full `uv run pytest -q`;
+- deterministic I/O-boundary tests proving each GET reads only its manifest/requested view;
+- tests proving GET does not read history, global writeback, v1 projection or unrelated raw artifacts;
+- explicit/implicit `run_id` scoped authorization tests;
+- malformed/missing manifest/view, unsafe identifier and path-resolution tests;
+- atomic publication, interrupted publication and previous-generation recovery tests;
+- incremental refresh and explicit bootstrap smoke;
+- HTML adapter payload-boundary regression tests;
+- async dashboard API concurrency regression;
+- LOCAL/HTTPS cold and warm p50/p95 benchmark;
 - browser Back/Forward/F5/filter/sort/pagination/date/locale smoke;
 - Bitrix Local App iframe smoke;
-- SAST and targeted DAST-style route/auth checks;
-- malformed-input/fuzz-style projection parser coverage;
-- log review without raw payload or secret leakage.
+- SAST, targeted DAST-style auth/route checks and malformed/fuzz-style projection parser coverage;
+- application-log review without raw payload, token or secret leakage.
 
 #### DoD
 
-- request-ready projection v2 is the normal ROP Web read path;
-- HTTP GET remains read-only and never regenerates projection state;
+- request-ready projection v2 is the normal ROP Web/API read path;
+- HTTP GET remains read-only and never repairs or regenerates projection;
 - incremental refresh and explicit bootstrap publish valid generations atomically;
-- scoped authorization uses only bounded manifest metadata;
-- current ROP public contracts remain compatible;
-- performance acceptance is demonstrated with recorded LOCAL and HTTPS measurements;
+- scoped authorization uses bounded manifest metadata only;
+- HTML adapter returns bounded presentation-ready data;
+- canonical run/writeback artifacts remain authoritative;
+- current ROP URL/query/BeeUI/API contracts remain compatible;
+- recorded LOCAL, HTTPS, cold-start and browser performance gates pass;
 - tests and required security checks pass;
-- docs describe v2 lifecycle, migration and operational verification;
-- UI-8.7 remains DONE and stale IN PROGRESS wording is removed;
-- UI-9 follows the completed UI-8.9 performance gate.
+- docs describe v2 lifecycle, migration and production verification;
+- UI-8.7 remains DONE;
+- UI-9 starts only after UI-8.9 performance acceptance is complete.
 
 ### Итерация UI-9 — Remove legacy BeeAgent web after BeeUI parity
 
