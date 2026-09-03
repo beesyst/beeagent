@@ -6,6 +6,7 @@ import os
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -2651,15 +2652,25 @@ class TestRopWebProjectionLifecycle:
         original_aggregate = rop_dashboard_module._aggregate_period_events
         original_list_runs = rop_dashboard_module._list_run_ids
 
-        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+        def counted_aggregate(
+            runs_dir: Path,
+            anchor_run_id: str,
+            anchor_client_id: str,
+            logger: logging.Logger,
+        ) -> dict[str, Any]:
             nonlocal aggregate_calls
             aggregate_calls += 1
-            return original_aggregate(*args, **kwargs)
+            return original_aggregate(
+                runs_dir,
+                anchor_run_id,
+                anchor_client_id,
+                logger,
+            )
 
-        def counted_list_runs(*args: object, **kwargs: object) -> list[str]:
+        def counted_list_runs(runs_dir: Path) -> list[str]:
             nonlocal run_enumerations
             run_enumerations += 1
-            return original_list_runs(*args, **kwargs)
+            return original_list_runs(runs_dir)
 
         monkeypatch.setattr(
             rop_dashboard_module, "_aggregate_period_events", counted_aggregate
@@ -2691,20 +2702,30 @@ class TestRopWebProjectionLifecycle:
         original_read_list = rop_dashboard_module._read_json_list
         original_aggregate = rop_dashboard_module._aggregate_period_events
 
-        def counted_read_dict(*args: object, **kwargs: object) -> dict | None:
+        def counted_read_dict(path: Path) -> dict[str, Any] | None:
             nonlocal read_calls
             read_calls += 1
-            return original_read_dict(*args, **kwargs)
+            return original_read_dict(path)
 
-        def counted_read_list(*args: object, **kwargs: object) -> list[dict] | None:
+        def counted_read_list(path: Path) -> list[dict[str, Any]] | None:
             nonlocal read_calls
             read_calls += 1
-            return original_read_list(*args, **kwargs)
+            return original_read_list(path)
 
-        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+        def counted_aggregate(
+            runs_dir: Path,
+            anchor_run_id: str,
+            anchor_client_id: str,
+            logger: logging.Logger,
+        ) -> dict[str, Any]:
             nonlocal aggregate_calls
             aggregate_calls += 1
-            return original_aggregate(*args, **kwargs)
+            return original_aggregate(
+                runs_dir,
+                anchor_run_id,
+                anchor_client_id,
+                logger,
+            )
 
         monkeypatch.setattr(rop_dashboard_module, "_read_json_dict", counted_read_dict)
         monkeypatch.setattr(rop_dashboard_module, "_read_json_list", counted_read_list)
@@ -2734,20 +2755,30 @@ class TestRopWebProjectionLifecycle:
         original_read_list = rop_dashboard_module._read_json_list
         original_aggregate = rop_dashboard_module._aggregate_period_events
 
-        def counted_read_dict(*args: object, **kwargs: object) -> dict | None:
+        def counted_read_dict(path: Path) -> dict[str, Any] | None:
             nonlocal read_calls
             read_calls += 1
-            return original_read_dict(*args, **kwargs)
+            return original_read_dict(path)
 
-        def counted_read_list(*args: object, **kwargs: object) -> list[dict] | None:
+        def counted_read_list(path: Path) -> list[dict[str, Any]] | None:
             nonlocal read_calls
             read_calls += 1
-            return original_read_list(*args, **kwargs)
+            return original_read_list(path)
 
-        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+        def counted_aggregate(
+            runs_dir: Path,
+            anchor_run_id: str,
+            anchor_client_id: str,
+            logger: logging.Logger,
+        ) -> dict[str, Any]:
             nonlocal aggregate_calls
             aggregate_calls += 1
-            return original_aggregate(*args, **kwargs)
+            return original_aggregate(
+                runs_dir,
+                anchor_run_id,
+                anchor_client_id,
+                logger,
+            )
 
         monkeypatch.setattr(rop_dashboard_module, "_read_json_dict", counted_read_dict)
         monkeypatch.setattr(rop_dashboard_module, "_read_json_list", counted_read_list)
@@ -2781,10 +2812,20 @@ class TestRopWebProjectionLifecycle:
         aggregate_calls = 0
         original_aggregate = rop_dashboard_module._aggregate_period_events
 
-        def counted_aggregate(*args: object, **kwargs: object) -> dict:
+        def counted_aggregate(
+            runs_dir: Path,
+            anchor_run_id: str,
+            anchor_client_id: str,
+            logger: logging.Logger,
+        ) -> dict[str, Any]:
             nonlocal aggregate_calls
             aggregate_calls += 1
-            return original_aggregate(*args, **kwargs)
+            return original_aggregate(
+                runs_dir,
+                anchor_run_id,
+                anchor_client_id,
+                logger,
+            )
 
         def fail_catalog_enumeration(*_args: object, **_kwargs: object) -> list[str]:
             raise AssertionError("normal refresh must not rebuild the full catalog")
@@ -3343,3 +3384,142 @@ class TestQueueFilters:
                 items, sort="received_at", order="desc"
             )
         ] == ["late", "early", "malformed", "missing"]
+
+
+def test_v2_canonical_queue_rows_keep_same_event_id_sources_isolated() -> None:
+    queues = {
+        "high_priority": [
+            {
+                "run_id": "run-1",
+                "source_id": "source-a",
+                "event_id": "shared",
+                "event_instance_id": "instance-a",
+            },
+            {
+                "run_id": "run-1",
+                "source_id": "source-b",
+                "event_id": "shared",
+                "event_instance_id": "instance-b",
+            },
+        ]
+    }
+    attention_events = [
+        {
+            **queues["high_priority"][0],
+            "sender": "a@example.com",
+            "subject": "Source A",
+        },
+        {
+            **queues["high_priority"][1],
+            "sender": "b@example.com",
+            "subject": "Source B",
+        },
+    ]
+
+    rows = rop_dashboard_module._v2_canonical_queue_rows(
+        queues,
+        attention_events,
+        lambda *_args: [dict(item) for item in queues["high_priority"]],
+    )
+
+    assert [(row["source_id"], row["sender"], row["subject"]) for row in rows] == [
+        ("source-a", "a@example.com", "Source A"),
+        ("source-b", "b@example.com", "Source B"),
+    ]
+
+
+def test_v2_overview_action_required_count_is_exact_while_preview_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rows = [
+        {
+            "run_id": "run-1",
+            "source_id": "source-a",
+            "event_id": f"event-{number}",
+            "event_instance_id": f"instance-{number}",
+        }
+        for number in range(30)
+    ]
+    source_data = {
+        "business_kpi": {},
+        "series": {},
+        "queues": {"high_priority": rows, "needs_review": [dict(rows[0])]},
+        "attention_events": rows,
+        "filter_options": {},
+        "thread_summary": {},
+        "threads": [],
+        "ai_assist_summary": {},
+        "ai_assist_events": [],
+        "source_health": [],
+        "attachment_summary": {},
+        "evidence_links": [],
+        "delivery_recommendations": {},
+        "bitrix": {},
+    }
+
+    def source_model(*_args: object, **kwargs: object) -> dict[str, object]:
+        if kwargs.get("tab") == "bitrix":
+            return {"business_kpi": {}, "queues": {}, "bitrix": {}}
+        return dict(source_data)
+
+    monkeypatch.setattr(
+        "beeagent_module.interfaces.ui.read_model._build_rop_tab_read_model_legacy",
+        source_model,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.interfaces.ui.read_model._canonical_queue_rows",
+        lambda *_args: [dict(item) for item in rows],
+    )
+
+    views = rop_dashboard_module.build_rop_web_projection_v2_views(
+        tmp_path, "run-1", ["all"]
+    )
+
+    overview = views["overview.all"]
+    assert overview["action_required_count"] == 30
+    assert len(overview["priority_preview"]["high_priority"]) == 25
+
+
+def test_v2_writer_rejects_incomplete_views_before_manifest_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    interfaces = tmp_path / "interfaces"
+    interfaces.mkdir()
+    manifest_path = interfaces / "rop_web_projection_v2.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "generated_at_utc": "2026-01-01T00:00:00Z",
+                "generation": "g_existing",
+                "latest_run_id": "run-1",
+                "run_ids": ["run-1"],
+                "total_runs": 1,
+                "runs": {
+                    "run-1": {
+                        "generation": "g_existing",
+                        "revision": "r_existing",
+                        "view_keys": ["api.7d"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = manifest_path.read_bytes()
+    monkeypatch.setattr(
+        rop_dashboard_module,
+        "build_rop_web_projection_v2_views",
+        lambda *_args: {"api.7d": {}},
+    )
+
+    with pytest.raises(ValueError, match="incomplete or uncontrolled"):
+        rop_dashboard_module.write_rop_web_projection_v2(
+            tmp_path,
+            ["run-1"],
+            1,
+            {"run-1": ["7d"]},
+            _null_logger(),
+        )
+
+    assert manifest_path.read_bytes() == before

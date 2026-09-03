@@ -20,10 +20,10 @@ from beeui_module.web.app import create_beeui_app
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from beeagent_module.cases.rop_dashboard import (
-    rop_web_projection_entry_path,
-    rop_web_projection_index,
+    rop_web_projection_v2_manifest,
 )
 from beeagent_module.core.attachment_store import (
     lookup_attachment,
@@ -502,25 +502,17 @@ def _request_scopes(request: Request) -> frozenset[str] | None:
 def _rop_projection_run_ids(storage_dir: Path | None) -> frozenset[str]:
     if storage_dir is None:
         return frozenset()
-    index = rop_web_projection_index(storage_dir)
-    if index is None:
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    if manifest is None:
         return frozenset()
-    return frozenset(index.get("run_ids", []))
+    return frozenset(manifest.get("run_ids", []))
 
 
 def _rop_projection_entry_valid(storage_dir: Path | None, run_id: str) -> bool:
     if storage_dir is None:
         return False
-    entry_path = rop_web_projection_entry_path(storage_dir, run_id)
-    try:
-        data = json_mod.loads(entry_path.read_text(encoding="utf-8"))
-    except OSError, json_mod.JSONDecodeError, TypeError:
-        return False
-    return (
-        isinstance(data, dict)
-        and data.get("schema_version") == 1
-        and data.get("run_id") == run_id
-    )
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    return manifest is not None and run_id in manifest.get("run_ids", [])
 
 
 def _artifact_path_run_id(path: str) -> str | None:
@@ -851,7 +843,9 @@ def _register_custom_routes(
         try:
             query = request.query_params.get("q", "").strip().lower()
             if len(query) > 254:
-                return _error_json("invalid_params", "Search query is invalid", status_code=400)
+                return _error_json(
+                    "invalid_params", "Search query is invalid", status_code=400
+                )
             entries = load_sender_blacklist_entries(app.state.beeagent_storage_dir)
         except SenderBlacklistError as exc:
             return _error_json("state_malformed", str(exc), status_code=400)
@@ -861,8 +855,18 @@ def _register_custom_routes(
         for entry in entries:
             if query and query not in entry["email"]:
                 continue
-            writer.writerow([_csv_cell(entry[key]) for key in ("name", "title", "email", "role")])
-        return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=rop-sender-blacklist.csv", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+            writer.writerow(
+                [_csv_cell(entry[key]) for key in ("name", "title", "email", "role")]
+            )
+        return Response(
+            output.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=rop-sender-blacklist.csv",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/api/rop/dashboard", include_in_schema=False)
     async def api_rop_dashboard(request: Request) -> JSONResponse:
@@ -878,7 +882,8 @@ def _register_custom_routes(
                 "invalid_params", "; ".join(param_errors), status_code=400
             )
 
-        result = adapter.get_rop_dashboard(
+        result = await run_in_threadpool(
+            adapter.get_rop_dashboard,
             tab=request.query_params.get("tab", "api"),
             run_id=run_id,
             period=period,

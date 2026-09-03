@@ -56,21 +56,19 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
   - source for AI adjudicator evidence in AI tab and event detail
 - `storage/interfaces/rop_routing_map.json`
   - source for routing map evidence / routing contract
-- `storage/interfaces/rop_web_projection.json`
-  - derived, rebuildable ROP Web projection index;
-  - stores projection schema metadata, latest run id, the bounded recent run-id catalog (`run_ids`, fixed window) and the scalar `total_runs` materialized during rebuild;
-  - `available_runs` — bounded recent window из index `run_ids` (фиксированный bound, не весь historical catalog);
-  - `kpis.total_runs` / `total_runs` — scalar materialized value из index, не вычисляется через filesystem scan при GET;
-  - ordinary protected `/rop` и `/api/rop/dashboard` читают только index + selected-run entry, без перечисления `storage/runs`;
-- `storage/interfaces/rop_web_projection/<sha256(run_id)>.json`
-  - derived per-run materialized period dashboard entries;
-  - a normal `/rop` or `/api/rop/dashboard` request reads only the index and the selected run projection entry;
-  - explicit `?run_id=<id>` validates the requested id and reads only the matching hashed per-run entry (schema + exact run_id match);
+- `storage/interfaces/rop_web_projection_v2.json`
+  - derived schema-v2 bounded manifest with `latest_run_id`, bounded `run_ids`, scalar `total_runs`, generation/revision metadata and controlled view references;
+  - `available_runs` and `total_runs` are materialized metadata and never require a `storage/runs` scan during GET;
+  - scoped `run_id` authorization uses only validated manifest membership and never opens a semantic view;
+- `storage/interfaces/rop_web_projection_v2/<generation>/<sha256(run_id)>/<revision>/...`
+  - immutable request-ready semantic views for Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix, Recommendations and dashboard API period variants;
+  - a normal `/rop` or `/api/rop/dashboard` request reads the manifest and exactly one controlled requested view; it never reads v1 entries, global writeback state or raw run artifacts;
+  - Queue is one canonical deduplicated row set with bounded membership metadata; Overview has separately materialized counters, series, source summaries and bounded previews;
 - both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
-- normal ROP lifecycle refresh updates only the changed run entry and the existing bounded index; it does not bootstrap an absent projection or reconstruct the complete historical Web catalog;
-- explicit bootstrap/regeneration for an upgraded storage tree without a projection is `./start.sh rop dashboard --period 7d`; it enumerates canonical historical ROP data once per bounded materialized run, derives configured periods from that materialization, writes required entries atomically and publishes the index last;
-- an interrupted bootstrap leaves an existing valid index usable; without a prior index it leaves the Web console explicitly unavailable rather than publishing partial derived state;
-- missing or malformed index, selected-run entry or period entry fails explicitly and recoverably and can be repaired through the supported `rop dashboard` regeneration path;
+- normal ROP lifecycle refresh updates only the affected run generation/views and publishes the new manifest last; it does not bootstrap an absent projection or reconstruct the complete historical Web catalog;
+- explicit bootstrap/regeneration for an upgraded storage tree without v2 is `./start.sh rop dashboard --period 7d`; HTTP GET never migrates, repairs, regenerates or falls back to historical reconstruction;
+- publication writes and validates immutable views before the manifest replacement, so an interrupted publication preserves the previous valid manifest; projection failure does not alter canonical run, writeback or checkpoint artifacts;
+- missing or malformed manifest or requested view fails explicitly and recoverably through the supported `rop dashboard` regeneration path;
 - canonical ROP run artifacts remain the business source of truth.
 
 UI не хранит отдельный runtime state и не создаёт второй source of truth.
@@ -1058,8 +1056,8 @@ HTML `/rop` использует BeeUI tabs:
 Возвращаемые данные (UI-6 enriched payload):
 
 - `selected_run_id` — выбранный run ID;
-- `available_runs` — bounded recent run-id window из `rop_web_projection.json` index (`run_ids`, фиксированный bound), не результат сканирования `storage/runs` при GET;
-- `total_runs` — scalar materialized total run count из projection index (не длина `available_runs`);
+- `available_runs` — bounded recent run-id window из validated `rop_web_projection_v2.json` manifest (`run_ids`, фиксированный bound), не результат сканирования `storage/runs` при GET;
+- `total_runs` — scalar materialized total run count из validated projection v2 manifest (не длина `available_runs`);
 - `kpis` — сводные KPI:
   - `total_runs` — scalar materialized total run count из projection index;
   - `source_count`, `loaded_source_count`, `degraded_source_count`;

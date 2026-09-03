@@ -25,6 +25,15 @@ from beeagent_module.cases.rop_dashboard import (
     validate_filter_params,
     validate_pagination_params,
 )
+from beeagent_module.core.rop_sender_blacklist import (
+    SenderBlacklistError,
+    add_sender_blacklist_entry,
+    load_sender_blacklist_entries,
+    normalize_sender_email,
+    remove_sender_blacklist_email,
+    update_sender_blacklist_entry,
+    write_sender_blacklist_audit,
+)
 from beeagent_module.interfaces.ui.artifacts import (
     is_artifact_id_allowed,
     list_available_artifact_ids,
@@ -32,16 +41,6 @@ from beeagent_module.interfaces.ui.artifacts import (
 )
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
-from beeagent_module.core.rop_sender_blacklist import (
-    SenderBlacklistError,
-    add_sender_blacklist_entry,
-    load_sender_blacklist_entries,
-    load_sender_blacklist,
-    normalize_sender_email,
-    remove_sender_blacklist_email,
-    update_sender_blacklist_entry,
-    write_sender_blacklist_audit,
-)
 from beeagent_module.interfaces.ui.read_model import (
     build_config_read_model,
     build_dashboard,
@@ -635,8 +634,16 @@ class BeeAgentUiAdapter:
                 data["locale"] = locale
                 data["title"] = t("ROP Dashboard", locale)
                 layout = build_rop_page_layout(data, tab=tab, locale=locale)
-                data["layout"] = layout
-                return ok_result(data)
+                return ok_result(
+                    {
+                        "layout": layout,
+                        "locale": locale,
+                        "title": data["title"],
+                        "run_id": data.get("run_id"),
+                        "selected_run_id": data.get("selected_run_id"),
+                        "period": data.get("period"),
+                    }
+                )
 
             if page_id == "modules":
                 locale = resolve_locale(query.get("lang"))
