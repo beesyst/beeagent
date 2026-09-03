@@ -319,7 +319,7 @@ ls -lah /opt/beeagent/releases
 
 ```
 git fetch origin
-git worktree add -b review/pr-141 ../beeagent-pr141 origin/feat/137-local_env_and_auth_diagnostics
+git worktree add -b review/pr141 ../beeagent-pr141 origin/feat/137-local_env_and_auth_diagnostics
 cd ../beeagent-pr141
 code .
 git status
@@ -393,7 +393,7 @@ git push --force-with-lease origin HEAD:feat/137-local_env_and_auth_diagnostics
 ```
 cd ../beeagent
 git worktree remove ../beeagent-pr141
-git branch -D review/pr-141
+git branch -D review/pr141
 git switch main
 git pull --ff-only
 ```

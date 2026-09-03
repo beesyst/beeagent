@@ -81,7 +81,9 @@ The PR provides delivery, implementation and reviewer context. It does not overr
 
 When pasted content and a URL are supplied together, consider both. Report a material conflict instead of silently discarding either source.
 
-If required GitHub context cannot be read completely, return:
+If the initial GitHub tool response is truncated by the response/output budget, do not treat that alone as incomplete GitHub context. When a persisted response resource is available, read that resource completely in successive ranges before deciding that context is unavailable.
+
+Return:
 
 ```text
 ПРОВЕРКА НЕ ЗАВЕРШЕНА
