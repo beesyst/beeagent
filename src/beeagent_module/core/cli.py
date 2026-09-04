@@ -282,6 +282,7 @@ def handle_rop_run(
                     run_id=effective_run_id,
                     settings=effective_settings,
                     logger=logger,
+                    scope_run_id=effective_run_id,
                 )
                 logger.info(
                     "ROP CLI: write-back execution after run: run_id=%s "
@@ -1339,6 +1340,7 @@ def handle_rop_writeback(
                 logger=logger,
                 dry_run_override=args.dry_run,
                 retry_failed=args.retry_failed,
+                existing_only=args.existing_only,
             )
         else:
             raise RopCliError(f"Unknown write-back action: {action}")
@@ -1586,6 +1588,13 @@ def create_rop_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Re-arm retry-exhausted create or attachment work with a fresh retry budget"
+        ),
+    )
+    writeback_execute_parser.add_argument(
+        "--existing-only",
+        action="store_true",
+        help=(
+            "Recover only exact existing BeeAgent leads; never create a missing lead"
         ),
     )
 

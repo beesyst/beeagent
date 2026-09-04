@@ -33,7 +33,6 @@ from beeagent_module.cases.rop_recommendations import (
 from beeagent_module.cases.rop_writeback import (
     build_writeback_plan,
     execute_writeback_pending,
-    refresh_recoverable_writeback_prerequisites,
 )
 from beeagent_module.core.rop_review_export import export_review_tsv_for_run
 
@@ -234,8 +233,6 @@ def handle_mailbox_poll(
             rebaseline=rebaseline,
             require_checkpoint_source=require_checkpoint_source,
         )
-        if not processed and not rebaseline:
-            _resume_writeback_pending(settings, storage_dir, logger)
         return
 
     successes: list[str] = []
@@ -274,31 +271,10 @@ def handle_mailbox_poll(
             "mailbox poll completed with partial source failures: failed=%s",
             ",".join(failures),
         )
-    if not processed_any and not rebaseline:
-        _resume_writeback_pending(settings, storage_dir, logger)
 
 
 def _writeback_enabled(settings: dict[str, Any]) -> bool:
     return settings.get("bitrix", {}).get("writeback", {}).get("enabled") is True
-
-
-def _resume_writeback_pending(
-    settings: dict[str, Any], storage_dir: Path, logger: logging.Logger
-) -> None:
-    if not _writeback_enabled(settings):
-        return
-    refresh_recoverable_writeback_prerequisites(storage_dir, settings, logger)
-    result = execute_writeback_pending(
-        storage_dir=storage_dir,
-        run_id="poll-recovery",
-        settings=settings,
-        logger=logger,
-    )
-    logger.info(
-        "ROP write-back recovery during poll: status=%s writes=%d",
-        result.get("status"),
-        result.get("writes_performed", 0),
-    )
 
 
 def _poll_single_source(
@@ -494,6 +470,7 @@ def _poll_single_source(
                 run_id=run_id,
                 settings=settings,
                 logger=logger,
+                scope_run_id=run_id,
             )
             logger.info(
                 "ROP write-back executed during poll: run_id=%s status=%s writes=%d",

@@ -24,13 +24,17 @@ from beeagent_module.adapters.bitrix_write_client import (
     BitrixWriteClient,
     build_bitrix_write_client,
 )
-from beeagent_module.core.input_source import effective_rop_sender_email
 from beeagent_module.core.attachment_store import (
     load_attachment_manifest as _load_attachment_manifest,
+)
+from beeagent_module.core.attachment_store import (
     read_attachment_blob as _read_attachment_blob,
 )
+from beeagent_module.core.input_source import effective_rop_sender_email
 from beeagent_module.core.message_id import (
     extract_reference_ids as _extract_reference_ids_shared,
+)
+from beeagent_module.core.message_id import (
     normalize_message_id as _normalize_message_id_shared,
 )
 from beeagent_module.core.rop_outbound_correlation import resolve_outbound_bridge
@@ -57,7 +61,12 @@ _RECOVERABLE_PREREQUISITE_REASONS = frozenset(
     }
 )
 _TRUSTED_TARGET_PROVENANCES: frozenset[str] = frozenset(
-    {"beeagent_created", "thread_resolved", "bitrix_outbound_exact", "sender_subject_resolved"}
+    {
+        "beeagent_created",
+        "thread_resolved",
+        "bitrix_outbound_exact",
+        "sender_subject_resolved",
+    }
 )
 _PENDING_THREAD_ROOT_REASON = "pending_thread_root"
 _PENDING_SENDER_SUBJECT_REASON = "pending_sender_subject_root"
@@ -617,9 +626,7 @@ def _build_planned_record(
         "attach_attempts": 0,
         "last_attach_error_code": None,
         "file_attach_required": file_attach_required,
-        "file_attach_status": (
-            "pending" if file_attach_required else "not_required"
-        ),
+        "file_attach_status": ("pending" if file_attach_required else "not_required"),
         "file_attach_attempts": 0,
         "last_file_attach_error_code": None,
         "attachment_refs": safe_attachment_refs,
@@ -733,9 +740,7 @@ def _merge_planned_record(
         "file_attach_status", planned.get("file_attach_status", "not_required")
     )
     merged["file_attach_attempts"] = existing.get("file_attach_attempts", 0)
-    merged["last_file_attach_error_code"] = existing.get(
-        "last_file_attach_error_code"
-    )
+    merged["last_file_attach_error_code"] = existing.get("last_file_attach_error_code")
     merged["attachment_refs"] = planned.get("attachment_refs") or existing.get(
         "attachment_refs", []
     )
@@ -868,6 +873,34 @@ def _apply_sender_subject_target(
     record["target_entity_id"] = entity_id
     record["target_responsible_user_id"] = responsible_id
     record["target_provenance"] = "sender_subject_resolved"
+    record["email_attachment_required"] = email_attachment_required
+    record["email_attachment_status"] = (
+        "pending" if email_attachment_required else "not_required"
+    )
+    record["file_attach_required"] = file_attach_required
+    record["file_attach_status"] = "pending" if file_attach_required else "not_required"
+
+
+def _apply_thread_target(
+    record: dict[str, Any],
+    target: dict[str, Any],
+    policy: dict[str, Any],
+) -> None:
+    email_attachment_required = policy["email_attach"] is True
+    file_attach_required = email_attachment_required and policy["file_attach"] is True
+    record["outcome"] = "attach_existing"
+    record["status"] = "pending"
+    record["reason_code"] = None
+    record["case_type"] = "existing_deal"
+    record["stage_id"] = None
+    record["responsible_user_id"] = None
+    record["responsible_status"] = ""
+    record["responsible_reason"] = None
+    record["target_entity_type"] = target["target_entity_type"]
+    record["target_entity_type_id"] = target["target_entity_type_id"]
+    record["target_entity_id"] = target["target_entity_id"]
+    record["target_responsible_user_id"] = target["target_responsible_user_id"]
+    record["target_provenance"] = "thread_resolved"
     record["email_attachment_required"] = email_attachment_required
     record["email_attachment_status"] = (
         "pending" if email_attachment_required else "not_required"
@@ -1192,9 +1225,7 @@ def build_writeback_plan(
         record for record in state["events"].values() if isinstance(record, dict)
     ]
     trusted_by_client: dict[str, set[tuple[str, int, int, int]]] = {}
-    sender_subject_targets: dict[
-        tuple[str, str, str], set[tuple[int, int, int]]
-    ] = {}
+    sender_subject_targets: dict[tuple[str, str, str], set[tuple[int, int, int]]] = {}
     for record in state_records:
         client_id = _bounded_text(record.get("client_id"))
         if client_id and client_id not in trusted_by_client:
@@ -1767,6 +1798,7 @@ def _execute_create_lead(
     readonly_client: Any,
     write_client: BitrixWriteClient,
     logger: logging.Logger,
+    existing_only: bool = False,
 ) -> None:
     if record.get("remote_entity_id"):
         record["status"] = "created"
@@ -1810,6 +1842,17 @@ def _execute_create_lead(
             "ROP write-back recovered existing lead: identity=%s remote_entity_id=%s",
             record["identity"],
             existing_id,
+        )
+        return
+
+    if existing_only:
+        record["status"] = "pending"
+        record["uncertain"] = False
+        record["last_error_code"] = "existing_only_not_found"
+        record["reason_code"] = "existing_only_not_found"
+        logger.info(
+            "ROP write-back existing-only miss: identity=%s",
+            record["identity"],
         )
         return
 
@@ -1891,6 +1934,8 @@ def execute_writeback_pending(
     logger: logging.Logger,
     dry_run_override: bool | None = None,
     retry_failed: bool = False,
+    scope_run_id: str | None = None,
+    existing_only: bool = False,
 ) -> dict[str, Any]:
     state = _load_state(storage_dir)
     policy = _writeback_policy(settings)
@@ -1931,8 +1976,34 @@ def execute_writeback_pending(
         _save_state(storage_dir, state)
         _refresh_changed_run_projections(storage_dir, state, previous_records, logger)
 
+    scoped_records = [
+        record
+        for record in events.values()
+        if isinstance(record, dict)
+        and (scope_run_id is None or record.get("last_run_id") == scope_run_id)
+    ]
+
+    if existing_only:
+        scoped_records = [
+            record
+            for record in scoped_records
+            if record.get("outcome") == "create_lead"
+        ]
+
+    def result_records() -> list[dict[str, Any]]:
+        return scoped_records
+
+    logger.info(
+        "ROP write-back execution scope start: run_id=%s scope_run_id=%s candidates=%d skipped_outside_scope=%d existing_only=%s",
+        run_id,
+        scope_run_id or "global",
+        len(scoped_records),
+        len(events) - len(scoped_records),
+        existing_only,
+    )
+
     if not policy["enabled"]:
-        for record in events.values():
+        for record in scoped_records:
             if record.get("status") in ("planned", "pending", "uncertain"):
                 record["status"] = "deferred"
                 record["reason_code"] = "writeback_disabled"
@@ -1944,7 +2015,7 @@ def execute_writeback_pending(
             "status": "disabled",
             "writes_performed": 0,
             "policy": policy,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
 
     if effective_dry_run:
@@ -1955,11 +2026,11 @@ def execute_writeback_pending(
             "status": "dry_run",
             "writes_performed": 0,
             "policy": policy,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
 
     if not policy["credential_present"]:
-        for record in events.values():
+        for record in scoped_records:
             if record.get("status") in ("planned", "pending", "uncertain"):
                 record["status"] = "deferred"
                 record["reason_code"] = "write_credential_missing"
@@ -1974,12 +2045,12 @@ def execute_writeback_pending(
             "status": "credential_missing",
             "writes_performed": 0,
             "policy": policy,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
 
     if retry_failed:
         rearmed = 0
-        for record in events.values():
+        for record in scoped_records:
             if (
                 record.get("outcome") == "create_lead"
                 and record.get("status") == "failed"
@@ -2000,6 +2071,7 @@ def execute_writeback_pending(
                 record["status"] = "pending"
                 record["attach_attempts"] = 0
                 record["uncertain"] = False
+                record["email_attachment_status"] = "pending"
                 record["last_attach_error_code"] = None
                 record["reason_code"] = None
                 rearmed += 1
@@ -2032,13 +2104,13 @@ def execute_writeback_pending(
 
     create_records = [
         record
-        for record in events.values()
+        for record in scoped_records
         if record.get("outcome") == "create_lead"
         and record.get("status") in ("planned", "pending", "uncertain")
     ]
     attach_records = [
         record
-        for record in events.values()
+        for record in scoped_records
         if record.get("outcome") == "attach_existing"
         and record.get("status") in ("planned", "pending", "uncertain")
     ]
@@ -2053,8 +2125,12 @@ def execute_writeback_pending(
     readonly_client = None
     try:
         readonly_client = build_bitrix_client(settings, logger=logger)
-        invalid_stages = _validate_stages_against_bitrix(
-            readonly_client, policy["stages"], logger
+        invalid_stages = (
+            []
+            if existing_only
+            else _validate_stages_against_bitrix(
+                readonly_client, policy["stages"], logger
+            )
         )
     except BitrixConnectorError as exc:
         invalid_stages = None
@@ -2081,7 +2157,7 @@ def execute_writeback_pending(
             "writes_performed": 0,
             "policy": policy,
             "invalid_stages": invalid_stages,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
     if invalid_stages is None or readonly_client is None:
         for record in create_records:
@@ -2095,7 +2171,7 @@ def execute_writeback_pending(
             "status": "stage_validation_degraded",
             "writes_performed": 0,
             "policy": policy,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
 
     try:
@@ -2116,123 +2192,189 @@ def execute_writeback_pending(
             "status": "write_client_unavailable",
             "writes_performed": 0,
             "policy": policy,
-            "aggregate": _aggregate_records(list(events.values())),
+            "aggregate": _aggregate_records(result_records()),
         }
 
-    writes_performed = 0
-    for record in create_records:
-        if record.get("status") in ("deferred", "failed"):
-            continue
-        before = record.get("remote_entity_id")
-        _execute_create_lead(
-            record,
-            policy,
-            readonly_client,
-            write_client,
-            logger,
+    def release_sender_subject_dependents() -> None:
+        roots: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for item in scoped_records:
+            origin_run_id = str(item.get("last_run_id") or "").strip()
+            key = _sender_subject_key(item)
+            if (
+                origin_run_id
+                and key is not None
+                and _trusted_sender_subject_root(item) is not None
+            ):
+                roots[(origin_run_id, *key)] = item
+        for item in scoped_records:
+            if (
+                item.get("outcome") != "deferred"
+                or item.get("reason_code") != _PENDING_SENDER_SUBJECT_REASON
+            ):
+                continue
+            origin_run_id = str(item.get("last_run_id") or "").strip()
+            key = _sender_subject_key(item)
+            root = roots.get((origin_run_id, *key)) if origin_run_id and key else None
+            target = _trusted_sender_subject_root(root) if root is not None else None
+            if target is not None:
+                _apply_sender_subject_target(item, target, policy, status="pending")
+                item["updated_at_utc"] = _utc_now()
+
+    def release_thread_dependents() -> bool:
+        index = _build_message_id_index(
+            {str(position): item for position, item in enumerate(scoped_records)}
         )
-        if (
-            record.get("status") == "created"
-            and record.get("remote_entity_id")
-            and before is None
+        released = False
+        for item in scoped_records:
+            if (
+                item.get("outcome") != "deferred"
+                or item.get("reason_code") != _PENDING_THREAD_ROOT_REASON
+            ):
+                continue
+            client_id = _bounded_text(item.get("client_id"))
+            target = _resolve_thread_target(item, index.get(client_id, {}))
+            if (
+                not isinstance(target, dict)
+                or target.get("ambiguous") is True
+                or target.get("deferred") is True
+                or not _positive_int(target.get("target_entity_type_id"))
+                or not _positive_int(target.get("target_entity_id"))
+                or not _positive_int(target.get("target_responsible_user_id"))
+            ):
+                continue
+            _apply_thread_target(item, target, policy)
+            item["updated_at_utc"] = _utc_now()
+            released = True
+        return released
+
+    def needs_file_delivery(item: dict[str, Any]) -> bool:
+        return (
+            item.get("file_attach_required") is True
+            and item.get("file_attach_status")
+            not in ("attached", "completed", "not_required", "failed")
+            and _positive_int(item.get("email_activity_id"))
+        )
+
+    delivery_records = [
+        item
+        for item in scoped_records
+        if item.get("outcome") in {"create_lead", "attach_existing"}
+        or item.get("reason_code")
+        in {_PENDING_SENDER_SUBJECT_REASON, _PENDING_THREAD_ROOT_REASON}
+    ]
+    writes_performed = 0
+    created_count = 0
+    recovered_count = 0
+    email_attached_count = 0
+    files_attached_count = 0
+    existing_only_misses = 0
+
+    for record in delivery_records:
+        if record.get("outcome") == "deferred":
+            release_sender_subject_dependents()
+            if release_thread_dependents():
+                _save_state(storage_dir, state)
+        if record.get("outcome") == "create_lead" and record.get("status") in (
+            "planned",
+            "pending",
+            "uncertain",
         ):
-            writes_performed += 1
-        record["updated_at_utc"] = _utc_now()
+            if record.get("status") not in ("deferred", "failed"):
+                before_remote_id = record.get("remote_entity_id")
+                _execute_create_lead(
+                    record,
+                    policy,
+                    readonly_client,
+                    write_client,
+                    logger,
+                    existing_only=existing_only,
+                )
+                record["updated_at_utc"] = _utc_now()
+                _save_state(storage_dir, state)
+                if record.get("reason_code") == "existing_only_not_found":
+                    existing_only_misses += 1
+                    continue
+                if (
+                    record.get("status") == "created"
+                    and record.get("remote_entity_id")
+                    and before_remote_id is None
+                ):
+                    writes_performed += 1
+                    created_count += 1
+                elif record.get("status") == "recovered":
+                    recovered_count += 1
+                release_sender_subject_dependents()
+                if release_thread_dependents():
+                    _save_state(storage_dir, state)
 
-    sender_subject_roots: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-
-    for record in events.values():
-        if not isinstance(record, dict):
+        if record.get("outcome") not in {"create_lead", "attach_existing"}:
             continue
-        origin_run_id = str(record.get("last_run_id") or "").strip()
-        key = _sender_subject_key(record)
+        if record.get("outcome") == "create_lead":
+            can_attach_email = record.get("status") in ("created", "recovered")
+        else:
+            can_attach_email = record.get("status") in (
+                "planned",
+                "pending",
+                "uncertain",
+            )
         if (
-            origin_run_id
-            and key is not None
-            and _trusted_sender_subject_root(record) is not None
-        ):
-            sender_subject_roots[(origin_run_id, *key)] = record
-
-    if sender_subject_roots:
-        for record in events.values():
-            if not isinstance(record, dict):
-                continue
-            if record.get("outcome") != "deferred":
-                continue
-            if record.get("reason_code") != _PENDING_SENDER_SUBJECT_REASON:
-                continue
-            origin_run_id = str(record.get("last_run_id") or "").strip()
-            key = _sender_subject_key(record)
-            if not origin_run_id or key is None:
-                continue
-            root = sender_subject_roots.get((origin_run_id, *key))
-            if root is None:
-                continue
-            target = _trusted_sender_subject_root(root)
-            if target is None:
-                continue
-            _apply_sender_subject_target(record, target, policy, status="pending")
-            record["updated_at_utc"] = _utc_now()
-
-    for record in events.values():
-        if record.get("outcome") == "attach_existing":
-            if record.get("status") not in ("planned", "pending", "uncertain"):
-                continue
-        elif (
-            record.get("outcome") == "create_lead"
-            and record.get("status") in ("created", "recovered")
+            can_attach_email
             and not record.get("email_activity_id")
             and record.get("email_attachment_required") is True
             and record.get("email_attachment_status") in ("pending", "uncertain")
         ):
-            pass
-        else:
-            continue
-        if _execute_email_attachment(
-            record,
-            policy,
-            readonly_client,
-            write_client,
-            logger,
-        ):
-            writes_performed += 1
-        record["updated_at_utc"] = _utc_now()
+            if _execute_email_attachment(
+                record,
+                policy,
+                readonly_client,
+                write_client,
+                logger,
+            ):
+                writes_performed += 1
+                email_attached_count += 1
+            record["updated_at_utc"] = _utc_now()
+            _save_state(storage_dir, state)
 
-    for record in events.values():
-        if record.get("file_attach_required") is not True:
-            continue
-        if record.get("file_attach_status") in (
-            "attached",
-            "completed",
-            "not_required",
-            "failed",
-        ):
-            continue
-        if not _positive_int(record.get("email_activity_id")):
-            continue
-        if _execute_file_attachment(
-            record,
-            policy,
-            write_client,
-            storage_dir,
-            logger,
-        ):
-            writes_performed += 1
-        record["updated_at_utc"] = _utc_now()
+        if needs_file_delivery(record):
+            if _execute_file_attachment(
+                record,
+                policy,
+                write_client,
+                storage_dir,
+                logger,
+            ):
+                writes_performed += 1
+                files_attached_count += 1
+            record["updated_at_utc"] = _utc_now()
+            _save_state(storage_dir, state)
 
     persist_and_refresh()
 
     logger.info(
-        "ROP write-back execute finished: run_id=%s writes=%d status_counts=%s",
+        "ROP write-back execution scope end: run_id=%s scope_run_id=%s candidates=%d writes=%d created=%d recovered=%d email_attached=%d files_attached=%d existing_only_misses=%d status_counts=%s",
         run_id,
+        scope_run_id or "global",
+        len(scoped_records),
         writes_performed,
-        _aggregate_records(list(events.values()))["status_counts"],
+        created_count,
+        recovered_count,
+        email_attached_count,
+        files_attached_count,
+        existing_only_misses,
+        _aggregate_records(result_records())["status_counts"],
     )
 
     return {
         "run_id": run_id,
         "status": "executed",
         "writes_performed": writes_performed,
+        "scope_run_id": scope_run_id,
+        "existing_only": existing_only,
+        "created_count": created_count,
+        "recovered_count": recovered_count,
+        "email_attached_count": email_attached_count,
+        "files_attached_count": files_attached_count,
+        "existing_only_misses": existing_only_misses,
         "policy": policy,
-        "aggregate": _aggregate_records(list(events.values())),
+        "aggregate": _aggregate_records(result_records()),
     }
