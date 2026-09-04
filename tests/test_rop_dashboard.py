@@ -2853,6 +2853,16 @@ class TestRopWebProjectionLifecycle:
         assert rop_dashboard_module.rop_web_projection_entry_path(
             storage_dir, "run-new"
         ).exists()
+        manifest = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+        assert manifest is not None
+        assert manifest["run_ids"] == index["run_ids"]
+        assert manifest["total_runs"] == index["total_runs"]
+        assert (
+            rop_dashboard_module.read_rop_web_projection_v2_view(
+                storage_dir, manifest, "run-new", "api", "all"
+            )
+            is not None
+        )
 
     def test_missing_projection_stays_unavailable_until_bootstrap(
         self, run_dir: Path, tmp_path: Path
@@ -3523,3 +3533,320 @@ def test_v2_writer_rejects_incomplete_views_before_manifest_publication(
         )
 
     assert manifest_path.read_bytes() == before
+
+
+def _projection_for_runs(run_ids: list[str]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "generated_at_utc": "2026-01-01T00:00:00Z",
+        "run_ids": run_ids,
+        "total_runs": len(run_ids),
+        "dashboards": {run_id: {"7d": {"status": "ok"}} for run_id in run_ids},
+    }
+
+
+def _v2_views(
+    _storage_dir: Path, _run_id: str, periods: list[str]
+) -> dict[str, dict[str, object]]:
+    payloads: dict[str, dict[str, object]] = {}
+    for view_key in rop_dashboard_module._v2_required_view_keys(periods):
+        if view_key.startswith("overview."):
+            payloads[view_key] = {
+                "business_kpi": {},
+                "series": {},
+                "priority_preview": {},
+                "action_required_count": 0,
+            }
+        elif view_key.startswith("bitrix."):
+            payloads[view_key] = {"business_kpi": {}, "queues": {}, "bitrix": {}}
+        elif view_key.startswith("api."):
+            payloads[view_key] = {
+                "business_kpi": {},
+                "series": {},
+                "queues": {},
+                "canonical_queue_rows": [],
+            }
+        elif view_key == "queue":
+            payloads[view_key] = {"queue_rows": [], "filter_options": {}}
+        elif view_key == "threads":
+            payloads[view_key] = {"thread_summary": {}, "threads": []}
+        elif view_key == "ai_assist":
+            payloads[view_key] = {"ai_assist_summary": {}, "ai_assist_events": []}
+        elif view_key == "sources":
+            payloads[view_key] = {"source_health": []}
+        elif view_key == "attachments":
+            payloads[view_key] = {"attachment_summary": {}}
+        elif view_key == "evidence":
+            payloads[view_key] = {"evidence_links": []}
+        else:
+            payloads[view_key] = {"delivery_recommendations": {}}
+    return payloads
+
+
+def test_v1_projection_gc_keeps_current_and_previous_entries_and_bounds_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rop_dashboard_module, "write_rop_web_projection_v2", lambda **_: None
+    )
+    storage_dir = tmp_path / "storage"
+    projection_dir = storage_dir / "interfaces" / "rop_web_projection"
+    projection_dir.mkdir(parents=True)
+    stale = rop_dashboard_module.rop_web_projection_entry_path(storage_dir, "stale")
+    stale.write_text("{}", encoding="utf-8")
+    unknown = projection_dir / "operator-note.txt"
+    unknown.write_text("keep", encoding="utf-8")
+    temporary = projection_dir / "unrelated.json.tmp"
+    temporary.write_text("keep", encoding="utf-8")
+    target = tmp_path / "symlink-target.json"
+    target.write_text("keep", encoding="utf-8")
+    symlink = rop_dashboard_module.rop_web_projection_entry_path(storage_dir, "link")
+    symlink.symlink_to(target)
+    run_artifact = storage_dir / "runs" / "run-1" / "canonical.json"
+    attachment = storage_dir / "attachments" / "run-1" / "attachment.bin"
+    unrelated = storage_dir / "interfaces" / "other.json"
+    for path in (run_artifact, attachment, unrelated):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("keep", encoding="utf-8")
+
+    rop_dashboard_module.write_rop_web_projection(
+        storage_dir, _projection_for_runs(["a", "b"]), _null_logger()
+    )
+    assert not stale.exists()
+    assert symlink.is_symlink()
+    assert target.read_text(encoding="utf-8") == "keep"
+    assert unknown.exists()
+    assert temporary.exists()
+    assert all(path.exists() for path in (run_artifact, attachment, unrelated))
+
+    rop_dashboard_module.write_rop_web_projection(
+        storage_dir, _projection_for_runs(["c", "b"]), _null_logger()
+    )
+    assert all(
+        rop_dashboard_module.rop_web_projection_entry_path(storage_dir, run_id).exists()
+        for run_id in ("a", "b", "c")
+    )
+    rop_dashboard_module.write_rop_web_projection(
+        storage_dir, _projection_for_runs(["d", "c"]), _null_logger()
+    )
+    assert not rop_dashboard_module.rop_web_projection_entry_path(
+        storage_dir, "a"
+    ).exists()
+    assert all(
+        rop_dashboard_module.rop_web_projection_entry_path(storage_dir, run_id).exists()
+        for run_id in ("b", "c", "d")
+    )
+
+    for number in range(30):
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir,
+            _projection_for_runs([f"run-{number}", f"run-{number + 1}"]),
+            _null_logger(),
+        )
+    controlled_entries = [
+        path
+        for path in projection_dir.iterdir()
+        if path.is_file()
+        and rop_dashboard_module._ROP_WEB_PROJECTION_ENTRY_RE.fullmatch(path.name)
+    ]
+    assert len(controlled_entries) <= 4
+
+
+def test_v1_projection_gc_failure_preserves_published_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rop_dashboard_module, "write_rop_web_projection_v2", lambda **_: None
+    )
+    storage_dir = tmp_path / "storage"
+    rop_dashboard_module.write_rop_web_projection(
+        storage_dir, _projection_for_runs(["old"]), _null_logger()
+    )
+    stale = rop_dashboard_module.rop_web_projection_entry_path(storage_dir, "stale")
+    stale.write_text("{}", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def failing_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == stale:
+            raise OSError("simulated cleanup failure")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    rop_dashboard_module.write_rop_web_projection(
+        storage_dir, _projection_for_runs(["new"]), _null_logger()
+    )
+
+    index = rop_dashboard_module.rop_web_projection_index(storage_dir)
+    assert index is not None
+    assert index["run_ids"] == ["new"]
+    assert stale.exists()
+
+
+def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rop_dashboard_module, "build_rop_web_projection_v2_views", _v2_views
+    )
+    storage_dir = tmp_path / "storage"
+    logger = _null_logger()
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+    )
+    first = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+    assert first is not None
+    first_generation = first["runs"]["run-a"]["generation"]
+    root = storage_dir / "interfaces" / "rop_web_projection_v2"
+    stale = root / ("g_" + "0" * 32)
+    stale.mkdir()
+    invalid = root / "not-a-generation"
+    invalid.mkdir()
+    target = tmp_path / "symlink-generation-target"
+    target.mkdir()
+    symlink = root / ("g_" + "f" * 32)
+    symlink.symlink_to(target, target_is_directory=True)
+
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir,
+        ["run-b", "run-a"],
+        2,
+        {"run-b": ["7d"]},
+        logger,
+    )
+    second = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+    assert second is not None
+    second_generation = second["runs"]["run-b"]["generation"]
+    assert not stale.exists()
+    assert invalid.is_dir()
+    assert symlink.is_symlink()
+    assert target.is_dir()
+    assert {entry["generation"] for entry in second["runs"].values()} == {
+        first_generation,
+        second_generation,
+    }
+
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir,
+        ["run-c", "run-b"],
+        3,
+        {"run-c": ["7d"]},
+        logger,
+    )
+    third = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+    assert third is not None
+    assert (root / first_generation).is_dir()
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir,
+        ["run-d", "run-c"],
+        4,
+        {"run-d": ["7d"]},
+        logger,
+    )
+    fourth = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+    assert fourth is not None
+    assert not (root / first_generation).exists()
+    for run_id in fourth["run_ids"]:
+        assert (
+            rop_dashboard_module.read_rop_web_projection_v2_view(
+                storage_dir, fourth, run_id, "api", "7d"
+            )
+            is not None
+        )
+
+    for number in range(20):
+        rop_dashboard_module.write_rop_web_projection_v2(
+            storage_dir,
+            ["run-d"],
+            4,
+            {"run-d": ["7d"]},
+            logger,
+        )
+    generations = [
+        path
+        for path in root.iterdir()
+        if not path.is_symlink()
+        and path.is_dir()
+        and rop_dashboard_module._projection_revision(path.name) is not None
+    ]
+    assert len(generations) <= 2
+
+
+def test_v2_interrupted_publication_cleans_only_own_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rop_dashboard_module, "build_rop_web_projection_v2_views", _v2_views
+    )
+    storage_dir = tmp_path / "storage"
+    logger = _null_logger()
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+    )
+    manifest_path = storage_dir / "interfaces" / "rop_web_projection_v2.json"
+    before = manifest_path.read_bytes()
+    root = storage_dir / "interfaces" / "rop_web_projection_v2"
+    previous_generations = {path.name for path in root.iterdir() if path.is_dir()}
+    original_write_text = Path.write_text
+
+    def interrupted_write(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+    ) -> int:
+        if path.parents[2].name.startswith(".g_"):
+            raise OSError("simulated interrupted generation write")
+        return original_write_text(path, data, encoding=encoding)
+
+    monkeypatch.setattr(Path, "write_text", interrupted_write)
+    with pytest.raises(OSError, match="interrupted"):
+        rop_dashboard_module.write_rop_web_projection_v2(
+            storage_dir, ["run-b"], 2, {"run-b": ["7d"]}, logger
+        )
+    assert manifest_path.read_bytes() == before
+    assert {
+        path.name for path in root.iterdir() if path.is_dir()
+    } == previous_generations
+    assert not any(path.name.startswith(".g_") for path in root.iterdir())
+
+
+def test_v2_manifest_failure_cleans_unpublished_final_without_masking_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rop_dashboard_module, "build_rop_web_projection_v2_views", _v2_views
+    )
+    storage_dir = tmp_path / "storage"
+    logger = _null_logger()
+    rop_dashboard_module.write_rop_web_projection_v2(
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+    )
+    manifest_path = storage_dir / "interfaces" / "rop_web_projection_v2.json"
+    before = manifest_path.read_bytes()
+    root = storage_dir / "interfaces" / "rop_web_projection_v2"
+    existing = {path.name for path in root.iterdir() if path.is_dir()}
+    original_replace = rop_dashboard_module.os.replace
+    original_rmtree = rop_dashboard_module.shutil.rmtree
+
+    def failing_manifest_replace(source: Path, target: Path) -> None:
+        if source.name == "rop_web_projection_v2.json.tmp":
+            raise OSError("simulated manifest replacement failure")
+        original_replace(source, target)
+
+    monkeypatch.setattr(rop_dashboard_module.os, "replace", failing_manifest_replace)
+    with pytest.raises(OSError, match="manifest replacement"):
+        rop_dashboard_module.write_rop_web_projection_v2(
+            storage_dir, ["run-b"], 2, {"run-b": ["7d"]}, logger
+        )
+    assert manifest_path.read_bytes() == before
+    assert {path.name for path in root.iterdir() if path.is_dir()} == existing
+
+    def failing_rmtree(path: Path) -> None:
+        if path.name not in existing:
+            raise OSError("simulated cleanup failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr(rop_dashboard_module.shutil, "rmtree", failing_rmtree)
+    with pytest.raises(OSError, match="manifest replacement"):
+        rop_dashboard_module.write_rop_web_projection_v2(
+            storage_dir, ["run-c"], 3, {"run-c": ["7d"]}, logger
+        )
