@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.0...beeagent-v0.59.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **rop:** bound web projection retention ([#237](https://github.com/beesyst/beeagent/issues/237)) ([0e53c2a](https://github.com/beesyst/beeagent/commit/0e53c2abb03622607ecfeb6806a5e5d10be7a88d))
+
 ## [0.59.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.58.0...beeagent-v0.59.0) (2026-09-03)
 
 
