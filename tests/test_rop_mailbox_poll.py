@@ -662,9 +662,7 @@ def test_cli_all_sources_overrides_configured_single_source(
     assert selected == ["source_a", "source_b"]
 
 
-def test_poll_multi_source_no_new_messages_skips_pipeline(
-    monkeypatch, tmp_path: Path
-):
+def test_poll_multi_source_no_new_messages_skips_pipeline(monkeypatch, tmp_path: Path):
     _multi_poll_env(monkeypatch)
     path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
     _write_checkpoint(
@@ -706,25 +704,15 @@ def test_poll_multi_source_no_new_messages_skips_pipeline(
         "source_id": "EMAIL",
         "stages": {"new_lead": "NEW", "irrelevant": "NEW"},
     }
-    calls: list[str] = []
-    monkeypatch.setattr(
-        "beeagent_module.cases.rop_mailbox_poll."
-        "refresh_recoverable_writeback_prerequisites",
-        lambda *_args: calls.append("refresh") or [],
-    )
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
-        lambda **_kwargs: calls.append("execute")
-        or {"status": "executed", "writes_performed": 0},
+        lambda **_kwargs: pytest.fail("writeback execution"),
     )
     before = path.read_text()
-    handle_mailbox_poll(
-        settings, tmp_path, tmp_path, logging.getLogger("test")
-    )
-    assert path.read_text() == before
+    handle_mailbox_poll(settings, tmp_path, tmp_path, logging.getLogger("test"))
     assert mailboxes["user_a"].fetched == []
     assert mailboxes["user_b"].fetched == []
-    assert calls == ["refresh", "execute"]
+    assert path.read_text() == before
 
 
 def test_poll_source_failure_isolated_and_checkpoint_preserved(
@@ -1162,9 +1150,7 @@ def test_poll_writeback_disabled_failure_does_not_block_checkpoint(
     )
 
 
-def test_poll_writeback_enabled_executes_after_checkpoint(
-    monkeypatch, tmp_path: Path
-):
+def test_poll_writeback_enabled_executes_after_checkpoint(monkeypatch, tmp_path: Path):
     _poll_env(monkeypatch)
     mailbox = _PollMailbox(7, [101, 102, 103])
     path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
@@ -1211,14 +1197,18 @@ def test_poll_writeback_enabled_executes_after_checkpoint(
         lambda *_args, **_kwargs: "x",
     )
     order: list[str] = []
+    execute_kwargs: dict[str, object] = {}
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
         lambda **kwargs: order.append("plan"),
     )
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
-        lambda **kwargs: order.append("execute")
-        or {"status": "executed", "writes_performed": 2},
+        lambda **kwargs: (
+            execute_kwargs.update(kwargs)
+            or order.append("execute")
+            or {"status": "executed", "writes_performed": 2}
+        ),
     )
     real_write_checkpoint = _write_checkpoint
 
@@ -1237,14 +1227,13 @@ def test_poll_writeback_enabled_executes_after_checkpoint(
         logging.getLogger("test"),
     )
     assert order == ["plan", "checkpoint", "execute"]
+    assert execute_kwargs["scope_run_id"] == "run"
     assert (
         json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 103
     )
 
 
-def test_poll_writeback_disabled_does_not_execute(
-    monkeypatch, tmp_path: Path
-):
+def test_poll_writeback_disabled_does_not_execute(monkeypatch, tmp_path: Path):
     _poll_env(monkeypatch)
     mailbox = _PollMailbox(7, [101, 102, 103])
     path = tmp_path / "interfaces" / "rop_mailbox_checkpoint.json"
@@ -1298,8 +1287,10 @@ def test_poll_writeback_disabled_does_not_execute(
     execute_called: list[str] = []
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
-        lambda **kwargs: execute_called.append("execute")
-        or {"status": "executed", "writes_performed": 0},
+        lambda **kwargs: (
+            execute_called.append("execute")
+            or {"status": "executed", "writes_performed": 0}
+        ),
     )
     real_write_checkpoint = _write_checkpoint
 
@@ -1376,14 +1367,16 @@ def test_poll_degraded_reconciliation_persists_before_checkpoint(
     )
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
-        lambda **_kwargs: order.append("execute")
-        or {"status": "executed", "writes_performed": 0},
+        lambda **_kwargs: (
+            order.append("execute") or {"status": "executed", "writes_performed": 0}
+        ),
     )
     real_write_checkpoint = _write_checkpoint
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll._write_checkpoint",
-        lambda target_path, data: order.append("checkpoint")
-        or real_write_checkpoint(target_path, data),
+        lambda target_path, data: (
+            order.append("checkpoint") or real_write_checkpoint(target_path, data)
+        ),
     )
     handle_mailbox_poll(
         _writeback_poll_settings(True), tmp_path, tmp_path, logging.getLogger("test")
@@ -1393,7 +1386,7 @@ def test_poll_degraded_reconciliation_persists_before_checkpoint(
     assert checkpoint["sources"]["source"]["last_processed_uid"] == 101
 
 
-def test_poll_no_new_messages_recovers_pending_writeback_once(
+def test_poll_no_new_messages_does_not_recover_historical_writeback(
     monkeypatch, tmp_path: Path
 ):
     _poll_env(monkeypatch)
@@ -1420,22 +1413,14 @@ def test_poll_no_new_messages_recovers_pending_writeback_once(
         "beeagent_module.cases.rop_mailbox_poll.run_rop_batch_case",
         lambda **_kwargs: pytest.fail("mailbox ingestion"),
     )
-    calls: list[str] = []
-    monkeypatch.setattr(
-        "beeagent_module.cases.rop_mailbox_poll."
-        "refresh_recoverable_writeback_prerequisites",
-        lambda *_args: calls.append("refresh") or [],
-    )
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.execute_writeback_pending",
-        lambda **_kwargs: calls.append("execute")
-        or {"status": "executed", "writes_performed": 0},
+        lambda **_kwargs: pytest.fail("writeback execution"),
     )
     handle_mailbox_poll(
         _writeback_poll_settings(True), tmp_path, tmp_path, logging.getLogger("test")
     )
     assert mailbox.fetched == []
-    assert calls == ["refresh", "execute"]
 
 
 def test_poll_no_new_messages_disabled_does_not_recover_writeback(
@@ -1536,11 +1521,12 @@ def test_poll_attachment_blobs_persist_before_checkpoint_advance(
         "beeagent_module.cases.rop_mailbox_poll.ImapReadonlyMailboxClient",
         lambda *_args: mailbox,
     )
-    captured: dict[str, object] = {}
+    captured: dict[str, str] = {}
 
     def _fake_batch(**kwargs):
         storage_dir = kwargs["storage_dir"]
         run_id = kwargs.get("run_id") or "run"
+        assert isinstance(run_id, str)
         store_dir = storage_dir / "attachments" / run_id
         store_dir.mkdir(parents=True, exist_ok=True)
         (store_dir / "att-blob.bin").write_bytes(b"blob-bytes")
@@ -1588,9 +1574,7 @@ def test_poll_attachment_blobs_persist_before_checkpoint_advance(
         "beeagent_module.cases.rop_mailbox_poll.export_review_tsv_for_run",
         lambda *args, **kwargs: None,
     )
-    handle_mailbox_poll(
-        _poll_settings(), tmp_path, tmp_path, logging.getLogger("test")
-    )
+    handle_mailbox_poll(_poll_settings(), tmp_path, tmp_path, logging.getLogger("test"))
     run_id = captured["run_id"]
     assert (tmp_path / "attachments" / run_id / "attachment_manifest.json").exists()
     assert (

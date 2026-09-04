@@ -580,9 +580,7 @@ class TestWritebackSettingsValidation:
         )
         monkeypatch.setenv("BITRIX_WEBHOOK_URL", "https://same.test/rest/1/x")
         settings["bitrix"]["writeback"]["enabled"] = True
-        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = (
-            "NEW_ASSIGNED"
-        )
+        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = "NEW_ASSIGNED"
 
         with pytest.raises(RuntimeError) as exc_info:
             validate_settings(settings)
@@ -599,9 +597,7 @@ class TestWritebackSettingsValidation:
         )
         settings = self._load()
         settings["bitrix"]["writeback"]["enabled"] = True
-        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = (
-            "NEW_ASSIGNED"
-        )
+        settings["bitrix"]["writeback"]["stages"]["new_lead_assigned"] = "NEW_ASSIGNED"
 
         validate_settings(settings)
 
@@ -714,7 +710,9 @@ class TestWriteClientBoundary:
         assert fields["OWNER_ID"] == 199263
         assert fields["RESPONSIBLE_ID"] == 42
         assert fields["PROVIDER_ID"] == "beeagent-rop"
-        assert fields["PROVIDER_TYPE_ID"] == "welding|hotline_mailbox|<msg-1@example.test>"
+        assert (
+            fields["PROVIDER_TYPE_ID"] == "welding|hotline_mailbox|<msg-1@example.test>"
+        )
         assert fields["COMPLETED"] == "Y"
         assert fields["COMMUNICATIONS"][0]["VALUE"] == "sender@example.com"
         assert fields["COMMUNICATIONS"][0]["TYPE"] == "EMAIL"
@@ -786,7 +784,10 @@ class TestWritebackPlanner:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-1", "new_lead", message_id="<msg-1@example.test>", subject="Buy equipment"
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-1@example.test>",
+                    subject="Buy equipment",
                 )
             ],
             decisions=[_decision("evt-1", "new_lead")],
@@ -810,7 +811,8 @@ class TestWritebackPlanner:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -841,7 +843,9 @@ class TestWritebackPlanner:
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "existing_deal", message_id="<msg-1@example.test>")
+                _classified_event(
+                    "evt-1", "existing_deal", message_id="<msg-1@example.test>"
+                )
             ],
             decisions=[_decision("evt-1", "existing_deal")],
             reconciliation=[
@@ -1386,7 +1390,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[
                 _recon_item(
@@ -1413,7 +1421,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[
                 _recon_item(
@@ -1440,7 +1452,9 @@ class TestWritebackPlanner:
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "existing_deal", message_id="<msg-1@example.test>")
+                _classified_event(
+                    "evt-1", "existing_deal", message_id="<msg-1@example.test>"
+                )
             ],
             decisions=[_decision("evt-1", "existing_deal")],
             reconciliation=[_recon_item("evt-1", "not_found")],
@@ -1457,7 +1471,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "duplicate", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "duplicate", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "duplicate")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -1475,7 +1493,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "ambiguous")],
             routing=[_routing_item("evt-1", "matched")],
@@ -1501,7 +1523,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
             routing=[_routing_item("evt-1", "matched")],
@@ -1518,7 +1544,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "weak_match")],
             routing=[_routing_item("evt-1", "matched")],
@@ -1535,7 +1565,9 @@ class TestWritebackPlanner:
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "existing_deal", message_id="<msg-1@example.test>")
+                _classified_event(
+                    "evt-1", "existing_deal", message_id="<msg-1@example.test>"
+                )
             ],
             decisions=[_decision("evt-1", "existing_deal")],
             reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
@@ -1554,7 +1586,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "duplicate", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "duplicate", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "duplicate")],
             reconciliation=[_recon_item("evt-1", "duplicate_candidate")],
             routing=[_routing_item("evt-1", "matched")],
@@ -1571,7 +1607,9 @@ class TestWritebackPlanner:
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "existing_deal", message_id="<msg-1@example.test>")
+                _classified_event(
+                    "evt-1", "existing_deal", message_id="<msg-1@example.test>"
+                )
             ],
             decisions=[_decision("evt-1", "existing_deal")],
             reconciliation=[
@@ -1633,7 +1671,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
@@ -1657,7 +1699,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=None,
@@ -1691,7 +1737,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "unresolved", user_id=None)],
@@ -1715,7 +1765,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
         )
@@ -1739,7 +1793,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[],
@@ -1763,7 +1821,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched", user_id=42)],
@@ -1787,7 +1849,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched", user_id=user_id)],
@@ -1811,7 +1877,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "connector_degraded", user_id=None)],
@@ -1833,7 +1903,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", status, user_id=None)],
@@ -1854,7 +1928,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
@@ -1875,7 +1953,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched", user_id=42)],
@@ -1883,9 +1965,7 @@ class TestWritebackPlanner:
         plan = build_writeback_plan(
             tmp_path,
             "run-wb",
-            _writeback_settings(
-                stages={"new_lead": "NEW", "irrelevant": "NEW"}
-            ),
+            _writeback_settings(stages={"new_lead": "NEW", "irrelevant": "NEW"}),
             _null_logger(),
         )
         record = plan["events"][0]
@@ -1898,7 +1978,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched", user_id=42)],
@@ -1921,7 +2005,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
@@ -1969,7 +2057,10 @@ class TestWritebackPlanner:
         assert record["responsible_status"] == "matched"
 
     def test_exact_reply_attaches_to_created_thread_root(self, tmp_path: Path) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -2210,7 +2301,10 @@ class TestWritebackPlanner:
     def test_exact_outbound_bridge_matching_trusted_target_attaches(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_attached_thread_record("<msg-a@example.test>", target_entity_id=3001)])
+        _seed_state(
+            tmp_path,
+            [_attached_thread_record("<msg-a@example.test>", target_entity_id=3001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb-outbound-trusted"
         _write_artifacts(
             run_dir,
@@ -2262,7 +2356,10 @@ class TestWritebackPlanner:
     def test_exact_outbound_bridge_responsible_mismatch_attaches_canonical(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_attached_thread_record("<msg-a@example.test>", target_entity_id=3001)])
+        _seed_state(
+            tmp_path,
+            [_attached_thread_record("<msg-a@example.test>", target_entity_id=3001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb-outbound-responsible-mismatch"
         _write_artifacts(
             run_dir,
@@ -2585,7 +2682,10 @@ class TestWritebackPlanner:
     def test_irrelevant_semantic_trusted_attach_projects_existing_deal(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb-irrelevant-attach"
         _write_artifacts(
             run_dir,
@@ -2613,9 +2713,7 @@ class TestWritebackPlanner:
         assert record["case_type"] == "existing_deal"
         assert record["semantic_case_type"] == "irrelevant"
 
-    def test_independent_request_keeps_semantic_case_type(
-        self, tmp_path: Path
-    ) -> None:
+    def test_independent_request_keeps_semantic_case_type(self, tmp_path: Path) -> None:
         run_dir = tmp_path / "runs" / "run-wb-independent"
         _write_artifacts(
             run_dir,
@@ -2710,7 +2808,10 @@ class TestWritebackPlanner:
     def test_exact_outbound_bridge_conflicting_trusted_target_is_deferred(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_attached_thread_record("<msg-a@example.test>", target_entity_id=2002)])
+        _seed_state(
+            tmp_path,
+            [_attached_thread_record("<msg-a@example.test>", target_entity_id=2002)],
+        )
         run_dir = tmp_path / "runs" / "run-wb-outbound-conflict"
         _write_artifacts(
             run_dir,
@@ -2831,7 +2932,10 @@ class TestWritebackPlanner:
         assert record["target_entity_id"] is None
 
     def test_thread_headers_merged_from_normalized_events(self, tmp_path: Path) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         run_dir.mkdir(parents=True, exist_ok=True)
         normalized = [
@@ -2846,7 +2950,9 @@ class TestWritebackPlanner:
         (run_dir / "normalized_events.json").write_text(
             json.dumps(normalized), encoding="utf-8"
         )
-        classified = [_classified_event("evt-b", "new_lead", message_id="<msg-b@example.test>")]
+        classified = [
+            _classified_event("evt-b", "new_lead", message_id="<msg-b@example.test>")
+        ]
         (run_dir / "classified_events.json").write_text(
             json.dumps(classified), encoding="utf-8"
         )
@@ -2872,7 +2978,10 @@ class TestWritebackPlanner:
     def test_normalized_event_without_event_id_never_authorizes_thread(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         run_dir.mkdir(parents=True, exist_ok=True)
         normalized = [
@@ -2885,7 +2994,9 @@ class TestWritebackPlanner:
         (run_dir / "normalized_events.json").write_text(
             json.dumps(normalized), encoding="utf-8"
         )
-        classified = [_classified_event("evt-b", "new_lead", message_id="<msg-b@example.test>")]
+        classified = [
+            _classified_event("evt-b", "new_lead", message_id="<msg-b@example.test>")
+        ]
         (run_dir / "classified_events.json").write_text(
             json.dumps(classified), encoding="utf-8"
         )
@@ -3143,13 +3254,19 @@ class TestWritebackPlanner:
     def test_missing_thread_headers_never_authorize_targeting(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-y", "new_lead", message_id="<msg-y@example.test>", sender="client@example.com"
+                    "evt-y",
+                    "new_lead",
+                    message_id="<msg-y@example.test>",
+                    sender="client@example.com",
                 )
             ],
             decisions=[_decision("evt-y", "new_lead")],
@@ -3166,7 +3283,10 @@ class TestWritebackPlanner:
     def test_subject_similarity_alone_never_authorizes_attach(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb-subject"
         _write_artifacts(
             run_dir,
@@ -3193,7 +3313,10 @@ class TestWritebackPlanner:
     def test_malformed_thread_headers_never_authorize_targeting(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -3280,7 +3403,10 @@ class TestWritebackPlanner:
     def test_independent_same_sender_new_lead_creates_new_lead(
         self, tmp_path: Path
     ) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -3311,7 +3437,10 @@ class TestWritebackPlanner:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-a", "new_lead", message_id="<msg-a@example.test>", sender="client@example.com"
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender="client@example.com",
                 ),
                 _classified_event(
                     "evt-b",
@@ -3341,7 +3470,10 @@ class TestWritebackPlanner:
         assert by_event["evt-b"]["status"] == "pending"
 
     def test_skipped_case_type_is_not_attached_via_thread(self, tmp_path: Path) -> None:
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
@@ -3368,7 +3500,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "connector_degraded")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3387,7 +3523,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "connector_degraded")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3428,7 +3568,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[
@@ -3453,7 +3597,11 @@ class TestWritebackPlanner:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
@@ -3521,8 +3669,12 @@ class TestWritebackPlanner:
         _write_artifacts(
             run_dir,
             classified=[
-                _classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>"),
-                _classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>"),
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                ),
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                ),
             ],
             decisions=[
                 _decision("evt-1", "new_lead"),
@@ -3593,7 +3745,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3621,7 +3777,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3645,7 +3805,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3671,7 +3835,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3698,7 +3866,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3731,7 +3903,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3763,7 +3939,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -3802,7 +3982,10 @@ class TestWritebackExecutor:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-1", "new_lead", message_id="<msg-1@example.test>", subject="Buy machine"
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-1@example.test>",
+                    subject="Buy machine",
                 )
             ],
             decisions=[_decision("evt-1", "new_lead")],
@@ -3844,7 +4027,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4152,7 +4339,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4295,7 +4486,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "not_found", user_id=None)],
@@ -4371,7 +4566,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4393,7 +4592,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4449,7 +4652,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4504,7 +4711,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4554,7 +4765,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4606,7 +4821,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -4681,7 +4897,10 @@ class TestWritebackExecutor:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-1", "new_lead", message_id="<msg-1@example.test>", sender="sender@example.com"
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-1@example.test>",
+                    sender="sender@example.com",
                 )
             ],
             decisions=[_decision("evt-1", "new_lead")],
@@ -4742,7 +4961,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4786,7 +5009,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4820,7 +5047,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4855,7 +5086,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4888,7 +5123,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -4915,7 +5154,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -4963,7 +5203,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -4995,7 +5236,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -5028,7 +5270,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -5074,7 +5317,8 @@ class TestWritebackExecutor:
     ) -> None:
         run_dir = tmp_path / "runs" / "run-wb"
         _seed_state(
-            tmp_path, [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)]
+            tmp_path,
+            [_attached_thread_record("<msg-root@example.test>", target_entity_id=253)],
         )
         _write_artifacts(
             run_dir,
@@ -5176,7 +5420,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -5207,7 +5455,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -5235,7 +5487,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / "run-wb"
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -5378,7 +5634,11 @@ class TestWritebackExecutor:
         run_dir = tmp_path / "runs" / run_id
         _write_artifacts(
             run_dir,
-            classified=[_classified_event("evt-1", "new_lead", message_id="<msg-1@example.test>")],
+            classified=[
+                _classified_event(
+                    "evt-1", "new_lead", message_id="<msg-1@example.test>"
+                )
+            ],
             decisions=[_decision("evt-1", "new_lead")],
             reconciliation=[_recon_item("evt-1", "not_found")],
             routing=[_routing_item("evt-1", "matched")],
@@ -5410,7 +5670,10 @@ class TestWritebackExecutor:
             run_a,
             classified=[
                 _classified_event(
-                    "evt-a", "new_lead", message_id="<msg-a@example.test>", sender="client@example.com"
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender="client@example.com",
                 )
             ],
             decisions=[_decision("evt-a", "new_lead")],
@@ -5470,7 +5733,10 @@ class TestWritebackExecutor:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-1", "new_lead", message_id="<msg-1@example.test>", sender="client@example.com"
+                    "evt-1",
+                    "new_lead",
+                    message_id="<msg-1@example.test>",
+                    sender="client@example.com",
                 )
             ],
             decisions=[_decision("evt-1", "new_lead")],
@@ -5500,7 +5766,10 @@ class TestWritebackExecutor:
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         settings = _writeback_settings(email_attach=True)
-        _seed_state(tmp_path, [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)])
+        _seed_state(
+            tmp_path,
+            [_created_lead_record("<msg-a@example.test>", remote_entity_id=1001)],
+        )
         run_b = tmp_path / "runs" / "run-b"
         _write_artifacts(
             run_b,
@@ -5548,7 +5817,10 @@ class TestWritebackExecutor:
             run_a,
             classified=[
                 _classified_event(
-                    "evt-a", "new_lead", message_id="<msg-a@example.test>", sender="client@example.com"
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender="client@example.com",
                 )
             ],
             decisions=[_decision("evt-a", "new_lead")],
@@ -5610,7 +5882,7 @@ class TestWritebackExecutor:
         assert by_event["evt-a"]["remote_entity_id"] == 1001
         assert by_event["evt-b"]["target_entity_id"] == 1001
 
-    def test_same_run_reply_recovers_to_attach_after_root_confirmed(
+    def test_same_run_reply_attaches_after_root_confirmed_in_scoped_execution(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
         settings = _writeback_settings(email_attach=True)
@@ -5620,7 +5892,10 @@ class TestWritebackExecutor:
             run_dir,
             classified=[
                 _classified_event(
-                    "evt-a", "new_lead", message_id="<msg-a@example.test>", sender="client@example.com"
+                    "evt-a",
+                    "new_lead",
+                    message_id="<msg-a@example.test>",
+                    sender="client@example.com",
                 ),
                 _classified_event(
                     "evt-b",
@@ -5641,31 +5916,30 @@ class TestWritebackExecutor:
             ],
         )
         build_writeback_plan(tmp_path, run_id, settings, _null_logger())
-        first = _HttpRecorder(_default_handler)
-        with _patch_http(first)[0], _patch_http(first)[1]:
-            execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
-        state = _load_state(tmp_path)
-        by_event = {r["event_id"]: r for r in state["events"].values()}
-        assert by_event["evt-a"]["status"] == "created"
-        assert by_event["evt-a"]["remote_entity_id"] == 1001
-        assert by_event["evt-b"]["outcome"] == "deferred"
-        assert by_event["evt-b"]["reason_code"] == "pending_thread_root"
-
-        build_writeback_plan(tmp_path, run_id, settings, _null_logger())
-        second = _HttpRecorder(_default_handler)
-        with _patch_http(second)[0], _patch_http(second)[1]:
+        recorder = _HttpRecorder(_default_handler)
+        with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             result = execute_writeback_pending(
-                tmp_path, run_id, settings, _null_logger()
+                tmp_path,
+                run_id,
+                settings,
+                _null_logger(),
+                scope_run_id=run_id,
             )
-        assert result["writes_performed"] == 1
+        assert result["writes_performed"] == 3
         state = _load_state(tmp_path)
+        a_record = next(
+            r for r in state["events"].values() if r.get("event_id") == "evt-a"
+        )
         b_record = next(
             r for r in state["events"].values() if r.get("event_id") == "evt-b"
         )
+        assert a_record["status"] == "created"
+        assert a_record["email_activity_id"] == 9001
         assert b_record["outcome"] == "attach_existing"
         assert b_record["status"] == "attached"
         assert b_record["target_entity_id"] == 1001
         assert b_record["target_provenance"] == "thread_resolved"
+        assert b_record["email_activity_id"] == 9001
 
     def test_same_run_sender_subject_siblings_attach_to_confirmed_root(
         self, tmp_path: Path, writeback_env: None
@@ -5754,7 +6028,10 @@ class TestWritebackExecutor:
             ],
         )
         plan = build_writeback_plan(
-            tmp_path, "run-sender-subject-negative", _writeback_settings(), _null_logger()
+            tmp_path,
+            "run-sender-subject-negative",
+            _writeback_settings(),
+            _null_logger(),
         )
         assert [record["outcome"] for record in plan["events"]] == [
             "create_lead",
@@ -5824,6 +6101,198 @@ class TestWritebackCli:
         execute_default = parser.parse_args(["writeback", "execute"])
         assert execute_default.run_id == "manual-execute"
         assert execute_default.dry_run is False
+
+        existing_only = parser.parse_args(["writeback", "execute", "--existing-only"])
+        assert existing_only.existing_only is True
+
+
+def _plan_scoped_create(
+    storage_dir: Path,
+    run_id: str,
+    event_ids: list[str],
+    settings: dict[str, Any],
+) -> None:
+    _write_artifacts(
+        storage_dir / "runs" / run_id,
+        classified=[
+            _classified_event(
+                event_id,
+                "new_lead",
+                message_id=f"<{event_id}@example.test>",
+                sender="sender@example.com",
+                subject=event_id,
+            )
+            for event_id in event_ids
+        ],
+        decisions=[_decision(event_id, "new_lead") for event_id in event_ids],
+        reconciliation=[_recon_item(event_id, "not_found") for event_id in event_ids],
+        routing=[_routing_item(event_id, "matched") for event_id in event_ids],
+    )
+    build_writeback_plan(storage_dir, run_id, settings, _null_logger())
+
+
+def test_execute_scope_mutates_only_current_run(
+    tmp_path: Path, writeback_env: None
+) -> None:
+    settings = _writeback_settings(email_attach=True)
+    _plan_scoped_create(tmp_path, "run-a", ["a-1", "a-2"], settings)
+    _plan_scoped_create(tmp_path, "run-b", ["b-1"], settings)
+    _plan_scoped_create(tmp_path, "run-x", ["x-1", "x-2"], settings)
+    before = {
+        identity: json.dumps(record, sort_keys=True)
+        for identity, record in _load_state(tmp_path)["events"].items()
+        if record["last_run_id"] in {"run-a", "run-b"}
+    }
+    recorder = _HttpRecorder(_default_handler)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        result = execute_writeback_pending(
+            tmp_path,
+            "run-x",
+            settings,
+            _null_logger(),
+            scope_run_id="run-x",
+        )
+    mutations = [
+        call["method"]
+        for call in recorder.calls
+        if call["method"] in {"crm.item.add", "crm.activity.add"}
+    ]
+    assert mutations == [
+        "crm.item.add",
+        "crm.activity.add",
+        "crm.item.add",
+        "crm.activity.add",
+    ]
+    assert result["writes_performed"] == 4
+    after = _load_state(tmp_path)["events"]
+    assert {
+        identity: json.dumps(record, sort_keys=True)
+        for identity, record in after.items()
+        if record["last_run_id"] in {"run-a", "run-b"}
+    } == before
+
+
+def test_existing_only_recovers_exact_lead_without_creating_missing_lead(
+    tmp_path: Path, writeback_env: None
+) -> None:
+    settings = _writeback_settings(email_attach=True)
+    _plan_scoped_create(tmp_path, "run-existing", ["existing"], settings)
+
+    def existing_lead(call: dict[str, Any]) -> bytes:
+        if call["method"] == "crm.item.list":
+            return json.dumps({"result": {"items": [{"id": 701}]}}).encode()
+        return _default_handler(call)
+
+    recorder = _HttpRecorder(existing_lead)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        result = execute_writeback_pending(
+            tmp_path,
+            "manual-existing",
+            settings,
+            _null_logger(),
+            existing_only=True,
+        )
+    assert result["recovered_count"] == 1
+    assert not [call for call in recorder.calls if call["method"] == "crm.item.add"]
+    assert [call for call in recorder.calls if call["method"] == "crm.activity.add"]
+    record = next(iter(_load_state(tmp_path)["events"].values()))
+    assert record["remote_entity_id"] == 701
+    assert record["email_activity_id"] == 9001
+
+
+def test_existing_only_leaves_missing_lead_pending_without_creation(
+    tmp_path: Path, writeback_env: None
+) -> None:
+    settings = _writeback_settings(email_attach=True)
+    _plan_scoped_create(tmp_path, "run-missing", ["missing"], settings)
+    recorder = _HttpRecorder(_default_handler)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        result = execute_writeback_pending(
+            tmp_path,
+            "manual-existing",
+            settings,
+            _null_logger(),
+            existing_only=True,
+        )
+    assert result["existing_only_misses"] == 1
+    assert not [
+        call
+        for call in recorder.calls
+        if call["method"] in {"crm.item.add", "crm.activity.add"}
+    ]
+    record = next(iter(_load_state(tmp_path)["events"].values()))
+    assert record["status"] == "pending"
+    assert record["reason_code"] == "existing_only_not_found"
+
+
+def test_existing_only_leaves_historical_attach_existing_unchanged(
+    tmp_path: Path, writeback_env: None
+) -> None:
+    settings = _writeback_settings(email_attach=True, file_attach=True)
+    _plan_scoped_create(tmp_path, "run-create", ["existing"], settings)
+    state = _load_state(tmp_path)
+    identity = _stable_identity("welding", "historical", "<attach@example.test>")
+    historical_attach = {
+        "identity": identity,
+        "client_id": "welding",
+        "source_id": "historical",
+        "remote_id": "<attach@example.test>",
+        "message_id": "<attach@example.test>",
+        "event_id": "historical-attach",
+        "sender_email": "sender@example.com",
+        "subject": "Historical attachment",
+        "body_preview": "body",
+        "outcome": "attach_existing",
+        "status": "pending",
+        "target_entity_type": "lead",
+        "target_entity_type_id": 1,
+        "target_entity_id": 253,
+        "target_responsible_user_id": 42,
+        "target_provenance": "thread_resolved",
+        "originator_id": "beeagent-rop",
+        "origin_id": _origin_id(identity),
+        "email_activity_id": None,
+        "email_attachment_required": True,
+        "email_attachment_status": "pending",
+        "attach_attempts": 0,
+        "last_attach_error_code": None,
+        "file_attach_required": True,
+        "file_attach_status": "pending",
+        "file_attach_attempts": 0,
+        "last_file_attach_error_code": None,
+        "attachment_refs": [],
+        "last_run_id": "historical-attach-run",
+    }
+    _seed_state(tmp_path, [*state["events"].values(), historical_attach])
+    before = json.dumps(historical_attach, sort_keys=True)
+
+    def existing_lead(call: dict[str, Any]) -> bytes:
+        if call["method"] == "crm.item.list":
+            return json.dumps({"result": {"items": [{"id": 701}]}}).encode()
+        return _default_handler(call)
+
+    recorder = _HttpRecorder(existing_lead)
+    with _patch_http(recorder)[0], _patch_http(recorder)[1]:
+        execute_writeback_pending(
+            tmp_path,
+            "manual-existing",
+            settings,
+            _null_logger(),
+            existing_only=True,
+        )
+    after = _load_state(tmp_path)["events"][identity]
+    assert json.dumps(after, sort_keys=True) == before
+    assert not [
+        call
+        for call in recorder.calls
+        if call["method"] == "crm.activity.add"
+        and call["payload"]["fields"]["OWNER_ID"] == 253
+    ]
+    assert not [
+        call
+        for call in recorder.calls
+        if call["method"] == "crm.activity.update" and call["payload"]["id"] == 253
+    ]
 
 
 def _seed_attachment_manifest(storage_dir: Path, run_id: str) -> dict[str, Any]:
@@ -5974,9 +6443,7 @@ class TestPhysicalFileAttachmentDelivery:
             routing=[_routing_item("evt-1", "matched")],
         )
         _seed_attachment_manifest(tmp_path, "run-wb-files-replay")
-        settings = _writeback_settings(
-            email_attach=True, file_attach=True
-        )
+        settings = _writeback_settings(email_attach=True, file_attach=True)
         build_writeback_plan(tmp_path, "run-wb-files-replay", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
@@ -6087,9 +6554,7 @@ class TestPhysicalFileAttachmentDelivery:
             ),
             encoding="utf-8",
         )
-        settings = _writeback_settings(
-            email_attach=True, file_attach=True
-        )
+        settings = _writeback_settings(email_attach=True, file_attach=True)
         build_writeback_plan(tmp_path, "run-wb-files-missing", settings, _null_logger())
         recorder = _HttpRecorder(_default_handler)
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
@@ -6124,10 +6589,10 @@ class TestPhysicalFileAttachmentDelivery:
             routing=[_routing_item("evt-1", "matched")],
         )
         _seed_attachment_manifest(tmp_path, "run-wb-files-recovered")
-        settings = _writeback_settings(
-            email_attach=True, file_attach=True
+        settings = _writeback_settings(email_attach=True, file_attach=True)
+        build_writeback_plan(
+            tmp_path, "run-wb-files-recovered", settings, _null_logger()
         )
-        build_writeback_plan(tmp_path, "run-wb-files-recovered", settings, _null_logger())
         state = _load_state(tmp_path)
         record = list(state["events"].values())[0]
         record["status"] = "created"
@@ -6224,9 +6689,7 @@ class TestPhysicalFileAttachmentDelivery:
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(tmp_path, run_id, settings, _null_logger())
         update_calls = [
-            call
-            for call in recorder.calls
-            if call["method"] == "crm.activity.update"
+            call for call in recorder.calls if call["method"] == "crm.activity.update"
         ]
         assert len(update_calls) == 1
         file_data = update_calls[0]["payload"]["fields"]["FILES"]
@@ -6393,9 +6856,7 @@ def test_sender_subject_confirmed_historical_root_attaches_changed_body(
     ][-1]
     assert activity_call["payload"]["fields"]["OWNER_ID"] == 101
     state = _load_state(tmp_path)
-    record = next(
-        r for r in state["events"].values() if r["event_id"] == "evt-two"
-    )
+    record = next(r for r in state["events"].values() if r["event_id"] == "evt-two")
     assert record["status"] == "attached"
 
 
@@ -6413,9 +6874,7 @@ def test_sender_subject_historical_root_does_not_cross_exact_key(
     subject: str,
     client_id: str,
 ) -> None:
-    historical = _created_lead_record(
-        "<old-root@example.test>", remote_entity_id=101
-    )
+    historical = _created_lead_record("<old-root@example.test>", remote_entity_id=101)
     historical.update(
         {
             "last_run_id": "run-old",
@@ -6441,9 +6900,7 @@ def test_sender_subject_historical_root_does_not_cross_exact_key(
         reconciliation=[_recon_item("evt-new", "not_found")],
         routing=[_routing_item("evt-new", "matched")],
     )
-    plan = build_writeback_plan(
-        tmp_path, run_id, _writeback_settings(), _null_logger()
-    )
+    plan = build_writeback_plan(tmp_path, run_id, _writeback_settings(), _null_logger())
     assert plan["events"][0]["outcome"] == "create_lead"
 
 
@@ -6499,9 +6956,7 @@ def test_sender_subject_ambiguous_historical_roots_defer_without_mutation(
 def test_sender_subject_untrusted_historical_root_does_not_authorize_attachment(
     tmp_path: Path,
 ) -> None:
-    historical = _created_lead_record(
-        "<old-root@example.test>", remote_entity_id=101
-    )
+    historical = _created_lead_record("<old-root@example.test>", remote_entity_id=101)
     historical.update(
         {
             "last_run_id": "run-old",
@@ -6527,7 +6982,5 @@ def test_sender_subject_untrusted_historical_root_does_not_authorize_attachment(
         reconciliation=[_recon_item("evt-new", "not_found")],
         routing=[_routing_item("evt-new", "matched")],
     )
-    plan = build_writeback_plan(
-        tmp_path, run_id, _writeback_settings(), _null_logger()
-    )
+    plan = build_writeback_plan(tmp_path, run_id, _writeback_settings(), _null_logger())
     assert plan["events"][0]["outcome"] == "create_lead"
