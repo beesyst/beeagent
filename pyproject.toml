@@ -1,6 +1,6 @@
 [project]
 name = "beeagent"
-version = "0.59.1"
+version = "0.59.2"
 description = "BeeAgent pre-MVP skeleton"
 readme = "README.ru.md"
 requires-python = ">=3.14"

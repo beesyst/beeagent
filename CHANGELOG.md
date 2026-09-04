@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.1...beeagent-v0.59.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **rop:** scope writeback recovery and preserve thread delivery ([#239](https://github.com/beesyst/beeagent/issues/239)) ([e1700bc](https://github.com/beesyst/beeagent/commit/e1700bcdd3509d08360c498e56ff04949e9691bb))
+
 ## [0.59.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.0...beeagent-v0.59.1) (2026-09-04)
 
 
