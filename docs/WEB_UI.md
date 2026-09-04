@@ -68,6 +68,8 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
 - normal ROP lifecycle refresh updates only the affected run generation/views and publishes the new manifest last; it does not bootstrap an absent projection or reconstruct the complete historical Web catalog;
 - explicit bootstrap/regeneration for an upgraded storage tree without v2 is `./start.sh rop dashboard --period 7d`; HTTP GET never migrates, repairs, regenerates or falls back to historical reconstruction;
 - publication writes and validates immutable views before the manifest replacement, so an interrupted publication preserves the previous valid manifest; projection failure does not alter canonical run, writeback or checkpoint artifacts;
+- derived projection retention runs only after successful publication: v1 retains entry files referenced by the current and immediately previous indexes, while v2 retains every generation referenced by the current and immediately previous manifests; stale controlled derived entries/generations are best-effort pruned without touching canonical runs or attachments;
+- an interrupted v2 publication removes only its own temporary or unpublished generation; publication readers retain one immediately previous publication as deterministic grace;
 - missing or malformed manifest or requested view fails explicitly and recoverably through the supported `rop dashboard` regeneration path;
 - canonical ROP run artifacts remain the business source of truth.
 

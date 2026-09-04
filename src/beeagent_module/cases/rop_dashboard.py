@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -80,6 +81,7 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
 )
 _SAFE_PROJECTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _SAFE_PROJECTION_REVISION_RE = re.compile(r"^[gr]_[a-f0-9]{32}$")
+_ROP_WEB_PROJECTION_ENTRY_RE = re.compile(r"^[a-f0-9]{64}\.json$")
 
 ALLOWED_QUEUE_IDS: tuple[str, ...] = (
     "high_priority",
@@ -809,6 +811,7 @@ def write_rop_web_projection(
     projection: dict[str, Any],
     logger: logging.Logger,
 ) -> Path:
+    previous_index = rop_web_projection_index(storage_dir)
     interfaces_dir = (storage_dir / "interfaces").resolve()
     interfaces_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = interfaces_dir / WEB_PROJECTION_ARTIFACT
@@ -876,6 +879,12 @@ def write_rop_web_projection(
         periods_by_run=periods_by_run,
         logger=logger,
     )
+    _prune_rop_web_projection_entries(
+        storage_dir,
+        set(bounded_run_ids)
+        | set(previous_index.get("run_ids", []) if previous_index is not None else []),
+        logger,
+    )
     logger.info(
         "ROP Web projection written: path=%s runs=%d",
         str(artifact_path.relative_to(storage_dir)),
@@ -926,6 +935,107 @@ def _projection_revision(value: object) -> str | None:
     if not isinstance(value, str) or not _SAFE_PROJECTION_REVISION_RE.fullmatch(value):
         return None
     return value
+
+
+def _rop_web_projection_generation(value: object) -> str | None:
+    revision = _projection_revision(value)
+    if revision is None or not revision.startswith("g_"):
+        return None
+    return revision
+
+
+def _prune_rop_web_projection_entries(
+    storage_dir: Path,
+    run_ids: set[str],
+    logger: logging.Logger,
+) -> None:
+    root = storage_dir / "interfaces" / "rop_web_projection"
+    if root.is_symlink() or not root.is_dir():
+        return
+    keep_names = {
+        rop_web_projection_entry_path(storage_dir, run_id).name
+        for run_id in run_ids
+        if isinstance(run_id, str) and run_id
+    }
+    pruned = 0
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        logger.warning("ROP Web projection v1 cleanup failed: %s", exc)
+        return
+    for path in children:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or _ROP_WEB_PROJECTION_ENTRY_RE.fullmatch(path.name) is None
+            or path.name in keep_names
+        ):
+            continue
+        try:
+            path.unlink()
+        except OSError as exc:
+            logger.warning("ROP Web projection v1 cleanup failed: %s", exc)
+            continue
+        pruned += 1
+    if pruned:
+        logger.info("ROP Web projection v1 cleanup pruned=%d", pruned)
+
+
+def _rop_web_projection_v2_generations(manifest: dict[str, Any] | None) -> set[str]:
+    if manifest is None:
+        return set()
+    runs = manifest.get("runs")
+    if not isinstance(runs, dict):
+        return set()
+    return {
+        generation
+        for entry in runs.values()
+        if isinstance(entry, dict)
+        and (generation := _rop_web_projection_generation(entry.get("generation")))
+        is not None
+    }
+
+
+def _prune_rop_web_projection_v2_generations(
+    root: Path,
+    keep_generations: set[str],
+    logger: logging.Logger,
+) -> None:
+    if root.is_symlink() or not root.is_dir():
+        return
+    pruned = 0
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        logger.warning("ROP Web projection v2 cleanup failed: %s", exc)
+        return
+    for path in children:
+        if (
+            path.is_symlink()
+            or not path.is_dir()
+            or _rop_web_projection_generation(path.name) is None
+            or path.name in keep_generations
+        ):
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            logger.warning("ROP Web projection v2 cleanup failed: %s", exc)
+            continue
+        pruned += 1
+    if pruned:
+        logger.info("ROP Web projection v2 cleanup pruned=%d", pruned)
+
+
+def _cleanup_own_rop_web_projection_v2_root(
+    path: Path,
+    logger: logging.Logger,
+) -> None:
+    try:
+        if not path.is_symlink() and path.is_dir():
+            shutil.rmtree(path)
+    except OSError as exc:
+        logger.warning("ROP Web projection v2 interrupted cleanup failed: %s", exc)
 
 
 def _v2_view_key(view_id: str, period: str | None = None) -> str:
@@ -1400,8 +1510,11 @@ def write_rop_web_projection_v2(
         ):
             raise ValueError("ROP Web projection view payload is malformed")
         pending_views.append((safe_run_id, revision, views))
+    temporary_root_created = False
+    final_root_created = False
     try:
         temporary_root.mkdir(parents=True, exist_ok=False)
+        temporary_root_created = True
         for safe_run_id, revision, views in pending_views:
             run_root = (
                 temporary_root
@@ -1432,32 +1545,43 @@ def write_rop_web_projection_v2(
                 "view_keys": sorted(views),
             }
         temporary_root.replace(final_root)
-    except Exception:
-        raise
+        final_root_created = True
 
-    bounded_run_ids = []
-    for run_id in run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]:
-        if _projection_identifier(run_id) is None or run_id not in next_runs:
-            raise ValueError("ROP Web projection manifest run is unavailable")
-        bounded_run_ids.append(run_id)
-    manifest = {
-        "schema_version": 2,
-        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "generation": generation,
-        "latest_run_id": bounded_run_ids[0] if bounded_run_ids else None,
-        "run_ids": bounded_run_ids,
-        "total_runs": total_runs,
-        "runs": {run_id: next_runs[run_id] for run_id in bounded_run_ids},
-    }
-    if rop_web_projection_v2_manifest_data(manifest) is None:
-        raise ValueError("ROP Web projection manifest is malformed")
-    manifest_path = interfaces_dir / WEB_PROJECTION_V2_ARTIFACT
-    temporary_manifest = manifest_path.with_suffix(".json.tmp")
-    temporary_manifest.write_text(
-        json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
-        encoding="utf-8",
+        bounded_run_ids = []
+        for run_id in run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]:
+            if _projection_identifier(run_id) is None or run_id not in next_runs:
+                raise ValueError("ROP Web projection manifest run is unavailable")
+            bounded_run_ids.append(run_id)
+        manifest = {
+            "schema_version": 2,
+            "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generation": generation,
+            "latest_run_id": bounded_run_ids[0] if bounded_run_ids else None,
+            "run_ids": bounded_run_ids,
+            "total_runs": total_runs,
+            "runs": {run_id: next_runs[run_id] for run_id in bounded_run_ids},
+        }
+        if rop_web_projection_v2_manifest_data(manifest) is None:
+            raise ValueError("ROP Web projection manifest is malformed")
+        manifest_path = interfaces_dir / WEB_PROJECTION_V2_ARTIFACT
+        temporary_manifest = manifest_path.with_suffix(".json.tmp")
+        temporary_manifest.write_text(
+            json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temporary_manifest, manifest_path)
+    except Exception:
+        if final_root_created:
+            _cleanup_own_rop_web_projection_v2_root(final_root, logger)
+        elif temporary_root_created:
+            _cleanup_own_rop_web_projection_v2_root(temporary_root, logger)
+        raise
+    _prune_rop_web_projection_v2_generations(
+        root,
+        _rop_web_projection_v2_generations(manifest)
+        | _rop_web_projection_v2_generations(existing),
+        logger,
     )
-    os.replace(temporary_manifest, manifest_path)
     logger.info("ROP Web projection v2 published: runs=%d", len(bounded_run_ids))
     return manifest_path
 
