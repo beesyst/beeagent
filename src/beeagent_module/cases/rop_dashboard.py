@@ -70,7 +70,6 @@ DEFAULT_PAGE_SIZE = 25
 ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "overview",
     "queue",
-    "threads",
     "sources",
     "api",
 )
@@ -1143,7 +1142,6 @@ def rop_web_projection_v2_manifest(storage_dir: Path) -> dict[str, Any] | None:
 def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
     required_types: dict[str, dict[str, type]] = {
         "queue": {"queue_rows": list, "filter_options": dict},
-        "threads": {"thread_summary": dict, "threads": list},
         "sources": {"source_health": list},
     }
     if view_key.startswith("overview."):
@@ -1385,7 +1383,6 @@ def build_rop_web_projection_v2_views(
         "updated_at": all_data.get("updated_at"),
     }
     for view_id, fields in {
-        "threads": ("thread_summary", "threads", "warnings"),
         "sources": ("source_health", "sources", "warnings"),
     }.items():
         views[_v2_view_key(view_id)] = _v2_payload_fields(all_data, fields)
@@ -1400,7 +1397,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
         _v2_view_key(view_id)
         for view_id in (
             "queue",
-            "threads",
             "sources",
         )
     }

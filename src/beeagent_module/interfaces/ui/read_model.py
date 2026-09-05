@@ -2492,7 +2492,6 @@ def build_rop_tab_read_model(
         view_id = requested_tab
         view_period = effective_period
     elif requested_tab in {
-        "threads",
         "sources",
     }:
         view_id = requested_tab
@@ -2906,23 +2905,6 @@ def _build_rop_tab_read_model_legacy(
             classified if isinstance(classified, list) else None,
         )
 
-    if requested_tab == "threads":
-        thread_index = _read_json(run_dir / "mail_thread_index.json")
-        thread_context = _read_json(run_dir / "mail_thread_context.json")
-        classified = _read_json(run_dir / "classified_events.json")
-        normalized = _read_json(run_dir / "normalized_events.json")
-        result["thread_summary"] = _build_thread_summary(
-            thread_index if isinstance(thread_index, dict) else None,
-            thread_context if isinstance(thread_context, dict) else None,
-            classified if isinstance(classified, list) else None,
-        )
-        result["threads"] = _build_threads(
-            thread_index if isinstance(thread_index, dict) else None,
-            thread_context if isinstance(thread_context, dict) else None,
-            classified if isinstance(classified, list) else None,
-            normalized if isinstance(normalized, list) else None,
-        )
-
     return result
 
 
@@ -2992,8 +2974,6 @@ def build_rop_page_layout(
         return _build_rop_queue_layout(data, locale=locale)
     if tab == "sources":
         return _build_rop_sources_layout(data, locale=locale)
-    if tab == "threads":
-        return _build_rop_threads_layout(data, locale=locale)
     return _build_rop_overview_layout(data, locale=locale)
 
 
@@ -5013,138 +4993,6 @@ def _build_rop_bitrix_layout(
                 "rows": rows,
             }
         )
-
-    return layout
-
-
-def _build_rop_threads_layout(
-    data: dict[str, Any],
-    locale: str = "en",
-) -> list[dict[str, Any]]:
-    thread_summary_result = data.get("thread_summary", {})
-    if not isinstance(thread_summary_result, dict):
-        thread_summary_result = {}
-    thread_list = data.get("threads", [])
-    if not isinstance(thread_list, list):
-        thread_list = []
-
-    layout: list[dict[str, Any]] = []
-
-    thread_count = thread_summary_result.get("thread_count", 0)
-    events_with_thread = thread_summary_result.get("events_with_thread_context", 0)
-
-    kpi_items = [
-        {"label": t("Threads", locale), "value": thread_count},
-        {
-            "label": t("Events with thread context", locale),
-            "value": events_with_thread,
-        },
-        {
-            "label": t("Reply or forward", locale),
-            "value": thread_summary_result.get("reply_or_forward_count", 0),
-        },
-        {
-            "label": t("Linked by references", locale),
-            "value": thread_summary_result.get("linked_by_references_count", 0),
-        },
-        {
-            "label": t("Linked by subject", locale),
-            "value": thread_summary_result.get("linked_by_subject_fallback_count", 0),
-        },
-        {
-            "label": t("Source-client scoped", locale),
-            "value": thread_summary_result.get(
-                "source_client_scoped_fallback_count", 0
-            ),
-        },
-    ]
-    layout.append(
-        {
-            "type": "kpi_grid",
-            "size": "XL",
-            "columns": 3,
-            "title": t("Thread Summary", locale),
-            "items": kpi_items,
-        }
-    )
-
-    thread_warnings = thread_summary_result.get("warnings", [])
-    if isinstance(thread_warnings, list) and thread_warnings:
-        warn_items = []
-        for w in thread_warnings:
-            if isinstance(w, str):
-                warn_items.append({"label": "Warning", "value": w, "status": "warning"})
-        if warn_items:
-            layout.append(
-                {
-                    "type": "state_grid",
-                    "size": "XL",
-                    "title": t("Thread warnings", locale),
-                    "items": warn_items,
-                }
-            )
-
-    if not thread_list:
-        if thread_count == 0:
-            layout.append(
-                {
-                    "type": "state_grid",
-                    "size": "XL",
-                    "title": t("Thread Groups", locale),
-                    "items": [
-                        {
-                            "label": t("No threads", locale),
-                            "value": t(
-                                "No thread context available for this run", locale
-                            ),
-                            "status": "empty",
-                        }
-                    ],
-                }
-            )
-        return layout
-
-    thread_rows: list[list[str]] = []
-    for ctx in thread_list[:50]:
-        if not isinstance(ctx, dict):
-            continue
-        thread_rows.append(
-            [
-                str(ctx.get("thread_id", "")),
-                str(ctx.get("event_count", 0)),
-                str(ctx.get("source_id", "")),
-                str(ctx.get("client_id", "")),
-                str(ctx.get("latest_subject", "")),
-                str(ctx.get("latest_sender", "")),
-                str(ctx.get("previous_event_ids_count", 0)),
-                t("Yes", locale)
-                if ctx.get("has_reply_or_forward")
-                else t("No", locale),
-                str(ctx.get("previous_case_type", "") or ""),
-                str(ctx.get("review_reason", "") or ""),
-            ]
-        )
-
-    layout.append(
-        {
-            "type": "status_table",
-            "size": "XL",
-            "title": t("Thread Groups", locale),
-            "columns": [
-                t("Thread ID", locale),
-                t("Events", locale),
-                t("Source", locale),
-                t("Client", locale),
-                t("Latest subject", locale),
-                t("Latest sender", locale),
-                t("Previous events", locale),
-                t("Reply/Forward", locale),
-                t("Previous case type", locale),
-                t("Review reason", locale),
-            ],
-            "rows": thread_rows,
-        }
-    )
 
     return layout
 

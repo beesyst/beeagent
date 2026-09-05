@@ -103,13 +103,6 @@ pages:
           href: /rop?tab=queue
           icon: queue
 
-        - id: threads
-          title:
-            en: Threads
-            ru: Цепочки
-          href: /rop?tab=threads
-          icon: messages
-
         - id: sources
           title:
             en: Sources
