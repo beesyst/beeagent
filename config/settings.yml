@@ -101,20 +101,6 @@ rop:
       events_max: 100
       attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
-  routing:
-    queues:
-      sales:
-        bitrix_category: sales
-      tender:
-        bitrix_category: tenders
-      logistics:
-        bitrix_category: logistics
-      finance:
-        bitrix_category: finance
-      procurement:
-        bitrix_category: procurement
-      manual_review:
-        bitrix_category: manual_review
   attachments: # настройки для извлечения вложений из событий ROP
     enabled: true # true/false - включить/выключить local document extraction вложений (не влияет на retention/download/Bitrix delivery)
     chars_max: 1000 # макс. число символов preview для извлечения из одного вложения

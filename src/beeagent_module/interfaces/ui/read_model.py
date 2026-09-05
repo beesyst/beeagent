@@ -2022,7 +2022,6 @@ def build_rop_dashboard_read_model(
     ai_decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
     ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
-    recommendations_data = _read_json(run_dir / "rop_recommendations.json")
 
     warnings: list[dict[str, Any]] = []
     if summary is None:
@@ -2345,9 +2344,6 @@ def build_rop_dashboard_read_model(
         "queues": queues,
         "queue_rows": paginated_queue_rows,
         "rop_recommendations": rop_recommendations,
-        "delivery_recommendations": recommendations_data
-        if isinstance(recommendations_data, dict)
-        else {},
         "configured_periods": list(configured_periods or []),
         "default_period": default_period,
         "updated_at": dashboard_payload.get("generated_at_utc")
@@ -2501,7 +2497,6 @@ def build_rop_tab_read_model(
         "sources",
         "attachments",
         "evidence",
-        "recommendations",
     }:
         view_id = requested_tab
         view_period = None
@@ -2897,11 +2892,6 @@ def _build_rop_tab_read_model_legacy(
             decisions if isinstance(decisions, dict) else None,
             ai_results if isinstance(ai_results, dict) else None,
         )
-        delivery = _read_json(run_dir / "rop_recommendations.json")
-        result["delivery_recommendations"] = (
-            delivery if isinstance(delivery, dict) else {}
-        )
-
     if requested_tab == "queue" or tab == "api":
         attention_events: list[dict[str, Any]] = []
         if not queues:
@@ -3000,12 +2990,6 @@ def _build_rop_tab_read_model_legacy(
         )
         result["final_decisions"] = final_decisions
 
-    if requested_tab == "recommendations":
-        recommendations = _read_json(run_dir / "rop_recommendations.json")
-        result["delivery_recommendations"] = (
-            recommendations if isinstance(recommendations, dict) else {}
-        )
-
     return result
 
 
@@ -3085,8 +3069,6 @@ def build_rop_page_layout(
         return _build_rop_threads_layout(data, locale=locale)
     if tab == "ai_assist":
         return _build_rop_ai_assist_layout(data, locale=locale)
-    if tab == "recommendations":
-        return _build_rop_recommendations_layout(data, locale=locale)
     return _build_rop_overview_layout(data, locale=locale)
 
 
@@ -5267,223 +5249,6 @@ def _build_rop_threads_layout(
     )
 
     return layout
-
-
-def _build_rop_recommendations_layout(
-    data: dict[str, Any],
-    locale: str = "en",
-) -> list[dict[str, Any]]:
-    run_id = data.get("run_id", "")
-    recommendations_raw = data.get("delivery_recommendations", {})
-    if not isinstance(recommendations_raw, dict):
-        recommendations_raw = {}
-
-    items = recommendations_raw.get("items", [])
-    if not isinstance(items, list):
-        items = []
-    aggregate = recommendations_raw.get("aggregate", {})
-    if not isinstance(aggregate, dict):
-        aggregate = {}
-
-    layout: list[dict[str, Any]] = []
-
-    if not items:
-        layout.append(
-            {
-                "type": "state_grid",
-                "size": "XL",
-                "title": t("Recommendations", locale),
-                "items": [
-                    {
-                        "label": t("No recommendations", locale),
-                        "value": t(
-                            "Run rop recommendations --run-id <id> to generate",
-                            locale,
-                        ),
-                        "status": "empty",
-                    }
-                ],
-            }
-        )
-        return layout
-
-    priority_counts: dict[str, int] = {}
-    queue_counts: dict[str, int] = {}
-    action_counts: dict[str, int] = {}
-    safe_to_execute, _ = resolve_recommendation_execution_policy(None)
-
-    for item in items:
-        priority = str(item.get("priority", "medium"))
-        priority_counts[priority] = priority_counts.get(priority, 0) + 1
-        queue = str(item.get("recommended_queue", "unknown"))
-        queue_counts[queue] = queue_counts.get(queue, 0) + 1
-        action = str(item.get("recommended_action", "unknown"))
-        action_counts[action] = action_counts.get(action, 0) + 1
-
-    kpi_items = [
-        {"label": t("Total recommendations", locale), "value": len(items)},
-        {
-            "label": t("High priority", locale),
-            "value": priority_counts.get("high", 0),
-        },
-        {
-            "label": t("Actionable", locale),
-            "value": aggregate.get("actionable_count", 0),
-        },
-        {
-            "label": t("Manual review", locale),
-            "value": aggregate.get("manual_review_count", 0),
-        },
-        {
-            "label": t("Ignore", locale),
-            "value": aggregate.get("ignore_count", 0),
-        },
-        {
-            "label": t("Safe to execute", locale),
-            "value": t("Yes", locale) if safe_to_execute else t("No", locale),
-        },
-    ]
-
-    layout.append(
-        {
-            "type": "kpi_grid",
-            "size": "XL",
-            "columns": 3,
-            "title": t("Recommendations", locale),
-            "items": kpi_items,
-        }
-    )
-
-    table_rows: list[dict[str, Any]] = []
-
-    for item in items[:50]:
-        event_id = str(item.get("event_id", ""))
-        title = str(item.get("title", ""))
-        summary = str(item.get("summary", ""))
-        sender = str(item.get("sender", ""))
-        confidence = item.get("confidence", 0.0)
-        if isinstance(confidence, (int, float)):
-            confidence_label = f"{float(confidence):.2f}"
-        else:
-            confidence_label = "0.00"
-
-        evidence_links = item.get("evidence_links", [])
-        evidence_href = ""
-        if isinstance(evidence_links, list):
-            for link in evidence_links:
-                if isinstance(link, str) and link:
-                    evidence_href = link
-                    break
-
-        detail_href = (
-            _rop_event_detail_href(event_id, run_id, locale)
-            if event_id and run_id
-            else None
-        )
-
-        bitrix_status = str(item.get("bitrix_status", ""))
-        priority = str(item.get("priority", ""))
-        safe_to_execute, requires_human_confirmation = (
-            resolve_recommendation_execution_policy(item.get("recommended_action"))
-        )
-
-        row: dict[str, Any] = {
-            "event_id": event_id[:20],
-            "title": {
-                "title": title[:80],
-                "subtitle": summary[:140],
-                "initials": _initials(sender or title),
-                "color": "red" if priority == "high" else "blue",
-            },
-            "action": str(item.get("recommended_action", "")),
-            "queue": str(item.get("recommended_queue", "")),
-            "target": str(item.get("target_bitrix_category", "")),
-            "summary": summary[:140],
-            "priority": {
-                "label": priority,
-                "tone": "danger" if priority == "high" else "secondary",
-            },
-            "confidence": confidence_label,
-            "bitrix_status": {
-                "label": bitrix_status,
-                "status": _bitrix_status_tone(bitrix_status),
-            },
-            "ai_used": t("Yes", locale) if item.get("ai_used") else t("No", locale),
-            "safe": t("Yes", locale) if safe_to_execute else t("No", locale),
-            "confirm": (
-                t("Yes", locale) if requires_human_confirmation else t("No", locale)
-            ),
-            "reason": str(item.get("reason", ""))[:140],
-        }
-
-        if evidence_href:
-            row["evidence"] = {
-                "label": t("Evidence", locale),
-                "href": evidence_href,
-            }
-
-        if detail_href:
-            row["detail"] = {
-                "label": t("View details", locale),
-                "href": detail_href,
-            }
-
-        table_rows.append(row)
-
-    if table_rows:
-        columns = [
-            {"key": "event_id", "label": "Event ID", "cell": "text"},
-            {"key": "title", "label": "Title / Summary", "cell": "avatar_text"},
-            {"key": "action", "label": t("Action", locale), "cell": "text"},
-            {"key": "queue", "label": t("Queue", locale), "cell": "text"},
-            {"key": "target", "label": "Target category", "cell": "text"},
-            {"key": "summary", "label": t("Summary", locale), "cell": "muted"},
-            {"key": "priority", "label": t("Priority", locale), "cell": "badge"},
-            {"key": "confidence", "label": "Confidence", "cell": "text"},
-            {
-                "key": "bitrix_status",
-                "label": "Bitrix status",
-                "cell": "status",
-            },
-            {"key": "ai_used", "label": t("AI used", locale), "cell": "text"},
-            {"key": "safe", "label": t("Safe to execute", locale), "cell": "text"},
-            {
-                "key": "confirm",
-                "label": t("Needs confirmation", locale),
-                "cell": "text",
-            },
-            {"key": "reason", "label": t("Reason", locale), "cell": "muted"},
-        ]
-
-        if any(row.get("evidence") for row in table_rows):
-            columns.append(
-                {"key": "evidence", "label": t("Evidence", locale), "cell": "link"}
-            )
-
-        if any(row.get("detail") for row in table_rows):
-            columns.append(
-                {"key": "detail", "label": t("Detail", locale), "cell": "link"}
-            )
-
-        layout.append(
-            {
-                "type": "data_table",
-                "size": "XL",
-                "title": t("Recommendation Items", locale),
-                "striped": True,
-                "mobile": "md",
-                "columns": columns,
-                "rows": table_rows,
-            }
-        )
-
-    return layout
-
-
-def resolve_recommendation_execution_policy(
-    recommended_action: Any,
-) -> tuple[bool, bool]:
-    return False, str(recommended_action) != "ignore"
 
 
 def _build_rop_ai_assist_layout(

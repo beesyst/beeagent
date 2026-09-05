@@ -8,10 +8,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from beeagent_module.cases.rop_context_enrichment import (
-    build_context_enrichment,
-    write_context_enrichment_artifact,
-)
 from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
@@ -25,10 +21,6 @@ from beeagent_module.cases.rop_mvp_pack import (
     write_mvp_pack_artifacts,
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
-from beeagent_module.cases.rop_recommendations import (
-    build_recommendations,
-    build_routing_map,
-)
 from beeagent_module.core.paths import get_project_root, get_storage_dir
 from beeagent_module.core.rop_review_export import (
     RopReviewExportError,
@@ -883,96 +875,6 @@ def handle_rop_evaluate_review(
         raise RopCliError(f"evaluate-review failed: {exc}") from exc
 
 
-def handle_rop_recommendations(
-    args: argparse.Namespace,
-    settings: dict,
-    logger: logging.Logger,
-) -> None:
-    storage_dir = get_storage_dir()
-    run_id = args.run_id
-
-    logger.info("ROP CLI: building recommendations for run_id=%s", run_id)
-
-    try:
-        routing_map = build_routing_map(
-            settings=settings,
-            storage_dir=storage_dir,
-            logger=logger,
-        )
-        logger.info(
-            "ROP CLI: routing map built: queues=%d entries=%d",
-            len(routing_map.get("queues", {})),
-            len(routing_map.get("routing_entries", [])),
-        )
-
-        context_enrichment = build_context_enrichment(
-            storage_dir=storage_dir,
-            run_id=run_id,
-            logger=logger,
-        )
-        write_context_enrichment_artifact(
-            storage_dir=storage_dir,
-            run_id=run_id,
-            artifact=context_enrichment,
-            logger=logger,
-        )
-        logger.info(
-            "ROP CLI: context enrichment built: events=%d enriched=%d",
-            context_enrichment.get("aggregate", {}).get("event_count", 0),
-            context_enrichment.get("aggregate", {}).get("enriched_count", 0),
-        )
-
-        recommendations = build_recommendations(
-            storage_dir=storage_dir,
-            run_id=run_id,
-            settings=settings,
-            logger=logger,
-        )
-
-        print(f"\nRecommendations artifact written for run_id={run_id}")
-        agg = recommendations.get("aggregate", {})
-        print(f"  total:           {agg.get('recommendation_count', 0)}")
-        print(f"  actionable:      {agg.get('actionable_count', 0)}")
-        print(f"  manual_review:   {agg.get('manual_review_count', 0)}")
-        print(f"  ignore:          {agg.get('ignore_count', 0)}")
-        print(f"  safe_to_execute: {recommendations.get('safe_to_execute', False)}")
-
-        logger.info(
-            "ROP CLI: recommendations completed: run_id=%s items=%d",
-            run_id,
-            len(recommendations.get("items", [])),
-        )
-
-        try:
-            from beeagent_module.cases.rop_dashboard import (
-                build_rop_dashboard,
-                write_rop_dashboard,
-            )
-
-            dashboard = build_rop_dashboard(
-                storage_dir=storage_dir,
-                period=_dashboard_default_period(settings),
-                logger=logger,
-                run_id=run_id,
-                aggregate_runs=True,
-            )
-            write_rop_dashboard(
-                storage_dir=storage_dir,
-                dashboard=dashboard,
-                logger=logger,
-            )
-            _refresh_rop_web_projection(storage_dir, settings, run_id, logger)
-        except Exception as exc:
-            logger.warning(
-                "ROP CLI: dashboard build failed after recommendations: %s",
-                exc,
-            )
-
-    except Exception as exc:
-        logger.error("ROP CLI: recommendations failed: %s", exc)
-        raise RopCliError(f"recommendations failed: {exc}") from exc
-
-
 def handle_rop_current(
     args: argparse.Namespace,
     settings: dict,
@@ -1538,17 +1440,6 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Direct path to reviewed TSV file",
-    )
-
-    recommendations_parser = subparsers.add_parser(
-        "recommendations",
-        help="Build ROP recommendations artifact from existing run artifacts",
-    )
-    recommendations_parser.add_argument(
-        "--run-id",
-        type=str,
-        required=True,
-        help="run_id to build recommendations for",
     )
 
     writeback_parser = subparsers.add_parser(

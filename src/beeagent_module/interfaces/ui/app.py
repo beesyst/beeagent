@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json as json_mod
 import logging
 import os
 import re
@@ -60,7 +59,6 @@ from beeagent_module.interfaces.ui.locale import (
 from beeagent_module.interfaces.ui.read_model import (
     ALLOWED_EVIDENCE_IDS,
     normalize_rop_recommendation_hrefs,
-    resolve_recommendation_execution_policy,
 )
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_read_model,
@@ -1218,14 +1216,6 @@ def _register_bitrix_widget_routes(
         if not widget_enabled:
             return _ok_json(
                 {
-                    "summary": {
-                        "high_priority": 0,
-                        "needs_review": 0,
-                        "lost_in_bitrix": 0,
-                        "ambiguous": 0,
-                        "ai_assisted": 0,
-                    },
-                    "items": [],
                     "final_decisions": empty_final_decisions(),
                 },
                 meta={
@@ -1280,14 +1270,6 @@ def _register_bitrix_widget_routes(
         if not run_id:
             return _ok_json(
                 {
-                    "summary": {
-                        "high_priority": 0,
-                        "needs_review": 0,
-                        "lost_in_bitrix": 0,
-                        "ambiguous": 0,
-                        "ai_assisted": 0,
-                    },
-                    "items": [],
                     "final_decisions": empty_final_decisions(),
                 },
                 warnings=[{"code": "no_runs", "message": "No runs available"}],
@@ -1302,8 +1284,6 @@ def _register_bitrix_widget_routes(
 
         max_items = widget_cfg.get("max_items", 50)
 
-        rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
-
         run_dir = storage_dir / "runs" / run_id
         if run_dir.is_dir():
             final_decisions, _ = load_or_build_final_decisions(run_dir)
@@ -1314,117 +1294,8 @@ def _register_bitrix_widget_routes(
         else:
             final_decisions_payload = empty_final_decisions()
 
-        if not rec_path.exists():
-            payload = {
-                "summary": {
-                    "high_priority": 0,
-                    "needs_review": 0,
-                    "lost_in_bitrix": 0,
-                    "ambiguous": 0,
-                    "ai_assisted": 0,
-                },
-                "items": [],
-            }
-            payload["final_decisions"] = final_decisions_payload
-            return _ok_json(
-                payload,
-                warnings=[
-                    {
-                        "code": "no_recommendations",
-                        "message": f"No recommendations for run {run_id}",
-                    }
-                ],
-            )
-
-        try:
-            rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
-        except json_mod.JSONDecodeError, OSError:
-            return _error_json(
-                "malformed_artifact",
-                "Failed to read recommendations artifact",
-                status_code=500,
-            )
-
-        if not isinstance(rec_data, dict):
-            return _error_json(
-                "malformed_artifact",
-                "Invalid recommendations artifact format",
-                status_code=500,
-            )
-
-        items_raw = rec_data.get("items", [])
-        if not isinstance(items_raw, list):
-            items_raw = []
-
-        serializable_items: list[dict[str, Any]] = []
-        summary = {
-            "high_priority": 0,
-            "needs_review": 0,
-            "lost_in_bitrix": 0,
-            "ambiguous": 0,
-            "ai_assisted": 0,
-        }
-
-        for item in items_raw[:max_items]:
-            recommended_action = str(item.get("recommended_action", ""))
-            (
-                safe_to_execute,
-                requires_human_confirmation,
-            ) = resolve_recommendation_execution_policy(recommended_action)
-            priority = str(item.get("priority", "medium"))
-            if priority == "high":
-                summary["high_priority"] += 1
-            if requires_human_confirmation:
-                summary["needs_review"] += 1
-            if item.get("bitrix_status") == "not_found":
-                summary["lost_in_bitrix"] += 1
-            if item.get("bitrix_status") == "ambiguous":
-                summary["ambiguous"] += 1
-            if item.get("ai_used"):
-                summary["ai_assisted"] += 1
-
-            event_id = str(item.get("event_id", ""))
-            evidence_links = item.get("evidence_links", [])
-            if not isinstance(evidence_links, list):
-                evidence_links = []
-
-            safe_item = {
-                "event_id": event_id,
-                "title": str(item.get("title", "")),
-                "priority": str(item.get("priority", "")),
-                "sender": str(item.get("sender", "")),
-                "subject": str(item.get("subject", "")),
-                "summary": str(item.get("summary", "")),
-                "recommended_action": recommended_action,
-                "recommended_queue": str(item.get("recommended_queue", "")),
-                "target_bitrix_category": str(item.get("target_bitrix_category", "")),
-                "bitrix_status": str(item.get("bitrix_status", "")),
-                "confidence": float(item.get("confidence", 0.0))
-                if isinstance(item.get("confidence"), (int, float))
-                else 0.0,
-                "ai_used": bool(item.get("ai_used")),
-                "reason": str(item.get("reason", "")),
-                "safe_to_execute": safe_to_execute,
-                "requires_human_confirmation": requires_human_confirmation,
-                "evidence_links": [
-                    str(link) for link in evidence_links if isinstance(link, str)
-                ],
-                "detail_url": (
-                    f"/api/bitrix/rop/widget/events/{quote(event_id, safe='')}"
-                    f"?run_id={quote(run_id, safe='')}"
-                ),
-            }
-            serializable_items.append(safe_item)
-
-        widget_data = {
-            "summary": summary,
-            "items": serializable_items,
-        }
-
-        widget_data["final_decisions"] = final_decisions_payload
-
         return _ok_json(
-            widget_data,
+            {"final_decisions": final_decisions_payload},
             meta={
                 "run_id": run_id,
                 "read_only": True,
@@ -1514,88 +1385,16 @@ def _register_bitrix_widget_routes(
         )
         final_decision = find_final_decision(final_decisions, event_id)
 
-        rec_path = storage_dir / "runs" / run_id / "rop_recommendations.json"
-        if not rec_path.exists():
+        if final_decision is None:
             return _error_json(
                 "not_found",
-                f"No recommendations for run {run_id}",
+                f"Event {event_id} not found in final decisions for run {run_id}",
                 status_code=404,
             )
 
-        try:
-            rec_data = json_mod.loads(rec_path.read_text(encoding="utf-8"))
-        except json_mod.JSONDecodeError, OSError:
-            return _error_json(
-                "malformed_artifact",
-                "Failed to read recommendations artifact",
-                status_code=500,
-            )
-
-        if not isinstance(rec_data, dict):
-            return _error_json(
-                "malformed_artifact",
-                "Invalid recommendations artifact format",
-                status_code=500,
-            )
-
-        items_raw = rec_data.get("items", [])
-        if not isinstance(items_raw, list):
-            items_raw = []
-
-        for item in items_raw:
-            if str(item.get("event_id", "")) == event_id:
-                evidence_links = item.get("evidence_links", [])
-                if not isinstance(evidence_links, list):
-                    evidence_links = []
-
-                recommended_action = str(item.get("recommended_action", ""))
-                (
-                    safe_to_execute,
-                    requires_human_confirmation,
-                ) = resolve_recommendation_execution_policy(recommended_action)
-                safe_item = {
-                    "event_id": str(item.get("event_id", "")),
-                    "title": str(item.get("title", "")),
-                    "summary": str(item.get("summary", "")),
-                    "priority": str(item.get("priority", "")),
-                    "sender": str(item.get("sender", "")),
-                    "subject": str(item.get("subject", "")),
-                    "recommended_action": recommended_action,
-                    "recommended_queue": str(item.get("recommended_queue", "")),
-                    "target_bitrix_category": str(
-                        item.get("target_bitrix_category", "")
-                    ),
-                    "bitrix_status": str(item.get("bitrix_status", "")),
-                    "confidence": float(item.get("confidence", 0.0))
-                    if isinstance(item.get("confidence"), (int, float))
-                    else 0.0,
-                    "ai_used": bool(item.get("ai_used")),
-                    "reason": str(item.get("reason", "")),
-                    "safe_to_execute": safe_to_execute,
-                    "requires_human_confirmation": requires_human_confirmation,
-                    "evidence_links": [
-                        str(link) for link in evidence_links if isinstance(link, str)
-                    ],
-                }
-                return _ok_json(
-                    {
-                        **safe_item,
-                        "final_decision": (
-                            serialize_final_decision(final_decision)
-                            if final_decision
-                            else None
-                        ),
-                    },
-                    meta={
-                        "run_id": run_id,
-                        "read_only": True,
-                    },
-                )
-
-        return _error_json(
-            "not_found",
-            f"Event {event_id} not found in recommendations for run {run_id}",
-            status_code=404,
+        return _ok_json(
+            {"final_decision": serialize_final_decision(final_decision)},
+            meta={"run_id": run_id, "read_only": True},
         )
 
     logger.info("Bitrix widget API routes registered")
