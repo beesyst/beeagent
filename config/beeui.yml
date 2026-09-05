@@ -117,13 +117,6 @@ pages:
           href: /rop?tab=sources
           icon: source
 
-        - id: attachments
-          title:
-            en: Attachments
-            ru: Вложения
-          href: /rop?tab=attachments
-          icon: attachment
-
         - id: bitrix
           title:
             en: Bitrix

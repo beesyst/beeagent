@@ -72,7 +72,6 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "queue",
     "threads",
     "sources",
-    "attachments",
     "bitrix",
     "api",
 )
@@ -1147,7 +1146,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         "queue": {"queue_rows": list, "filter_options": dict},
         "threads": {"thread_summary": dict, "threads": list},
         "sources": {"source_health": list},
-        "attachments": {"attachment_summary": dict},
     }
     if view_key.startswith("overview."):
         required = {
@@ -1425,7 +1423,6 @@ def build_rop_web_projection_v2_views(
     for view_id, fields in {
         "threads": ("thread_summary", "threads", "warnings"),
         "sources": ("source_health", "sources", "warnings"),
-        "attachments": ("attachment_summary", "warnings"),
     }.items():
         views[_v2_view_key(view_id)] = _v2_payload_fields(all_data, fields)
     return views
@@ -1441,7 +1438,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
             "queue",
             "threads",
             "sources",
-            "attachments",
         )
     }
     for period in selected_periods:
@@ -2735,7 +2731,7 @@ def _build_recommendations(
                 "count": attachment_refused,
                 "read_only": True,
                 "action_type": "manual_review",
-                "evidence_href": "/rop?tab=attachments",
+                "evidence_href": "/rop?tab=queue",
             }
         )
 
