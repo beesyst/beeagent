@@ -56,7 +56,7 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
   - `available_runs` and `total_runs` are materialized metadata and never require a `storage/runs` scan during GET;
   - scoped `run_id` authorization uses only validated manifest membership and never opens a semantic view;
 - `storage/interfaces/rop_web_projection_v2/<generation>/<sha256(run_id)>/<revision>/...`
-  - immutable request-ready semantic views for Overview, Queue, Threads, Sources, Bitrix and dashboard API period variants;
+  - immutable request-ready semantic views for Overview, Queue, Threads, Sources and dashboard API period variants;
   - a normal `/rop` or `/api/rop/dashboard` request reads the manifest and exactly one controlled requested view; it never reads v1 entries, global writeback state or raw run artifacts;
   - Queue is one canonical deduplicated row set with bounded membership metadata; Overview has separately materialized counters, series, source summaries and bounded previews;
 - both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
@@ -130,7 +130,7 @@ CLI overrides:
 - `/health` — health check
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
-- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, sources, bitrix, blacklist)
+- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, sources, blacklist)
 - `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires a known action, `operator`/`admin` authority, `rop` scope, CSRF validation/protection, product validation and audit. It grants no general runtime, CRM or mailbox execution authority. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
@@ -924,7 +924,7 @@ ROP dashboard агрегирует события по периоду для в�
 - period filtering применяется к агрегированному business view;
 - опциональные malformed артефакты (`bitrix_reconciliation.json`, `attachment_extraction.json`) игнорируются с bounded warning `malformed_optional_artifact`; aggregate-only attachment counters не приписываются событиям (warning `attachment_aggregate_unscoped`).
 
-ROP dashboard включает вкладку Bitrix / Bitrix Evidence Board. Она читает только artifact-level current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json`, показывает read-only KPI и очереди matched/lost/ambiguous/degraded/unreconciled без POST actions или write-back.
+ROP Queue поддерживает фильтр `bitrix_status` для artifact-backed CRM статусов (`matched`, `lost`, `ambiguous`, `degraded`, `unreconciled`) и ведёт на Event Detail. Current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json` остаются read-only evidence без POST actions или write-back.
 
 Отклоняются:
 
@@ -994,7 +994,6 @@ HTML `/rop` использует BeeUI tabs:
 - `queue`
 - `threads`
 - `sources`
-- `bitrix` — read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state
 
 Возвращаемые данные (UI-6 enriched payload):
 
@@ -1169,7 +1168,6 @@ Backward-compatible поля сохранены:
 - `queue`: attention events;
 - `threads`: сводка цепочек и таблица групп;
 - `sources`: source health details;
-- `bitrix`: read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state;
 
 BeeAgent не держит manual HTML builders/templates для `/rop`.
 

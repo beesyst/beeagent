@@ -3467,9 +3467,7 @@ def test_v2_overview_action_required_count_is_exact_while_preview_is_bounded(
         "bitrix": {},
     }
 
-    def source_model(*_args: object, **kwargs: object) -> dict[str, object]:
-        if kwargs.get("tab") == "bitrix":
-            return {"business_kpi": {}, "queues": {}, "bitrix": {}}
+    def source_model(*_args: object, **_kwargs: object) -> dict[str, object]:
         return dict(source_data)
 
     monkeypatch.setattr(
@@ -3557,8 +3555,6 @@ def _v2_views(
                 "priority_preview": {},
                 "action_required_count": 0,
             }
-        elif view_key.startswith("bitrix."):
-            payloads[view_key] = {"business_kpi": {}, "queues": {}, "bitrix": {}}
         elif view_key.startswith("api."):
             payloads[view_key] = {
                 "business_kpi": {},

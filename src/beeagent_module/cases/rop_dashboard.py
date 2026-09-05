@@ -72,7 +72,6 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "queue",
     "threads",
     "sources",
-    "bitrix",
     "api",
 )
 _SAFE_PROJECTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -1037,7 +1036,7 @@ def _cleanup_own_rop_web_projection_v2_root(
 def _v2_view_key(view_id: str, period: str | None = None) -> str:
     if view_id not in ROP_WEB_PROJECTION_V2_VIEW_IDS:
         raise ValueError("ROP Web projection view is invalid")
-    if view_id in {"overview", "bitrix", "api"}:
+    if view_id in {"overview", "api"}:
         if period is None:
             raise ValueError("ROP Web projection period is required")
         validate_period(period)
@@ -1154,8 +1153,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
             "priority_preview": dict,
             "action_required_count": int,
         }
-    elif view_key.startswith("bitrix."):
-        required = {"business_kpi": dict, "queues": dict, "bitrix": dict}
     elif view_key.startswith("api."):
         required = {
             "business_kpi": dict,
@@ -1331,16 +1328,6 @@ def build_rop_web_projection_v2_views(
     )
     views: dict[str, dict[str, Any]] = {}
     for period, data in data_by_period.items():
-        bitrix_data = _build_rop_tab_read_model_legacy(
-            storage_dir=storage_dir,
-            tab="bitrix",
-            run_id=run_id,
-            period=period,
-            default_period=period,
-            configured_periods=selected_periods,
-        )
-        if "error" in bitrix_data:
-            raise ValueError("ROP Web projection Bitrix source data is unavailable")
         overview_payload = _v2_payload_fields(data, overview_fields)
         queues = data.get("queues", {})
         overview_payload["action_required_count"] = 0
@@ -1360,29 +1347,6 @@ def build_rop_web_projection_v2_views(
             }
             overview_payload["action_required_count"] = len(action_required_identities)
         views[_v2_view_key("overview", period)] = overview_payload
-        bitrix_payload = _v2_payload_fields(
-            bitrix_data,
-            (
-                "warnings",
-                "business_kpi",
-                "queues",
-                "current_state_kpi",
-                "current_state_queues",
-                "bitrix",
-                "evidence_links",
-                "updated_at",
-                "period",
-                "period_start_utc",
-                "period_end_utc",
-                "time_basis",
-            ),
-        )
-        bitrix_payload["bitrix"] = (
-            bitrix_data.get("bitrix")
-            if isinstance(bitrix_data.get("bitrix"), dict)
-            else {}
-        )
-        views[_v2_view_key("bitrix", period)] = bitrix_payload
         api_payload = {
             name: value
             for name, value in data.items()
@@ -1444,7 +1408,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
         required.update(
             {
                 _v2_view_key("overview", period),
-                _v2_view_key("bitrix", period),
                 _v2_view_key("api", period),
             }
         )
@@ -2659,7 +2622,8 @@ def _build_recommendations(
                 "count": lost_in_bitrix,
                 "read_only": True,
                 "action_type": "manual_review",
-                "evidence_href": "/rop?tab=bitrix",
+                "evidence_href": "/rop?tab=queue",
+                "bitrix_status_filter": "not_found",
             }
         )
 
@@ -2677,7 +2641,8 @@ def _build_recommendations(
                 "count": ambiguous_or_duplicate,
                 "read_only": True,
                 "action_type": "manual_review",
-                "evidence_href": "/rop?tab=bitrix",
+                "evidence_href": "/rop?tab=queue",
+                "bitrix_status_filter": "ambiguous,duplicate_candidate",
             }
         )
 
@@ -2695,7 +2660,8 @@ def _build_recommendations(
                 "count": unreconciled,
                 "read_only": True,
                 "action_type": "run_reconciliation",
-                "evidence_href": "/rop?tab=bitrix",
+                "evidence_href": "/rop?tab=queue",
+                "bitrix_status_filter": "unreconciled",
             }
         )
 

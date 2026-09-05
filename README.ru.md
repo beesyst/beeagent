@@ -522,7 +522,7 @@ API artifact маршруты:
 - Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
 - `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
 - Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;
-- HTML tabs на `/rop`: Overview, Queue, Threads, Sources, Bitrix. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
+- HTML tabs на `/rop`: Overview, Queue, Threads, Sources. Bitrix status доступен через фильтр `bitrix_status` во вкладке Queue.
 - вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
 - при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
@@ -820,7 +820,7 @@ rop:
 
 Current-state — artifact-level projection поверх существующих run artifacts. Он содержит KPI (events, normalized, classified, Bitrix matching, очереди) и автоматически строится после успешного `rop run` и `reconcile-bitrix`.
 
-В ROP dashboard доступна вкладка Bitrix / Bitrix Evidence Board для просмотра matched/lost/ambiguous/degraded/unreconciled очередей, если есть current-state/Bitrix evidence.
+ROP Queue поддерживает фильтр `bitrix_status` для просмотра matched/lost/ambiguous/degraded/unreconciled событий с письмом и Event Detail, если есть current-state/Bitrix evidence.
 
 CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
 `--source-id` и `--all-sources` взаимоисключающие.
