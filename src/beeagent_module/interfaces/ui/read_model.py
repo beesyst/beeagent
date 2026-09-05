@@ -2493,7 +2493,6 @@ def build_rop_tab_read_model(
         view_period = effective_period
     elif requested_tab in {
         "threads",
-        "ai_assist",
         "sources",
         "attachments",
     }:
@@ -2953,31 +2952,6 @@ def _build_rop_tab_read_model_legacy(
             normalized if isinstance(normalized, list) else None,
         )
 
-    if requested_tab == "ai_assist":
-        requests = _read_json(run_dir / "rop_ai_assist_requests.json")
-        decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
-        results = _read_json(run_dir / "rop_ai_assist_results.json")
-        adjudicator = _read_json(run_dir / "rop_ai_adjudicator_results.json")
-        classified = _read_json(run_dir / "classified_events.json")
-        normalized = _read_json(run_dir / "normalized_events.json")
-        final_decisions, _ = load_or_build_final_decisions(run_dir)
-        result["ai_assist_summary"] = _build_ai_assist_summary(
-            requests if isinstance(requests, dict) else None,
-            decisions if isinstance(decisions, dict) else None,
-            results if isinstance(results, dict) else None,
-        )
-        result["ai_adjudicator_summary"] = _build_ai_adjudicator_summary(
-            adjudicator if isinstance(adjudicator, dict) else None
-        )
-        result["ai_assist_events"] = _build_ai_assist_events(
-            classified if isinstance(classified, list) else None,
-            normalized if isinstance(normalized, list) else None,
-            requests if isinstance(requests, dict) else None,
-            decisions if isinstance(decisions, dict) else None,
-            results if isinstance(results, dict) else None,
-        )
-        result["final_decisions"] = final_decisions
-
     return result
 
 
@@ -3053,8 +3027,6 @@ def build_rop_page_layout(
         return _build_rop_bitrix_layout(data, locale=locale)
     if tab == "threads":
         return _build_rop_threads_layout(data, locale=locale)
-    if tab == "ai_assist":
-        return _build_rop_ai_assist_layout(data, locale=locale)
     return _build_rop_overview_layout(data, locale=locale)
 
 

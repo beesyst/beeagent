@@ -71,7 +71,6 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "overview",
     "queue",
     "threads",
-    "ai_assist",
     "sources",
     "attachments",
     "bitrix",
@@ -1147,7 +1146,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
     required_types: dict[str, dict[str, type]] = {
         "queue": {"queue_rows": list, "filter_options": dict},
         "threads": {"thread_summary": dict, "threads": list},
-        "ai_assist": {"ai_assist_summary": dict, "ai_assist_events": list},
         "sources": {"source_health": list},
         "attachments": {"attachment_summary": dict},
     }
@@ -1426,13 +1424,6 @@ def build_rop_web_projection_v2_views(
     }
     for view_id, fields in {
         "threads": ("thread_summary", "threads", "warnings"),
-        "ai_assist": (
-            "ai_assist_summary",
-            "ai_assist_events",
-            "ai_adjudicator_summary",
-            "final_decisions",
-            "warnings",
-        ),
         "sources": ("source_health", "sources", "warnings"),
         "attachments": ("attachment_summary", "warnings"),
     }.items():
@@ -1449,7 +1440,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
         for view_id in (
             "queue",
             "threads",
-            "ai_assist",
             "sources",
             "attachments",
         )

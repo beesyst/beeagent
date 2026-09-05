@@ -3570,8 +3570,6 @@ def _v2_views(
             payloads[view_key] = {"queue_rows": [], "filter_options": {}}
         elif view_key == "threads":
             payloads[view_key] = {"thread_summary": {}, "threads": []}
-        elif view_key == "ai_assist":
-            payloads[view_key] = {"ai_assist_summary": {}, "ai_assist_events": []}
         elif view_key == "sources":
             payloads[view_key] = {"source_health": []}
         elif view_key == "attachments":
