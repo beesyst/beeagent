@@ -3215,6 +3215,12 @@ class TestQueueFilters:
         errors = rop_dashboard_module.validate_filter_params({"is_fallback": "false"})
         assert errors == []
 
+    def test_validate_filter_params_accepts_has_attachments(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"has_attachments": "true"}
+        )
+        assert errors == []
+
     def test_apply_queue_filters_classification(self) -> None:
         events = [
             {"event_id": "1", "case_type": "new_lead", "sender": "a@b.com"},
@@ -3296,6 +3302,24 @@ class TestQueueFilters:
         )
         assert len(result) == 2
         assert {r["event_id"] for r in result} == {"2", "4"}
+
+    def test_apply_queue_filters_has_attachments(self) -> None:
+        events = [
+            {"event_id": "1", "has_attachments": True},
+            {"event_id": "2", "has_attachments": False},
+            {"event_id": "3"},
+        ]
+        result = rop_dashboard_module.apply_queue_filters(
+            events, None, {"has_attachments": "true"}
+        )
+
+        assert [row["event_id"] for row in result] == ["1"]
+
+        result = rop_dashboard_module.apply_queue_filters(
+            events, None, {"has_attachments": "false"}
+        )
+
+        assert [row["event_id"] for row in result] == ["2", "3"]
 
     def test_apply_queue_filters_date_range(self) -> None:
         events = [

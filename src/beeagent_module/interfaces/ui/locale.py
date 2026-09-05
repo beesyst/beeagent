@@ -384,6 +384,10 @@ _LABELS_EN: dict[str, str] = {
     "No active filters": "No active filters",
     "From": "From",
     "To": "To",
+    "Attachments": "Attachments",
+    "All": "All",
+    "With attachments": "With attachments",
+    "Without attachments": "Without attachments",
 }
 _LABELS_RU: dict[str, str] = {
     "Sender blacklist": "Чёрный список отправителей",
@@ -769,6 +773,10 @@ _LABELS_RU: dict[str, str] = {
     "No active filters": "Нет активных фильтров",
     "From": "От",
     "To": "До",
+    "Attachments": "Вложения",
+    "All": "Все",
+    "With attachments": "С вложениями",
+    "Without attachments": "Без вложений",
 }
 
 _CURRENT_LOCALE: ContextVar[str] = ContextVar("beeagent_ui_locale", default="en")

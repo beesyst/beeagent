@@ -118,6 +118,7 @@ def validate_filter_params(
             "priority",
             "bitrix_status",
             "is_fallback",
+            "has_attachments",
             "queue",
             "columns",
             "columns_open",
@@ -160,6 +161,13 @@ def validate_filter_params(
     if is_fallback and is_fallback not in ("true", "false"):
         errors.append(
             f"Invalid is_fallback '{is_fallback}', expected 'true' or 'false'"
+        )
+
+    has_attachments = params.get("has_attachments", "")
+    if has_attachments and has_attachments not in ("true", "false"):
+        errors.append(
+            "Invalid has_attachments "
+            f"'{has_attachments}', expected 'true' or 'false'"
         )
 
     bitrix_status = params.get("bitrix_status", "")
@@ -302,6 +310,7 @@ def apply_queue_filters(
     )
     q = params.get("q", "").lower().strip()
     is_fallback_raw = params.get("is_fallback", "").lower().strip()
+    has_attachments_raw = params.get("has_attachments", "").lower().strip()
     date_from = params.get("date_from", "")
     date_to = params.get("date_to", "")
 
@@ -332,6 +341,12 @@ def apply_queue_filters(
     elif is_fallback_raw == "false":
         is_fallback_filter = False
 
+    has_attachments_filter: bool | None = None
+    if has_attachments_raw == "true":
+        has_attachments_filter = True
+    elif has_attachments_raw == "false":
+        has_attachments_filter = False
+
     filtered: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -339,6 +354,10 @@ def apply_queue_filters(
 
         if is_fallback_filter is not None:
             if bool(item.get("is_fallback")) != is_fallback_filter:
+                continue
+
+        if has_attachments_filter is not None:
+            if bool(item.get("has_attachments")) != has_attachments_filter:
                 continue
 
         if case_types:
@@ -627,6 +646,10 @@ def build_rop_dashboard(
                     }
                 )
             period_info["time_basis"] = _resolve_time_basis(classified_filter_stats)
+
+    classified_list = _with_attachment_presence(
+        classified_list, normalized_list, run_id
+    )
 
     bitrix_period_state = _build_bitrix_period_state(
         classified_list=classified_list,
@@ -1662,6 +1685,54 @@ def _confirmed_bitrix_delivery_events(
     return confirmed
 
 
+def _with_attachment_presence(
+    classified_list: list[dict[str, Any]],
+    normalized_list: list[dict[str, Any]],
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """Annotate classified events with attachment presence from normalized mail."""
+    exact_presence: dict[tuple[str, str, str, str], bool] = {}
+    fallback_presence: dict[tuple[str, str, str], list[bool]] = {}
+
+    for event in normalized_list:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("event_id") or "")
+        source_id = str(event.get("source_id") or "")
+        if not event_id or not source_id:
+            continue
+        origin_run_id = str(event.get("_dashboard_origin_run_id") or run_id)
+        instance_id = str(event.get("event_instance_id") or "")
+        attachments = event.get("attachments")
+        has_attachments = bool(attachments) if isinstance(attachments, list) else bool(
+            event.get("attachment_count")
+        )
+        exact_presence[(origin_run_id, source_id, event_id, instance_id)] = (
+            has_attachments
+        )
+        fallback_presence.setdefault((origin_run_id, source_id, event_id), []).append(
+            has_attachments
+        )
+
+    result: list[dict[str, Any]] = []
+    for event in classified_list:
+        if not isinstance(event, dict):
+            continue
+        enriched = dict(event)
+        event_id = str(event.get("event_id") or "")
+        source_id = str(event.get("source_id") or "")
+        origin_run_id = str(event.get("_dashboard_origin_run_id") or run_id)
+        instance_id = str(event.get("event_instance_id") or "")
+        exact_key = (origin_run_id, source_id, event_id, instance_id)
+        if exact_key in exact_presence:
+            enriched["has_attachments"] = exact_presence[exact_key]
+        else:
+            fallback = fallback_presence.get((origin_run_id, source_id, event_id), [])
+            enriched["has_attachments"] = fallback[0] if len(fallback) == 1 else False
+        result.append(enriched)
+    return result
+
+
 def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
     return {
         "status": "empty",
@@ -2615,6 +2686,7 @@ def _operator_queue_entry(
         "run_id": run_id,
         "evidence_href": f"/runs/{run_id}/artifacts/classified_events_json",
         "is_fallback": bool(evt.get("is_fallback")),
+        "has_attachments": bool(evt.get("has_attachments")),
     }
 
 

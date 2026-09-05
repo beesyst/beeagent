@@ -1508,6 +1508,30 @@ def test_rop_queue_filter_options_from_queue_data() -> None:
     layout = build_rop_page_layout(data, tab="queue")
 
     assert len(layout) == 1
+    filter_fields = layout[0]["toolbar"]["fields"]
+    attachment_filter = next(
+        field for field in filter_fields if field.get("name") == "has_attachments"
+    )
+    assert attachment_filter["choices"] == [
+        {
+            "value": "",
+            "label": "All",
+            "checked": True,
+            "toggle_href": "/rop?tab=queue",
+        },
+        {
+            "value": "true",
+            "label": "With attachments",
+            "checked": False,
+            "toggle_href": "/rop?tab=queue&has_attachments=true",
+        },
+        {
+            "value": "false",
+            "label": "Without attachments",
+            "checked": False,
+            "toggle_href": "/rop?tab=queue&has_attachments=false",
+        }
+    ]
     assert layout[0]["type"] == "data_table"
     assert "toolbar" in layout[0]
     field_types = {f.get("type") for f in layout[0]["toolbar"].get("fields", [])}
@@ -7605,6 +7629,42 @@ def test_fallback_queue_rows_share_html_and_api_pagination(
         "/api/rop/dashboard?tab=queue&run_id=run-fallback-queue&is_fallback=false"
     ).json()["data"]
     assert excluded["pagination"]["total_items"] == 0
+
+
+def test_attachment_queue_filter_is_accepted_and_filters_rows(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_run_artifacts(storage_dir, "run-attachments-queue")
+    normalized = json.loads(
+        (run_dir / "normalized_events.json").read_text(encoding="utf-8")
+    )
+    normalized[0].update(
+        {
+            "source_id": "hotline_mailbox",
+            "attachments": [{"filename": "quote.pdf"}],
+        }
+    )
+    classified = json.loads(
+        (run_dir / "classified_events.json").read_text(encoding="utf-8")
+    )
+    classified[0]["source_id"] = "hotline_mailbox"
+    (run_dir / "normalized_events.json").write_text(
+        json.dumps(normalized), encoding="utf-8"
+    )
+    (run_dir / "classified_events.json").write_text(
+        json.dumps(classified), encoding="utf-8"
+    )
+    _write_rop_web_projection(storage_dir)
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/api/rop/dashboard?tab=queue&run_id=run-attachments-queue&"
+        "has_attachments=true"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["pagination"]["total_items"] == 1
+    assert payload["queue_rows"][0]["has_attachments"] is True
 
 
 class TestRopDashboardAggregateReadModel:
