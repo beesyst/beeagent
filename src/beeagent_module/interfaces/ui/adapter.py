@@ -498,7 +498,6 @@ class BeeAgentUiAdapter:
                         "queue",
                         "sources",
                         "attachments",
-                        "evidence",
                         "bitrix",
                         "threads",
                         "ai_assist",

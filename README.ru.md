@@ -524,7 +524,7 @@ API artifact маршруты:
 - Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
 - `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
 - Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;
-- HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Evidence, Bitrix, Recommendations. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
+- HTML tabs на `/rop`: Overview, Queue, Threads, AI Assist, Sources, Attachments, Bitrix. Вкладка Bitrix остаётся read-only и artifact-backed; если Bitrix/current-state artifacts отсутствуют, tab показывает empty/unavailable state.
 - вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
 - при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
