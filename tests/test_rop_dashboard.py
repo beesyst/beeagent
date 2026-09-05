@@ -3564,8 +3564,6 @@ def _v2_views(
             }
         elif view_key == "queue":
             payloads[view_key] = {"queue_rows": [], "filter_options": {}}
-        elif view_key == "threads":
-            payloads[view_key] = {"thread_summary": {}, "threads": []}
         elif view_key == "sources":
             payloads[view_key] = {"source_health": []}
         else:

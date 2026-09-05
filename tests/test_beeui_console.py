@@ -4865,8 +4865,8 @@ def test_rop_tabs_preserve_lang_and_period(tmp_path: Path) -> None:
     assert response.status_code == 200
     html = response.text
     assert (
-        "/rop?tab=threads&amp;period=7d&amp;lang=ru" in html
-        or "/rop?lang=ru&amp;period=7d&amp;tab=threads" in html
+        "/rop?tab=sources&amp;period=7d&amp;lang=ru" in html
+        or "/rop?lang=ru&amp;period=7d&amp;tab=sources" in html
     )
 
 
@@ -5477,29 +5477,12 @@ class TestUi6It30:
         assert low_conf_event["sender"] == "partner@supply.kz"
         assert low_conf_event["subject"] == "Price list"
 
-    def test_rop_tab_threads_returns_200(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-tab-threads")
-        client = _client(storage_dir)
-        response = client.get("/rop?tab=threads")
-        assert response.status_code == 200
-
     def _test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-tab-ai")
         client = _client(storage_dir)
         response = client.get("/rop?tab=ai_assist")
         assert response.status_code == 200
-
-    def test_rop_lang_ru_includes_russian_labels(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-lang-ru")
-        client = _client(storage_dir)
-        response = client.get("/rop?tab=threads&lang=ru")
-        assert response.status_code == 200
-        html = response.text
-        assert "Цепочки" in html
-        assert "Группы цепочек" in html
 
     def _test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -5598,7 +5581,7 @@ class TestUi6It30:
         assert ai_summary["used_count"] == 0
         assert ai_summary["degraded_count"] == 2
 
-    def test_threads_fallback_to_index_when_contexts_empty(
+    def test_thread_data_falls_back_to_index_when_contexts_empty(
         self, tmp_path: Path
     ) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -5621,12 +5604,6 @@ class TestUi6It30:
         assert payload["threads"]
         assert payload["threads"][0]["latest_subject"]
         assert payload["threads"][0]["latest_sender"]
-
-        html_response = client.get("/rop?tab=threads")
-        assert html_response.status_code == 200
-        assert "Re: Order #123" in html_response.text
-        assert "client@workshop.kz" in html_response.text
-        assert "Linked by references" in html_response.text
 
     def _test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -5761,7 +5738,6 @@ class TestUi6It30:
 
         client.get("/rop")
         client.get("/api/rop/dashboard")
-        client.get("/rop?tab=threads")
         client.get("/rop?lang=ru")
 
         after = {
@@ -5790,7 +5766,7 @@ class TestUi6It30:
             encoding="utf-8",
         )
         client = _client(storage_dir)
-        for tab in ("threads", "overview"):
+        for tab in ("overview",):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200
             assert "should-not-leak" not in response.text
@@ -5800,7 +5776,7 @@ class TestUi6It30:
         storage_dir = _make_storage(tmp_path)
         run_dir = self._write_full_it30_run(storage_dir, "run-no-raw")
         client = _client(storage_dir)
-        for tab in ("threads",):
+        for tab in ("overview",):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200
             assert "raw_eml" not in response.text.lower()
@@ -10120,13 +10096,12 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
     expected_icons = {
         "overview": "dashboard",
         "queue": "queue",
-        "threads": "messages",
         "sources": "source",
         "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 5
-    assert html.count('data-beeui-tab-icon="') == 5
+    assert len(set(expected_icons.values())) == 4
+    assert html.count('data-beeui-tab-icon="') == 4
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"

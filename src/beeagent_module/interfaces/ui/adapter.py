@@ -497,7 +497,6 @@ class BeeAgentUiAdapter:
                         "overview",
                         "queue",
                         "sources",
-                        "threads",
                         "blacklist",
                     }
                 )

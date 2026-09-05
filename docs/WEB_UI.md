@@ -56,7 +56,7 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
   - `available_runs` and `total_runs` are materialized metadata and never require a `storage/runs` scan during GET;
   - scoped `run_id` authorization uses only validated manifest membership and never opens a semantic view;
 - `storage/interfaces/rop_web_projection_v2/<generation>/<sha256(run_id)>/<revision>/...`
-  - immutable request-ready semantic views for Overview, Queue, Threads, Sources and dashboard API period variants;
+  - immutable request-ready semantic views for Overview, Queue, Sources and dashboard API period variants;
   - a normal `/rop` or `/api/rop/dashboard` request reads the manifest and exactly one controlled requested view; it never reads v1 entries, global writeback state or raw run artifacts;
   - Queue is one canonical deduplicated row set with bounded membership metadata; Overview has separately materialized counters, series, source summaries and bounded previews;
 - both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
@@ -130,7 +130,7 @@ CLI overrides:
 - `/health` — health check
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
-- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, sources, blacklist)
+- `/rop` — ROP operator dashboard (tabs: overview, queue, sources, blacklist)
 - `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires a known action, `operator`/`admin` authority, `rop` scope, CSRF validation/protection, product validation and audit. It grants no general runtime, CRM or mailbox execution authority. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
@@ -992,7 +992,6 @@ HTML `/rop` использует BeeUI tabs:
 
 - `overview`
 - `queue`
-- `threads`
 - `sources`
 
 Возвращаемые данные (UI-6 enriched payload):
@@ -1166,7 +1165,6 @@ Backward-compatible поля сохранены:
 
 - `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда; Overview использует period dropdown;
 - `queue`: attention events;
-- `threads`: сводка цепочек и таблица групп;
 - `sources`: source health details;
 
 BeeAgent не держит manual HTML builders/templates для `/rop`.
@@ -1199,7 +1197,6 @@ Read-only операторские секции на основе It30 арте�
 - **AI assist**: `ai_assist_summary` и `ai_assist_events[]` показывают evidence AI assist и статус каждого события;
 - **RU labels**: через `?lang=ru` переводятся все новые UI-6 секции;
 - **Det recommendations**: обогащены `_build_it30_recommendations()` — review threaded conversations, AI degraded, low confidence, module contract unavailable;
-- **New tab**: `/rop?tab=threads`.
 
 ### UI-6 — Артефакты It30 в allowlist
 
@@ -1255,12 +1252,14 @@ Read-only операторские секции на основе It30 арте�
 
 Existing UI-5 поля сохраняются.
 
-### HTML route `/rop` — UI-6 tabs
+### HTML route `/rop` — current tabs
 
 Текущие вкладки:
 
-- `threads` — сводка цепочек и таблица групп;
-- `ai_assist` — сводка AI assist и таблица событий.
+- `overview` — dashboard;
+- `queue` — очередь событий;
+- `sources` — состояние источников;
+- `blacklist` — чёрный список отправителей.
 
 Поддерживается `?lang=ru` для русских меток во всех новых секциях.
 
@@ -1342,7 +1341,7 @@ Column visibility is managed through the toolbar ellipsis action (column chooser
 #### Canonical params preserved in all ROP links
 
 - `run_id` — explicit run identifier
-- `tab` — active tab name (overview, queue, threads, …)
+- `tab` — active tab name (overview, queue, sources, blacklist)
 - `period` — period value (today, yesterday, 7d, 30d, 90d, 365d, all)
 - `lang` — locale override (en, ru)
 
