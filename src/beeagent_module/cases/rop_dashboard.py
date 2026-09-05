@@ -1148,7 +1148,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         required = {
             "business_kpi": dict,
             "series": dict,
-            "priority_preview": dict,
             "action_required_count": int,
         }
     elif view_key.startswith("api."):
@@ -1330,11 +1329,6 @@ def build_rop_web_projection_v2_views(
         queues = data.get("queues", {})
         overview_payload["action_required_count"] = 0
         if isinstance(queues, dict):
-            overview_payload["priority_preview"] = {
-                queue_id: [item for item in rows if isinstance(item, dict)][:25]
-                for queue_id, rows in queues.items()
-                if isinstance(rows, list)
-            }
             action_required_identities = {
                 _v2_event_identity(item)
                 for queue_id in ALLOWED_QUEUE_IDS

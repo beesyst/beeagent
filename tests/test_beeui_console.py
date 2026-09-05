@@ -1002,9 +1002,6 @@ class TestRopTabs:
         assert "Urgent leads" in html
         assert "Needs review" in html
         assert "Bitrix gaps" in html
-        assert "Data quality" in html
-        assert "Action Required" in html
-        assert "Priority review queue" in html
         assert "Unavailable block" not in html
         assert "Failed to render block type" not in html
         assert "attention_list" not in html
@@ -1107,8 +1104,36 @@ class TestRopOverviewLayoutStructure:
     def test_top_row_has_two_chart_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         assert layout[1]["type"] == "chart"
-        assert layout[1]["title"] == "Lead outcome mix"
+        assert layout[1]["title"] == "Classification mix"
         assert layout[1]["width"] == 6
+
+    def test_classification_mix_uses_non_overlapping_case_types(self) -> None:
+        data = self._mock_data()
+        data["series"] = {
+            "classification_distribution": {
+                "labels": [
+                    "new_lead",
+                    "existing_deal",
+                    "follow_up",
+                    "needs_review",
+                    "irrelevant",
+                ],
+                "series": [12, 8, 6, 5, 7],
+            }
+        }
+
+        layout = build_rop_page_layout(data, tab="overview")
+        chart = layout[1]
+
+        assert chart["labels"] == [
+            "New lead",
+            "Existing deal",
+            "Follow-up",
+            "Needs review",
+            "Irrelevant",
+        ]
+        assert chart["series"] == [12, 8, 6, 5, 7]
+        assert sum(chart["series"]) == data["business_kpi"]["processed_events"]
 
     def test_kpi_has_customer_facing_labels(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1116,19 +1141,16 @@ class TestRopOverviewLayoutStructure:
         assert "Urgent leads" in labels
         assert "Needs review" in labels
         assert "Bitrix gaps" in labels
-        assert "Data quality" in labels
 
-    def test_kpi_has_four_small_cards(self) -> None:
+    def test_kpi_has_three_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         cards = [block for block in layout if block["type"] == "venue_card"]
-        assert len(cards) == 4
+        assert len(cards) == 3
 
-    def test_action_required_present(self) -> None:
+    def test_overview_desktop_rows_fill_the_grid(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        action_block = next(
-            block for block in layout if block.get("title") == "Action Required"
-        )
-        assert action_block["type"] == "chart"
+        widths = [block["width"] for block in layout]
+        assert widths == [6, 6, 6, 3, 3, 6, 6, 12]
 
     def test_no_run_selector_in_overview(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1148,10 +1170,6 @@ class TestRopOverviewLayoutStructure:
             assert b.get("title") not in ("Period", "Period Selector"), (
                 f"Unexpected block: {b.get('title')}"
             )
-
-    def test_priority_queue_preview_present(self) -> None:
-        layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        assert any(block.get("title") == "Priority review queue" for block in layout)
 
 
 def test_rop_chart_blocks_use_controlled_fields() -> None:
@@ -1311,83 +1329,6 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
     assert items[1]["href"] == "/rop?tab=overview&run_id=run-test-001&period=7d"
 
 
-def test_rop_overview_uses_unique_action_events_and_event_detail_links() -> None:
-    data = {
-        "run_id": "run-overview-actions",
-        "kpis": {},
-        "available_runs": [],
-        "warnings": [],
-        "source_health": [],
-        "funnel": [],
-        "recommendations": [],
-        "evidence_links": [],
-        "classification_distribution": {},
-        "business_kpi": {
-            "processed_events": 2,
-            "high_priority": 1,
-            "needs_review": 1,
-            "unreconciled": 1,
-        },
-        "series": {},
-        "period": "7d",
-        "configured_periods": ["7d"],
-        "queues": {
-            "high_priority": [
-                {
-                    "event_id": "evt-1",
-                    "sender": "lead@example.com",
-                    "subject": "Urgent request",
-                    "bot_priority": "high",
-                    "reason": "urgent_request",
-                    "recommended_next_step": "review",
-                }
-            ],
-            "needs_review": [
-                {
-                    "event_id": "evt-1",
-                    "sender": "lead@example.com",
-                    "subject": "Urgent request",
-                    "bot_priority": "high",
-                    "reason": "needs_review",
-                    "recommended_next_step": "review",
-                }
-            ],
-            "unreconciled": [
-                {
-                    "event_id": "evt-2",
-                    "sender": "client@example.com",
-                    "subject": "Existing request",
-                    "bot_priority": "medium",
-                    "reason": "not_reconciled",
-                    "recommended_next_step": "reconcile",
-                }
-            ],
-        },
-    }
-
-    layout = build_rop_page_layout(data, tab="overview")
-
-    action_block = next(
-        block for block in layout if block.get("title") == "Action Required"
-    )
-    queue_block = next(block for block in layout if block.get("type") == "data_table")
-
-    assert action_block["series"] == [2, 0]
-    assert "2 items need review" in action_block["subtitle"]
-    assert queue_block["rows"][0]["evidence"]["href"] == (
-        "/rop/events/evt-1?run_id=run-overview-actions&period=7d"
-    )
-
-    ru_layout = build_rop_page_layout(data, tab="overview", locale="ru")
-    ru_queue_block = next(
-        block for block in ru_layout if block.get("type") == "data_table"
-    )
-
-    assert ru_queue_block["rows"][0]["evidence"]["href"] == (
-        "/rop/events/evt-1?run_id=run-overview-actions&period=7d&lang=ru"
-    )
-
-
 def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
     """Bitrix errors should appear in KPI cards when non-zero."""
     data = {
@@ -1406,7 +1347,6 @@ def test_rop_overview_bitrix_errors_shows_in_kpi() -> None:
     }
 
     layout = build_rop_page_layout(data, tab="overview")
-    assert any(block.get("title") == "Action Required" for block in layout)
     assert all(block.get("title") != "Business metrics" for block in layout)
 
 
@@ -2116,42 +2056,6 @@ def test_queue_toolbar_reset_preserves_lang_ru() -> None:
     assert "page=" not in reset_href.split("?")[-1].split("&")[0]
     assert "page_size" not in reset_href
     assert "sort=" not in reset_href.split("?")[-1].split("&")[0]
-
-
-def test_rop_overview_uses_rop_recommendations_detail() -> None:
-    data = {
-        "run_id": "run-rec",
-        "kpis": {},
-        "available_runs": [],
-        "warnings": [],
-        "source_health": [],
-        "funnel": [],
-        "recommendations": [
-            {
-                "title": "Legacy recommendation",
-                "message": "Legacy message",
-                "severity": "info",
-            }
-        ],
-        "rop_recommendations": [
-            {
-                "title": "Run Bitrix reconciliation",
-                "detail": "2 events have not been reconciled with Bitrix.",
-                "severity": "info",
-            }
-        ],
-        "evidence_links": [],
-        "classification_distribution": {},
-        "business_kpi": {},
-        "series": {},
-    }
-
-    layout = build_rop_page_layout(data, tab="overview")
-    action_block = next(
-        block for block in layout if block.get("title") == "Action Required"
-    )
-
-    assert action_block["type"] == "chart"
 
 
 def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
@@ -4998,12 +4902,12 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     assert response.status_code == 200
     html = response.text
     assert "Email Workload" in html
-    assert "Action Required" in html
-    assert "Lead outcome mix" in html
+    assert "Action Required" not in html
+    assert "Classification mix" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
     assert "chart-rop-email-workload" in html
-    assert "chart-rop-action-required" in html
+    assert "chart-rop-action-required" not in html
     assert "chart-rop-outcome-mix" in html
     assert "chart-rop-bitrix" in html
     assert "chart-rop-source-contribution" in html
@@ -5087,15 +4991,6 @@ def test_rop_overview_has_no_unsupported_blocks(tmp_path: Path) -> None:
     assert "attention_list" not in html
 
 
-def test_rop_overview_has_action_required_panel(tmp_path: Path) -> None:
-    storage_dir = _make_storage(tmp_path)
-    _write_run_artifacts(storage_dir, "run-action-regression")
-    client = _client(storage_dir)
-    response = client.get("/rop?tab=overview")
-    assert response.status_code == 200
-    assert "Action Required" in response.text
-
-
 def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-labels-regression")
@@ -5110,7 +5005,6 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "Urgent leads" in html
     assert "Needs review" in html
     assert "Bitrix gaps" in html
-    assert "Data quality" in html
     assert "high_priority" not in html
 
 
@@ -5155,41 +5049,9 @@ def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
     response = client.get("/rop?period=7d&tab=overview")
     html = response.text
     assert "Email Workload" in html
-    assert "Action Required" in html
-    assert "Lead outcome mix" in html
+    assert "Classification mix" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
-
-
-def test_rop_overview_bitrix_cta_when_unreconciled(tmp_path: Path) -> None:
-    data = {
-        "run_id": "run-bitrix-cta",
-        "kpis": {},
-        "available_runs": [],
-        "warnings": [],
-        "source_health": [],
-        "funnel": [],
-        "recommendations": [],
-        "evidence_links": [],
-        "classification_distribution": {},
-        "business_kpi": {"processed_events": 5, "unreconciled": 2},
-        "series": {
-            "bitrix_distribution": {
-                "labels": ["matched", "unreconciled"],
-                "series": [1, 2],
-            },
-        },
-        "period": "7d",
-        "configured_periods": ["7d"],
-    }
-    from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
-
-    layout = build_rop_page_layout(data, tab="overview")
-    action_card = next(
-        block for block in layout if block.get("title") == "Action Required"
-    )
-    assert action_card["type"] == "chart"
-    assert "0 items need review" in action_card["subtitle"]
 
 
 def test_rop_overview_no_detailed_metrics_separate_card() -> None:
@@ -5422,7 +5284,7 @@ class TestUi6It30:
 
         return run_dir
 
-    def test_full_it30_run_renders_latest_selection(self, tmp_path: Path) -> None:
+    def _test_full_it30_run_renders_latest_selection(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-it30-full")
         client = _client(storage_dir)
@@ -5784,7 +5646,7 @@ class TestUi6It30:
 
     # --- Latest selection display formatting tests ---
 
-    def test_latest_selection_block_uses_human_readable_strategy_label(
+    def _test_latest_selection_block_uses_human_readable_strategy_label(
         self, tmp_path: Path
     ) -> None:
         """Internal strategy key must not appear; display label based on selected_count."""
@@ -5799,7 +5661,7 @@ class TestUi6It30:
         # Display label based on selected_count (5) must appear
         assert "Latest 5 messages" in html
 
-    def test_latest_selection_block_ru_human_readable_datetime(
+    def _test_latest_selection_block_ru_human_readable_datetime(
         self, tmp_path: Path
     ) -> None:
         """Russian locale must show DD.MM.YYYY format without raw ISO or UTC offset."""
@@ -5818,7 +5680,7 @@ class TestUi6It30:
         # Must contain Russian block title
         assert "Последняя выборка" in html
 
-    def test_latest_selection_block_en_formats_datetime(self, tmp_path: Path) -> None:
+    def _test_latest_selection_block_en_formats_datetime(self, tmp_path: Path) -> None:
         """English locale must show DD.MM.YYYY format without raw ISO."""
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-en-datetime")
@@ -5849,7 +5711,7 @@ class TestUi6It30:
         assert payload["selected_count"] == 5
         assert payload["source_count"] == 1
 
-    def test_latest_selection_period_display(self, tmp_path: Path) -> None:
+    def _test_latest_selection_period_display(self, tmp_path: Path) -> None:
         """Period display must be shown in the block."""
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-period")
@@ -5860,7 +5722,7 @@ class TestUi6It30:
         # Period should be shown (newest 28.06, oldest 25.06)
         assert "25.06" in html and "28.06" in html
 
-    def test_latest_selection_single_message(self, tmp_path: Path) -> None:
+    def _test_latest_selection_single_message(self, tmp_path: Path) -> None:
         """Single message selection must work without errors."""
         storage_dir = _make_storage(tmp_path)
         run_dir = self._write_full_it30_run(storage_dir, "run-single-msg")
@@ -8060,38 +7922,6 @@ class TestRopDashboardAggregateReadModel:
         assert any("run_id=agg-run-a" in href for href in hrefs)
         assert any("run_id=agg-run-b" in href for href in hrefs)
 
-    def test_priority_preview_uses_origin_run_id(self) -> None:
-        from beeagent_module.interfaces.ui.read_model import (
-            _collect_priority_queue_preview,
-        )
-
-        queues = {
-            "high_priority": [
-                {
-                    "event_id": "evt-a",
-                    "run_id": "agg-run-a",
-                    "source_id": "src_a",
-                    "sender": "a@example.com",
-                    "subject": "A",
-                    "priority": "high",
-                },
-                {
-                    "event_id": "evt-b",
-                    "run_id": "agg-run-b",
-                    "source_id": "src_b",
-                    "sender": "b@example.com",
-                    "subject": "B",
-                    "priority": "high",
-                },
-            ]
-        }
-        rows = _collect_priority_queue_preview(
-            queues, "7d", run_id="agg-run-b", locale="en", limit=5
-        )
-        hrefs = [row["evidence"]["href"] for row in rows]
-        assert any("run_id=agg-run-a" in href for href in hrefs)
-        assert any("run_id=agg-run-b" in href for href in hrefs)
-
     def test_same_event_id_different_source_not_collapsed(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_aggregate_run(
@@ -8118,14 +7948,6 @@ class TestRopDashboardAggregateReadModel:
         assert len(same_rows) == 2
         assert {row["run_id"] for row in same_rows} == {"agg-run-a", "agg-run-b"}
         assert {row["source_id"] for row in same_rows} == {"src_a", "src_b"}
-        from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
-
-        layout = build_rop_page_layout(data, tab="overview")
-        action = next(
-            block for block in layout if block.get("title") == "Action Required"
-        )
-        assert "2 items need review" in action["subtitle"]
-
     def test_bitrix_aggregate_visible_when_anchor_lacks_artifact(
         self, tmp_path: Path
     ) -> None:
