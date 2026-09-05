@@ -980,7 +980,6 @@ class TestRopTabs:
             "overview",
             "queue",
             "sources",
-            "attachments",
             "bitrix",
         ):
             response = client.get(f"/rop?tab={tab}")
@@ -1019,11 +1018,6 @@ class TestRopTabs:
     def test_sources_content(self, tmp_path: Path) -> None:
         _, client = self._setup(tmp_path)
         response = client.get("/rop?tab=sources")
-        assert response.status_code == 200
-
-    def test_attachments_content(self, tmp_path: Path) -> None:
-        _, client = self._setup(tmp_path)
-        response = client.get("/rop?tab=attachments")
         assert response.status_code == 200
 
     def test_bitrix_content(self, tmp_path: Path) -> None:
@@ -1663,7 +1657,7 @@ def test_queue_toolbar_other_tabs_no_toolbar() -> None:
         "period": "7d",
         "configured_periods": ["7d"],
     }
-    for tab in ("overview", "sources", "attachments", "bitrix"):
+    for tab in ("overview", "sources", "bitrix"):
         layout = build_rop_page_layout(data, tab=tab)
         for block in layout:
             if block.get("type") == "data_table":
@@ -10140,13 +10134,12 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         "queue": "queue",
         "threads": "messages",
         "sources": "source",
-        "attachments": "attachment",
         "bitrix": "integration",
         "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 7
-    assert html.count('data-beeui-tab-icon="') == 7
+    assert len(set(expected_icons.values())) == 6
+    assert html.count('data-beeui-tab-icon="') == 6
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"

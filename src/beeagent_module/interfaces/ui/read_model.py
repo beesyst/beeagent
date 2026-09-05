@@ -2494,7 +2494,6 @@ def build_rop_tab_read_model(
     elif requested_tab in {
         "threads",
         "sources",
-        "attachments",
     }:
         view_id = requested_tab
         view_period = None
@@ -2929,12 +2928,6 @@ def _build_rop_tab_read_model_legacy(
             classified if isinstance(classified, list) else None,
         )
 
-    if requested_tab == "attachments":
-        extraction = _read_json(run_dir / "attachment_extraction.json")
-        result["attachment_summary"] = _build_attachment_summary(
-            extraction if isinstance(extraction, dict) else None
-        )
-
     if requested_tab == "threads":
         thread_index = _read_json(run_dir / "mail_thread_index.json")
         thread_context = _read_json(run_dir / "mail_thread_context.json")
@@ -3021,8 +3014,6 @@ def build_rop_page_layout(
         return _build_rop_queue_layout(data, locale=locale)
     if tab == "sources":
         return _build_rop_sources_layout(data, locale=locale)
-    if tab == "attachments":
-        return _build_rop_attachments_layout(data, locale=locale)
     if tab == "bitrix":
         return _build_rop_bitrix_layout(data, locale=locale)
     if tab == "threads":
@@ -3441,7 +3432,7 @@ def normalize_rop_recommendation_hrefs(
         "/rop?tab=bitrix": "bitrix",
         "/rop?tab=evidence": "bitrix",
         "/rop?tab=sources": "sources",
-        "/rop?tab=attachments": "attachments",
+        "/rop?tab=attachments": "queue",
     }
     normalized: list[dict[str, Any]] = []
     for recommendation in recommendations:

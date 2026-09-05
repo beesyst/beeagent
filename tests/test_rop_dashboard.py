@@ -3572,8 +3572,6 @@ def _v2_views(
             payloads[view_key] = {"thread_summary": {}, "threads": []}
         elif view_key == "sources":
             payloads[view_key] = {"source_health": []}
-        elif view_key == "attachments":
-            payloads[view_key] = {"attachment_summary": {}}
         else:
             payloads[view_key] = {"delivery_recommendations": {}}
     return payloads
