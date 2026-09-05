@@ -11,10 +11,6 @@ from typing import Any
 from beeagent_module.adapters.mailbox import ImapReadonlyMailboxClient
 from beeagent_module.cases.rop_action_drafts import build_action_drafts
 from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
-from beeagent_module.cases.rop_context_enrichment import (
-    build_context_enrichment,
-    write_context_enrichment_artifact,
-)
 from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
     write_current_state,
@@ -26,10 +22,6 @@ from beeagent_module.cases.rop_dashboard import (
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.cases.rop_recipient_routing import build_recipient_routing_artifact
-from beeagent_module.cases.rop_recommendations import (
-    build_recommendations,
-    build_routing_map,
-)
 from beeagent_module.cases.rop_writeback import (
     build_writeback_plan,
     execute_writeback_pending,
@@ -432,14 +424,6 @@ def _poll_single_source(
                 exc,
             )
         build_action_drafts(storage_dir, run_id, reconciliation, logger)
-    enrichment = build_context_enrichment(
-        storage_dir=storage_dir, run_id=run_id, logger=logger
-    )
-    write_context_enrichment_artifact(
-        storage_dir=storage_dir, run_id=run_id, artifact=enrichment, logger=logger
-    )
-    build_routing_map(settings, storage_dir, logger)
-    build_recommendations(storage_dir, run_id, settings, logger)
     state = build_rop_current_state(storage_dir, run_id, logger)
     write_current_state(storage_dir, run_id, state, logger)
     dashboard = build_rop_dashboard(

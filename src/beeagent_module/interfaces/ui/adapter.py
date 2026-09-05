@@ -502,7 +502,6 @@ class BeeAgentUiAdapter:
                         "bitrix",
                         "threads",
                         "ai_assist",
-                        "recommendations",
                         "blacklist",
                     }
                 )

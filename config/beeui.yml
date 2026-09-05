@@ -145,13 +145,6 @@ pages:
           href: /rop?tab=bitrix
           icon: integration
 
-        - id: recommendations
-          title:
-            en: Recommendations
-            ru: Рекомендации
-          href: /rop?tab=recommendations
-          icon: recommendation
-
         - id: blacklist
           title:
             en: Blacklist

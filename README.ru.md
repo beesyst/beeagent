@@ -208,16 +208,12 @@ BeeAgent уже прошёл этап **module platform v0**:
 
 - `./start.sh rop evaluate-review --run-id <run_id>`;
 - `storage/runs/<run_id>/rop_evaluation.json` — classification quality gate;
-- `storage/runs/<run_id>/rop_context_enrichment.json` — per-event context evidence;
-- `storage/runs/<run_id>/rop_recommendations.json` — read-only/draft-only recommendations;
-- `storage/interfaces/rop_routing_map.json` — config-driven routing map;
 - AI provider profiles: openai, deepseek, lmstudio, custom;
-- Web UI recommendations tab `/rop?tab=recommendations`;
 - Bitrix widget API:
   - `GET /api/bitrix/rop/widget`;
   - `GET /api/bitrix/rop/widget/events`;
   - `GET /api/bitrix/rop/widget/events/{event_id}`;
-- конфиг `bitrix.widget` и `rop.routing`.
+- конфиг `bitrix.widget`.
 
 Итерация 33 добавила:
 
@@ -409,7 +405,6 @@ run:
 ./start.sh rop evaluate-review --tsv storage/runs/ID/rop_review_table.tsv
 ./start.sh rop reconcile-bitrix --run-id ID
 ./start.sh rop action-drafts --run-id ID
-./start.sh rop recommendations --run-id ID
 
 # ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
@@ -455,7 +450,6 @@ cd beeagent
 | ROP                  | `./start.sh rop dashboard ...`                      | Build ROP business dashboard                                                     |
 | ROP                  | `./start.sh rop reconcile-bitrix ...`               | Reconcile with Bitrix CRM (read-only)                                            |
 | ROP                  | `./start.sh rop action-drafts ...`                  | Generate action draft artifacts                                                  |
-| ROP                  | `./start.sh rop recommendations ...`                | Build recommendations artifact                                                   |
 | ROP                  | `./start.sh rop mvp-pack ...`                       | Build ROP MVP handoff/readiness pack                                             |
 | ROP                  | `./start.sh rop writeback plan ...`                 | Build authoritative write-back plan (zero writes)                                |
 | ROP                  | `./start.sh rop writeback execute ...`              | Execute pending write-back per policy                                            |
@@ -756,9 +750,6 @@ principal token rotation требует повторного входа; каж�
 
 # Построить action drafts после reconciliation.
 ./start.sh rop action-drafts --run-id live-review-2026-05-15
-
-# Построить context enrichment, routing map и delivery recommendations.
-./start.sh rop recommendations --run-id live-review-2026-05-15
 
 # Собрать MVP handoff/readiness pack.
 ./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
@@ -1084,9 +1075,6 @@ configured source(s)
 → rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если legacy bounded AI assist включён
 → rop_ai_adjudicator_requests.json / rop_ai_adjudicator_decisions.json / rop_ai_adjudicator_results.json, если ROP AI adjudicator включён
 → bitrix_reconciliation.json (optional read-only evidence)
-→ rop_context_enrichment.json
-→ storage/interfaces/rop_routing_map.json
-→ rop_recommendations.json
 → rop_action_drafts.json (optional draft-only artifact)
 → rop_current_state.json / interfaces current index
 → rop_dashboard.json
@@ -1527,8 +1515,6 @@ Write-back в этом path не выполняется.
 - `storage/runs/<run_id>/rop_ai_adjudicator_requests.json`
 - `storage/runs/<run_id>/rop_ai_adjudicator_decisions.json`
 - `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
-- `storage/runs/<run_id>/rop_context_enrichment.json`
-- `storage/runs/<run_id>/rop_recommendations.json`
 - `storage/runs/<run_id>/rop_evaluation.json`, если выполнена команда `rop evaluate-review`
 - `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
@@ -1547,7 +1533,6 @@ Write-back в этом path не выполняется.
 - `storage/interfaces/rop_latest.json`
 - `storage/interfaces/rop_index.json`
 - `storage/interfaces/rop_dashboard.json`
-- `storage/interfaces/rop_routing_map.json`
 
 Для multi-source run:
 
@@ -1763,9 +1748,6 @@ BeeAgent не принимает business-решений на основе trans
 - AI output не может триггерить CRM/Bitrix/mailbox actions;
 - write-back/action instructions from AI output must be rejected or preserved as non-executed evidence;
 - deterministic-preserved/`low_confidence_preserve` — safety route, а не write-back action; `manual_review` не используется как normal terminal semantic queue;
-- recommendations должны оставаться read-only/draft-only;
-- `safe_to_execute=false` в текущем scope;
-- для non-ignore recommendations требуется human confirmation.
 
 ## Статус проекта
 
@@ -1829,7 +1811,6 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
 - BeeAgent может выполнять `evaluate-review` по reviewed TSV и пишет `rop_evaluation.json`;
-- BeeAgent строит `rop_context_enrichment.json`, `storage/interfaces/rop_routing_map.json` и `rop_recommendations.json`;
 - ROP Queue ведёт на read-only event detail page `/rop/events/{event_id}?run_id=...`;
 - BeeAgent отдаёт JSON detail через `/api/rop/events/{event_id}?run_id=...`;
 - event detail HTML рендерится через BeeUI generic detail renderer;
@@ -1852,10 +1833,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - BeeAgent может строить Bitrix reconciliation artifact без CRM write-back;
 - Bitrix match quality gate не считает weak/unsafe matches безопасными target;
 - action drafts создаются как read-only/draft-only artifact, без выполнения действий в Bitrix;
-- BeeAgent строит delivery recommendations как read-only/draft-only слой в BeeAgent, а не в `beeagent-rop`;
-- Web Console показывает `/rop?tab=recommendations` поверх `rop_recommendations.json`;
 - BeeAgent отдаёт protected read-only Bitrix widget API;
-- recommendations остаются `safe_to_execute=false`, а non-ignore items требуют human confirmation;
 - It32 delivery/readiness layer находится в BeeAgent, а `beeagent-rop` остаётся владельцем domain classification / `ai_assist_merge` boundary;
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;

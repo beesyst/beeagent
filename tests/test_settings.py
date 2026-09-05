@@ -51,52 +51,6 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
             lambda data: data["rop"]["sources"][1].update(authority="draft_only"),
             "read_only",
         ),
-        (
-            lambda data: data["rop"]["sources"][1].update(routing="invalid"),
-            "routing",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "not-an-email"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz,b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz;b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz", "other": "x"}
-            ),
-            "Unsupported",
-        ),
     ],
 )
 def test_mailbox_poll_settings_fail_fast(monkeypatch, mutate, match):
@@ -142,15 +96,6 @@ def test_mailbox_poll_old_all_sources_key_fails(monkeypatch) -> None:
     changed = deepcopy(settings)
     changed["rop"]["mailbox_poll"]["all_sources"] = True
     with pytest.raises(RuntimeError, match="Unsupported.*all_sources"):
-        validate_settings(changed)
-
-
-def test_routing_old_recipient_email_key_fails(monkeypatch) -> None:
-    _base_env(monkeypatch)
-    settings = load_settings(_project_root() / "config" / "settings.yml")
-    changed = deepcopy(settings)
-    changed["rop"]["sources"][1]["routing"] = {"recipient_email": "hotline@welding.kz"}
-    with pytest.raises(RuntimeError, match="recipient_email"):
         validate_settings(changed)
 
 

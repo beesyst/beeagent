@@ -63,7 +63,6 @@ REQUIRED_KEYS = (
     ("ai", "prompts", "path"),
     ("ai", "prompts", "store"),
     ("ai", "profiles"),
-    ("rop", "routing"),
     ("bitrix", "widget", "enabled"),
     ("bitrix", "widget", "token_env"),
     ("bitrix", "widget", "default_period"),
@@ -72,14 +71,6 @@ REQUIRED_KEYS = (
     ("bitrix", "embedded_app", "portal_origin"),
     ("bitrix", "embedded_app", "default_role"),
     ("bitrix", "embedded_app", "request_timeout"),
-)
-_REQUIRED_ROP_ROUTING_QUEUES: tuple[str, ...] = (
-    "sales",
-    "tender",
-    "logistics",
-    "finance",
-    "procurement",
-    "manual_review",
 )
 _SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
     {"openai_responses", "openai_compatible"}
@@ -266,7 +257,6 @@ def validate_settings(settings: dict) -> None:
     _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
     _validate_rop_ai_adjudicator_settings(settings)
-    _validate_rop_routing_settings(settings)
 
     mailbox_poll = _get_nested_value(settings, ("rop", "mailbox_poll"))
     if not isinstance(mailbox_poll, dict):
@@ -1208,42 +1198,6 @@ def _validate_bitrix_settings(settings: dict) -> None:
                     "Bitrix read and write webhook credentials must be distinct "
                     "when bitrix.writeback.enabled=true"
                 )
-
-
-def _validate_rop_routing_settings(settings: dict) -> None:
-    routing_cfg = _get_nested_value(settings, ("rop", "routing"))
-    if routing_cfg is None:
-        return
-    if not isinstance(routing_cfg, dict):
-        raise RuntimeError("Invalid type for rop.routing, expected mapping")
-
-    queues = routing_cfg.get("queues")
-    if not isinstance(queues, dict) or not queues:
-        raise RuntimeError(
-            "Invalid or missing rop.routing.queues, expected non-empty mapping"
-        )
-
-    missing_queues = [
-        queue_name
-        for queue_name in _REQUIRED_ROP_ROUTING_QUEUES
-        if queue_name not in queues
-    ]
-    if missing_queues:
-        raise RuntimeError(
-            "Missing required rop.routing.queues: " + ", ".join(missing_queues)
-        )
-
-    for queue_name, queue_cfg in queues.items():
-        if not isinstance(queue_cfg, dict):
-            raise RuntimeError(
-                f"Invalid type for rop.routing.queues.{queue_name}, expected mapping"
-            )
-        bitrix_category = queue_cfg.get("bitrix_category")
-        if not isinstance(bitrix_category, str) or not bitrix_category.strip():
-            raise RuntimeError(
-                f"Invalid or missing rop.routing.queues.{queue_name}.bitrix_category, "
-                "expected non-empty string"
-            )
 
 
 def _validate_bitrix_widget_settings(settings: dict) -> None:

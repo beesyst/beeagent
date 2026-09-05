@@ -76,7 +76,6 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "attachments",
     "evidence",
     "bitrix",
-    "recommendations",
     "api",
 )
 _SAFE_PROJECTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -1153,7 +1152,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         "sources": {"source_health": list},
         "attachments": {"attachment_summary": dict},
         "evidence": {"evidence_links": list},
-        "recommendations": {"delivery_recommendations": dict},
     }
     if view_key.startswith("overview."):
         required = {
@@ -1440,7 +1438,6 @@ def build_rop_web_projection_v2_views(
         "sources": ("source_health", "sources", "warnings"),
         "attachments": ("attachment_summary", "warnings"),
         "evidence": ("evidence_links", "warnings"),
-        "recommendations": ("delivery_recommendations", "warnings"),
     }.items():
         views[_v2_view_key(view_id)] = _v2_payload_fields(all_data, fields)
     return views
@@ -1459,7 +1456,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
             "sources",
             "attachments",
             "evidence",
-            "recommendations",
         )
     }
     for period in selected_periods:
