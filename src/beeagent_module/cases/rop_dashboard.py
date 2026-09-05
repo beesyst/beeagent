@@ -52,6 +52,7 @@ ALLOWED_BITRIX_STATUSES: tuple[str, ...] = (
     "connector_degraded",
     "error",
     "skipped",
+    "identity_only_no_target",
     "unreconciled",
 )
 ALLOWED_SORT_FIELDS: tuple[str, ...] = (
@@ -566,6 +567,7 @@ def build_rop_dashboard(
     intake = artifact_data["intake"]
     current_state = artifact_data["current_state"]
     bitrix_reconciliation = artifact_data["bitrix_reconciliation"]
+    writeback_state = artifact_data["writeback_state"]
     attachment_extraction = artifact_data["attachment_extraction"]
     operator_summary = artifact_data["operator_summary"]
     ai_assist_results = artifact_data["ai_assist_results"]
@@ -630,6 +632,7 @@ def build_rop_dashboard(
         classified_list=classified_list,
         bitrix_reconciliation=bitrix_reconciliation,
         run_id=run_id,
+        confirmed_delivery_events=_confirmed_bitrix_delivery_events(writeback_state),
     )
 
     business_kpi = _build_business_kpi(
@@ -1621,6 +1624,9 @@ def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
         "bitrix_reconciliation": _read_json_dict(
             run_dir / "bitrix_reconciliation.json"
         ),
+        "writeback_state": _read_json_dict(
+            run_dir.parents[1] / "interfaces" / "rop_writeback_state.json"
+        ),
         "attachment_extraction": _read_json_dict(
             run_dir / "attachment_extraction.json"
         ),
@@ -1630,6 +1636,30 @@ def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
             run_dir / "rop_ai_adjudicator_results.json"
         ),
     }
+
+
+def _confirmed_bitrix_delivery_events(
+    state: dict[str, Any] | None,
+) -> set[tuple[str, str, str]]:
+    """Return events whose email activity was successfully attached in Bitrix."""
+    if not isinstance(state, dict):
+        return set()
+    records = state.get("events")
+    if not isinstance(records, dict):
+        return set()
+
+    confirmed: set[tuple[str, str, str]] = set()
+    for record in records.values():
+        if not isinstance(record, dict):
+            continue
+        if record.get("email_attachment_status") != "attached":
+            continue
+        run_id = record.get("last_run_id")
+        source_id = record.get("source_id")
+        event_id = record.get("event_id")
+        if all(isinstance(value, str) and value for value in (run_id, source_id, event_id)):
+            confirmed.add((run_id, source_id, event_id))
+    return confirmed
 
 
 def _empty_dashboard(period: str, reason: str) -> dict[str, Any]:
@@ -2129,11 +2159,7 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
 
 
 def _event_needs_review(evt: dict[str, Any]) -> bool:
-    return (
-        bool(evt.get("is_fallback"))
-        or evt.get("priority") == "high"
-        or evt.get("case_type") == "duplicate"
-    )
+    return bool(evt.get("is_fallback"))
 
 
 def _build_business_kpi(
@@ -2192,6 +2218,9 @@ def _build_business_kpi(
         "lost_in_bitrix": _int(bitrix_kpi.get("lost_in_bitrix", 0)),
         "weak_match": _int(bitrix_kpi.get("weak_match", 0)),
         "ambiguous_or_duplicate": _int(bitrix_kpi.get("ambiguous_or_duplicate", 0)),
+        "identity_only_no_target": _int(
+            bitrix_kpi.get("identity_only_no_target", 0)
+        ),
         "unreconciled": _int(bitrix_kpi.get("unreconciled", 0)),
         "matched_in_bitrix": _int(bitrix_kpi.get("matched_in_bitrix", 0)),
         "bitrix_errors": _int(bitrix_kpi.get("bitrix_errors", 0)),
@@ -2314,11 +2343,24 @@ def _build_series(
     b_lost = _int(bitrix_kpi.get("lost_in_bitrix", 0))
     b_weak = _int(bitrix_kpi.get("weak_match", 0))
     b_ambiguous = _int(bitrix_kpi.get("ambiguous_or_duplicate", 0))
+    b_identity_only = _int(bitrix_kpi.get("identity_only_no_target", 0))
     b_unreconciled = _int(bitrix_kpi.get("unreconciled", 0))
     if classified_list:
         series["bitrix_distribution"] = {
-            "labels": ["matched", "lost", "weak", "ambiguous", "unreconciled"],
-            "series": [b_matched, b_lost, b_weak, b_ambiguous, b_unreconciled],
+            "labels": [
+                "matched",
+                "lost",
+                "needs_clarification",
+                "identity_only_no_target",
+                "unreconciled",
+            ],
+            "series": [
+                b_matched,
+                b_lost,
+                b_weak + b_ambiguous,
+                b_identity_only,
+                b_unreconciled,
+            ],
         }
 
     source_dist: dict[str, int] = {}
@@ -2406,6 +2448,9 @@ def _build_queues(
         "weak_match": list(bitrix_queues.get("weak_match", [])),
         "ambiguous": list(bitrix_queues.get("ambiguous", [])),
         "degraded": list(bitrix_queues.get("degraded", [])),
+        "identity_only_no_target": list(
+            bitrix_queues.get("identity_only_no_target", [])
+        ),
         "unreconciled": list(bitrix_queues.get("unreconciled", [])),
     }
 
@@ -2414,6 +2459,7 @@ def _build_bitrix_period_state(
     classified_list: list[dict[str, Any]],
     bitrix_reconciliation: dict | None,
     run_id: str,
+    confirmed_delivery_events: set[tuple[str, str, str]] | None = None,
 ) -> dict[str, Any]:
     kpi = {
         "matched_in_bitrix": 0,
@@ -2422,6 +2468,7 @@ def _build_bitrix_period_state(
         "ambiguous_or_duplicate": 0,
         "bitrix_errors": 0,
         "connector_degraded": 0,
+        "identity_only_no_target": 0,
         "unreconciled": 0,
     }
     queues: dict[str, list[dict[str, Any]]] = {
@@ -2430,6 +2477,7 @@ def _build_bitrix_period_state(
         "weak_match": [],
         "ambiguous": [],
         "degraded": [],
+        "identity_only_no_target": [],
         "unreconciled": [],
     }
 
@@ -2485,6 +2533,9 @@ def _build_bitrix_period_state(
                 or ""
             )
 
+        if (origin_run_id, source_id, event_id) in (confirmed_delivery_events or set()):
+            status = "matched_lead"
+
         if status.startswith("matched_"):
             kpi["matched_in_bitrix"] += 1
             queues["matched"].append(
@@ -2511,6 +2562,11 @@ def _build_bitrix_period_state(
             kpi["connector_degraded"] += 1
             queues["degraded"].append(
                 _bitrix_queue_entry(evt, status, origin_run_id, "degraded")
+            )
+        elif status == "identity_only_no_target":
+            kpi["identity_only_no_target"] += 1
+            queues["identity_only_no_target"].append(
+                _bitrix_queue_entry(evt, status, origin_run_id, "identity_only_no_target")
             )
         elif status == "skipped":
             continue

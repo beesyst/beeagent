@@ -3064,9 +3064,27 @@ def _bitrix_status_tone(status: object) -> str:
         return "warning"
     if value in ("connector_degraded", "error"):
         return "danger"
-    if value in ("unreconciled", "skipped", ""):
+    if value in ("identity_only_no_target", "unreconciled", "skipped", ""):
         return "info"
     return "unknown"
+
+
+def _bitrix_status_label(status: object, locale: str) -> str:
+    value = str(status or "").lower()
+    if value.startswith("matched_"):
+        return t("Matched in Bitrix", locale)
+    label_keys = {
+        "not_found": "Not found in Bitrix",
+        "weak_match": "Needs clarification",
+        "ambiguous": "Needs clarification",
+        "duplicate_candidate": "Possible duplicate",
+        "identity_only_no_target": "Contact without lead/deal",
+        "unreconciled": "Reconciliation not run",
+        "connector_degraded": "Bitrix connection error",
+        "error": "Bitrix reconciliation error",
+        "skipped": "Reconciliation not required",
+    }
+    return t(label_keys.get(value, value.replace("_", " ").title()), locale)
 
 
 def _chart_block(
@@ -3359,6 +3377,7 @@ def _build_rop_overview_layout(
     high_priority = business_kpi.get("high_priority", 0)
     needs_review = business_kpi.get("needs_review", 0)
     lost_in_bitrix = business_kpi.get("lost_in_bitrix", 0)
+    identity_only_no_target = business_kpi.get("identity_only_no_target", 0)
     unreconciled = business_kpi.get("unreconciled", 0)
     ambiguous_or_duplicate = business_kpi.get("ambiguous_or_duplicate", 0)
     source_count = kpis.get("source_count", 0)
@@ -3538,7 +3557,7 @@ def _build_rop_overview_layout(
             "width": 6,
             "compact": True,
             "title": t("Urgent leads", locale),
-            "subtitle": t("Open now", locale),
+            "subtitle": t("High-priority emails", locale),
             "status": str(high_priority),
             "items": [{"label": t("Count", locale), "value": high_priority}],
             "links": [{"label": t("Open Queue", locale), "href": queue_urgent_href}],
@@ -3548,7 +3567,7 @@ def _build_rop_overview_layout(
             "width": 3,
             "compact": True,
             "title": t("Needs review", locale),
-            "subtitle": t("Operator queue", locale),
+            "subtitle": t("Fallback classifications", locale),
             "status": str(needs_review),
             "items": [{"label": t("Count", locale), "value": needs_review}],
             "links": [
@@ -3559,8 +3578,8 @@ def _build_rop_overview_layout(
             "type": "venue_card",
             "width": 3,
             "compact": True,
-            "title": t("Bitrix gaps", locale),
-            "subtitle": t("Check CRM evidence", locale),
+            "title": t("Bitrix problems", locale),
+            "subtitle": t("Emails with Bitrix problems", locale),
             "status": str(bitrix_gap_count),
             "items": [{"label": t("Count", locale), "value": bitrix_gap_count}],
             "links": [
@@ -3597,13 +3616,15 @@ def _build_rop_overview_layout(
     bitrix_labels = [
         t("Matched in Bitrix", locale),
         t("Lost in Bitrix", locale),
-        t("Ambiguous / duplicate", locale),
+        t("Needs clarification", locale),
+        t("Contact without lead/deal", locale),
         t("Not reconciled", locale),
     ]
     bitrix_values = [
         _int(business_kpi.get("matched_in_bitrix", 0)),
         _int(lost_in_bitrix),
         _int(ambiguous_or_duplicate),
+        _int(identity_only_no_target),
         _int(unreconciled),
     ]
     layout.append(
@@ -3755,7 +3776,7 @@ def _build_queue_toolbar(
     bitrix_status_options: list[dict[str, str]] = []
     for bs in raw_bitrix_statuses:
         bitrix_status_options.append(
-            {"value": bs, "label": bs.replace("_", " ").title()}
+            {"value": bs, "label": _bitrix_status_label(bs, locale)}
         )
 
     def _make_checkboxes(
@@ -4063,7 +4084,7 @@ def _queue_table(
                     locale,
                 ),
                 "bitrix_status": {
-                    "label": bitrix_status,
+                    "label": _bitrix_status_label(bitrix_status, locale),
                     "status": _bitrix_status_tone(bitrix_status),
                 },
                 "detail_href": detail_href if event_id else None,
