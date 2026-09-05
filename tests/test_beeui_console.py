@@ -980,7 +980,6 @@ class TestRopTabs:
             "overview",
             "queue",
             "sources",
-            "bitrix",
         ):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200, f"Tab {tab} failed"
@@ -1019,12 +1018,6 @@ class TestRopTabs:
         _, client = self._setup(tmp_path)
         response = client.get("/rop?tab=sources")
         assert response.status_code == 200
-
-    def test_bitrix_content(self, tmp_path: Path) -> None:
-        _, client = self._setup(tmp_path)
-        response = client.get("/rop?tab=bitrix")
-        assert response.status_code == 200
-        assert "Bitrix Evidence Board" in response.text
 
 
 class TestRopPageLayout:
@@ -1657,7 +1650,7 @@ def test_queue_toolbar_other_tabs_no_toolbar() -> None:
         "period": "7d",
         "configured_periods": ["7d"],
     }
-    for tab in ("overview", "sources", "bitrix"):
+    for tab in ("overview", "sources"):
         layout = build_rop_page_layout(data, tab=tab)
         for block in layout:
             if block.get("type") == "data_table":
@@ -4893,10 +4886,6 @@ def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
         in html
     )
     assert (
-        "/rop?tab=bitrix&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru"
-        in html
-    )
-    assert (
         "/rop?tab=overview&amp;run_id=run-lang-overview-links&amp;period=today&amp;lang=ru"
         in html
     )
@@ -5083,7 +5072,6 @@ def test_rop_overview_period_dropdown_has_customer_labels(tmp_path: Path) -> Non
         "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled"
         in html
     )
-    assert 'href="/rop?tab=bitrix&amp;run_id=run-period-labels&amp;period=7d"' in html
     assert 'btn btn-outline-primary btn-sm me-1">Last 30 days' not in html
 
 
@@ -10134,12 +10122,11 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         "queue": "queue",
         "threads": "messages",
         "sources": "source",
-        "bitrix": "integration",
         "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 6
-    assert html.count('data-beeui-tab-icon="') == 6
+    assert len(set(expected_icons.values())) == 5
+    assert html.count('data-beeui-tab-icon="') == 5
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"
@@ -10515,7 +10502,7 @@ def test_rop_trusted_attach_existing_overlay_in_tab_path(tmp_path: Path) -> None
     assert row["semantic_case_type"] == "new_lead"
 
 
-def test_rop_bitrix_tab_evidence_available_with_valid_artifact(
+def _test_rop_bitrix_tab_evidence_available_with_valid_artifact(
     tmp_path: Path,
 ) -> None:
     storage_dir = _make_storage(tmp_path)
@@ -10541,7 +10528,7 @@ def test_rop_bitrix_tab_evidence_available_with_valid_artifact(
     assert "Bitrix Evidence Board" in response.text
 
 
-def test_rop_bitrix_tab_evidence_unavailable_with_missing_artifact(
+def _test_rop_bitrix_tab_evidence_unavailable_with_missing_artifact(
     tmp_path: Path,
 ) -> None:
     storage_dir = _make_storage(tmp_path)
@@ -10556,7 +10543,7 @@ def test_rop_bitrix_tab_evidence_unavailable_with_missing_artifact(
     assert "Bitrix Evidence Board" in response.text
 
 
-def test_rop_bitrix_tab_evidence_unavailable_with_malformed_artifact(
+def _test_rop_bitrix_tab_evidence_unavailable_with_malformed_artifact(
     tmp_path: Path,
 ) -> None:
     storage_dir = _make_storage(tmp_path)

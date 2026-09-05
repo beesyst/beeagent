@@ -2488,7 +2488,7 @@ def build_rop_tab_read_model(
     elif tab == "api":
         view_id = "api"
         view_period = effective_period
-    elif requested_tab in {"overview", "bitrix"}:
+    elif requested_tab == "overview":
         view_id = requested_tab
         view_period = effective_period
     elif requested_tab in {
@@ -2730,7 +2730,7 @@ def _build_rop_tab_read_model_legacy(
         "order": order,
     }
 
-    if requested_tab in {"overview", "queue", "bitrix"}:
+    if requested_tab in {"overview", "queue"}:
         current_state = _read_json(run_dir / "rop_current_state.json")
         if isinstance(current_state, dict):
             result["current_state_kpi"] = current_state.get("kpi", {})
@@ -2836,28 +2836,6 @@ def _build_rop_tab_read_model_legacy(
                     is not None
                 )
             result["evidence_links"] = evidence_links
-    if requested_tab == "bitrix":
-        reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
-        if isinstance(reconciliation, dict):
-            aggregate = reconciliation.get("aggregate", {})
-            result["bitrix"] = {
-                "status": reconciliation.get("status", "unknown"),
-                "matched_count": _int(aggregate.get("matched_count", 0)),
-                "not_found_count": _int(aggregate.get("not_found_count", 0)),
-                "ambiguous_count": _int(aggregate.get("ambiguous_count", 0)),
-                "connector_error_count": _int(
-                    aggregate.get("connector_error_count", 0)
-                ),
-            }
-
-        bitrix_link = next(
-            link
-            for link in _build_evidence_links(selected_run_id)
-            if link["artifact_id"] == "bitrix_reconciliation_json"
-        )
-        bitrix_link["available"] = isinstance(reconciliation, dict)
-        result["evidence_links"] = [bitrix_link]
-
     if tab == "api":
         classified = _read_json(run_dir / "classified_events.json")
         normalized = _read_json(run_dir / "normalized_events.json")
@@ -3014,8 +2992,6 @@ def build_rop_page_layout(
         return _build_rop_queue_layout(data, locale=locale)
     if tab == "sources":
         return _build_rop_sources_layout(data, locale=locale)
-    if tab == "bitrix":
-        return _build_rop_bitrix_layout(data, locale=locale)
     if tab == "threads":
         return _build_rop_threads_layout(data, locale=locale)
     return _build_rop_overview_layout(data, locale=locale)
@@ -3429,21 +3405,31 @@ def normalize_rop_recommendation_hrefs(
 ) -> list[dict[str, Any]]:
     target_tabs = {
         "/rop?tab=queue": "queue",
-        "/rop?tab=bitrix": "bitrix",
-        "/rop?tab=evidence": "bitrix",
+        "/rop?tab=bitrix": "queue",
+        "/rop?tab=evidence": "queue",
         "/rop?tab=sources": "sources",
         "/rop?tab=attachments": "queue",
     }
     normalized: list[dict[str, Any]] = []
     for recommendation in recommendations:
         item = dict(recommendation)
-        target_tab = target_tabs.get(str(item.get("evidence_href", "")))
+        raw_href = str(item.get("evidence_href", ""))
+        target_tab = target_tabs.get(raw_href)
         if target_tab:
+            filter_params: dict[str, str] = {}
+            bitrix_status_filter = item.get("bitrix_status_filter")
+            if target_tab == "queue" and isinstance(bitrix_status_filter, str):
+                filter_params["bitrix_status"] = bitrix_status_filter
+            elif raw_href in {"/rop?tab=bitrix", "/rop?tab=evidence"}:
+                filter_params["bitrix_status"] = (
+                    "not_found,ambiguous,duplicate_candidate,unreconciled"
+                )
             item["evidence_href"] = build_rop_url(
                 tab=target_tab,
                 run_id=run_id,
                 period=period,
                 lang=locale,
+                filter_params=filter_params or None,
             )
         normalized.append(item)
     return normalized
@@ -3778,17 +3764,17 @@ def _build_rop_overview_layout(
         if date_filter
         else {"bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"},
     )
-    bitrix_href = build_rop_url(
-        tab="bitrix",
-        period=current_period,
-        lang=locale,
-        run_id=str(data.get("run_id", "")),
-    )
     evidence_href = build_rop_url(
-        tab="bitrix",
+        tab="queue",
         period=current_period,
         lang=locale,
         run_id=str(data.get("run_id", "")),
+        filter_params={
+            **date_filter,
+            "bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled",
+        }
+        if date_filter
+        else {"bitrix_status": "not_found,ambiguous,duplicate_candidate,unreconciled"},
     )
 
     processed_by_day = series.get("processed_by_day", {})
@@ -3908,7 +3894,6 @@ def _build_rop_overview_layout(
             "items": [{"label": t("Count", locale), "value": bitrix_gap_count}],
             "links": [
                 {"label": t("Open Queue", locale), "href": queue_bitrix_gaps_href},
-                {"label": t("Open Bitrix", locale), "href": bitrix_href},
             ],
         },
         {

@@ -117,13 +117,6 @@ pages:
           href: /rop?tab=sources
           icon: source
 
-        - id: bitrix
-          title:
-            en: Bitrix
-            ru: Битрикс
-          href: /rop?tab=bitrix
-          icon: integration
-
         - id: blacklist
           title:
             en: Blacklist
