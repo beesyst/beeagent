@@ -500,7 +500,6 @@ class BeeAgentUiAdapter:
                         "attachments",
                         "bitrix",
                         "threads",
-                        "ai_assist",
                         "blacklist",
                     }
                 )

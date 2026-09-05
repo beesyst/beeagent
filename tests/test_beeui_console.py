@@ -4881,10 +4881,6 @@ def test_rop_tabs_preserve_lang_and_period(tmp_path: Path) -> None:
         "/rop?tab=threads&amp;period=7d&amp;lang=ru" in html
         or "/rop?lang=ru&amp;period=7d&amp;tab=threads" in html
     )
-    assert (
-        "/rop?tab=ai_assist&amp;period=7d&amp;lang=ru" in html
-        or "/rop?lang=ru&amp;period=7d&amp;tab=ai_assist" in html
-    )
 
 
 def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
@@ -5506,7 +5502,7 @@ class TestUi6It30:
         response = client.get("/rop?tab=threads")
         assert response.status_code == 200
 
-    def test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
+    def _test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-tab-ai")
         client = _client(storage_dir)
@@ -5523,7 +5519,7 @@ class TestUi6It30:
         assert "Цепочки" in html
         assert "Группы цепочек" in html
 
-    def test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
+    def _test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-lang-ru-ai")
         client = _client(storage_dir)
@@ -5650,7 +5646,7 @@ class TestUi6It30:
         assert "client@workshop.kz" in html_response.text
         assert "Linked by references" in html_response.text
 
-    def test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
+    def _test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-requested")
 
@@ -5705,7 +5701,7 @@ class TestUi6It30:
         assert "AI Assist Summary" not in html_response.text
         assert "not_requested" not in html_response.text
 
-    def test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
+    def _test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-used-ru")
 
@@ -5784,7 +5780,6 @@ class TestUi6It30:
         client.get("/rop")
         client.get("/api/rop/dashboard")
         client.get("/rop?tab=threads")
-        client.get("/rop?tab=ai_assist")
         client.get("/rop?lang=ru")
 
         after = {
@@ -5813,7 +5808,7 @@ class TestUi6It30:
             encoding="utf-8",
         )
         client = _client(storage_dir)
-        for tab in ("threads", "ai_assist", "overview"):
+        for tab in ("threads", "overview"):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200
             assert "should-not-leak" not in response.text
@@ -5823,7 +5818,7 @@ class TestUi6It30:
         storage_dir = _make_storage(tmp_path)
         run_dir = self._write_full_it30_run(storage_dir, "run-no-raw")
         client = _client(storage_dir)
-        for tab in ("threads", "ai_assist"):
+        for tab in ("threads",):
             response = client.get(f"/rop?tab={tab}")
             assert response.status_code == 200
             assert "raw_eml" not in response.text.lower()
@@ -10144,15 +10139,14 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         "overview": "dashboard",
         "queue": "queue",
         "threads": "messages",
-        "ai_assist": "ai",
         "sources": "source",
         "attachments": "attachment",
         "bitrix": "integration",
         "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 8
-    assert html.count('data-beeui-tab-icon="') == 8
+    assert len(set(expected_icons.values())) == 7
+    assert html.count('data-beeui-tab-icon="') == 7
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"

@@ -110,13 +110,6 @@ pages:
           href: /rop?tab=threads
           icon: messages
 
-        - id: ai_assist
-          title:
-            en: AI Assist
-            ru: AI ассистент
-          href: /rop?tab=ai_assist
-          icon: ai
-
         - id: sources
           title:
             en: Sources

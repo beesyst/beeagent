@@ -56,7 +56,7 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
   - `available_runs` and `total_runs` are materialized metadata and never require a `storage/runs` scan during GET;
   - scoped `run_id` authorization uses only validated manifest membership and never opens a semantic view;
 - `storage/interfaces/rop_web_projection_v2/<generation>/<sha256(run_id)>/<revision>/...`
-  - immutable request-ready semantic views for Overview, Queue, Threads, AI Assist, Sources, Attachments, Bitrix and dashboard API period variants;
+  - immutable request-ready semantic views for Overview, Queue, Threads, Sources, Attachments, Bitrix and dashboard API period variants;
   - a normal `/rop` or `/api/rop/dashboard` request reads the manifest and exactly one controlled requested view; it never reads v1 entries, global writeback state or raw run artifacts;
   - Queue is one canonical deduplicated row set with bounded membership metadata; Overview has separately materialized counters, series, source summaries and bounded previews;
 - both projection layers are refreshed or regenerated only through supported ROP runtime/CLI paths, never by HTTP GET;
@@ -130,7 +130,7 @@ CLI overrides:
 - `/health` — health check
 - `/runs` — run history
 - `/runs/{run_id}` — run detail
-- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, ai_assist, sources, attachments, bitrix, blacklist)
+- `/rop` — ROP operator dashboard (tabs: overview, queue, threads, sources, attachments, bitrix, blacklist)
 - `/rop?tab=blacklist` — exact sender e-mail blacklist; mutation requires a known action, `operator`/`admin` authority, `rop` scope, CSRF validation/protection, product validation and audit. It grants no general runtime, CRM or mailbox execution authority. Future blacklisted messages use the existing `irrelevant` Bitrix path and show the classification override reason in ROP Event Detail.
 - `/modules` — module diagnostics
 - `/runs/{run_id}/artifacts` — browser artifact list/viewer route, BeeUI-owned HTML
@@ -311,14 +311,6 @@ New allowlisted artifacts:
 - `rop_ai_adjudicator_requests.json` — AI adjudicator requests
 - `rop_ai_adjudicator_decisions.json` — AI adjudicator decisions
 - `rop_final_decisions.json` — final decision read-model
-
-### AI tab changes (UI-8)
-
-`/rop?tab=ai_assist` now shows:
-
-- AI Adjudicator summary block when `rop_ai_adjudicator_results.json` exists
-- Final Decisions summary block for artifact-first or computed read-only data
-- legacy AI Assist summary only when legacy activity exists
 
 ### Event detail changes (UI-8)
 
@@ -1001,7 +993,6 @@ HTML `/rop` использует BeeUI tabs:
 - `overview`
 - `queue`
 - `threads`
-- `ai_assist`
 - `sources`
 - `attachments`
 - `bitrix` — read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state
@@ -1178,7 +1169,6 @@ Backward-compatible поля сохранены:
 - `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда; Overview использует period dropdown;
 - `queue`: attention events;
 - `threads`: сводка цепочек и таблица групп;
-- `ai_assist`: сводка AI assist и таблица событий;
 - `sources`: source health details;
 - `attachments`: attachment processing summary;
 - `bitrix`: read-only, artifact-backed; при отсутствии Bitrix/current-state artifacts показывает empty/unavailable state;
@@ -1213,7 +1203,7 @@ Read-only операторские секции на основе It30 арте�
 - **AI assist**: `ai_assist_summary` и `ai_assist_events[]` показывают evidence AI assist и статус каждого события;
 - **RU labels**: через `?lang=ru` переводятся все новые UI-6 секции;
 - **Det recommendations**: обогащены `_build_it30_recommendations()` — review threaded conversations, AI degraded, low confidence, module contract unavailable;
-- **New tabs**: `/rop?tab=threads` и `/rop?tab=ai_assist`.
+- **New tab**: `/rop?tab=threads`.
 
 ### UI-6 — Артефакты It30 в allowlist
 
