@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -55,6 +56,9 @@ from beeagent_module.interfaces.ui.read_model import (
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _product_version() -> str:
@@ -266,6 +270,7 @@ class BeeAgentUiAdapter:
             )
             return ok_result(data)
         except Exception as exc:
+            logger.exception("BeeAgent dashboard adapter failed")
             return error_result_from_exception(exc)
 
     def list_runs(self) -> AdapterResult | AdapterErrorResult:
@@ -685,6 +690,7 @@ class BeeAgentUiAdapter:
 
             return error_result("unavailable", f"Page '{page_id}' is unavailable")
         except Exception as exc:
+            logger.exception("BeeAgent UI page adapter failed: page_id=%s", page_id)
             return error_result_from_exception(exc)
 
 

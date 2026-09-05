@@ -3485,7 +3485,6 @@ def test_v2_overview_action_required_count_is_exact_while_preview_is_bounded(
 
     overview = views["overview.all"]
     assert overview["action_required_count"] == 30
-    assert len(overview["priority_preview"]["high_priority"]) == 25
 
 
 def test_v2_writer_rejects_incomplete_views_before_manifest_publication(
@@ -3552,7 +3551,6 @@ def _v2_views(
             payloads[view_key] = {
                 "business_kpi": {},
                 "series": {},
-                "priority_preview": {},
                 "action_required_count": 0,
             }
         elif view_key.startswith("api."):
