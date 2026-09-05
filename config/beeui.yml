@@ -131,13 +131,6 @@ pages:
           href: /rop?tab=attachments
           icon: attachment
 
-        - id: evidence
-          title:
-            en: Evidence
-            ru: Доказательства
-          href: /rop?tab=evidence
-          icon: evidence
-
         - id: bitrix
           title:
             en: Bitrix

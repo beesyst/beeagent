@@ -74,7 +74,6 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
     "ai_assist",
     "sources",
     "attachments",
-    "evidence",
     "bitrix",
     "api",
 )
@@ -1151,7 +1150,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         "ai_assist": {"ai_assist_summary": dict, "ai_assist_events": list},
         "sources": {"source_health": list},
         "attachments": {"attachment_summary": dict},
-        "evidence": {"evidence_links": list},
     }
     if view_key.startswith("overview."):
         required = {
@@ -1437,7 +1435,6 @@ def build_rop_web_projection_v2_views(
         ),
         "sources": ("source_health", "sources", "warnings"),
         "attachments": ("attachment_summary", "warnings"),
-        "evidence": ("evidence_links", "warnings"),
     }.items():
         views[_v2_view_key(view_id)] = _v2_payload_fields(all_data, fields)
     return views
@@ -1455,7 +1452,6 @@ def _v2_required_view_keys(periods: list[str]) -> set[str]:
             "ai_assist",
             "sources",
             "attachments",
-            "evidence",
         )
     }
     for period in selected_periods:
@@ -2713,7 +2709,7 @@ def _build_recommendations(
                 "count": unreconciled,
                 "read_only": True,
                 "action_type": "run_reconciliation",
-                "evidence_href": "/rop?tab=evidence",
+                "evidence_href": "/rop?tab=bitrix",
             }
         )
 

@@ -2496,7 +2496,6 @@ def build_rop_tab_read_model(
         "ai_assist",
         "sources",
         "attachments",
-        "evidence",
     }:
         view_id = requested_tab
         view_period = None
@@ -2937,17 +2936,6 @@ def _build_rop_tab_read_model_legacy(
             extraction if isinstance(extraction, dict) else None
         )
 
-    if requested_tab == "evidence":
-        evidence_links = _build_evidence_links(selected_run_id)
-        from beeagent_module.interfaces.ui.artifacts import resolve_artifact_path
-
-        for link in evidence_links:
-            link["available"] = (
-                resolve_artifact_path(storage_dir, selected_run_id, link["artifact_id"])
-                is not None
-            )
-        result["evidence_links"] = evidence_links
-
     if requested_tab == "threads":
         thread_index = _read_json(run_dir / "mail_thread_index.json")
         thread_context = _read_json(run_dir / "mail_thread_context.json")
@@ -3061,8 +3049,6 @@ def build_rop_page_layout(
         return _build_rop_sources_layout(data, locale=locale)
     if tab == "attachments":
         return _build_rop_attachments_layout(data, locale=locale)
-    if tab == "evidence":
-        return _build_rop_evidence_layout(data, locale=locale)
     if tab == "bitrix":
         return _build_rop_bitrix_layout(data, locale=locale)
     if tab == "threads":
@@ -3481,7 +3467,7 @@ def normalize_rop_recommendation_hrefs(
     target_tabs = {
         "/rop?tab=queue": "queue",
         "/rop?tab=bitrix": "bitrix",
-        "/rop?tab=evidence": "evidence",
+        "/rop?tab=evidence": "bitrix",
         "/rop?tab=sources": "sources",
         "/rop?tab=attachments": "attachments",
     }
@@ -3836,7 +3822,7 @@ def _build_rop_overview_layout(
         run_id=str(data.get("run_id", "")),
     )
     evidence_href = build_rop_url(
-        tab="evidence",
+        tab="bitrix",
         period=current_period,
         lang=locale,
         run_id=str(data.get("run_id", "")),
@@ -4935,42 +4921,6 @@ def _build_rop_attachments_layout(
             "size": "XL",
             "title": t("Attachment Processing", locale),
             "items": kpi_items,
-        }
-    ]
-
-
-def _build_rop_evidence_layout(
-    data: dict[str, Any],
-    locale: str = "en",
-) -> list[dict[str, Any]]:
-    evidence_links = data.get("evidence_links", [])
-
-    if not evidence_links:
-        return [
-            {
-                "type": "quick_links",
-                "size": "XL",
-                "title": t("Evidence & Exports", locale),
-                "items": [],
-            }
-        ]
-
-    link_items: list[dict[str, Any]] = []
-    for link in evidence_links:
-        if link.get("available"):
-            link_items.append(
-                {
-                    "label": link.get("label", link.get("artifact_id", "")),
-                    "href": link.get("url", ""),
-                }
-            )
-
-    return [
-        {
-            "type": "quick_links",
-            "size": "XL",
-            "title": t("Evidence & Exports", locale),
-            "items": link_items,
         }
     ]
 

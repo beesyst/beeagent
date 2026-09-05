@@ -981,7 +981,6 @@ class TestRopTabs:
             "queue",
             "sources",
             "attachments",
-            "evidence",
             "bitrix",
         ):
             response = client.get(f"/rop?tab={tab}")
@@ -1025,11 +1024,6 @@ class TestRopTabs:
     def test_attachments_content(self, tmp_path: Path) -> None:
         _, client = self._setup(tmp_path)
         response = client.get("/rop?tab=attachments")
-        assert response.status_code == 200
-
-    def test_evidence_content(self, tmp_path: Path) -> None:
-        _, client = self._setup(tmp_path)
-        response = client.get("/rop?tab=evidence")
         assert response.status_code == 200
 
     def test_bitrix_content(self, tmp_path: Path) -> None:
@@ -1669,7 +1663,7 @@ def test_queue_toolbar_other_tabs_no_toolbar() -> None:
         "period": "7d",
         "configured_periods": ["7d"],
     }
-    for tab in ("overview", "sources", "attachments", "evidence", "bitrix"):
+    for tab in ("overview", "sources", "attachments", "bitrix"):
         layout = build_rop_page_layout(data, tab=tab)
         for block in layout:
             if block.get("type") == "data_table":
@@ -4910,10 +4904,6 @@ def test_rop_overview_links_preserve_lang(tmp_path: Path) -> None:
     )
     assert (
         "/rop?tab=bitrix&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru"
-        in html
-    )
-    assert (
-        "/rop?tab=evidence&amp;run_id=run-lang-overview-links&amp;period=7d&amp;lang=ru"
         in html
     )
     assert (
@@ -10157,13 +10147,12 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         "ai_assist": "ai",
         "sources": "source",
         "attachments": "attachment",
-        "evidence": "evidence",
         "bitrix": "integration",
         "blacklist": "ban",
     }
 
-    assert len(set(expected_icons.values())) == 9
-    assert html.count('data-beeui-tab-icon="') == 9
+    assert len(set(expected_icons.values())) == 8
+    assert html.count('data-beeui-tab-icon="') == 8
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"
