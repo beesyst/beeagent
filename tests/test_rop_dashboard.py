@@ -1116,8 +1116,7 @@ class TestCrossRunPeriodAggregation:
         )
 
         assert dashboard["business_kpi"]["processed_events"] == 3
-        nr_ids = [item["event_id"] for item in dashboard["queues"]["needs_review"]]
-        assert nr_ids.count("triple") == 3
+        assert dashboard["queues"]["needs_review"] == []
 
     def test_three_occurrences_across_two_runs_merge_to_three(
         self, run_dir: Path
@@ -1167,11 +1166,7 @@ class TestCrossRunPeriodAggregation:
         )
 
         assert dashboard["business_kpi"]["processed_events"] == 3
-        nr_ids = [item["event_id"] for item in dashboard["queues"]["needs_review"]]
-        assert nr_ids.count("triple") == 3
-        assert {item["run_id"] for item in dashboard["queues"]["needs_review"]} == {
-            "newest-run"
-        }
+        assert dashboard["queues"]["needs_review"] == []
 
     def test_x_email_id_fallback_identity_across_runs(self, run_dir: Path) -> None:
         newest = _copy_run(run_dir, "newest-run")
@@ -1355,7 +1350,7 @@ class TestCrossRunPeriodAggregation:
             ("shared-id", "second_mailbox"),
         }
 
-    def test_queues_keep_duplicate_occurrences_with_same_event_id(
+    def test_duplicate_occurrences_do_not_enter_needs_review(
         self, run_dir: Path
     ) -> None:
         norm = json.loads((run_dir / "normalized_events.json").read_text())
@@ -1397,16 +1392,8 @@ class TestCrossRunPeriodAggregation:
             aggregate_runs=True,
         )
 
-        nr = [
-            item
-            for item in dashboard["queues"]["needs_review"]
-            if item["event_id"] == "same-id"
-        ]
-        assert len(nr) == 2
-        assert {item["event_instance_id"] for item in nr} == {
-            "event-000010",
-            "event-000011",
-        }
+        assert dashboard["business_kpi"]["processed_events"] == 2
+        assert dashboard["queues"]["needs_review"] == []
 
     def _write_identity_run(self, storage: Path, name: str, events: list[dict]) -> Path:
         rdir = storage / "runs" / name
@@ -2186,7 +2173,7 @@ class TestBuildRopDashboard:
         assert bkpi["new_leads"] == 2
         assert bkpi["existing_clients"] == 1
         assert bkpi["high_priority"] == 2
-        assert bkpi["needs_review"] >= 2
+        assert bkpi["needs_review"] == 1
         assert "lost_in_bitrix" in bkpi
         assert "unreconciled" in bkpi
         assert "source_degraded" in bkpi
@@ -2511,7 +2498,7 @@ class TestBuildRopDashboard:
         assert dashboard["status"] == "ok"
         assert "evt-001" in high_priority_ids
 
-    def test_duplicate_rows_enter_needs_review_queue(
+    def test_duplicate_rows_do_not_enter_needs_review_queue(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
         classified = json.loads(
@@ -2538,10 +2525,21 @@ class TestBuildRopDashboard:
         dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
 
         review_ids = {item["event_id"] for item in dashboard["queues"]["needs_review"]}
-        assert "evt-dup-in-queue" in review_ids
+        assert "evt-dup-in-queue" not in review_ids
         assert dashboard["status"] == "ok"
 
-    def test_medium_non_fallback_duplicate_counts_in_needs_review_kpi(
+    def test_only_fallback_events_need_review(self) -> None:
+        assert rop_dashboard_module._event_needs_review(
+            {"is_fallback": True, "priority": "low", "case_type": "irrelevant"}
+        )
+        assert not rop_dashboard_module._event_needs_review(
+            {"is_fallback": False, "priority": "high", "case_type": "new_lead"}
+        )
+        assert not rop_dashboard_module._event_needs_review(
+            {"is_fallback": False, "priority": "medium", "case_type": "duplicate"}
+        )
+
+    def test_medium_non_fallback_duplicate_does_not_count_in_needs_review_kpi(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
         normalized = json.loads(
@@ -2582,9 +2580,9 @@ class TestBuildRopDashboard:
         dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
         bkpi = dashboard["business_kpi"]
         assert bkpi["needs_review"] == len(dashboard["queues"]["needs_review"])
-        assert bkpi["needs_review"] == 3
-        assert any(
-            item["event_id"] == "evt-dup-kpi"
+        assert bkpi["needs_review"] == 1
+        assert all(
+            item["event_id"] != "evt-dup-kpi"
             for item in dashboard["queues"]["needs_review"]
         )
 
@@ -3096,6 +3094,81 @@ class TestQueueFilters:
             }
         )
         assert errors == []
+
+    def test_validate_filter_params_accepts_identity_only_status(self) -> None:
+        errors = rop_dashboard_module.validate_filter_params(
+            {"bitrix_status": "identity_only_no_target"}
+        )
+        assert errors == []
+
+    def test_identity_only_status_is_not_counted_as_unreconciled(self) -> None:
+        state = rop_dashboard_module._build_bitrix_period_state(
+            [{"event_id": "evt-1", "source_id": "source-1"}],
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "source-1",
+                        "bitrix_match_status": "identity_only_no_target",
+                    }
+                ]
+            },
+            "run-1",
+        )
+
+        assert state["kpi"]["identity_only_no_target"] == 1
+        assert state["kpi"]["unreconciled"] == 0
+        assert [item["event_id"] for item in state["queues"]["identity_only_no_target"]] == [
+            "evt-1"
+        ]
+
+    def test_confirmed_bitrix_delivery_overrides_not_found_status(self) -> None:
+        state = rop_dashboard_module._build_bitrix_period_state(
+            [{"event_id": "evt-1", "source_id": "source-1"}],
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "source-1",
+                        "bitrix_match_status": "not_found",
+                    }
+                ]
+            },
+            "run-1",
+            confirmed_delivery_events={("run-1", "source-1", "evt-1")},
+        )
+
+        assert state["kpi"]["matched_in_bitrix"] == 1
+        assert state["kpi"]["lost_in_bitrix"] == 0
+        assert state["queues"]["matched"][0]["bitrix_status"] == "matched_lead"
+
+    def test_dashboard_uses_confirmed_bitrix_delivery_for_status(
+        self, run_dir: Path
+    ) -> None:
+        storage_dir = run_dir.parents[1]
+        interfaces_dir = storage_dir / "interfaces"
+        interfaces_dir.mkdir()
+        (interfaces_dir / "rop_writeback_state.json").write_text(
+            json.dumps(
+                {
+                    "events": {
+                        "welding|rop_batch_sample|evt-002": {
+                            "last_run_id": "test-dashboard-run",
+                            "source_id": "rop_batch_sample",
+                            "event_id": "evt-002",
+                            "email_attachment_status": "attached",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        dashboard = build_rop_dashboard(storage_dir, "all", _null_logger())
+
+        assert dashboard["business_kpi"]["matched_in_bitrix"] == 2
+        assert dashboard["business_kpi"]["lost_in_bitrix"] == 0
+        assert dashboard["queues"]["matched"][1]["event_id"] == "evt-002"
 
     def test_validate_filter_params_accepts_duplicate_aliases(self) -> None:
         errors = rop_dashboard_module.validate_filter_params(

@@ -1000,8 +1000,8 @@ class TestRopTabs:
         assert "Emails in period" in html
         assert "NEW LEADS" in html
         assert "Urgent leads" in html
-        assert "Needs review" in html
-        assert "Bitrix gaps" in html
+        assert "Fallback classifications" in html
+        assert "Bitrix problems" in html
         assert "Unavailable block" not in html
         assert "Failed to render block type" not in html
         assert "attention_list" not in html
@@ -1140,7 +1140,7 @@ class TestRopOverviewLayoutStructure:
         labels = [block["title"] for block in layout if block["type"] == "venue_card"]
         assert "Urgent leads" in labels
         assert "Needs review" in labels
-        assert "Bitrix gaps" in labels
+        assert "Bitrix problems" in labels
 
     def test_kpi_has_three_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1513,6 +1513,14 @@ def test_rop_queue_filter_options_from_queue_data() -> None:
     field_types = {f.get("type") for f in layout[0]["toolbar"].get("fields", [])}
     assert "checkboxes" in field_types
     assert len(layout[0]["rows"]) == 3
+
+
+def test_bitrix_status_labels_are_translated_for_russian_locale() -> None:
+    from beeagent_module.interfaces.ui.read_model import _bitrix_status_label
+
+    assert _bitrix_status_label("matched_lead", "ru") == "Найдено в Bitrix"
+    assert _bitrix_status_label("identity_only_no_target", "ru") == "Контакт без лида/сделки"
+    assert _bitrix_status_label("unreconciled", "ru") == "Сверка не выполнена"
 
 
 def test_queue_toolbar_contract() -> None:
@@ -5003,8 +5011,8 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "Emails in period" in html
     assert "NEW LEADS" in html
     assert "Urgent leads" in html
-    assert "Needs review" in html
-    assert "Bitrix gaps" in html
+    assert "Fallback classifications" in html
+    assert "Bitrix problems" in html
     assert "high_priority" not in html
 
 
