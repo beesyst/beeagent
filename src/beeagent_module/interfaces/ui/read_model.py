@@ -3827,6 +3827,45 @@ def _build_queue_toolbar(
             "selected_count": len(selected),
         }
 
+    def _make_attachment_filter() -> dict[str, Any]:
+        current = filter_params.get("has_attachments", "")
+        choices: list[dict[str, Any]] = []
+        for value, label in (
+            ("", t("All", locale)),
+            ("true", t("With attachments", locale)),
+            ("false", t("Without attachments", locale)),
+        ):
+            toggle_params = dict(filter_params)
+            if value:
+                toggle_params["has_attachments"] = value
+            else:
+                toggle_params.pop("has_attachments", None)
+            choices.append(
+                {
+                    "value": value,
+                    "label": label,
+                    "checked": current == value,
+                    "toggle_href": build_rop_url(
+                        tab="queue",
+                        period=current_period,
+                        lang=locale,
+                        run_id=run_id,
+                        page=1,
+                        page_size=page_size,
+                        sort=sort,
+                        order=order,
+                        filter_params=toggle_params,
+                    ),
+                }
+            )
+        return {
+            "type": "checkboxes",
+            "name": "has_attachments",
+            "label": t("Attachments", locale),
+            "choices": choices,
+            "selected_count": 1 if current else 0,
+        }
+
     fields: list[dict[str, Any]] = [
         {
             "type": "date_range",
@@ -3862,6 +3901,7 @@ def _build_queue_toolbar(
                 "bitrix_status", t("Bitrix status", locale), bitrix_status_options
             )
         )
+    fields.append(_make_attachment_filter())
 
     current_columns = filter_params.get("columns", "")
     selected_set = (
@@ -3929,7 +3969,13 @@ def _build_queue_toolbar(
     if sort != "received_at" or order != "desc":
         hidden["sort"] = sort
         hidden["order"] = order
-    for key in ("case_type", "priority", "bitrix_status", "columns"):
+    for key in (
+        "case_type",
+        "priority",
+        "bitrix_status",
+        "has_attachments",
+        "columns",
+    ):
         val = filter_params.get(key, "")
         if val:
             hidden[key] = val
