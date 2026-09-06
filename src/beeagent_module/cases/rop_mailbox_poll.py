@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from beeagent_module.adapters.mailbox import ImapReadonlyMailboxClient
-from beeagent_module.cases.rop_action_drafts import build_action_drafts
 from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
 from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
@@ -405,7 +404,7 @@ def _poll_single_source(
         settings["bitrix"]["enabled"]
         and settings["bitrix"]["reconciliation"]["enabled"]
     ):
-        reconciliation = run_reconciliation(storage_dir, run_id, settings, logger)
+        run_reconciliation(storage_dir, run_id, settings, logger)
         try:
             build_writeback_plan(
                 storage_dir=storage_dir,
@@ -423,7 +422,6 @@ def _poll_single_source(
                 run_id,
                 exc,
             )
-        build_action_drafts(storage_dir, run_id, reconciliation, logger)
     state = build_rop_current_state(storage_dir, run_id, logger)
     write_current_state(storage_dir, run_id, state, logger)
     dashboard = build_rop_dashboard(

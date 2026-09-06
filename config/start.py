@@ -11,7 +11,6 @@ from beeagent_module.core.accelerator import detect_accelerator
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
-    handle_rop_action_drafts,
     handle_rop_current,
     handle_rop_dashboard,
     handle_rop_evaluate_review,
@@ -250,8 +249,6 @@ def _handle_rop_cli(
             handle_rop_dashboard(args, settings=settings, logger=logger)
         elif args.rop_command == "mvp-pack":
             handle_rop_mvp_pack(args, settings=settings, logger=logger)
-        elif args.rop_command == "action-drafts":
-            handle_rop_action_drafts(args, logger=logger)
         elif args.rop_command == "evaluate-review":
             handle_rop_evaluate_review(args, logger=logger)
         elif args.rop_command == "writeback":

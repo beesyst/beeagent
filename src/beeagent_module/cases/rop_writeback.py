@@ -1146,23 +1146,9 @@ def _refresh_changed_run_projections(
     if not changed_run_ids:
         return []
 
-    from beeagent_module.cases.rop_action_drafts import build_action_drafts
-
     refreshed: list[str] = []
     for original_run_id in changed_run_ids:
         _write_run_summary(storage_dir, original_run_id, state, logger)
-        try:
-            run_dir = _bounded_run_dir(storage_dir, original_run_id)
-            reconciliation = _read_json_dict(
-                run_dir, "bitrix_reconciliation.json", required=True
-            )
-            build_action_drafts(storage_dir, original_run_id, reconciliation, logger)
-        except Exception as exc:
-            logger.warning(
-                "ROP write-back projection refresh failed: run_id=%s reason=%s",
-                original_run_id,
-                exc,
-            )
         refreshed.append(original_run_id)
     return refreshed
 
@@ -1411,15 +1397,13 @@ def refresh_recoverable_writeback_prerequisites(
     if not run_ids:
         return []
 
-    from beeagent_module.cases.rop_action_drafts import build_action_drafts
     from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
 
     refreshed: list[str] = []
     for run_id in run_ids:
         try:
-            reconciliation = run_reconciliation(storage_dir, run_id, settings, logger)
+            run_reconciliation(storage_dir, run_id, settings, logger)
             build_writeback_plan(storage_dir, run_id, settings, logger)
-            build_action_drafts(storage_dir, run_id, reconciliation, logger)
             refreshed.append(run_id)
         except Exception as exc:
             logger.warning(

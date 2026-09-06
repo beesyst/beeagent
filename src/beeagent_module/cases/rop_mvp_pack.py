@@ -371,7 +371,6 @@ def _build_evidence_links(storage_dir: Path, run_id: str) -> list[dict[str, Any]
         ("rop_review_table_tsv", "rop_review_table.tsv"),
         ("rop_current_state_json", "rop_current_state.json"),
         ("bitrix_reconciliation_json", "bitrix_reconciliation.json"),
-        ("rop_action_drafts_json", "rop_action_drafts.json"),
     )
 
     runs_root = (storage_dir / "runs").resolve()
@@ -546,8 +545,6 @@ def build_rop_mvp_pack(
 
     first_actions = _build_first_actions(queues, business_summary)
 
-    action_drafts = _read_json_dict(run_dir / "rop_action_drafts.json")
-
     bitrix_status = "unreconciled"
     if isinstance(bitrix_reconciliation, dict):
         bitrix_status = str(bitrix_reconciliation.get("status", "unreconciled"))
@@ -568,7 +565,6 @@ def build_rop_mvp_pack(
     limitations = _build_limitations(
         bitrix_reconciliation=bitrix_reconciliation,
         attachment_extraction=attachment_extraction,
-        action_drafts=action_drafts,
     )
 
     pack: dict[str, Any] = {
@@ -664,7 +660,6 @@ def _build_demo_readiness(
 def _build_limitations(
     bitrix_reconciliation: dict[str, Any] | None,
     attachment_extraction: dict[str, Any] | None,
-    action_drafts: dict[str, Any] | None = None,
 ) -> list[str]:
     limitations: list[str] = [
         "Read-only snapshot; no Bitrix write-back",
@@ -680,11 +675,6 @@ def _build_limitations(
         limitations.append("Bitrix reconciliation not yet run")
     if not isinstance(attachment_extraction, dict):
         limitations.append("Attachment extraction not yet run")
-    if not isinstance(action_drafts, dict):
-        limitations.append(
-            "Action drafts not yet generated (run reconcile-bitrix first)"
-        )
-
     return limitations
 
 

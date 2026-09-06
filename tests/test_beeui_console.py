@@ -4279,21 +4279,6 @@ def test_event_detail_joins_occurrence_evidence_by_event_instance_id(
         ),
         encoding="utf-8",
     )
-    (run_dir / "rop_action_drafts.json").write_text(
-        json.dumps(
-            {
-                "items": [
-                    {
-                        "event_id": event_id,
-                        "event_instance_id": instance_id,
-                        "action_type": f"draft_{index}",
-                    }
-                    for index, instance_id in enumerate(instances, start=1)
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
     (run_dir / "rop_recipient_routing.json").write_text(
         json.dumps(
             {
@@ -4323,7 +4308,6 @@ def test_event_detail_joins_occurrence_evidence_by_event_instance_id(
     )
 
     assert data["bitrix"]["bitrix_status"] == "matched_2"
-    assert data["action_draft"]["action_type"] == "draft_2"
     assert data["recipient_routing"]["recipient"] == "recipient2@welding.kz"
     assert data["recipient_routing"]["proposed_responsible_user_id"] == 2
 
@@ -7285,10 +7269,6 @@ def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> N
         json.dumps({"items": [{"event_id": "evt-1", "status": "matched"}]}),
         encoding="utf-8",
     )
-    (run_dir / "rop_action_drafts.json").write_text(
-        json.dumps({"items": [{"event_id": "evt-1", "action_type": "review"}]}),
-        encoding="utf-8",
-    )
     client = _client(storage_dir)
 
     response = client.get(
@@ -7297,12 +7277,14 @@ def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> N
     )
 
     assert response.status_code == 200
-    assert "Thread context" in response.text or "Контекст цепочки" in response.text
+    assert "Thread context" not in response.text
+    assert "Контекст цепочки" not in response.text
     assert (
         "Bitrix evidence" in response.text
         or "Доказательства из Битрикс" in response.text
     )
-    assert "Action draft" in response.text or "Черновик действия" in response.text
+    assert "Action draft" not in response.text
+    assert "Черновик действия" not in response.text
     assert "run_id=run-detail-state" in response.text
     assert "page_size=50" in response.text
 
@@ -8357,84 +8339,13 @@ def test_rop_event_detail_page_model_bool_missing_field(tmp_path: Path) -> None:
     assert should_rop_ru["value"] == "н/д"
 
 
-def test_rop_event_detail_page_model_thread_bool_none(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.locale import t
+def test_rop_event_detail_page_model_hides_ai_assist_block(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,
     )
 
     storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-null")
-    (run_dir / "mail_thread_context.json").write_text(
-        json.dumps(
-            {
-                "contexts": [
-                    {
-                        "event_id": "evt-1",
-                        "thread_id": "t-1",
-                        "reply_or_forward": None,
-                        "thread_connection": "reply",
-                        "reason_codes": [],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    page_en = build_rop_event_detail_page_model(
-        storage_dir, "run-thread-null", "evt-1", lang="en"
-    )
-    thr_items = _find_section_items(page_en, "Thread context")
-    rf = _item_by_label(thr_items, "Reply/forward")
-    assert rf["value"] == "n/a"
-    assert rf["variant"] == "boolean"
-
-    page_ru = build_rop_event_detail_page_model(
-        storage_dir, "run-thread-null", "evt-1", lang="ru"
-    )
-    thr_items_ru = _find_section_items(page_ru, t("Thread context", "ru"))
-    rf_ru = _item_by_label(thr_items_ru, "Ответ/пересылка")
-    assert rf_ru["value"] == "н/д"
-
-
-def test_rop_event_detail_page_model_thread_bool_missing(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.rop_event_detail import (
-        build_rop_event_detail_page_model,
-    )
-
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-miss")
-    (run_dir / "mail_thread_context.json").write_text(
-        json.dumps(
-            {
-                "contexts": [
-                    {
-                        "event_id": "evt-1",
-                        "thread_id": "t-1",
-                        "thread_connection": "reply",
-                        "reason_codes": [],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    page_en = build_rop_event_detail_page_model(
-        storage_dir, "run-thread-miss", "evt-1", lang="en"
-    )
-    thr_items = _find_section_items(page_en, "Thread context")
-    rf = _item_by_label(thr_items, "Reply/forward")
-    assert rf["value"] == "n/a"
-    assert rf["variant"] == "boolean"
-
-
-def test_rop_event_detail_page_model_ai_assist_used_none(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.rop_event_detail import (
-        build_rop_event_detail_page_model,
-    )
-
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-none")
+    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-hidden")
     (run_dir / "rop_ai_assist_results.json").write_text(
         json.dumps(
             {
@@ -8442,8 +8353,8 @@ def test_rop_event_detail_page_model_ai_assist_used_none(tmp_path: Path) -> None
                     {
                         "event_id": "evt-1",
                         "ai_assist_status": "ok",
-                        "ai_assist_used": None,
-                        "ai_assist_confidence": 0.5,
+                        "ai_assist_used": True,
+                        "ai_assist_confidence": 0.95,
                     }
                 ]
             }
@@ -8451,71 +8362,9 @@ def test_rop_event_detail_page_model_ai_assist_used_none(tmp_path: Path) -> None
         encoding="utf-8",
     )
     page = build_rop_event_detail_page_model(
-        storage_dir, "run-ai-used-none", "evt-1", lang="en"
+        storage_dir, "run-ai-hidden", "evt-1", lang="en"
     )
-    ai_items = _find_section_items(page, "AI Assist")
-    used_item = _item_by_label(ai_items, "AI used")
-    assert used_item["value"] == "n/a"
-    assert used_item["variant"] == "boolean"
-
-
-def test_rop_event_detail_page_model_ai_assist_used_missing(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.rop_event_detail import (
-        build_rop_event_detail_page_model,
-    )
-
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-miss")
-    (run_dir / "rop_ai_assist_results.json").write_text(
-        json.dumps(
-            {
-                "results": [
-                    {
-                        "event_id": "evt-1",
-                        "ai_assist_status": "ok",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    page = build_rop_event_detail_page_model(
-        storage_dir, "run-ai-used-miss", "evt-1", lang="en"
-    )
-    ai_items = _find_section_items(page, "AI Assist")
-    used_item = _item_by_label(ai_items, "AI used")
-    assert used_item["value"] == "n/a"
-    assert used_item["variant"] == "boolean"
-
-
-def test_rop_event_detail_page_model_ai_assist_used_malformed(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.rop_event_detail import (
-        build_rop_event_detail_page_model,
-    )
-
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-ai-used-bad")
-    (run_dir / "rop_ai_assist_results.json").write_text(
-        json.dumps(
-            {
-                "results": [
-                    {
-                        "event_id": "evt-1",
-                        "ai_assist_status": "ok",
-                        "ai_assist_used": "false",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    page = build_rop_event_detail_page_model(
-        storage_dir, "run-ai-used-bad", "evt-1", lang="en"
-    )
-    ai_items = _find_section_items(page, "AI Assist")
-    used_item = _item_by_label(ai_items, "AI used")
-    assert used_item["value"] == "n/a"
-    assert used_item["variant"] == "boolean"
+    assert "AI Assist" not in [section["title"] for section in page["sections"]]
 
 
 def test_rop_event_detail_page_model_adjudicator_used_none(tmp_path: Path) -> None:
@@ -8836,46 +8685,6 @@ def test_rop_event_detail_page_model_adjudicator_used_tone(tmp_path: Path) -> No
         assert used_item["tone"] == expected_tone
         assert used_item["variant"] == "badge"
         assert used_item["value"] == ("Yes" if used else "No")
-
-
-def test_rop_event_detail_page_model_thread_bool_localized(tmp_path: Path) -> None:
-    from beeagent_module.interfaces.ui.locale import t
-    from beeagent_module.interfaces.ui.rop_event_detail import (
-        build_rop_event_detail_page_model,
-    )
-
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-thread-bool")
-    (run_dir / "mail_thread_context.json").write_text(
-        json.dumps(
-            {
-                "contexts": [
-                    {
-                        "event_id": "evt-1",
-                        "thread_id": "t-1",
-                        "reply_or_forward": True,
-                        "thread_connection": "reply",
-                        "reason_codes": [],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    page_en = build_rop_event_detail_page_model(
-        storage_dir, "run-thread-bool", "evt-1", lang="en"
-    )
-    thr_items = _find_section_items(page_en, "Thread context")
-    rf = _item_by_label(thr_items, "Reply/forward")
-    assert rf["value"] == "Yes"
-    assert rf["variant"] == "boolean"
-
-    page_ru = build_rop_event_detail_page_model(
-        storage_dir, "run-thread-bool", "evt-1", lang="ru"
-    )
-    thr_items_ru = _find_section_items(page_ru, t("Thread context", "ru"))
-    rf_ru = _item_by_label(thr_items_ru, "Ответ/пересылка")
-    assert rf_ru["value"] == "Да"
 
 
 def test_rop_event_detail_page_model_case_type_default_badge(tmp_path: Path) -> None:

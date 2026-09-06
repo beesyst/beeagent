@@ -229,13 +229,12 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
 - unresolved `existing_deal`/`duplicate`, ambiguous/unsafe target и unresolved responsible fail closed в `deferred` без спекулятивного создания;
 - стабильная cross-run идентичность — `client_id + source_id + (message_id → x_email_id → event_id)`, `event_instance_id` не является remote business
   identity;
-- `rop_action_drafts.json` — read-only/draft-only артефакт и не является execution authority;
 - authoritative write-back intent durable сохраняется до mailbox checkpoint; ordering для poll: durable intent → checkpoint → external execution → original per-run projection refresh. Temporary reconciliation outage сохраняется как recoverable deferred state и повторно сверяется из retained run artifacts без mailbox re-ingestion.
 
 Артефакты:
 
 - `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
-- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed together with `rop_action_drafts.json` for each original affected run after execution/recovery.
+- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed for each original affected run after execution/recovery.
 
 With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it can report success. A projection or post-persistence executor failure never erases canonical intent and remains recoverable through later run, poll or controlled manual execution.
 

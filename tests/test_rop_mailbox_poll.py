@@ -102,7 +102,6 @@ def _patch_multi_postprocessing(monkeypatch) -> None:
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -382,7 +381,6 @@ def test_poll_oldest_batch_advances_checkpoint_after_full_flow(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -523,7 +521,6 @@ def test_poll_rebaseline_preserves_other_sources_and_replaces_stale_source(
         "build_recipient_routing_artifact",
         "export_review_tsv_for_run",
         "run_reconciliation",
-        "build_action_drafts",
         "write_current_state",
         "build_rop_dashboard",
         "write_rop_dashboard",
@@ -560,7 +557,6 @@ def test_poll_commit_gate_at_least_once_on_postprocessing_failure(
         "build_recipient_routing_artifact": lambda *args, **kwargs: {},
         "export_review_tsv_for_run": lambda *args, **kwargs: "x",
         "run_reconciliation": lambda *args, **kwargs: {"status": "ok"},
-        "build_action_drafts": lambda *args, **kwargs: {},
         "build_rop_current_state": lambda *args, **kwargs: {},
         "write_current_state": lambda *args, **kwargs: None,
         "build_rop_dashboard": lambda *args, **kwargs: {},
@@ -965,7 +961,6 @@ def test_poll_persists_durable_writeback_intent_before_checkpoint_advance(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1036,7 +1031,6 @@ def test_poll_writeback_enabled_failure_blocks_checkpoint_advance(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1096,7 +1090,6 @@ def test_poll_writeback_disabled_failure_does_not_block_checkpoint(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1153,7 +1146,6 @@ def test_poll_writeback_enabled_executes_after_checkpoint(monkeypatch, tmp_path:
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1232,7 +1224,6 @@ def test_poll_writeback_disabled_does_not_execute(monkeypatch, tmp_path: Path):
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1309,7 +1300,6 @@ def test_poll_degraded_reconciliation_persists_before_checkpoint(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "degraded"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),
@@ -1519,7 +1509,6 @@ def test_poll_attachment_blobs_persist_before_checkpoint_advance(
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_action_drafts", {}),
         ("build_rop_current_state", {}),
         ("write_current_state", None),
         ("build_rop_dashboard", {}),

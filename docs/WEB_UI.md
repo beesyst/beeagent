@@ -815,9 +815,6 @@ Browser route показывает bounded/redacted artifact preview через 
     "bitrix": {
       "available": false
     },
-    "action_draft": {
-      "available": false
-    },
     "attachments": [],
     "evidence_links": [
       {
@@ -885,7 +882,6 @@ Browser route показывает bounded/redacted artifact preview через 
 | `rop_review_table_tsv`            | `rop_review_table.tsv`                                |
 | `rop_current_state_json`          | `rop_current_state.json`                              |
 | `bitrix_reconciliation_json`      | `bitrix_reconciliation.json`                          |
-| `rop_action_drafts_json`          | `rop_action_drafts.json`                              |
 | `module_result_json`              | `module-beeagent-rop/module_result.json`              |
 | `rop_summary_result_json`         | `module-beeagent-rop/rop_summary_result.json`         |
 | `lead_classification_result_json` | `module-beeagent-rop/lead_classification_result.json` |

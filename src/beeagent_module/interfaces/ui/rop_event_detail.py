@@ -302,7 +302,6 @@ def build_rop_event_detail_read_model(
     ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
     ai_adjudicator_results = _read_json(run_dir / "rop_ai_adjudicator_results.json")
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
-    action_drafts = _read_json(run_dir / "rop_action_drafts.json")
     recipient_routing = _read_json(run_dir / "rop_recipient_routing.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
 
@@ -715,22 +714,6 @@ def build_rop_event_detail_read_model(
     if not bitrix_available:
         bitrix_section = {"available": False}
 
-    action_draft_section: dict[str, Any] = {}
-    draft_available = False
-    if isinstance(action_drafts, dict):
-        item = _match_by_event_id(action_drafts, event_id, event_instance_id)
-        if item:
-            action_draft_section = {
-                "available": True,
-                "action_type": _str(item.get("action_type", item.get("type", ""))),
-                "summary": _str(item.get("summary", item.get("description", ""))),
-                "draft_status": _str(item.get("status", "draft")),
-                "read_only": True,
-            }
-            draft_available = True
-    if not draft_available:
-        action_draft_section = {"available": False}
-
     recipient_routing_section: dict[str, Any] = {}
     routing_available = False
     if isinstance(recipient_routing, dict):
@@ -802,7 +785,6 @@ def build_rop_event_detail_read_model(
         "rop_ai_adjudicator_results_json",
         "rop_final_decisions_json",
         "bitrix_reconciliation_json",
-        "rop_action_drafts_json",
         "rop_recipient_routing_json",
         "rop_review_table_tsv",
         "operator_summary_json",
@@ -882,7 +864,6 @@ def build_rop_event_detail_read_model(
         "final_decision": final_decision_section,
         "bitrix": bitrix_section,
         "conversation": conversation_section,
-        "action_draft": action_draft_section,
         "recipient_routing": recipient_routing_section,
         "attachments": attachments_section,
         "evidence_links": evidence_links,
@@ -955,13 +936,10 @@ def build_rop_event_detail_page_model(
     classification = _safe_dict(data.get("classification"))
     deterministic = _safe_dict(data.get("deterministic"))
     duplicate = _safe_dict(classification.get("duplicate"))
-    thread = _safe_dict(data.get("thread"))
-    ai_assist = _safe_dict(data.get("ai_assist"))
     ai_adjudicator = _safe_dict(data.get("ai_adjudicator"))
     final_decision = _safe_dict(data.get("final_decision"))
     bitrix = _safe_dict(data.get("bitrix"))
     conversation = _safe_dict(data.get("conversation"))
-    action_draft = _safe_dict(data.get("action_draft"))
     recipient_routing = _safe_dict(data.get("recipient_routing"))
     attachments = _safe_list(data.get("attachments"))
     evidence_links = _safe_list(data.get("evidence_links"))
@@ -1137,48 +1115,6 @@ def build_rop_event_detail_page_model(
                         _bool_display(deterministic.get("is_fallback"), lang),
                         variant="boolean",
                     ),
-                ]
-            ),
-        },
-        {
-            "kind": "key_value",
-            "title": t("Thread context", lang),
-            "no_data": not thread.get("available", False),
-            "items": _page_kv_items(
-                [
-                    _kv(t("Thread ID", lang), thread.get("thread_id")),
-                    _kv(t("Connection", lang), thread.get("thread_connection")),
-                    _kv(
-                        t("Reply/forward", lang),
-                        _bool_display(thread.get("reply_or_forward"), lang),
-                        variant="boolean",
-                    ),
-                ]
-            ),
-        },
-        {
-            "kind": "key_value",
-            "title": t("AI Assist", lang),
-            "no_data": ai_assist.get("ai_assist_status")
-            in ("unavailable", "not_applied"),
-            "items": _page_kv_items(
-                [
-                    _kv(t("AI status", lang), ai_assist.get("ai_assist_status")),
-                    _kv(
-                        t("AI used", lang),
-                        _bool_display(ai_assist.get("ai_assist_used"), lang),
-                        variant="boolean",
-                    ),
-                    _kv(
-                        t("AI confidence", lang),
-                        ai_assist.get("ai_assist_confidence"),
-                        hint="confidence",
-                    ),
-                    _kv(
-                        t("Final type", lang),
-                        case_type_label(ai_assist.get("final_case_type"), lang),
-                    ),
-                    _kv(t("Final priority", lang), ai_assist.get("final_priority")),
                 ]
             ),
         },
@@ -1377,18 +1313,6 @@ def build_rop_event_detail_page_model(
         },
         {
             "kind": "key_value",
-            "title": t("Action draft", lang),
-            "no_data": not action_draft.get("available", False),
-            "items": _page_kv_items(
-                [
-                    _kv(t("Action type", lang), action_draft.get("action_type")),
-                    _kv(t("Summary", lang), action_draft.get("summary")),
-                    _kv(t("Draft status", lang), action_draft.get("draft_status")),
-                ]
-            ),
-        },
-        {
-            "kind": "key_value",
             "title": t("Recipient routing", lang),
             "no_data": not recipient_routing.get("available", False),
             "items": _page_kv_items(
@@ -1426,7 +1350,10 @@ def build_rop_event_detail_page_model(
 
     attachment_rows = [
         {
-            "filename": attachment.get("filename"),
+            "filename": {
+                "label": attachment.get("filename"),
+                "href": attachment.get("download_url"),
+            },
             "content_type": attachment.get("content_type"),
             "size_bytes": _format_size(attachment.get("size_bytes")),
             "storage_status": attachment.get("storage_status"),
@@ -1443,7 +1370,11 @@ def build_rop_event_detail_page_model(
                 "kind": "table",
                 "title": t("Attachment Processing", lang),
                 "columns": [
-                    {"key": "filename", "label": t("Filename", lang)},
+                    {
+                        "key": "filename",
+                        "label": t("Filename", lang),
+                        "cell": "link",
+                    },
                     {"key": "content_type", "label": t("Content type", lang)},
                     {"key": "size_bytes", "label": t("Size", lang)},
                     {
@@ -1459,25 +1390,6 @@ def build_rop_event_detail_page_model(
                 "rows": attachment_rows,
             }
         )
-        download_rows = [
-            row
-            for row in attachment_rows
-            if isinstance(row.get("download_url"), str) and row.get("download_url")
-        ]
-        if download_rows:
-            sections.append(
-                {
-                    "kind": "links",
-                    "title": t("Attachment downloads", lang),
-                    "items": [
-                        {
-                            "label": _str(row.get("filename")) or t("Download", lang),
-                            "href": _str(row.get("download_url")),
-                        }
-                        for row in download_rows
-                    ],
-                }
-            )
 
     link_items = [
         {
