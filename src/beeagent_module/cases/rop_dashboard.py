@@ -2837,7 +2837,6 @@ def _build_evidence_links(
         "rop_review_table_tsv",
         "rop_current_state_json",
         "bitrix_reconciliation_json",
-        "rop_action_drafts_json",
         "module_result_json",
         "rop_summary_result_json",
     )

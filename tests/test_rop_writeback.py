@@ -4110,11 +4110,7 @@ class TestWritebackExecutor:
         summary = json.loads(
             (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
         )
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert summary["aggregate"]["delivery_status_counts"] == {"completed": 1}
-        assert draft["recommended_action"] == "delivery_completed"
 
     def test_create_lead_attach_no_duplicate_activity_on_repeat(
         self, tmp_path: Path, writeback_env: None
@@ -4220,11 +4216,6 @@ class TestWritebackExecutor:
         assert record["email_activity_id"] is None
         assert record["last_attach_error_code"] == "api_error"
         assert record["email_attachment_status"] == "failed"
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
-        assert draft["recommended_action"] == "review_delivery_failure"
-
         recorder2 = _HttpRecorder(_default_handler)
         with _patch_http(recorder2)[0], _patch_http(recorder2)[1]:
             execute_writeback_pending(
@@ -4279,13 +4270,9 @@ class TestWritebackExecutor:
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
         record = list(_load_state(tmp_path)["events"].values())[0]
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert record["remote_entity_id"] == 1001
         assert record["email_attachment_status"] == "pending"
         assert record["last_attach_error_code"] == "transport"
-        assert draft["recommended_action"] == "complete_email_attachment"
 
     def test_created_lead_uncertain_attachment_requires_reconciliation(
         self, tmp_path: Path, writeback_env: None
@@ -4324,14 +4311,10 @@ class TestWritebackExecutor:
             assert first_record["email_attachment_status"] == "uncertain"
             execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
         record = list(_load_state(tmp_path)["events"].values())[0]
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert activity_adds["count"] == 1
         assert record["remote_entity_id"] == 1001
         assert record["email_activity_id"] == 9001
         assert record["email_attachment_status"] == "attached"
-        assert draft["recommended_action"] == "delivery_completed"
 
     def test_created_lead_with_missing_sender_is_not_completed(
         self, tmp_path: Path, writeback_env: None
@@ -4354,13 +4337,9 @@ class TestWritebackExecutor:
         with _patch_http(recorder)[0], _patch_http(recorder)[1]:
             execute_writeback_pending(tmp_path, "run-wb", settings, _null_logger())
         record = list(_load_state(tmp_path)["events"].values())[0]
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert record["remote_entity_id"] == 1001
         assert record["email_attachment_status"] == "failed"
         assert record["last_attach_error_code"] == "email_sender_unavailable"
-        assert draft["recommended_action"] == "review_delivery_failure"
         assert not [
             call for call in recorder.calls if call["method"] == "crm.activity.add"
         ]
@@ -4864,11 +4843,6 @@ class TestWritebackExecutor:
         assert record["status"] == "failed"
         assert record["reason_code"] == "retry_exhausted"
         assert record["target_entity_id"] == 253
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
-        assert draft["recommended_action"] == "review_delivery_failure"
-
         recovered = _HttpRecorder(_default_handler)
         with _patch_http(recovered)[0], _patch_http(recovered)[1]:
             result = execute_writeback_pending(
@@ -4884,11 +4858,6 @@ class TestWritebackExecutor:
         )
         assert record["status"] == "attached"
         assert record["email_activity_id"] == 9001
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
-        assert draft["recommended_action"] == "delivery_completed"
-
     def test_retry_failed_rearms_exhausted_created_lead_attachment(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
@@ -4931,11 +4900,6 @@ class TestWritebackExecutor:
         assert record["remote_entity_id"] == 1001
         assert record["last_attach_error_code"] == "retry_exhausted"
         assert record["email_attachment_status"] == "failed"
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
-        assert draft["recommended_action"] == "review_delivery_failure"
-
         recovered = _HttpRecorder(_default_handler)
         with _patch_http(recovered)[0], _patch_http(recovered)[1]:
             result = execute_writeback_pending(
@@ -4950,11 +4914,6 @@ class TestWritebackExecutor:
         assert record["remote_entity_id"] == 1001
         assert record["email_activity_id"] == 9001
         assert record["email_attachment_status"] == "attached"
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
-        assert draft["recommended_action"] == "delivery_completed"
-
     def test_terminal_401_fails_and_is_not_retried(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
@@ -5573,13 +5532,7 @@ class TestWritebackExecutor:
         summary = json.loads(
             (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
         )
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert summary["events"][0]["status"] == expected_status
-        assert draft["delivery_status"] == expected_status
-        assert draft["recommended_action"] == "delivery_completed"
-        assert draft["recommended_next_step"] == "no_action_required"
 
     def test_manual_execution_refreshes_every_affected_original_run(
         self, tmp_path: Path, writeback_env: None
@@ -5614,11 +5567,7 @@ class TestWritebackExecutor:
             summary = json.loads(
                 (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
             )
-            draft = json.loads(
-                (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-            )["items"][0]
             assert summary["events"][0]["status"] == "created"
-            assert draft["recommended_action"] == "delivery_completed"
 
         replay = _HttpRecorder(_default_handler)
         with _patch_http(replay)[0], _patch_http(replay)[1]:
@@ -5654,11 +5603,7 @@ class TestWritebackExecutor:
         summary = json.loads(
             (run_dir / WRITEBACK_SUMMARY_FILENAME).read_text(encoding="utf-8")
         )
-        draft = json.loads(
-            (run_dir / "rop_action_drafts.json").read_text(encoding="utf-8")
-        )["items"][0]
         assert summary["events"][0]["status"] == "created"
-        assert draft["recommended_action"] == "delivery_completed"
         assert not (tmp_path / "runs" / "poll-recovery").exists()
 
     def test_cross_run_exact_reply_attaches_without_duplicate_lead(

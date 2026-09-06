@@ -55,20 +55,6 @@ def export_review_tsv_for_run(
                 "ROP CLI: failed to read bitrix reconciliation artifact: %s", exc
             )
 
-    action_drafts_path = storage_dir / "runs" / run_id / "rop_action_drafts.json"
-    action_drafts_data = None
-    if action_drafts_path.exists():
-        try:
-            action_drafts_data = json.loads(
-                action_drafts_path.read_text(encoding="utf-8")
-            )
-            logger.debug(
-                "ROP CLI: action drafts artifact found for TSV enrichment: %s",
-                action_drafts_path,
-            )
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("ROP CLI: failed to read action drafts artifact: %s", exc)
-
     adjudicator_results_path = (
         storage_dir / "runs" / run_id / "rop_ai_adjudicator_results.json"
     )
@@ -91,7 +77,6 @@ def export_review_tsv_for_run(
         normalized_events,
         classified_events,
         reconciliation_data=reconciliation_data,
-        action_drafts_data=action_drafts_data,
         adjudicator_results_data=adjudicator_results_data,
     )
 
@@ -229,10 +214,6 @@ def review_tsv_columns() -> list[str]:
         "bitrix_confidence",
         "needs_manual_review",
         "safe_to_use_as_target",
-        "recommended_action",
-        "recommended_next_step",
-        "action_queue",
-        "action_draft_id",
         "human_case_type",
         "human_case_subtype",
         "human_recommended_queue",
@@ -266,7 +247,6 @@ def _build_review_tsv_rows(
     normalized_events: list[dict],
     classified_events: list[dict],
     reconciliation_data: dict | None = None,
-    action_drafts_data: dict | None = None,
     adjudicator_results_data: dict | None = None,
 ) -> list[dict[str, str]]:
     normalized_lookup = {
@@ -286,15 +266,6 @@ def _build_review_tsv_rows(
                 eid = item.get("event_id", "")
                 if eid:
                     bitrix_lookup[eid] = item
-
-    action_drafts_lookup: dict[str, dict] = {}
-    if action_drafts_data and isinstance(action_drafts_data, dict):
-        items = action_drafts_data.get("items", [])
-        if isinstance(items, list):
-            for item in items:
-                eid = item.get("event_id", "")
-                if eid:
-                    action_drafts_lookup[eid] = item
 
     adjudicator_results_lookup: dict[tuple[str, str], dict] = {}
     if adjudicator_results_data and isinstance(adjudicator_results_data, dict):
@@ -364,12 +335,6 @@ def _build_review_tsv_rows(
         bitrix_confidence = recon_item.get("bitrix_confidence", "")
         needs_manual_review = recon_item.get("needs_manual_review", "")
         safe_to_use_as_target = recon_item.get("safe_to_use_as_target", "")
-
-        action_draft_item = action_drafts_lookup.get(event_id, {})
-        action_draft_id = action_draft_item.get("action_draft_id", "")
-        recommended_action = action_draft_item.get("recommended_action", "")
-        recommended_next_step = action_draft_item.get("recommended_next_step", "")
-        action_queue = action_draft_item.get("queue", "")
 
         adj_result = adjudicator_results_lookup.get(
             (str(event_id or ""), event_instance_id),
@@ -446,10 +411,6 @@ def _build_review_tsv_rows(
             "safe_to_use_as_target": _safe_tsv_value(
                 str(safe_to_use_as_target).lower()
             ),
-            "recommended_action": _safe_tsv_value(recommended_action),
-            "recommended_next_step": _safe_tsv_value(recommended_next_step),
-            "action_queue": _safe_tsv_value(action_queue),
-            "action_draft_id": _safe_tsv_value(action_draft_id),
             "human_case_type": "",
             "human_case_subtype": "",
             "human_recommended_queue": "",

@@ -670,11 +670,6 @@ class TestRopCliRun:
             if phase_failure == "plan":
                 raise RuntimeError("plan persistence failed")
 
-        def drafts(*_args: object, **_kwargs: object) -> None:
-            calls.append("drafts")
-            if phase_failure == "drafts":
-                raise RuntimeError("projection failed")
-
         def execute(**_kwargs: object) -> dict:
             calls.append("execute")
             if phase_failure == "execute":
@@ -684,10 +679,6 @@ class TestRopCliRun:
         monkeypatch.setattr(
             "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
             reconciliation,
-        )
-        monkeypatch.setattr(
-            "beeagent_module.cases.rop_action_drafts.build_action_drafts",
-            drafts,
         )
         monkeypatch.setattr(
             "beeagent_module.cases.rop_writeback.build_writeback_plan", plan
@@ -721,7 +712,6 @@ class TestRopCliRun:
         assert result["calls"] == [
             "reconciliation",
             "plan",
-            "drafts",
             "execute",
         ]
 
@@ -749,7 +739,6 @@ class TestRopCliRun:
         assert result["calls"] == [
             "reconciliation",
             "plan",
-            "drafts",
             "execute",
         ]
 
@@ -777,24 +766,6 @@ class TestRopCliRun:
         assert result["calls"] == expected_calls
         assert "durable preparation failed" in str(result["error"])
 
-    def test_rop_run_projection_failure_keeps_execution_recoverable(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        result = self._rop_run_writeback_batch(
-            tmp_path,
-            monkeypatch,
-            "test-cli-run-wb-projection-failure",
-            writeback_enabled=True,
-            phase_failure="drafts",
-        )
-        assert result["error"] is None
-        assert result["calls"] == [
-            "reconciliation",
-            "plan",
-            "drafts",
-            "execute",
-        ]
-
     def test_rop_run_executor_failure_after_plan_is_visible_and_recoverable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -809,7 +780,6 @@ class TestRopCliRun:
         assert result["calls"] == [
             "reconciliation",
             "plan",
-            "drafts",
             "execute",
         ]
 
@@ -879,10 +849,6 @@ class TestRopCliRun:
         monkeypatch.setattr(
             "beeagent_module.cases.rop_bitrix_reconciliation.run_reconciliation",
             reconciliation,
-        )
-        monkeypatch.setattr(
-            "beeagent_module.cases.rop_action_drafts.build_action_drafts",
-            lambda *a, **k: None,
         )
         monkeypatch.setattr(
             "beeagent_module.cases.rop_writeback.build_writeback_plan",
@@ -1377,9 +1343,9 @@ class TestRopCliExportReview:
 
 
 class TestRopTsvEnriched:
-    def test_tsv_columns_order_has_68_fields(self) -> None:
+    def test_tsv_columns_order_has_64_fields(self) -> None:
         columns = review_tsv_columns()
-        assert len(columns) == 68
+        assert len(columns) == 64
         expected_order = [
             "event_id",
             "event_instance_id",
@@ -1419,10 +1385,6 @@ class TestRopTsvEnriched:
             "bitrix_confidence",
             "needs_manual_review",
             "safe_to_use_as_target",
-            "recommended_action",
-            "recommended_next_step",
-            "action_queue",
-            "action_draft_id",
             "human_case_type",
             "human_case_subtype",
             "human_recommended_queue",

@@ -115,7 +115,11 @@ def handle_rop_run(
         operator_text = result.get("operator_text", "")
         print("\n" + operator_text + "\n")
 
-        effective_run_id = str(result.get("run_id") or run_id or "")
+        raw_effective_run_id = result.get("run_id") or run_id
+        if not isinstance(raw_effective_run_id, str) or not raw_effective_run_id:
+            raise RopCliError("ROP run completed without a valid run_id")
+        _validate_cli_run_id(raw_effective_run_id)
+        effective_run_id = raw_effective_run_id
 
         if _result_requires_run_failure(result):
             logger.warning(
@@ -226,7 +230,6 @@ def handle_rop_run(
                     "ROP write-back requires enabled Bitrix reconciliation."
                 )
 
-            from beeagent_module.cases.rop_action_drafts import build_action_drafts
             from beeagent_module.cases.rop_bitrix_reconciliation import (
                 run_reconciliation,
             )
@@ -255,18 +258,6 @@ def handle_rop_run(
                 raise RopCliError(
                     f"ROP write-back durable preparation failed: {exc}"
                 ) from exc
-
-            try:
-                build_action_drafts(
-                    storage_dir, effective_run_id, reconciliation, logger
-                )
-            except Exception as exc:
-                logger.warning(
-                    "ROP CLI: write-back projection failed after durable plan: "
-                    "run_id=%s reason=%s",
-                    effective_run_id,
-                    exc,
-                )
 
             try:
                 writeback_result = execute_writeback_pending(
@@ -476,25 +467,6 @@ def handle_rop_reconcile_bitrix(
         except Exception as exc:
             logger.warning(
                 "ROP CLI: dashboard build failed after reconciliation: %s",
-                exc,
-            )
-
-        try:
-            from beeagent_module.cases.rop_action_drafts import build_action_drafts
-
-            build_action_drafts(
-                storage_dir=storage_dir,
-                run_id=run_id,
-                reconciliation=result,
-                logger=logger,
-            )
-            logger.info(
-                "ROP CLI: action drafts auto-generated after reconciliation: run_id=%s",
-                run_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "ROP CLI: action drafts generation failed after reconciliation: %s",
                 exc,
             )
 
@@ -1146,65 +1118,6 @@ def handle_rop_mvp_pack(
         raise RopCliError(f"ROP MVP pack build failed: {exc}") from exc
 
 
-def handle_rop_action_drafts(
-    args: argparse.Namespace,
-    logger: logging.Logger,
-) -> None:
-    storage_dir = get_storage_dir()
-    run_id = args.run_id
-
-    logger.info(
-        "ROP CLI: generating action drafts for run_id=%s",
-        run_id,
-    )
-
-    from beeagent_module.cases.rop_action_drafts import build_action_drafts
-
-    runs_dir = (storage_dir / "runs").resolve()
-    run_dir = (runs_dir / run_id).resolve()
-    try:
-        run_dir.relative_to(runs_dir)
-    except ValueError:
-        raise RopCliError(f"Invalid run_id: path traversal detected for '{run_id}'")
-
-    reconciliation_path = run_dir / "bitrix_reconciliation.json"
-    if not reconciliation_path.exists():
-        raise RopCliError(
-            f"bitrix_reconciliation.json not found for run_id={run_id}. "
-            "Run rop reconcile-bitrix first."
-        )
-
-    try:
-        reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        raise RopCliError(f"Failed to read bitrix_reconciliation.json: {exc}") from exc
-
-    artifact = build_action_drafts(
-        storage_dir=storage_dir,
-        run_id=run_id,
-        reconciliation=reconciliation,
-        logger=logger,
-    )
-
-    aggregate = artifact.get("aggregate", {})
-    print(
-        f"\nROP action drafts generated: run_id={run_id}\n"
-        f"  items:                    {len(artifact.get('items', []))}\n"
-        f"  actionable:               {aggregate.get('matched_actionable', 0)}\n"
-        f"  ignore:                   {aggregate.get('ignore_count', 0)}\n"
-        f"  degraded:                 {aggregate.get('degraded_count', 0)}\n"
-        f"  unreconciled:             {aggregate.get('unreconciled_count', 0)}\n"
-        f"  needs_manual_review:      {aggregate.get('needs_manual_review_count', 0)}\n"
-        f"  safe_to_use_as_target:    {aggregate.get('safe_to_use_as_target_count', 0)}\n"
-    )
-
-    logger.info(
-        "ROP CLI: action drafts generated: run_id=%s items=%d",
-        run_id,
-        len(artifact.get("items", [])),
-    )
-
-
 def handle_rop_writeback(
     args: argparse.Namespace,
     settings: dict,
@@ -1412,17 +1325,6 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Period label for report (e.g. 7d, 30d); defaults to rop.dashboard.default_period",
-    )
-
-    action_drafts_parser = subparsers.add_parser(
-        "action-drafts",
-        help="Generate ROP action draft artifacts from Bitrix reconciliation",
-    )
-    action_drafts_parser.add_argument(
-        "--run-id",
-        type=str,
-        required=True,
-        help="run_id to generate action drafts for",
     )
 
     evaluate_parser = subparsers.add_parser(
