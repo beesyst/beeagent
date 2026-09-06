@@ -711,7 +711,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
                 "results": [
                     {
                         "event_id": "evt-1",
+                        "ai_status": "manual_review_degrade",
                         "ai_reason_code": "",
+                        "merge_reason": "ai_output_conflict_manual_review",
                     }
                 ]
             }
@@ -867,13 +869,15 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "ai_evidence_codes exceeded maximum; truncated" in data["warnings"]
     assert "unknown ai evidence code ignored" in data["warnings"]
     assert "not_allowed" not in data["warnings"]
-    assert any(
-        "legacy ai_reason_code missing" in warning
+    assert not any(
+        "ai_reason_code" in warning
         for warning in legacy_api.json()["data"]["warnings"]
     )
-    assert "missing or invalid ai_reason_code" in empty_data["warnings"]
     assert not any(
-        "legacy ai_reason_code missing" in warning for warning in empty_data["warnings"]
+        "ai_reason_code" in warning for warning in empty_data["warnings"]
+    )
+    assert empty_data["ai_adjudicator"]["ai_adjudicator_reason_display"] == (
+        "AI output conflicted with signals; manual review required"
     )
     assert (
         "Старый формат итогового решения: код причины внимания отсутствует. "
@@ -941,8 +945,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         ]
         == "AI adjudicator routed the event to manual review"
     )
-    assert (
-        "legacy ai_reason_code missing" in legacy_status_ru.json()["data"]["warnings"]
+    assert not any(
+        "ai_reason_code" in warning
+        for warning in legacy_status_ru.json()["data"]["warnings"]
     )
     client.close()
     after = {
@@ -3923,6 +3928,7 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
     tmp_path: Path,
 ) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
         build_rop_event_detail_read_model,
     )
 
@@ -3956,6 +3962,20 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
     (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
         json.dumps(state), encoding="utf-8"
     )
+    (storage_dir / "runs" / "run-detail-op" / "bitrix_reconciliation.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "bitrix_match_status": "duplicate_candidate",
+                        "candidate_count": 3,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     data = build_rop_event_detail_read_model(storage_dir, "run-detail-op", "evt-1")
 
@@ -3968,6 +3988,19 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
     )
     assert conv_event["case_type"] == "existing_deal"
     assert conv_event["semantic_case_type"] == "new_lead"
+    assert data["bitrix"]["bitrix_status"] == "matched_lead"
+    assert data["bitrix"]["reconciliation_status"] == "duplicate_candidate"
+    assert data["bitrix"]["entity_type"] == "lead"
+    assert data["bitrix"]["entity_id"] == 1001
+    page = build_rop_event_detail_page_model(storage_dir, "run-detail-op", "evt-1")
+    bitrix_section = next(
+        section for section in page["sections"] if section.get("title") == "Bitrix evidence"
+    )
+    bitrix_labels = [item["label"] for item in bitrix_section["items"]]
+    assert "Match quality" not in bitrix_labels
+    assert "Candidate count" in bitrix_labels
+    assert "Entity type" in bitrix_labels
+    assert "Entity ID" in bitrix_labels
 
 
 def test_rop_event_detail_independent_event_keeps_semantic_final(
@@ -4211,6 +4244,29 @@ def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> N
     page = build_rop_event_detail_page_model(storage_dir, "run-detail-routing", "evt-1")
     section_titles = [section.get("title") for section in page["sections"]]
     assert "Recipient routing" in section_titles
+    assert section_titles.index("Recipient routing") == (
+        section_titles.index("Bitrix evidence") + 1
+    )
+
+
+def test_rop_event_detail_message_body_uses_modal_text(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-message-modal")
+
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-detail-message-modal", "evt-1"
+    )
+    message_section = next(
+        section for section in page["sections"] if section.get("title") == "Message body"
+    )
+    body_preview = next(
+        item for item in message_section["items"] if item["label"] == "Body preview"
+    )
+    assert body_preview["variant"] == "modal_text"
 
 
 def test_rop_event_detail_recipient_routing_absent_is_safe(tmp_path: Path) -> None:
@@ -7285,6 +7341,8 @@ def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> N
     )
     assert "Action draft" not in response.text
     assert "Черновик действия" not in response.text
+    assert "Evidence artifacts" not in response.text
+    assert "Артефакты доказательств" not in response.text
     assert "run_id=run-detail-state" in response.text
     assert "page_size=50" in response.text
 
