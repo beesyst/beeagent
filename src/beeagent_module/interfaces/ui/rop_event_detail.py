@@ -52,6 +52,15 @@ _QUEUE_ACTION_TONE = {
 _MAX_REASON_TEXT_LENGTH = 600
 _MAX_REASON_CODE_LENGTH = 80
 _TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
+_EXPECTED_REASONLESS_AI_STATUSES = frozenset(
+    {
+        "degraded",
+        "deterministic_preserved",
+        "duplicate_unresolved",
+        "low_confidence_preserve",
+        "manual_review_degrade",
+    }
+)
 
 
 def _bool_display(value: Any, lang: str) -> str:
@@ -213,6 +222,68 @@ def _match_by_event_id(
     )
 
 
+def _match_writeback_state_event(
+    state: dict | None,
+    run_id: str,
+    source_id: str,
+    event_id: str,
+    event_instance_id: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(state, dict):
+        return None
+    records = state.get("events")
+    if not isinstance(records, dict):
+        return None
+    candidates = [
+        record
+        for record in records.values()
+        if isinstance(record, dict)
+        and record.get("event_id") == event_id
+        and record.get("last_run_id") == run_id
+        and (not source_id or record.get("source_id") == source_id)
+    ]
+    return _select_event_occurrence(candidates, event_instance_id)
+
+
+def _bitrix_delivery_status(writeback: dict[str, Any] | None) -> str:
+    if not isinstance(writeback, dict):
+        return ""
+    outcome = _str(writeback.get("outcome"))
+    status = _str(writeback.get("status"))
+    attachment_status = _str(writeback.get("email_attachment_status"))
+    if attachment_status == "attached" or (
+        outcome == "attach_existing" and status == "attached"
+    ):
+        return "matched_lead"
+    if outcome == "create_lead" and status == "created":
+        return "lead_created"
+    if status in {"planned", "pending", "deferred", "error", "failed"}:
+        return status
+    return ""
+
+
+def _bitrix_status_display(status: str, lang: str) -> str:
+    if status.startswith("matched_"):
+        return t("Matched in Bitrix", lang)
+    labels = {
+        "lead_created": "Lead created in Bitrix",
+        "not_found": "Not found in Bitrix",
+        "weak_match": "Needs clarification",
+        "ambiguous": "Needs clarification",
+        "duplicate_candidate": "Possible duplicate",
+        "identity_only_no_target": "Contact without lead/deal",
+        "unreconciled": "Reconciliation not run",
+        "connector_degraded": "Bitrix connection error",
+        "error": "Bitrix reconciliation error",
+        "skipped": "Reconciliation not required",
+        "planned": "Bitrix delivery planned",
+        "pending": "Bitrix delivery pending",
+        "deferred": "Bitrix delivery deferred",
+        "failed": "Bitrix delivery failed",
+    }
+    return t(labels.get(status, status.replace("_", " ").title()), lang)
+
+
 def _match_attachment_extraction_items(
     artifact: dict | None,
     event_id: str,
@@ -304,6 +375,9 @@ def build_rop_event_detail_read_model(
     bitrix_reconciliation = _read_json(run_dir / "bitrix_reconciliation.json")
     recipient_routing = _read_json(run_dir / "rop_recipient_routing.json")
     operator_summary = _read_json(run_dir / "operator_summary.json")
+    writeback_state = _read_json(
+        storage_dir / "interfaces" / "rop_writeback_state.json"
+    )
 
     norm_event = _find_event(_safe_list(normalized), event_id, event_instance_id)
     class_event = _find_event(_safe_list(classified), event_id, event_instance_id)
@@ -555,6 +629,13 @@ def build_rop_event_detail_read_model(
                 matched_adjudicator.get("ai_reason_code", ""),
                 _MAX_REASON_CODE_LENGTH,
             )
+            ai_status = _bounded_str(
+                matched_adjudicator.get("ai_status", ""),
+                _MAX_REASON_CODE_LENGTH,
+            )
+            expected_reasonless_status = (
+                not ai_reason_code_str and ai_status in _EXPECTED_REASONLESS_AI_STATUSES
+            )
             ai_evidence_list = matched_adjudicator.get(
                 "ai_evidence_codes",
                 [],
@@ -568,17 +649,15 @@ def build_rop_event_detail_read_model(
             ai_reason_display_val, ai_reason_warn = get_ai_reason_display(
                 ai_reason_code_str if ai_reason_code_str else None,
                 lang,
-                _bounded_str(
-                    matched_adjudicator.get("ai_status", ""),
-                    _MAX_REASON_CODE_LENGTH,
-                ),
+                ai_status,
                 _bounded_str(
                     matched_adjudicator.get("merge_reason", ""),
                     _MAX_REASON_CODE_LENGTH,
                 ),
-                "ai_reason_code" in matched_adjudicator,
+                "ai_reason_code" in matched_adjudicator
+                and not expected_reasonless_status,
             )
-            if ai_reason_warn:
+            if ai_reason_warn and not expected_reasonless_status:
                 warnings.append(ai_reason_warn)
 
             ai_evidence_display_list: list[dict[str, str]] = []
@@ -687,31 +766,67 @@ def build_rop_event_detail_read_model(
             "bitrix_write_allowed": False,
         }
 
-    bitrix_section: dict[str, Any] = {}
-    bitrix_available = False
+    reconciliation_status = ""
+    reconciliation_item: dict[str, Any] | None = None
     if isinstance(bitrix_reconciliation, dict):
-        item = _match_by_event_id(
+        reconciliation_item = _match_by_event_id(
             bitrix_reconciliation,
             event_id,
             event_instance_id,
         )
-        if item:
-            bitrix_section = {
-                "available": True,
-                "bitrix_status": _str(
-                    item.get("bitrix_match_status")
-                    or item.get("match_status")
-                    or item.get("bitrix_status")
-                    or item.get("status")
-                ),
-                "match_quality": item.get("match_quality"),
-                "candidate_count": _int(item.get("candidate_count", 0)),
-                "entity_type": _str(item.get("entity_type", "")),
-                "entity_id": _int(item.get("entity_id", 0)),
-                "entity_url": _str(item.get("entity_url", "")),
-            }
-            bitrix_available = True
-    if not bitrix_available:
+        if reconciliation_item:
+            reconciliation_status = _str(
+                reconciliation_item.get("bitrix_match_status")
+                or reconciliation_item.get("match_status")
+                or reconciliation_item.get("bitrix_status")
+                or reconciliation_item.get("status")
+            )
+
+    writeback = _match_writeback_state_event(
+        writeback_state if isinstance(writeback_state, dict) else None,
+        run_id,
+        _str(source_section.get("source_id")),
+        event_id,
+        event_instance_id,
+    )
+    delivery_status = _bitrix_delivery_status(writeback)
+    if delivery_status:
+        bitrix_section = {
+            "available": True,
+            "bitrix_status": delivery_status,
+            "status_source": "writeback",
+            "reconciliation_status": reconciliation_status,
+            "writeback_outcome": _str(writeback.get("outcome")),
+            "writeback_status": _str(writeback.get("status")),
+            "match_quality": (
+                reconciliation_item.get("match_quality")
+                if reconciliation_item
+                else None
+            ),
+            "candidate_count": _int(
+                reconciliation_item.get("candidate_count", 0)
+                if reconciliation_item
+                else 0
+            ),
+            "entity_type": _str(writeback.get("target_entity_type")),
+            "entity_id": _int(writeback.get("target_entity_id", 0)),
+            "entity_url": "",
+        }
+    elif reconciliation_item:
+        bitrix_section = {
+            "available": True,
+            "bitrix_status": reconciliation_status,
+            "status_source": "reconciliation",
+            "reconciliation_status": reconciliation_status,
+            "writeback_outcome": "",
+            "writeback_status": "",
+            "match_quality": reconciliation_item.get("match_quality"),
+            "candidate_count": _int(reconciliation_item.get("candidate_count", 0)),
+            "entity_type": _str(reconciliation_item.get("entity_type", "")),
+            "entity_id": _int(reconciliation_item.get("entity_id", 0)),
+            "entity_url": _str(reconciliation_item.get("entity_url", "")),
+        }
+    else:
         bitrix_section = {"available": False}
 
     recipient_routing_section: dict[str, Any] = {}
@@ -942,7 +1057,6 @@ def build_rop_event_detail_page_model(
     conversation = _safe_dict(data.get("conversation"))
     recipient_routing = _safe_dict(data.get("recipient_routing"))
     attachments = _safe_list(data.get("attachments"))
-    evidence_links = _safe_list(data.get("evidence_links"))
 
     sections: list[dict[str, Any]] = [
         {
@@ -969,7 +1083,7 @@ def build_rop_event_detail_page_model(
                     _kv(
                         t("Body preview", lang),
                         message.get("body_preview"),
-                        hint="long_text",
+                        variant="modal_text",
                     ),
                 ]
             ),
@@ -1273,43 +1387,54 @@ def build_rop_event_detail_page_model(
             "no_data": not bitrix.get("available", False),
             "items": _page_kv_items(
                 [
-                    _kv(t("Bitrix status", lang), bitrix.get("bitrix_status")),
-                    _kv(t("Match quality", lang), bitrix.get("match_quality")),
-                    _kv(t("Candidate count", lang), bitrix.get("candidate_count")),
-                    _kv(t("Entity type", lang), bitrix.get("entity_type")),
-                    _kv(t("Entity ID", lang), bitrix.get("entity_id")),
+                    _kv(
+                        t("Bitrix status", lang),
+                        _bitrix_status_display(
+                            _str(bitrix.get("bitrix_status")), lang
+                        ),
+                    ),
+                    *(
+                        [
+                            _kv(
+                                t("Bitrix check before delivery", lang),
+                                _bitrix_status_display(
+                                    _str(bitrix.get("reconciliation_status")), lang
+                                ),
+                            )
+                        ]
+                        if bitrix.get("status_source") == "writeback"
+                        and bitrix.get("reconciliation_status")
+                        else []
+                    ),
+                    *(
+                        [
+                            _kv(
+                                t("Candidate count", lang),
+                                bitrix.get("candidate_count"),
+                            )
+                        ]
+                        if _str(bitrix.get("reconciliation_status"))
+                        in {
+                            "weak_match",
+                            "ambiguous",
+                            "duplicate_candidate",
+                            "identity_only_no_target",
+                        }
+                        and _int(bitrix.get("candidate_count")) >= 2
+                        else []
+                    ),
+                    *(
+                        [_kv(t("Entity type", lang), bitrix.get("entity_type"))]
+                        if _str(bitrix.get("entity_type"))
+                        else []
+                    ),
+                    *(
+                        [_kv(t("Entity ID", lang), bitrix.get("entity_id"))]
+                        if _int(bitrix.get("entity_id")) > 0
+                        else []
+                    ),
                 ]
             ),
-        },
-        {
-            "kind": "table",
-            "title": t("Conversation timeline", lang),
-            "no_data": not conversation.get("available", False),
-            "columns": [
-                {"key": "date", "label": t("Date", lang)},
-                {"key": "source_id", "label": t("Source", lang)},
-                {"key": "run_id", "label": t("Run", lang)},
-                {"key": "role", "label": t("Role", lang)},
-                {"key": "sender", "label": t("Sender", lang)},
-                {"key": "subject", "label": t("Subject", lang)},
-                {"key": "case_type", "label": t("Case type", lang)},
-                {"key": "writeback", "label": t("CRM outcome", lang)},
-            ],
-            "rows": [
-                {
-                    "date": _format_iso_datetime(item.get("date")),
-                    "source_id": item.get("source_id"),
-                    "run_id": item.get("run_id"),
-                    "role": item.get("role"),
-                    "sender": item.get("sender"),
-                    "subject": item.get("subject"),
-                    "case_type": case_type_label(item.get("case_type"), lang),
-                    "writeback": writeback_outcome_label(
-                        item.get("writeback", {}).get("outcome", ""), lang
-                    ),
-                }
-                for item in _safe_list(conversation.get("events"))
-            ],
         },
         {
             "kind": "key_value",
@@ -1345,6 +1470,36 @@ def build_rop_event_detail_page_model(
                     ),
                 ]
             ),
+        },
+        {
+            "kind": "table",
+            "title": t("Conversation timeline", lang),
+            "no_data": not conversation.get("available", False),
+            "columns": [
+                {"key": "date", "label": t("Date", lang)},
+                {"key": "source_id", "label": t("Source", lang)},
+                {"key": "run_id", "label": t("Run", lang)},
+                {"key": "role", "label": t("Role", lang)},
+                {"key": "sender", "label": t("Sender", lang)},
+                {"key": "subject", "label": t("Subject", lang)},
+                {"key": "case_type", "label": t("Case type", lang)},
+                {"key": "writeback", "label": t("CRM outcome", lang)},
+            ],
+            "rows": [
+                {
+                    "date": _format_iso_datetime(item.get("date")),
+                    "source_id": item.get("source_id"),
+                    "run_id": item.get("run_id"),
+                    "role": item.get("role"),
+                    "sender": item.get("sender"),
+                    "subject": item.get("subject"),
+                    "case_type": case_type_label(item.get("case_type"), lang),
+                    "writeback": writeback_outcome_label(
+                        item.get("writeback", {}).get("outcome", ""), lang
+                    ),
+                }
+                for item in _safe_list(conversation.get("events"))
+            ],
         },
     ]
 
@@ -1391,25 +1546,32 @@ def build_rop_event_detail_page_model(
             }
         )
 
-    link_items = [
-        {
-            "label": _str(link.get("artifact_id")),
-            "href": _str(link.get("url")),
-        }
-        for link in evidence_links
-        if isinstance(link, dict) and link.get("available") and link.get("url")
-    ]
-    if link_items:
-        sections.append(
-            {
-                "kind": "links",
-                "title": t("Evidence artifacts", lang),
-                "items": link_items,
-            }
-        )
-
     # Sort: filled sections first, "not used" sections last
     sections.sort(key=lambda s: s.get("no_data", False))
+
+    bitrix_title = t("Bitrix evidence", lang)
+    recipient_routing_title = t("Recipient routing", lang)
+    bitrix_index = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if section.get("title") == bitrix_title
+        ),
+        None,
+    )
+    recipient_routing_index = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if section.get("title") == recipient_routing_title
+        ),
+        None,
+    )
+    if bitrix_index is not None and recipient_routing_index is not None:
+        recipient_routing_section = sections.pop(recipient_routing_index)
+        if recipient_routing_index < bitrix_index:
+            bitrix_index -= 1
+        sections.insert(bitrix_index + 1, recipient_routing_section)
 
     back_href = build_rop_url(
         tab="queue",
