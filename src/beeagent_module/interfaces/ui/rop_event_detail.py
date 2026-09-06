@@ -27,7 +27,10 @@ from beeagent_module.interfaces.ui.reason_catalog import (
     get_attention_reason_display,
     get_classification_reason_display,
 )
-from beeagent_module.interfaces.ui.url_builder import build_rop_url
+from beeagent_module.interfaces.ui.url_builder import (
+    build_rop_event_url,
+    build_rop_url,
+)
 
 _PRIORITY_TONE = {
     "low": "muted",
@@ -38,20 +41,22 @@ _PRIORITY_TONE = {
 
 _ADJUDICATOR_STATUS_TONE = {
     "ok": "success",
+    "not_eligible": "muted",
     "low_confidence_preserve": "warning",
     "manual_review_degrade": "warning",
+    "deterministic_preserved": "warning",
+    "duplicate_unresolved": "warning",
+    "degraded": "danger",
+    "invalid": "danger",
     "invalid_output": "danger",
     "provider_unavailable": "danger",
     "module_contract_unavailable": "danger",
 }
 
-_QUEUE_ACTION_TONE = {
-    "manual_review": "warning",
-    "ignore": "muted",
-}
 _MAX_REASON_TEXT_LENGTH = 600
 _MAX_REASON_CODE_LENGTH = 80
 _TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
+_BITRIX_LINKABLE_ENTITY_TYPES = frozenset({"lead", "deal"})
 _EXPECTED_REASONLESS_AI_STATUSES = frozenset(
     {
         "degraded",
@@ -61,6 +66,48 @@ _EXPECTED_REASONLESS_AI_STATUSES = frozenset(
         "manual_review_degrade",
     }
 )
+
+_ATTACHMENT_CONTENT_TYPE_LABELS = {
+    "application/msword": "Word document",
+    "application/octet-stream": "Binary file",
+    "application/pdf": "PDF document",
+    "application/vnd.ms-excel.12": "Excel spreadsheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (
+        "Excel spreadsheet"
+    ),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
+        "Word document"
+    ),
+    "image/bmp": "Image",
+    "image/gif": "Image",
+    "image/jpeg": "Image",
+    "image/png": "Image",
+    "message/delivery-status": "Delivery status message",
+    "message/disposition-notification": "Read receipt",
+    "text/calendar": "Calendar event",
+    "text/plain": "Text file",
+    "text/rfc822-headers": "Email headers",
+}
+
+_ATTACHMENT_STORAGE_STATUS_LABELS = {
+    "stored": "Saved",
+    "malformed": "Damaged",
+}
+
+_ATTACHMENT_REASON_LABELS = {
+    "ai_analysis_preview": "AI text extraction",
+    "attachment_oversized": "File is too large",
+    "docling_extraction_failed": "Text extraction failed",
+    "local_extraction_preview": "Text extracted locally",
+    "metadata_only_no_safe_text": "No safe text available",
+    "unsupported_content_type": "Unsupported file type",
+}
+
+_ATTACHMENT_ANALYSIS_STATUS_LABELS = {
+    "failed": "Processing failed",
+    "ok": "Processed",
+    "unsupported": "Not supported",
+}
 
 
 def _bool_display(value: Any, lang: str) -> str:
@@ -86,8 +133,64 @@ def _adjudicator_status_tone(value: str) -> str:
     return _ADJUDICATOR_STATUS_TONE.get(value, "default")
 
 
-def _queue_action_tone(value: str) -> str:
-    return _QUEUE_ACTION_TONE.get(value, "default")
+def _adjudicator_status_display(value: Any, lang: str) -> str:
+    labels = {
+        "ok": "AI review completed",
+        "not_eligible": "AI review not required",
+        "low_confidence_preserve": "Low AI confidence",
+        "manual_review_degrade": "Manual review required",
+        "deterministic_preserved": "Base classification kept",
+        "duplicate_unresolved": "Duplicate needs review",
+        "degraded": "AI unavailable",
+        "invalid": "Invalid AI response",
+        "invalid_output": "Invalid AI response",
+        "provider_unavailable": "AI unavailable",
+        "module_contract_unavailable": "AI unavailable",
+    }
+    raw_value = _str(value)
+    return t(labels.get(raw_value, raw_value), lang)
+
+
+def _final_decision_basis_display(value: Any, lang: str) -> str:
+    labels = {
+        "ai_adjudicator": "AI",
+        "deterministic": "Base classification",
+        "deterministic_preserved": "Base classification",
+        "fallback_policy": "System rule",
+        "policy_override": "System rule",
+        "artifact": "Saved decision",
+        "legacy": "Historical decision",
+    }
+    raw_value = _str(value)
+    return t(labels.get(raw_value, raw_value), lang)
+
+
+def _conversation_role_label(value: Any, lang: str) -> str:
+    labels = {
+        "root": "First email",
+        "reply": "Reply",
+        "continuation": "Continuation",
+    }
+    return t(labels.get(_str(value), _str(value)), lang)
+
+
+def _attachment_value_display(
+    value: Any,
+    labels: dict[str, str],
+    lang: str,
+) -> str:
+    raw_value = _str(value)
+    return t(labels.get(raw_value, raw_value), lang)
+
+
+def _responsible_status_display(value: Any, lang: str) -> str:
+    labels = {
+        "matched": "Found",
+        "not_found": "Not found",
+        "not_attempted": "Not checked",
+    }
+    raw_value = _str(value)
+    return t(labels.get(raw_value, raw_value), lang)
 
 
 def _routing_status_tone(value: str) -> str:
@@ -536,6 +639,15 @@ def build_rop_event_detail_read_model(
     )
 
     if class_event and any(key in class_event for key in deterministic_keys):
+        deterministic_reason_code = _bounded_str(
+            class_event.get("deterministic_reason_code"),
+            _MAX_REASON_CODE_LENGTH,
+        )
+        deterministic_reason_display, deterministic_reason_warning = (
+            get_classification_reason_display(deterministic_reason_code, lang)
+        )
+        if deterministic_reason_warning:
+            warnings.append(deterministic_reason_warning)
         deterministic_section = {
             "available": True,
             "case_type": _bounded_str(
@@ -555,10 +667,8 @@ def build_rop_event_detail_read_model(
                 _MAX_REASON_CODE_LENGTH,
             ),
             "confidence": class_event.get("deterministic_confidence"),
-            "reason_code": _bounded_str(
-                class_event.get("deterministic_reason_code"),
-                _MAX_REASON_CODE_LENGTH,
-            ),
+            "reason_code": deterministic_reason_code,
+            "reason_display": deterministic_reason_display,
             "is_fallback": bool(class_event.get("is_fallback")),
         }
     else:
@@ -782,6 +892,18 @@ def build_rop_event_detail_read_model(
                 or reconciliation_item.get("status")
             )
 
+    reconciliation_entity_type = _str(
+        reconciliation_item.get("bitrix_entity_type")
+        or reconciliation_item.get("entity_type", "")
+        if reconciliation_item
+        else ""
+    )
+    reconciliation_entity_id = _int(
+        reconciliation_item.get("bitrix_entity_id")
+        or reconciliation_item.get("entity_id", 0)
+        if reconciliation_item
+        else 0
+    )
     writeback = _match_writeback_state_event(
         writeback_state if isinstance(writeback_state, dict) else None,
         run_id,
@@ -808,9 +930,15 @@ def build_rop_event_detail_read_model(
                 if reconciliation_item
                 else 0
             ),
-            "entity_type": _str(writeback.get("target_entity_type")),
-            "entity_id": _int(writeback.get("target_entity_id", 0)),
-            "entity_url": "",
+            "entity_type": _str(writeback.get("target_entity_type"))
+            or reconciliation_entity_type,
+            "entity_id": _int(writeback.get("target_entity_id", 0))
+            or reconciliation_entity_id,
+            "entity_url": (
+                _str(reconciliation_item.get("entity_url", ""))
+                if reconciliation_item
+                else ""
+            ),
         }
     elif reconciliation_item:
         bitrix_section = {
@@ -822,8 +950,8 @@ def build_rop_event_detail_read_model(
             "writeback_status": "",
             "match_quality": reconciliation_item.get("match_quality"),
             "candidate_count": _int(reconciliation_item.get("candidate_count", 0)),
-            "entity_type": _str(reconciliation_item.get("entity_type", "")),
-            "entity_id": _int(reconciliation_item.get("entity_id", 0)),
+            "entity_type": reconciliation_entity_type,
+            "entity_id": reconciliation_entity_id,
             "entity_url": _str(reconciliation_item.get("entity_url", "")),
         }
     else:
@@ -1001,6 +1129,17 @@ def _kv(
     return item
 
 
+def _bitrix_entity_href(entity_type: Any, entity_id: Any) -> str:
+    normalized_type = _str(entity_type).lower()
+    normalized_id = _int(entity_id)
+    if (
+        normalized_type not in _BITRIX_LINKABLE_ENTITY_TYPES
+        or normalized_id <= 0
+    ):
+        return ""
+    return f"/rop/bitrix/{normalized_type}/{normalized_id}"
+
+
 def _format_size(size_bytes: Any) -> str:
     """Convert bytes to a human-readable file size string."""
     if not isinstance(size_bytes, (int, float)) or size_bytes < 0:
@@ -1050,6 +1189,9 @@ def build_rop_event_detail_page_model(
     message = _safe_dict(data.get("message"))
     classification = _safe_dict(data.get("classification"))
     deterministic = _safe_dict(data.get("deterministic"))
+    basic_classification = (
+        deterministic if deterministic.get("available", False) else classification
+    )
     duplicate = _safe_dict(classification.get("duplicate"))
     ai_adjudicator = _safe_dict(data.get("ai_adjudicator"))
     final_decision = _safe_dict(data.get("final_decision"))
@@ -1073,35 +1215,47 @@ def build_rop_event_detail_page_model(
         },
         {
             "kind": "key_value",
-            "title": t("Message body", lang),
+            "title": t("Message", lang),
             "items": _page_kv_items(
                 [
-                    _kv(t("Event ID", lang), event_id),
-                    _kv(t("Sender", lang), message.get("sender")),
                     _kv(t("Subject", lang), message.get("subject")),
-                    _kv(t("Date", lang), _format_iso_datetime(message.get("date"))),
+                    _kv(t("Sender", lang), message.get("sender")),
                     _kv(
                         t("Body preview", lang),
                         message.get("body_preview"),
                         variant="modal_text",
                     ),
+                    _kv(t("Date", lang), _format_iso_datetime(message.get("date"))),
                 ]
             ),
         },
         {
             "kind": "key_value",
-            "title": t("Classification", lang),
+            "title": t("Basic classification", lang),
+            "no_data": not bool(basic_classification),
             "items": _page_kv_items(
                 [
                     _kv(
                         t("Case type", lang),
-                        case_type_label(classification.get("case_type"), lang),
+                        case_type_label(basic_classification.get("case_type"), lang),
                         variant="badge",
                         tone="default",
                     ),
                     _kv(
                         t("Subtype", lang),
-                        case_subtype_label(classification.get("case_subtype"), lang),
+                        case_subtype_label(
+                            basic_classification.get("case_subtype"), lang
+                        ),
+                    ),
+                    _kv(
+                        t("Reason", lang),
+                        basic_classification.get("reason_display"),
+                        hint="localized_reason",
+                    ),
+                    _kv(
+                        t("Confidence", lang),
+                        basic_classification.get("confidence"),
+                        hint="confidence",
                     ),
                     _kv(
                         t("Priority", lang),
@@ -1110,39 +1264,9 @@ def build_rop_event_detail_page_model(
                         tone=_priority_tone(classification.get("priority", "")),
                     ),
                     _kv(
-                        t("Confidence", lang),
-                        classification.get("confidence"),
-                        hint="confidence",
-                    ),
-                    _kv(t("Reason code", lang), classification.get("reason_code")),
-                    _kv(
-                        t("Reason", lang),
-                        classification.get("reason_display"),
-                        hint="localized_reason",
-                    ),
-                    _kv(
-                        t("Recommended queue", lang),
-                        classification.get("recommended_queue"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            classification.get("recommended_queue", "")
-                        ),
-                    ),
-                    _kv(
-                        t("Recommended action", lang),
-                        classification.get("correct_action"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            classification.get("correct_action", "")
-                        ),
-                    ),
-                    _kv(
-                        t("Should ROP see", lang),
-                        _bool_display(classification.get("should_rop_see"), lang),
-                        variant="badge",
-                        tone="warning"
-                        if classification.get("should_rop_see") is True
-                        else "muted",
+                        t("Fallback classification", lang),
+                        _bool_display(basic_classification.get("is_fallback"), lang),
+                        variant="boolean",
                     ),
                     *(
                         [
@@ -1166,10 +1290,6 @@ def build_rop_event_detail_page_model(
                                 hint="confidence",
                             ),
                             _kv(
-                                t("Duplicate reason code", lang),
-                                duplicate.get("reason_code"),
-                            ),
-                            _kv(
                                 t("Duplicate reasoning", lang),
                                 duplicate.get("reasoning"),
                                 variant="long_text",
@@ -1185,79 +1305,33 @@ def build_rop_event_detail_page_model(
         },
         {
             "kind": "key_value",
-            "title": t("Deterministic result", lang),
-            "no_data": not deterministic.get("available", False),
-            "items": _page_kv_items(
-                [
-                    _kv(
-                        t("Deterministic case type", lang),
-                        case_type_label(deterministic.get("case_type"), lang),
-                        variant="badge",
-                        tone="default",
-                    ),
-                    _kv(
-                        t("Deterministic subtype", lang),
-                        case_subtype_label(deterministic.get("case_subtype"), lang),
-                    ),
-                    _kv(
-                        t("Deterministic queue", lang),
-                        deterministic.get("recommended_queue"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            deterministic.get("recommended_queue", "")
-                        ),
-                    ),
-                    _kv(
-                        t("Deterministic action", lang),
-                        deterministic.get("correct_action"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            deterministic.get("correct_action", "")
-                        ),
-                    ),
-                    _kv(
-                        t("Deterministic confidence", lang),
-                        deterministic.get("confidence"),
-                        hint="confidence",
-                    ),
-                    _kv(
-                        t("Deterministic reason code", lang),
-                        deterministic.get("reason_code"),
-                    ),
-                    _kv(
-                        t("Deterministic fallback", lang),
-                        _bool_display(deterministic.get("is_fallback"), lang),
-                        variant="boolean",
-                    ),
-                ]
-            ),
-        },
-        {
-            "kind": "key_value",
-            "title": t("AI Adjudicator", lang),
+            "title": t("AI review", lang),
             "no_data": not bool(ai_adjudicator),
             "items": _page_kv_items(
                 [
-                    _kv(
-                        t("AI adjudicator used", lang),
-                        _bool_display(ai_adjudicator.get("ai_adjudicator_used"), lang),
-                        variant="badge",
-                        tone="default"
+                    *(
+                        [
+                            _kv(
+                                t("AI proposed case type", lang),
+                                case_type_label(
+                                    ai_adjudicator.get("final_case_type"), lang
+                                ),
+                                variant="badge",
+                                tone="default",
+                            ),
+                        ]
                         if ai_adjudicator.get("ai_adjudicator_used") is True
-                        else "muted",
+                        else []
                     ),
                     _kv(
                         t("AI adjudicator status", lang),
-                        ai_adjudicator.get("ai_adjudicator_status"),
+                        _adjudicator_status_display(
+                            ai_adjudicator.get("ai_adjudicator_status"), lang
+                        ),
                         variant="badge",
                         tone=_adjudicator_status_tone(
                             ai_adjudicator.get("ai_adjudicator_status", "")
                         ),
-                    ),
-                    _kv(
-                        t("AI adjudicator confidence", lang),
-                        ai_adjudicator.get("ai_adjudicator_confidence"),
-                        hint="confidence",
                     ),
                     _kv(
                         t("AI adjudicator reason", lang),
@@ -1265,33 +1339,16 @@ def build_rop_event_detail_page_model(
                         hint="localized_reason",
                     ),
                     _kv(
+                        t("AI adjudicator confidence", lang),
+                        ai_adjudicator.get("ai_adjudicator_confidence"),
+                        hint="confidence",
+                    ),
+                    _kv(
                         t("Reasoning", lang),
                         ai_adjudicator.get("ai_adjudicator_reason"),
                         variant="long_text",
                         collapsible=True,
                         display=ai_adjudicator.get("ai_adjudicator_reason", ""),
-                    ),
-                    _kv(
-                        t("AI proposed case type", lang),
-                        case_type_label(ai_adjudicator.get("final_case_type"), lang),
-                        variant="badge",
-                        tone="default",
-                    ),
-                    _kv(
-                        t("AI proposed queue", lang),
-                        ai_adjudicator.get("final_recommended_queue"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            ai_adjudicator.get("final_recommended_queue", "")
-                        ),
-                    ),
-                    _kv(
-                        t("AI proposed action", lang),
-                        ai_adjudicator.get("final_correct_action"),
-                        variant="badge",
-                        tone=_queue_action_tone(
-                            ai_adjudicator.get("final_correct_action", "")
-                        ),
                     ),
                 ]
             ),
@@ -1309,27 +1366,12 @@ def build_rop_event_detail_page_model(
                         tone="default",
                     ),
                     _kv(
-                        t("Final queue", lang),
-                        final_decision.get("final_queue"),
+                        t("Decision basis", lang),
+                        _final_decision_basis_display(
+                            final_decision.get("final_decision_source"), lang
+                        ),
                         variant="badge",
-                        tone=_queue_action_tone(final_decision.get("final_queue", "")),
-                    ),
-                    _kv(
-                        t("Final action", lang),
-                        final_decision.get("final_action"),
-                        variant="badge",
-                        tone=_queue_action_tone(final_decision.get("final_action", "")),
-                    ),
-                    _kv(
-                        t("Final confidence", lang),
-                        final_decision.get("final_confidence"),
-                        hint="confidence",
-                    ),
-                    _kv(
-                        t("Decision source", lang),
-                        final_decision.get("final_decision_source"),
-                        variant="badge",
-                        tone="muted",
+                        tone="default",
                     ),
                     *(
                         [
@@ -1344,39 +1386,9 @@ def build_rop_event_detail_page_model(
                         else []
                     ),
                     _kv(
-                        t("Needs attention", lang),
-                        _bool_display(final_decision.get("needs_attention"), lang),
-                        variant="badge",
-                        tone="warning"
-                        if final_decision.get("needs_attention") is True
-                        else "muted",
-                    ),
-                    *(
-                        [
-                            _kv(
-                                t("Attention reason", lang),
-                                final_decision.get("attention_reason_display"),
-                                hint="localized_reason",
-                            )
-                        ]
-                        if final_decision.get("needs_attention") is True
-                        else []
-                    ),
-                    _kv(
-                        t("Automation allowed", lang),
-                        _bool_display(final_decision.get("automation_allowed"), lang),
-                        variant="badge",
-                        tone="success"
-                        if final_decision.get("automation_allowed") is True
-                        else "muted",
-                    ),
-                    _kv(
-                        t("Bitrix write allowed", lang),
-                        _bool_display(final_decision.get("bitrix_write_allowed"), lang),
-                        variant="badge",
-                        tone="success"
-                        if final_decision.get("bitrix_write_allowed") is True
-                        else "muted",
+                        t("Final confidence", lang),
+                        final_decision.get("final_confidence"),
+                        hint="confidence",
                     ),
                 ]
             ),
@@ -1429,7 +1441,16 @@ def build_rop_event_detail_page_model(
                         else []
                     ),
                     *(
-                        [_kv(t("Entity ID", lang), bitrix.get("entity_id"))]
+                        [
+                            _kv(
+                                t("Entity ID", lang),
+                                bitrix.get("entity_id"),
+                                href=_bitrix_entity_href(
+                                    bitrix.get("entity_type"),
+                                    bitrix.get("entity_id"),
+                                ),
+                            )
+                        ]
                         if _int(bitrix.get("entity_id")) > 0
                         else []
                     ),
@@ -1444,25 +1465,15 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(t("Recipient", lang), recipient_routing.get("recipient")),
                     _kv(
-                        t("Recipient evidence", lang),
-                        recipient_routing.get("recipient_evidence_source"),
-                    ),
-                    _kv(
-                        t("Recipient status", lang),
-                        recipient_routing.get("recipient_status"),
-                        variant="badge",
-                        tone=_routing_status_tone(
-                            recipient_routing.get("recipient_status", "")
-                        ),
-                    ),
-                    _kv(
-                        t("Proposed responsible", lang),
+                        t("Responsible", lang),
                         recipient_routing.get("proposed_responsible_name")
                         or recipient_routing.get("proposed_responsible_email"),
                     ),
                     _kv(
                         t("Responsible status", lang),
-                        recipient_routing.get("responsible_status"),
+                        _responsible_status_display(
+                            recipient_routing.get("responsible_status"), lang
+                        ),
                         variant="badge",
                         tone=_responsible_status_tone(
                             recipient_routing.get("responsible_status", "")
@@ -1476,23 +1487,32 @@ def build_rop_event_detail_page_model(
             "title": t("Conversation timeline", lang),
             "no_data": not conversation.get("available", False),
             "columns": [
-                {"key": "date", "label": t("Date", lang)},
-                {"key": "source_id", "label": t("Source", lang)},
-                {"key": "run_id", "label": t("Run", lang)},
-                {"key": "role", "label": t("Role", lang)},
+                {"key": "subject", "label": t("Subject", lang), "cell": "link"},
                 {"key": "sender", "label": t("Sender", lang)},
-                {"key": "subject", "label": t("Subject", lang)},
+                {"key": "date", "label": t("Date", lang)},
+                {"key": "role", "label": t("Role", lang)},
                 {"key": "case_type", "label": t("Case type", lang)},
                 {"key": "writeback", "label": t("CRM outcome", lang)},
             ],
             "rows": [
                 {
-                    "date": _format_iso_datetime(item.get("date")),
-                    "source_id": item.get("source_id"),
-                    "run_id": item.get("run_id"),
-                    "role": item.get("role"),
+                    "subject": {
+                        "label": item.get("subject"),
+                        "href": (
+                            build_rop_event_url(
+                                _str(item.get("event_id")),
+                                _str(item.get("run_id")),
+                                event_instance_id=_str(item.get("event_instance_id"))
+                                or None,
+                                lang=lang,
+                            )
+                            if _str(item.get("event_id")) and _str(item.get("run_id"))
+                            else ""
+                        ),
+                    },
                     "sender": item.get("sender"),
-                    "subject": item.get("subject"),
+                    "date": _format_iso_datetime(item.get("date")),
+                    "role": _conversation_role_label(item.get("role"), lang),
                     "case_type": case_type_label(item.get("case_type"), lang),
                     "writeback": writeback_outcome_label(
                         item.get("writeback", {}).get("outcome", ""), lang
@@ -1509,11 +1529,27 @@ def build_rop_event_detail_page_model(
                 "label": attachment.get("filename"),
                 "href": attachment.get("download_url"),
             },
-            "content_type": attachment.get("content_type"),
+            "content_type": _attachment_value_display(
+                attachment.get("content_type"),
+                _ATTACHMENT_CONTENT_TYPE_LABELS,
+                lang,
+            ),
             "size_bytes": _format_size(attachment.get("size_bytes")),
-            "storage_status": attachment.get("storage_status"),
-            "reason_code": attachment.get("reason_code"),
-            "analysis_status": attachment.get("analysis_status"),
+            "storage_status": _attachment_value_display(
+                attachment.get("storage_status"),
+                _ATTACHMENT_STORAGE_STATUS_LABELS,
+                lang,
+            ),
+            "reason_code": _attachment_value_display(
+                attachment.get("reason_code"),
+                _ATTACHMENT_REASON_LABELS,
+                lang,
+            ),
+            "analysis_status": _attachment_value_display(
+                attachment.get("analysis_status"),
+                _ATTACHMENT_ANALYSIS_STATUS_LABELS,
+                lang,
+            ),
             "download_url": attachment.get("download_url"),
         }
         for attachment in attachments
@@ -1523,7 +1559,7 @@ def build_rop_event_detail_page_model(
         sections.append(
             {
                 "kind": "table",
-                "title": t("Attachment Processing", lang),
+                "title": t("Attached files", lang),
                 "columns": [
                     {
                         "key": "filename",
@@ -1536,7 +1572,10 @@ def build_rop_event_detail_page_model(
                         "key": "storage_status",
                         "label": t("Storage status", lang),
                     },
-                    {"key": "reason_code", "label": t("Reason", lang)},
+                    {
+                        "key": "reason_code",
+                        "label": t("Processing result", lang),
+                    },
                     {
                         "key": "analysis_status",
                         "label": t("Analysis status", lang),
