@@ -818,27 +818,24 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert ru_html.status_code == 200
     assert en_html.status_code == 200
     assert invalid_html.status_code == 200
-    assert "AI арбитр" in ru_html.text
+    assert "Проверка AI" in ru_html.text
     assert "AI adjudicator reason" in en_html.text
     assert "AI adjudicator reason" in invalid_html.text
     assert (
-        _item_by_label(_find_section_items(page_ru, "Классификация"), "Причина")[
+        _item_by_label(_find_section_items(page_ru, "Базовая классификация"), "Причина")[
             "value"
         ]
         == "Новый лид: обнаружен сигнал запроса или RFQ"
     )
     assert (
-        _item_by_label(_find_section_items(page_ru, "AI арбитр"), "Причина")["value"]
+        _item_by_label(_find_section_items(page_ru, "Проверка AI"), "Причина")["value"]
         == "Обнаружены противоречивые бизнес-сигналы"
     )
+    assert _item_by_label(
+        _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
+    ) == {}
     assert (
-        _item_by_label(
-            _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
-        )["value"]
-        == "Результат ИИ противоречит сигналам; требуется ручная проверка"
-    )
-    assert (
-        _item_by_label(_find_section_items(page_en, "Classification"), "Reason")[
+        _item_by_label(_find_section_items(page_en, "Basic classification"), "Reason")[
             "value"
         ]
         == "New lead: request or RFQ signal detected"
@@ -898,19 +895,13 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         "Legacy final-decision format: the attention reason code is missing. "
         "A compatible explanation is shown; no data was modified."
     ) in legacy_api_en.json()["data"]["warnings"]
-    assert (
-        _item_by_label(
-            _find_section_items(legacy_page_ru, "Итоговое решение"),
-            "Причина внимания",
-        )["value"]
-        == "Результат ИИ противоречит сигналам; требуется ручная проверка"
-    )
-    assert (
-        _item_by_label(
-            _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
-        )["value"]
-        == "AI output conflicted with signals; manual review required"
-    )
+    assert _item_by_label(
+        _find_section_items(legacy_page_ru, "Итоговое решение"),
+        "Причина внимания",
+    ) == {}
+    assert _item_by_label(
+        _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
+    ) == {}
     assert any(
         "unknown ai_reason_code" in warning
         for warning in unknown_api.json()["data"]["warnings"]
@@ -3673,13 +3664,11 @@ def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     for label in (
-        "Использован",
         "Статус",
         "Уверенность",
         "Причина",
         "Тип",
-        "Очередь",
-        "Действие",
+        "Основа решения",
     ):
         assert label in response.text
     for label in (
@@ -3692,7 +3681,10 @@ def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
         "Предложенное AI действие",
     ):
         assert label not in response.text
-    assert "Причина внимания" in response.text
+    assert "Причина внимания" not in response.text
+    assert "Очередь" not in response.text
+    assert "Итоговое действие" not in response.text
+    assert "Требует внимания" not in response.text
     assert "AI adjudicator status" not in response.text
     assert "AI proposed queue" not in response.text
     assert "Attention reason" not in response.text
@@ -3976,6 +3968,33 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
         ),
         encoding="utf-8",
     )
+    (storage_dir / "runs" / "run-detail-op" / "attachment_extraction.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "filename": "brief.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 128,
+                        "storage_status": "stored",
+                        "reason_code": "local_extraction_preview",
+                        "analysis_status": "ok",
+                    },
+                    {
+                        "event_id": "evt-1",
+                        "filename": "scan.png",
+                        "content_type": "image/png",
+                        "size_bytes": 256,
+                        "storage_status": "stored",
+                        "reason_code": "docling_extraction_failed",
+                        "analysis_status": "failed",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     data = build_rop_event_detail_read_model(storage_dir, "run-detail-op", "evt-1")
 
@@ -4001,6 +4020,54 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
     assert "Candidate count" in bitrix_labels
     assert "Entity type" in bitrix_labels
     assert "Entity ID" in bitrix_labels
+    timeline_section = next(
+        section
+        for section in page["sections"]
+        if section.get("title") == "Conversation timeline"
+    )
+    assert [column["key"] for column in timeline_section["columns"][:2]] == [
+        "subject",
+        "sender",
+    ]
+    assert timeline_section["columns"][0]["cell"] == "link"
+    assert {column["key"] for column in timeline_section["columns"]}.isdisjoint(
+        {"source_id", "run_id"}
+    )
+    timeline_subject = timeline_section["rows"][0]["subject"]
+    assert timeline_subject["label"] == "Re: Need welding quote"
+    assert timeline_subject["href"] == "/rop/events/evt-1?run_id=run-detail-op"
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir,
+        "run-detail-op",
+        "evt-1",
+        lang="ru",
+    )
+    timeline_ru = next(
+        section
+        for section in page_ru["sections"]
+        if section.get("title") == "Хронология переписки"
+    )
+    assert timeline_ru["rows"][0]["role"] == "Ответ"
+    attachments_ru = next(
+        section
+        for section in page_ru["sections"]
+        if section.get("title") == "Прикреплённые вложения"
+    )
+    assert [column["label"] for column in attachments_ru["columns"]] == [
+        "Имя файла",
+        "Тип содержимого",
+        "Размер",
+        "Статус хранения",
+        "Результат обработки",
+        "Статус анализа",
+    ]
+    attachment_row = attachments_ru["rows"][0]
+    assert attachment_row["content_type"] == "Документ PDF"
+    assert attachment_row["storage_status"] == "Сохранено"
+    assert attachment_row["reason_code"] == "Текст извлечён локально"
+    assert attachment_row["analysis_status"] == "Обработано"
+    failed_attachment_row = attachments_ru["rows"][1]
+    assert failed_attachment_row["analysis_status"] == "Ошибка обработки"
 
 
 def test_rop_event_detail_independent_event_keeps_semantic_final(
@@ -4247,6 +4314,32 @@ def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> N
     assert section_titles.index("Recipient routing") == (
         section_titles.index("Bitrix evidence") + 1
     )
+    routing_section = next(
+        section for section in page["sections"] if section.get("title") == "Recipient routing"
+    )
+    assert [item["label"] for item in routing_section["items"]] == [
+        "Recipient",
+        "Responsible",
+        "Responsible status",
+    ]
+    assert routing_section["items"][-1]["value"] == "Found"
+    page_ru = build_rop_event_detail_page_model(
+        storage_dir,
+        "run-detail-routing",
+        "evt-1",
+        lang="ru",
+    )
+    routing_section_ru = next(
+        section
+        for section in page_ru["sections"]
+        if section.get("title") == "Маршрутизация получателя"
+    )
+    assert [item["label"] for item in routing_section_ru["items"]] == [
+        "Получатель",
+        "Ответственный",
+        "Статус ответственного",
+    ]
+    assert routing_section_ru["items"][-1]["value"] == "Найден"
 
 
 def test_rop_event_detail_message_body_uses_modal_text(tmp_path: Path) -> None:
@@ -4261,8 +4354,14 @@ def test_rop_event_detail_message_body_uses_modal_text(tmp_path: Path) -> None:
         storage_dir, "run-detail-message-modal", "evt-1"
     )
     message_section = next(
-        section for section in page["sections"] if section.get("title") == "Message body"
+        section for section in page["sections"] if section.get("title") == "Message"
     )
+    assert [item["label"] for item in message_section["items"]] == [
+        "Subject",
+        "Sender",
+        "Body preview",
+        "Date",
+    ]
     body_preview = next(
         item for item in message_section["items"] if item["label"] == "Body preview"
     )
@@ -4444,20 +4543,16 @@ def test_rop_event_detail_exposes_duplicate_evidence(tmp_path: Path) -> None:
     assert classification["reason_display"] is not None
 
     page = build_rop_event_detail_page_model(storage_dir, "run-detail-dup", "evt-1")
-    items = _find_section_items(page, "Classification")
+    items = _find_section_items(page, "Basic classification")
     assert _item_by_label(items, "Base case type")["value"] == "New lead"
     assert _item_by_label(items, "Duplicate candidate event")["value"] == "evt-original"
     assert _item_by_label(items, "Duplicate confidence")["value"] == 0.99
-    assert _item_by_label(items, "Duplicate reason code")["value"] == (
-        "exact_email_body_match"
-    )
 
     client = _client(storage_dir)
     response = client.get("/rop/events/evt-1?run_id=run-detail-dup")
 
     assert response.status_code == 200
     assert "evt-original" in response.text
-    assert "exact_email_body_match" in response.text
     assert "exact duplicate matched" in response.text
 
 
@@ -8279,11 +8374,8 @@ def test_rop_event_detail_page_model_localized_bool_en(tmp_path: Path) -> None:
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-en", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
-    should_rop = _item_by_label(cls_items, "Should ROP see")
-    assert should_rop["value"] == "Yes"
-    assert should_rop["variant"] == "badge"
-    assert should_rop["tone"] == "warning"
+    cls_items = _find_section_items(page, "Basic classification")
+    assert "Should ROP see" not in [item["label"] for item in cls_items]
 
 
 def test_rop_event_detail_page_model_localized_bool_ru(tmp_path: Path) -> None:
@@ -8297,11 +8389,8 @@ def test_rop_event_detail_page_model_localized_bool_ru(tmp_path: Path) -> None:
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-ru", "evt-1", lang="ru"
     )
-    cls_items = _find_section_items(page, t("Classification", "ru"))
-    should_rop = _item_by_label(cls_items, "Должен увидеть РОП")
-    assert should_rop["value"] == "Да"
-    assert should_rop["variant"] == "badge"
-    assert should_rop["tone"] == "warning"
+    cls_items = _find_section_items(page, t("Basic classification", "ru"))
+    assert "Должен увидеть РОП" not in [item["label"] for item in cls_items]
 
 
 def test_rop_event_detail_page_model_bool_none(tmp_path: Path) -> None:
@@ -8322,17 +8411,14 @@ def test_rop_event_detail_page_model_bool_none(tmp_path: Path) -> None:
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-none", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
-    should_rop = _item_by_label(cls_items, "Should ROP see")
-    assert should_rop["value"] == "n/a"
-    assert should_rop["tone"] == "muted"
+    cls_items = _find_section_items(page, "Basic classification")
+    assert "Should ROP see" not in [item["label"] for item in cls_items]
 
     page_ru = build_rop_event_detail_page_model(
         storage_dir, "run-bool-none", "evt-1", lang="ru"
     )
-    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
-    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
-    assert should_rop_ru["value"] == "н/д"
+    cls_items_ru = _find_section_items(page_ru, t("Basic classification", "ru"))
+    assert "Должен увидеть РОП" not in [item["label"] for item in cls_items_ru]
 
 
 def test_rop_event_detail_page_model_bool_malformed_string(tmp_path: Path) -> None:
@@ -8353,17 +8439,14 @@ def test_rop_event_detail_page_model_bool_malformed_string(tmp_path: Path) -> No
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-str", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
-    should_rop = _item_by_label(cls_items, "Should ROP see")
-    assert should_rop["value"] == "n/a"
-    assert should_rop["tone"] == "muted"
+    cls_items = _find_section_items(page, "Basic classification")
+    assert "Should ROP see" not in [item["label"] for item in cls_items]
 
     page_ru = build_rop_event_detail_page_model(
         storage_dir, "run-bool-str", "evt-1", lang="ru"
     )
-    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
-    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
-    assert should_rop_ru["value"] == "н/д"
+    cls_items_ru = _find_section_items(page_ru, t("Basic classification", "ru"))
+    assert "Должен увидеть РОП" not in [item["label"] for item in cls_items_ru]
 
 
 def test_rop_event_detail_page_model_bool_missing_field(tmp_path: Path) -> None:
@@ -8384,17 +8467,14 @@ def test_rop_event_detail_page_model_bool_missing_field(tmp_path: Path) -> None:
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-miss", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
-    should_rop = _item_by_label(cls_items, "Should ROP see")
-    assert should_rop["value"] == "n/a"
-    assert should_rop["tone"] == "muted"
+    cls_items = _find_section_items(page, "Basic classification")
+    assert "Should ROP see" not in [item["label"] for item in cls_items]
 
     page_ru = build_rop_event_detail_page_model(
         storage_dir, "run-bool-miss", "evt-1", lang="ru"
     )
-    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
-    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
-    assert should_rop_ru["value"] == "н/д"
+    cls_items_ru = _find_section_items(page_ru, t("Basic classification", "ru"))
+    assert "Должен увидеть РОП" not in [item["label"] for item in cls_items_ru]
 
 
 def test_rop_event_detail_page_model_hides_ai_assist_block(tmp_path: Path) -> None:
@@ -8452,11 +8532,11 @@ def test_rop_event_detail_page_model_adjudicator_used_none(tmp_path: Path) -> No
     page = build_rop_event_detail_page_model(
         storage_dir, "run-adj-none", "evt-1", lang="en"
     )
-    adj_items = _find_section_items(page, "AI Adjudicator")
-    used_item = _item_by_label(adj_items, "AI adjudicator used")
-    assert used_item["value"] == "n/a"
-    assert used_item["variant"] == "badge"
-    assert used_item["tone"] == "muted"
+    adj_items = _find_section_items(page, "AI review")
+    assert _item_by_label(adj_items, "AI adjudicator status")["value"] == (
+        "AI review completed"
+    )
+    assert "AI adjudicator used" not in [item["label"] for item in adj_items]
 
 
 def test_rop_event_detail_page_model_bool_false_exact(tmp_path: Path) -> None:
@@ -8477,17 +8557,14 @@ def test_rop_event_detail_page_model_bool_false_exact(tmp_path: Path) -> None:
     page = build_rop_event_detail_page_model(
         storage_dir, "run-bool-false", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
-    should_rop = _item_by_label(cls_items, "Should ROP see")
-    assert should_rop["value"] == "No"
-    assert should_rop["tone"] == "muted"
+    cls_items = _find_section_items(page, "Basic classification")
+    assert "Should ROP see" not in [item["label"] for item in cls_items]
 
     page_ru = build_rop_event_detail_page_model(
         storage_dir, "run-bool-false", "evt-1", lang="ru"
     )
-    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
-    should_rop_ru = _item_by_label(cls_items_ru, "Должен увидеть РОП")
-    assert should_rop_ru["value"] == "Нет"
+    cls_items_ru = _find_section_items(page_ru, t("Basic classification", "ru"))
+    assert "Должен увидеть РОП" not in [item["label"] for item in cls_items_ru]
 
 
 def test_rop_event_detail_page_model_priority_tone(tmp_path: Path) -> None:
@@ -8515,7 +8592,7 @@ def test_rop_event_detail_page_model_priority_tone(tmp_path: Path) -> None:
         page = build_rop_event_detail_page_model(
             storage_dir, run_id, "evt-1", lang="en"
         )
-        cls_items = _find_section_items(page, "Classification")
+        cls_items = _find_section_items(page, "Basic classification")
         prio_item = _item_by_label(cls_items, "Priority")
         assert prio_item["tone"] == expected_tone, (
             f"priority={priority!r} expected tone={expected_tone!r} "
@@ -8531,16 +8608,21 @@ def test_rop_event_detail_page_model_adjudicator_status_tone(tmp_path: Path) -> 
 
     storage_dir = _make_storage(tmp_path)
     test_cases = [
-        ("ok", "success"),
-        ("low_confidence_preserve", "warning"),
-        ("manual_review_degrade", "warning"),
-        ("invalid_output", "danger"),
-        ("provider_unavailable", "danger"),
-        ("module_contract_unavailable", "danger"),
-        ("unknown_status", "default"),
-        ("", "default"),
+        ("ok", "success", "Проверка AI завершена"),
+        ("not_eligible", "muted", "Проверка AI не требуется"),
+        ("low_confidence_preserve", "warning", "Низкая уверенность AI"),
+        ("manual_review_degrade", "warning", "Требуется ручная проверка"),
+        ("deterministic_preserved", "warning", "Сохранена базовая классификация"),
+        ("duplicate_unresolved", "warning", "Дубликат требует проверки"),
+        ("degraded", "danger", "AI недоступен"),
+        ("invalid", "danger", "Некорректный ответ AI"),
+        ("invalid_output", "danger", "Некорректный ответ AI"),
+        ("provider_unavailable", "danger", "AI недоступен"),
+        ("module_contract_unavailable", "danger", "AI недоступен"),
+        ("unknown_status", "default", "unknown_status"),
+        ("", "default", ""),
     ]
-    for status, expected_tone in test_cases:
+    for status, expected_tone, expected_ru_label in test_cases:
         run_id = f"run-adj-status-{status.replace('_', '-')}"
         run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
         (run_dir / "rop_ai_adjudicator_results.json").write_text(
@@ -8565,29 +8647,27 @@ def test_rop_event_detail_page_model_adjudicator_status_tone(tmp_path: Path) -> 
         page = build_rop_event_detail_page_model(
             storage_dir, run_id, "evt-1", lang="en"
         )
-        adj_items = _find_section_items(page, "AI Adjudicator")
+        adj_items = _find_section_items(page, "AI review")
         status_item = _item_by_label(adj_items, "AI adjudicator status")
         assert status_item["tone"] == expected_tone, (
             f"status={status!r} expected tone={expected_tone!r} "
             f"got={status_item['tone']!r}"
         )
         assert status_item["variant"] == "badge"
+        page_ru = build_rop_event_detail_page_model(
+            storage_dir, run_id, "evt-1", lang="ru"
+        )
+        adj_items_ru = _find_section_items(page_ru, "Проверка AI")
+        assert _item_by_label(adj_items_ru, "Статус")["value"] == expected_ru_label
 
 
-def test_rop_event_detail_page_model_queue_action_tone(tmp_path: Path) -> None:
+def test_rop_event_detail_page_model_hides_queue_and_action_fields(tmp_path: Path) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,
     )
 
     storage_dir = _make_storage(tmp_path)
-    test_cases = [
-        ("manual_review", "warning"),
-        ("ignore", "muted"),
-        ("high_priority", "default"),
-        ("sales", "default"),
-        ("", "default"),
-    ]
-    for action, expected_tone in test_cases:
+    for action in ["manual_review", "ignore", "high_priority", "sales", ""]:
         run_id = f"run-qa-{action.replace('_', '-')}"
         run_dir = _write_rop_event_detail_artifacts(storage_dir, run_id)
         classified = json.loads(
@@ -8595,22 +8675,18 @@ def test_rop_event_detail_page_model_queue_action_tone(tmp_path: Path) -> None:
         )
         classified[0]["correct_action"] = action
         classified[0]["recommended_queue"] = action
+        classified[0]["deterministic_correct_action"] = action
+        classified[0]["deterministic_recommended_queue"] = action
         (run_dir / "classified_events.json").write_text(
             json.dumps(classified), encoding="utf-8"
         )
         page = build_rop_event_detail_page_model(
             storage_dir, run_id, "evt-1", lang="en"
         )
-        cls_items = _find_section_items(page, "Classification")
-        rec_act = _item_by_label(cls_items, "Recommended action")
-        rec_queue = _item_by_label(cls_items, "Recommended queue")
-        assert rec_act["tone"] == expected_tone, (
-            f"correct_action={action!r} expected tone={expected_tone!r} "
-            f"got={rec_act['tone']!r}"
-        )
-        assert rec_act["variant"] == "badge"
-        assert rec_queue["tone"] == expected_tone
-        assert rec_queue["variant"] == "badge"
+        cls_items = _find_section_items(page, "Basic classification")
+        labels = [item["label"] for item in cls_items]
+        assert "Recommended action" not in labels
+        assert "Recommended queue" not in labels
 
 
 def test_rop_event_detail_page_model_recommended_action_label(tmp_path: Path) -> None:
@@ -8624,17 +8700,19 @@ def test_rop_event_detail_page_model_recommended_action_label(tmp_path: Path) ->
     page_en = build_rop_event_detail_page_model(
         storage_dir, "run-rec-act-label", "evt-1", lang="en"
     )
-    cls_items_en = _find_section_items(page_en, "Classification")
+    cls_items_en = _find_section_items(page_en, "Basic classification")
     labels_en = [i["label"] for i in cls_items_en]
-    assert "Recommended action" in labels_en
+    assert "Recommended action" not in labels_en
+    assert "Recommended queue" not in labels_en
     assert "Correct action" not in labels_en
 
     page_ru = build_rop_event_detail_page_model(
         storage_dir, "run-rec-act-label", "evt-1", lang="ru"
     )
-    cls_items_ru = _find_section_items(page_ru, t("Classification", "ru"))
+    cls_items_ru = _find_section_items(page_ru, t("Basic classification", "ru"))
     labels_ru = [i["label"] for i in cls_items_ru]
-    assert "Рекомендуемое действие" in labels_ru
+    assert "Рекомендуемое действие" not in labels_ru
+    assert "Рекомендуемая очередь" not in labels_ru
     assert "Верное действие" not in labels_ru
 
 
@@ -8679,32 +8757,28 @@ def test_rop_event_detail_page_model_final_decision_badge_tones(tmp_path: Path) 
         storage_dir, "run-fd-tones", "evt-1", lang="en"
     )
     fd_items = _find_section_items(page, "Final decision")
-    needs_attn = _item_by_label(fd_items, "Needs attention")
-    assert needs_attn["value"] == "Yes"
-    assert needs_attn["tone"] == "warning"
-    assert needs_attn["variant"] == "badge"
-
-    auto_allowed = _item_by_label(fd_items, "Automation allowed")
-    assert auto_allowed["value"] == "No"
-    assert auto_allowed["tone"] == "muted"
-    assert auto_allowed["variant"] == "badge"
-
-    bitrix_allowed = _item_by_label(fd_items, "Bitrix write allowed")
-    assert bitrix_allowed["value"] == "No"
-    assert bitrix_allowed["tone"] == "muted"
-    assert bitrix_allowed["variant"] == "badge"
+    labels = [item["label"] for item in fd_items]
+    assert "Automation allowed" not in labels
+    assert "Bitrix write allowed" not in labels
+    assert "Final action" not in labels
+    assert "Needs attention" not in labels
 
     fd_type = _item_by_label(fd_items, "Final case type")
     assert fd_type["variant"] == "badge"
     assert fd_type["tone"] == "default"
 
-    fd_queue = _item_by_label(fd_items, "Final queue")
-    assert fd_queue["variant"] == "badge"
-    assert fd_queue["tone"] == "warning"
+    basis = _item_by_label(fd_items, "Decision basis")
+    assert basis["value"] == "AI"
+    assert basis["variant"] == "badge"
+    assert [item["label"] for item in fd_items[:3]] == [
+        "Final case type",
+        "Decision basis",
+        "Final confidence",
+    ]
 
-    decision_source = _item_by_label(fd_items, "Decision source")
-    assert decision_source["variant"] == "badge"
-    assert decision_source["tone"] == "muted"
+    assert "Final queue" not in labels
+
+    assert "Decision source" not in labels
 
 
 def test_rop_event_detail_page_model_adjudicator_used_tone(tmp_path: Path) -> None:
@@ -8738,11 +8812,16 @@ def test_rop_event_detail_page_model_adjudicator_used_tone(tmp_path: Path) -> No
         page = build_rop_event_detail_page_model(
             storage_dir, run_id, "evt-1", lang="en"
         )
-        adj_items = _find_section_items(page, "AI Adjudicator")
-        used_item = _item_by_label(adj_items, "AI adjudicator used")
-        assert used_item["tone"] == expected_tone
-        assert used_item["variant"] == "badge"
-        assert used_item["value"] == ("Yes" if used else "No")
+        adj_items = _find_section_items(page, "AI review")
+        labels = [item["label"] for item in adj_items]
+        assert ("AI proposed case type" in labels) is used
+        if used:
+            assert labels[:4] == [
+                "AI proposed case type",
+                "AI adjudicator status",
+                "AI adjudicator reason",
+                "AI adjudicator confidence",
+            ]
 
 
 def test_rop_event_detail_page_model_case_type_default_badge(tmp_path: Path) -> None:
@@ -8755,10 +8834,17 @@ def test_rop_event_detail_page_model_case_type_default_badge(tmp_path: Path) -> 
     page = build_rop_event_detail_page_model(
         storage_dir, "run-ct-badge", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
+    cls_items = _find_section_items(page, "Basic classification")
     ct = _item_by_label(cls_items, "Case type")
     assert ct["variant"] == "badge"
     assert ct["tone"] == "default"
+    assert [item["label"] for item in cls_items[:5]] == [
+        "Case type",
+        "Subtype",
+        "Reason",
+        "Confidence",
+        "Priority",
+    ]
 
 
 def test_rop_event_detail_api_booleans_remain_raw(tmp_path: Path) -> None:
@@ -8798,16 +8884,13 @@ def test_rop_event_detail_page_model_unknown_values_degrades_safely(
     page = build_rop_event_detail_page_model(
         storage_dir, "run-unknown-safe", "evt-1", lang="en"
     )
-    cls_items = _find_section_items(page, "Classification")
+    cls_items = _find_section_items(page, "Basic classification")
     prio = _item_by_label(cls_items, "Priority")
     assert prio["tone"] == "muted"
     assert prio["variant"] == "badge"
-    rec_queue = _item_by_label(cls_items, "Recommended queue")
-    assert rec_queue["tone"] == "default"
-    assert rec_queue["variant"] == "badge"
-    rec_act = _item_by_label(cls_items, "Recommended action")
-    assert rec_act["tone"] == "default"
-    assert rec_act["variant"] == "badge"
+    labels = [item["label"] for item in cls_items]
+    assert "Recommended queue" not in labels
+    assert "Recommended action" not in labels
 
 
 def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
@@ -8824,7 +8907,16 @@ def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
     )
     (run_dir / "bitrix_reconciliation.json").write_text(
         json.dumps(
-            {"items": [{"event_id": "evt-1", "bitrix_match_status": "matched_lead"}]}
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "bitrix_match_status": "matched_lead",
+                        "bitrix_entity_type": "lead",
+                        "bitrix_entity_id": 199324,
+                    }
+                ]
+            }
         ),
         encoding="utf-8",
     )
@@ -8834,7 +8926,77 @@ def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
 
     assert response.status_code == 200
     assert "15.01.2026, 14:30" in response.text
-    assert "matched_lead" in response.text
+    assert "Matched in Bitrix" in response.text
+    assert "Entity type" in response.text
+    assert "199324" in response.text
+    assert 'href="/rop/bitrix/lead/199324"' in response.text
+
+
+def test_rop_bitrix_entity_redirect_uses_configured_portal(tmp_path: Path) -> None:
+    settings = _build_settings()
+    settings["bitrix"] = {
+        "embedded_app": {"portal_origin": "https://my.welding.kz"}
+    }
+    client = _client(_make_storage(tmp_path), settings)
+
+    response = client.get("/rop/bitrix/lead/199324", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "https://my.welding.kz/crm/lead/details/199324/"
+    )
+
+
+def test_event_detail_uses_reconciliation_entity_when_writeback_target_missing(
+    tmp_path: Path,
+) -> None:
+    storage_dir = _make_storage(tmp_path)
+    run_dir = _write_rop_event_detail_artifacts(
+        storage_dir, "run-writeback-entity-fallback"
+    )
+    (run_dir / "bitrix_reconciliation.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "bitrix_match_status": "matched_lead",
+                        "bitrix_entity_type": "lead",
+                        "bitrix_entity_id": 199324,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (storage_dir / "interfaces" / "rop_writeback_state.json").write_text(
+        json.dumps(
+            {
+                "events": {
+                    "evt-1": {
+                        "event_id": "evt-1",
+                        "last_run_id": "run-writeback-entity-fallback",
+                        "source_id": "hotline_mailbox",
+                        "outcome": "create_lead",
+                        "status": "created",
+                        "target_entity_type": "",
+                        "target_entity_id": None,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(storage_dir)
+
+    response = client.get(
+        "/rop/events/evt-1?run_id=run-writeback-entity-fallback"
+    )
+
+    assert response.status_code == 200
+    assert "Lead created in Bitrix" in response.text
+    assert "Entity type" in response.text
+    assert "199324" in response.text
 
 
 def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
@@ -9376,9 +9538,9 @@ def test_event_detail_route_badges_full_data(tmp_path: Path) -> None:
     )
     client = _client(storage_dir)
 
-    for lang, expected_yes, expected_no, expected_case in [
-        ("en", "Yes", "No", "New lead"),
-        ("ru", "Да", "Нет", "Новый лид"),
+    for lang, expected_yes, expected_ai_status, expected_case in [
+        ("en", "Yes", "AI review completed", "New lead"),
+        ("ru", "Да", "Проверка AI завершена", "Новый лид"),
     ]:
         response = client.get(f"/rop/events/evt-1?run_id=run-route-full&lang={lang}")
         assert response.status_code == 200
@@ -9388,12 +9550,10 @@ def test_event_detail_route_badges_full_data(tmp_path: Path) -> None:
         _assert_badge_in(html, "bg-danger-lt", "high")
         _assert_badge_in(html, "bg-warning-lt", expected_yes)
 
-        _assert_badge_in(html, "bg-secondary-lt", expected_yes)
-        _assert_badge_in(html, "bg-success-lt", "ok")
+        _assert_badge_in(html, "bg-success-lt", expected_ai_status)
         _assert_badge_in(html, "bg-warning-lt", "manual_review")
 
-        _assert_badge_in(html, "bg-secondary-lt", "ai_adjudicator")
-        _assert_badge_in(html, "bg-secondary-lt", expected_no)
+        assert "ai_adjudicator" not in html
 
 
 def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
@@ -9404,9 +9564,9 @@ def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
     )
     client = _client(storage_dir)
 
-    for lang, expected_yes, expected_no, fd_title, expected_case in [
-        ("en", "Yes", "No", "Final decision", "New lead"),
-        ("ru", "Да", "Нет", "Итоговое решение", "Новый лид"),
+    for lang, expected_yes, fd_title, expected_case in [
+        ("en", "Yes", "Final decision", "New lead"),
+        ("ru", "Да", "Итоговое решение", "Новый лид"),
     ]:
         response = client.get(f"/rop/events/evt-1?run_id=run-route-no-adj&lang={lang}")
         assert response.status_code == 200
@@ -9421,10 +9581,8 @@ def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
         _assert_badge_in(html, "bg-danger-lt", "high")
         _assert_badge_in(html, "bg-warning-lt", expected_yes)
 
-        _assert_badge_in(html, "bg-secondary-lt", "deterministic")
         _assert_badge_in(html, "bg-secondary-lt", "high_priority")
         _assert_badge_in(html, "bg-secondary-lt", "review")
-        _assert_badge_in(html, "bg-secondary-lt", expected_no)
 
         assert "bg-success-lt" not in html
 

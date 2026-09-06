@@ -17,7 +17,7 @@ from beeui_module.pages.config import load_beeui_config
 from beeui_module.pages.detail import render_beeui_detail_page
 from beeui_module.web.app import create_beeui_app
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
@@ -48,6 +48,7 @@ from beeagent_module.interfaces.ui.adapter import (
 )
 from beeagent_module.interfaces.ui.bitrix_embed import (
     EMBEDDED_SESSION_AGE_MAX_SECONDS,
+    is_valid_https_origin,
     is_bitrix_principal_user_id,
 )
 from beeagent_module.interfaces.ui.locale import (
@@ -1035,6 +1036,50 @@ def _register_custom_routes(
             )
         finally:
             reset_current_locale(token)
+
+    @app.get(
+        "/rop/bitrix/{entity_type}/{entity_id}",
+        include_in_schema=False,
+    )
+    async def rop_bitrix_entity_redirect(
+        entity_type: str,
+        entity_id: int,
+    ) -> Response:
+        entity_paths = {
+            "lead": "lead",
+            "deal": "deal",
+        }
+        entity_path = entity_paths.get(entity_type)
+        if entity_path is None or entity_id <= 0:
+            return _error_json(
+                "not_found",
+                "Bitrix entity not found",
+                status_code=404,
+            )
+
+        settings = getattr(app.state, "beeagent_settings", {})
+        bitrix_cfg = settings.get("bitrix", {}) if isinstance(settings, dict) else {}
+        embedded_cfg = (
+            bitrix_cfg.get("embedded_app", {})
+            if isinstance(bitrix_cfg, dict)
+            else {}
+        )
+        portal_origin = (
+            embedded_cfg.get("portal_origin", "")
+            if isinstance(embedded_cfg, dict)
+            else ""
+        )
+        if not isinstance(portal_origin, str) or not is_valid_https_origin(
+            portal_origin
+        ):
+            return _error_json(
+                "unavailable",
+                "Bitrix portal is unavailable",
+                status_code=503,
+            )
+        return RedirectResponse(
+            f"{portal_origin}/crm/{entity_path}/details/{entity_id}/"
+        )
 
     @app.get("/rop/attachments/{attachment_id}/download", include_in_schema=False)
     async def rop_attachment_download(request: Request, attachment_id: str) -> Response:
