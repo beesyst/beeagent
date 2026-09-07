@@ -38,7 +38,6 @@ _PRIORITY_TONE = {
     "high": "danger",
     "critical": "danger",
 }
-
 _ADJUDICATOR_STATUS_TONE = {
     "ok": "success",
     "not_eligible": "muted",
@@ -52,7 +51,6 @@ _ADJUDICATOR_STATUS_TONE = {
     "provider_unavailable": "danger",
     "module_contract_unavailable": "danger",
 }
-
 _MAX_REASON_TEXT_LENGTH = 600
 _MAX_REASON_CODE_LENGTH = 80
 _TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
@@ -66,7 +64,6 @@ _EXPECTED_REASONLESS_AI_STATUSES = frozenset(
         "manual_review_degrade",
     }
 )
-
 _ATTACHMENT_CONTENT_TYPE_LABELS = {
     "application/msword": "Word document",
     "application/octet-stream": "Binary file",
@@ -88,12 +85,10 @@ _ATTACHMENT_CONTENT_TYPE_LABELS = {
     "text/plain": "Text file",
     "text/rfc822-headers": "Email headers",
 }
-
 _ATTACHMENT_STORAGE_STATUS_LABELS = {
     "stored": "Saved",
     "malformed": "Damaged",
 }
-
 _ATTACHMENT_REASON_LABELS = {
     "ai_analysis_preview": "AI text extraction",
     "attachment_oversized": "File is too large",
@@ -102,7 +97,6 @@ _ATTACHMENT_REASON_LABELS = {
     "metadata_only_no_safe_text": "No safe text available",
     "unsupported_content_type": "Unsupported file type",
 }
-
 _ATTACHMENT_ANALYSIS_STATUS_LABELS = {
     "failed": "Processing failed",
     "ok": "Processed",
@@ -354,12 +348,19 @@ def _bitrix_delivery_status(writeback: dict[str, Any] | None) -> str:
     outcome = _str(writeback.get("outcome"))
     status = _str(writeback.get("status"))
     attachment_status = _str(writeback.get("email_attachment_status"))
-    if attachment_status == "attached" or (
-        outcome == "attach_existing" and status == "attached"
+    remote_entity_id = writeback.get("remote_entity_id")
+    if (
+        outcome == "create_lead"
+        and status in {"created", "recovered"}
+        and isinstance(remote_entity_id, int)
+        and not isinstance(remote_entity_id, bool)
+        and remote_entity_id > 0
+    ):
+        return "lead_recovered" if status == "recovered" else "lead_created"
+    if outcome == "attach_existing" and (
+        attachment_status == "attached" or status == "attached"
     ):
         return "matched_lead"
-    if outcome == "create_lead" and status == "created":
-        return "lead_created"
     if status in {"planned", "pending", "deferred", "error", "failed"}:
         return status
     return ""
@@ -370,6 +371,7 @@ def _bitrix_status_display(status: str, lang: str) -> str:
         return t("Matched in Bitrix", lang)
     labels = {
         "lead_created": "Lead created in Bitrix",
+        "lead_recovered": "Lead recovered in Bitrix",
         "not_found": "Not found in Bitrix",
         "weak_match": "Needs clarification",
         "ambiguous": "Needs clarification",
@@ -930,10 +932,20 @@ def build_rop_event_detail_read_model(
                 if reconciliation_item
                 else 0
             ),
-            "entity_type": _str(writeback.get("target_entity_type"))
-            or reconciliation_entity_type,
-            "entity_id": _int(writeback.get("target_entity_id", 0))
-            or reconciliation_entity_id,
+            "entity_type": (
+                "lead"
+                if _str(writeback.get("outcome")) == "create_lead"
+                and delivery_status in {"lead_created", "lead_recovered"}
+                else _str(writeback.get("target_entity_type"))
+                or reconciliation_entity_type
+            ),
+            "entity_id": (
+                _int(writeback.get("remote_entity_id"))
+                if _str(writeback.get("outcome")) == "create_lead"
+                and delivery_status in {"lead_created", "lead_recovered"}
+                else _int(writeback.get("target_entity_id", 0))
+                or reconciliation_entity_id
+            ),
             "entity_url": (
                 _str(reconciliation_item.get("entity_url", ""))
                 if reconciliation_item

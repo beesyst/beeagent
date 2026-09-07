@@ -50,7 +50,7 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
   - missing, malformed or unsafe artifact uses a computed read-only fallback from `classified_events.json` and `rop_ai_adjudicator_results.json`
   - GET/read-model fallback never writes storage
 - `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
-  - source for AI adjudicator evidence in AI tab and event detail
+  - source for AI adjudicator evidence in event detail and its JSON API
 - `storage/interfaces/rop_web_projection_v2.json`
   - derived schema-v2 bounded manifest with `latest_run_id`, bounded `run_ids`, scalar `total_runs`, generation/revision metadata and controlled view references;
   - `available_runs` and `total_runs` are materialized metadata and never require a `storage/runs` scan during GET;
@@ -307,7 +307,7 @@ Behavior / safety:
 
 New allowlisted artifacts:
 
-- `rop_ai_adjudicator_results.json` — AI adjudicator results for AI tab and event detail
+- `rop_ai_adjudicator_results.json` — AI adjudicator results for event detail and its JSON API
 - `rop_ai_adjudicator_requests.json` — AI adjudicator requests
 - `rop_ai_adjudicator_decisions.json` — AI adjudicator decisions
 - `rop_final_decisions.json` — final decision read-model
@@ -989,6 +989,7 @@ HTML `/rop` использует BeeUI tabs:
 - `overview`
 - `queue`
 - `sources`
+- `blacklist`
 
 Возвращаемые данные (UI-6 enriched payload):
 
@@ -1162,6 +1163,7 @@ Backward-compatible поля сохранены:
 - `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда; Overview использует period dropdown;
 - `queue`: attention events;
 - `sources`: source health details;
+- `blacklist`: protected sender blacklist management;
 
 BeeAgent не держит manual HTML builders/templates для `/rop`.
 
@@ -1186,13 +1188,13 @@ Web Console должен соблюдать:
 
 ### UI-6 evidence sections (latest-N, threads, AI assist)
 
-Read-only операторские секции на основе It30 артефактов, интегрированные в текущий контракт:
+Backward-compatible API/read-model evidence на основе It30 артефактов сохраняется в текущем контракте:
 
-- **Latest/N selection**: `latest_selection` в read-model показывает количество выбранных писем, стратегию, источники;
-- **Thread summary**: `thread_summary` и `threads[]` показывают цепочки писем и thread-контекст;
-- **AI assist**: `ai_assist_summary` и `ai_assist_events[]` показывают evidence AI assist и статус каждого события;
-- **RU labels**: через `?lang=ru` переводятся все новые UI-6 секции;
-- **Det recommendations**: обогащены `_build_it30_recommendations()` — review threaded conversations, AI degraded, low confidence, module contract unavailable;
+- `latest_selection` — selection evidence;
+- `thread_summary` и `threads[]` — thread evidence;
+- `ai_assist_summary` и `ai_assist_events[]` — AI assist evidence.
+
+Отдельных Latest-N / Threads / AI Assist tabs или blocks в текущем `/rop` нет. Event Detail может использовать соответствующее bounded evidence там, где это предусмотрено текущим контрактом.
 
 ### UI-6 — Артефакты It30 в allowlist
 
@@ -1274,14 +1276,13 @@ Sanitization rules:
 - user registration/password reset;
 - OAuth/OIDC;
 - DB-backed user management;
-- POST/write actions;
-- CRM/mailbox actions;
+- general UI-triggered runtime/CRM/mailbox operator write actions, except explicit bounded protected UI-8.8 Blacklist Add/Update/Delete;
 - UI-triggered CRM/Bitrix write-back; controlled server-side `rop run` and `rop poll` write-back remains outside Web/widget routes;
 - web-triggered ROP run;
 - widget-triggered execution;
 - save-human-decision UI flow;
 - production deployment hardening;
-- attachment parsing/OCR;
+- UI-triggered attachment parsing/OCR;
 - full attachment-aware dashboard with per-file detail viewer;
 - React/Reflex frontend;
 - SQLAdmin;
