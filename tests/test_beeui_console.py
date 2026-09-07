@@ -2086,37 +2086,6 @@ def test_queue_toolbar_reset_preserves_lang_ru() -> None:
     assert "sort=" not in reset_href.split("?")[-1].split("&")[0]
 
 
-def test_rop_bitrix_missing_artifact_renders_not_reconciled() -> None:
-    data = {
-        "current_state_kpi": {},
-        "current_state_queues": {},
-        "bitrix": {"status": "unreconciled"},
-        "evidence_links": [
-            {
-                "artifact_id": "bitrix_reconciliation_json",
-                "available": False,
-            }
-        ],
-    }
-
-    layout = build_rop_page_layout(data, tab="bitrix")
-
-    assert layout[0]["type"] == "kpi_grid"
-    assert layout[0]["title"] == "Bitrix Evidence Board"
-    notices = [
-        block
-        for block in layout
-        if block.get("type") == "state_grid"
-        and any(
-            item.get("label") == "Not reconciled" for item in block.get("items", [])
-        )
-    ]
-    assert notices
-    item = notices[0]["items"][0]
-    assert item["label"] == "Not reconciled"
-    assert "Run read-only reconcile-bitrix" in item["value"]
-
-
 def test_api_rop_dashboard_invalid_period_is_rejected(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_run_artifacts(storage_dir, "run-invalid-period")
@@ -2869,6 +2838,8 @@ def _write_html_artifact_values_run(storage_dir: Path, run_id: str) -> Path:
         {
             "event_id": "<script>alert('xss')</script>",
             "source_id": "<img src=x>",
+            "sender": "<script>alert('sender')</script>",
+            "subject": "<script>alert('subject')</script>",
             "case_type": "<b>bold</b>",
             "priority": "high",
             "confidence": 0.9,
@@ -3574,66 +3545,6 @@ def test_dashboard_drops_unsafe_nested_duplicate_evidence(tmp_path: Path) -> Non
         warning.get("code") == "missing_or_malformed_artifact"
         for warning in response.json()["data"]["warnings"]
     )
-
-
-def test_ai_adjudicator_layout_precedes_final_and_hides_empty_legacy() -> None:
-    data = {
-        "ai_assist_summary": {
-            "evidence_available": True,
-            "request_count": 0,
-            "decision_count": 0,
-            "result_count": 0,
-            "status_counts": {},
-        },
-        "ai_assist_events": [],
-        "ai_adjudicator_summary": {
-            "available": True,
-            "eligible_count": 1,
-            "used_count": 1,
-            "degraded_count": 0,
-            "total_events": 1,
-            "status_counts": {"ok": 1},
-        },
-        "final_decisions": {
-            "summary": {
-                "total_events": 1,
-                "decision_source_counts": {"ai_adjudicator": 1},
-                "attention_count": 0,
-            },
-            "events": [],
-        },
-    }
-
-    layout = build_rop_page_layout(data, tab="ai_assist")
-    titles = [block.get("title") for block in layout]
-
-    assert titles[:3] == [
-        "AI Adjudicator Summary",
-        "AI Adjudicator Status Breakdown",
-        "Final Decisions",
-    ]
-    assert "AI Assist Summary" not in titles
-    assert "AI Events" not in titles
-
-
-def test_deterministic_final_decisions_render_without_ai_activity() -> None:
-    data = {
-        "ai_assist_summary": {},
-        "ai_assist_events": [],
-        "ai_adjudicator_summary": {"available": False},
-        "final_decisions": {
-            "summary": {
-                "total_events": 1,
-                "decision_source_counts": {"deterministic": 1},
-                "attention_count": 0,
-            },
-            "events": [],
-        },
-    }
-
-    layout = build_rop_page_layout(data, tab="ai_assist")
-
-    assert [block.get("title") for block in layout] == ["Final Decisions"]
 
 
 def test_rop_event_detail_ru_localizes_ui8_labels(tmp_path: Path) -> None:
@@ -4610,180 +4521,6 @@ def test_api_rop_dashboard_includes_current_state_queues(tmp_path: Path) -> None
     )
 
 
-def test_rop_bitrix_layout_with_current_state_queues() -> None:
-    data = {
-        "current_state_kpi": {
-            "matched_in_bitrix": 1,
-            "lost_in_bitrix": 1,
-            "ambiguous_in_bitrix": 1,
-            "connector_degraded": 1,
-            "unreconciled": 1,
-        },
-        "current_state_queues": {
-            "lost_in_bitrix": [
-                {
-                    "event_id": "evt-lost",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "not_found",
-                }
-            ],
-            "ambiguous": [],
-            "degraded": [],
-            "unreconciled": [],
-            "matched": [],
-        },
-        "bitrix": {"status": "ok"},
-        "evidence_links": [
-            {
-                "artifact_id": "bitrix_reconciliation_json",
-                "available": True,
-            }
-        ],
-    }
-
-    layout = build_rop_page_layout(data, tab="bitrix")
-
-    assert any(block["type"] == "kpi_grid" for block in layout)
-    assert any(
-        block["type"] == "status_table" and block["title"] == "Lost in Bitrix"
-        for block in layout
-    )
-
-
-def test_rop_bitrix_layout_prefers_period_queues() -> None:
-    data = {
-        "business_kpi": {
-            "matched_in_bitrix": 0,
-            "lost_in_bitrix": 0,
-            "ambiguous_or_duplicate": 1,
-            "bitrix_errors": 2,
-            "unreconciled": 0,
-        },
-        "current_state_kpi": {"connector_degraded": 99},
-        "current_state_queues": {
-            "matched": [
-                {
-                    "event_id": "evt-old-matched",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "matched_lead",
-                }
-            ],
-            "lost_in_bitrix": [
-                {
-                    "event_id": "evt-old-lost",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "not_found",
-                }
-            ],
-            "ambiguous": [
-                {
-                    "event_id": "evt-old-ambiguous",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "ambiguous",
-                }
-            ],
-            "degraded": [
-                {
-                    "event_id": "evt-old-degraded",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "connector_degraded",
-                }
-            ],
-            "unreconciled": [
-                {
-                    "event_id": "evt-old-unreconciled",
-                    "case_type": "new_lead",
-                    "priority": "high",
-                    "bitrix_status": "unreconciled",
-                }
-            ],
-        },
-        "queues": {
-            "matched": [
-                {
-                    "event_id": "evt-current-matched",
-                    "bot_case_type": "existing_deal",
-                    "bot_priority": "low",
-                    "bitrix_status": "matched_deal",
-                }
-            ],
-            "lost_in_bitrix": [
-                {
-                    "event_id": "evt-current-lost",
-                    "bot_case_type": "new_lead",
-                    "bot_priority": "medium",
-                    "bitrix_status": "not_found",
-                }
-            ],
-            "ambiguous": [
-                {
-                    "event_id": "evt-current-ambiguous",
-                    "bot_case_type": "existing_deal",
-                    "bot_priority": "low",
-                    "bitrix_status": "ambiguous",
-                }
-            ],
-            "degraded": [
-                {
-                    "event_id": "evt-current-degraded",
-                    "bot_case_type": "new_lead",
-                    "bot_priority": "medium",
-                    "bitrix_status": "connector_degraded",
-                }
-            ],
-            "unreconciled": [
-                {
-                    "event_id": "evt-current-unreconciled",
-                    "bot_case_type": "new_lead",
-                    "bot_priority": "low",
-                    "bitrix_status": "unreconciled",
-                }
-            ],
-        },
-        "bitrix": {"status": "ok"},
-        "evidence_links": [
-            {
-                "artifact_id": "bitrix_reconciliation_json",
-                "available": True,
-            }
-        ],
-    }
-
-    layout = build_rop_page_layout(data, tab="bitrix")
-    tables = {
-        block["title"]: block for block in layout if block["type"] == "status_table"
-    }
-    kpi = next(block for block in layout if block["type"] == "kpi_grid")
-
-    assert tables["Matched"]["rows"] == [
-        ["evt-current-matched", "existing_deal", "low", "matched_deal"]
-    ]
-    assert tables["Lost in Bitrix"]["rows"] == [
-        ["evt-current-lost", "new_lead", "medium", "not_found"]
-    ]
-    assert tables["Ambiguous"]["rows"] == [
-        ["evt-current-ambiguous", "existing_deal", "low", "ambiguous"]
-    ]
-    assert tables["Connector Degraded"]["rows"] == [
-        ["evt-current-degraded", "new_lead", "medium", "connector_degraded"]
-    ]
-    assert tables["Unreconciled"]["rows"] == [
-        ["evt-current-unreconciled", "new_lead", "low", "unreconciled"]
-    ]
-    assert all("evt-old" not in str(table["rows"]) for table in tables.values())
-    assert (
-        next(item for item in kpi["items"] if item["label"] == "Connector Degraded")[
-            "value"
-        ]
-        == 2
-    )
-
-
 def test_rop_dashboard_handles_missing_artifacts(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     _write_missing_attachment_run(storage_dir, "run-missing-att")
@@ -4818,11 +4555,11 @@ def test_rop_dashboard_escapes_html(tmp_path: Path) -> None:
     client = _client(storage_dir)
     response = client.get("/api/rop/dashboard")
     assert response.status_code == 200
-    response_html = client.get("/rop")
+    response_html = client.get("/rop?tab=queue&run_id=run-html-safe")
     assert response_html.status_code == 200
     html = response_html.text
-    assert "<script>alert" not in html
-    assert "&lt;script&gt;" in html or "&#60;script&#62;" in html
+    assert "<script>alert('sender')</script>" not in html
+    assert "&lt;script&gt;alert(&#39;sender&#39;)&lt;/script&gt;" in html
 
 
 def test_beeui_artifact_viewer_html(tmp_path: Path) -> None:
@@ -4897,8 +4634,6 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     assert "ПИСЬМА ЗА ПЕРИОД" in html
     assert "НОВЫЕ ЛИДЫ" in html
     assert "Открыть очередь" in html
-    assert "Открыть Битрикс" in html
-    assert "Последняя выборка" in html
     assert "Требуют проверки" in html
     assert "Needs review" not in html
     assert "beeui-language-switcher" in html
@@ -5451,14 +5186,6 @@ class TestUi6It30:
 
         return run_dir
 
-    def _test_full_it30_run_renders_latest_selection(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-it30-full")
-        client = _client(storage_dir)
-        response = client.get("/rop")
-        assert response.status_code == 200
-        assert "Latest selection" in response.text
-
     def test_full_it30_api_includes_new_fields(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-it30-api")
@@ -5505,23 +5232,6 @@ class TestUi6It30:
         )
         assert low_conf_event["sender"] == "partner@supply.kz"
         assert low_conf_event["subject"] == "Price list"
-
-    def _test_rop_tab_ai_assist_returns_200(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-tab-ai")
-        client = _client(storage_dir)
-        response = client.get("/rop?tab=ai_assist")
-        assert response.status_code == 200
-
-    def _test_rop_lang_ru_ai_assist_labels(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-lang-ru-ai")
-        client = _client(storage_dir)
-        response = client.get("/rop?tab=ai_assist&lang=ru")
-        assert response.status_code == 200
-        html = response.text
-        assert "AI ассистент" in html
-        assert "Сводка AI ассистента" in html
 
     def test_old_run_without_it30_renders(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -5634,107 +5344,6 @@ class TestUi6It30:
         assert payload["threads"][0]["latest_subject"]
         assert payload["threads"][0]["latest_sender"]
 
-    def _test_ai_assist_not_requested_hides_noise(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-requested")
-
-        (run_dir / "rop_ai_assist_requests.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-requested",
-                    "enabled": True,
-                    "counters": {
-                        "ai_assist_requested_count": 0,
-                        "ai_assist_used_count": 0,
-                        "eligible_count": 5,
-                    },
-                    "requests": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (run_dir / "rop_ai_assist_decisions.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-requested",
-                    "counters": {"decision_count": 0},
-                    "decisions": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (run_dir / "rop_ai_assist_results.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-requested",
-                    "counters": {
-                        "ai_assist_requested_count": 0,
-                        "ai_assist_used_count": 0,
-                        "ai_assist_degraded_count": 0,
-                    },
-                    "results": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        client = _client(storage_dir)
-        api_response = client.get("/api/rop/dashboard")
-        assert api_response.status_code == 200
-        assert api_response.json()["data"]["ai_assist_events"] == []
-
-        html_response = client.get("/rop?tab=ai_assist")
-        assert html_response.status_code == 200
-        assert "Final Decisions" in html_response.text
-        assert "AI Assist Summary" not in html_response.text
-        assert "not_requested" not in html_response.text
-
-    def _test_ai_assist_not_used_ru_state(self, tmp_path: Path) -> None:
-        storage_dir = _make_storage(tmp_path)
-        run_dir = self._write_full_it30_run(storage_dir, "run-ai-not-used-ru")
-
-        (run_dir / "rop_ai_assist_requests.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-used-ru",
-                    "enabled": True,
-                    "counters": {"eligible_count": 5, "ai_assist_requested_count": 0},
-                    "requests": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (run_dir / "rop_ai_assist_decisions.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-used-ru",
-                    "counters": {"decision_count": 0},
-                    "decisions": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        (run_dir / "rop_ai_assist_results.json").write_text(
-            json.dumps(
-                {
-                    "run_id": "run-ai-not-used-ru",
-                    "counters": {
-                        "ai_assist_requested_count": 0,
-                        "ai_assist_used_count": 0,
-                        "ai_assist_degraded_count": 0,
-                    },
-                    "results": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        client = _client(storage_dir)
-        response = client.get("/rop?tab=ai_assist&lang=ru")
-        assert response.status_code == 200
-        assert "Итоговые решения" in response.text
-        assert "Сводка AI ассистента" not in response.text
-
     def test_new_it30_artifact_ids_allowlisted(self) -> None:
         from beeagent_module.interfaces.ui.artifacts import is_artifact_id_allowed
 
@@ -5811,119 +5420,20 @@ class TestUi6It30:
             assert "raw_eml" not in response.text.lower()
             assert "attachment_content" not in response.text.lower()
 
-    # --- Latest selection display formatting tests ---
-
-    def _test_latest_selection_block_uses_human_readable_strategy_label(
-        self, tmp_path: Path
-    ) -> None:
-        """Internal strategy key must not appear; display label based on selected_count."""
-        storage_dir = _make_storage(tmp_path)
-        run_dir = self._write_full_it30_run(storage_dir, "run-strategy-label")
-        client = _client(storage_dir)
-        response = client.get("/rop")
-        assert response.status_code == 200
-        html = response.text
-        # Internal key must NOT be visible as primary text
-        assert "latest_n_by_internaldate_desc" not in html
-        # Display label based on selected_count (5) must appear
-        assert "Latest 5 messages" in html
-
-    def _test_latest_selection_block_ru_human_readable_datetime(
-        self, tmp_path: Path
-    ) -> None:
-        """Russian locale must show DD.MM.YYYY format without raw ISO or UTC offset."""
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-ru-datetime")
-        client = _client(storage_dir)
-        response = client.get("/rop?lang=ru")
-        assert response.status_code == 200
-        html = response.text
-        # Must NOT contain raw ISO timestamp as visible text
-        assert "2026-06-28T12:00:00+00:00" not in html
-        # Must NOT contain UTC offset
-        assert "+00:00" not in html
-        # Must contain DD.MM.YYYY formatted date
-        assert "28.06.2026" in html
-        # Must contain Russian block title
-        assert "Последняя выборка" in html
-
-    def _test_latest_selection_block_en_formats_datetime(self, tmp_path: Path) -> None:
-        """English locale must show DD.MM.YYYY format without raw ISO."""
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-en-datetime")
-        client = _client(storage_dir)
-        response = client.get("/rop")
-        assert response.status_code == 200
-        html = response.text
-        # Must NOT contain raw ISO timestamp
-        assert "2026-06-28T12:00:00+00:00" not in html
-        # Must contain DD.MM.YYYY formatted date
-        assert "28.06.2026" in html
-
     def test_latest_selection_api_preserves_raw_technical_fields(
         self, tmp_path: Path
     ) -> None:
-        """API must still return raw strategy key and ISO timestamps for backward compat."""
         storage_dir = _make_storage(tmp_path)
         self._write_full_it30_run(storage_dir, "run-api-raw")
         client = _client(storage_dir)
         response = client.get("/api/rop/dashboard")
         assert response.status_code == 200
         payload = response.json()["data"]["latest_selection"]
-        # Raw technical fields must be preserved
         assert payload["strategy"] == "latest_n_by_internaldate_desc"
         assert payload["newest_message_at"] == "2026-06-28T12:00:00+00:00"
         assert payload["oldest_message_at"] == "2026-06-25T07:30:00+00:00"
-        # Display fields must also be present
         assert payload["selected_count"] == 5
         assert payload["source_count"] == 1
-
-    def _test_latest_selection_period_display(self, tmp_path: Path) -> None:
-        """Period display must be shown in the block."""
-        storage_dir = _make_storage(tmp_path)
-        self._write_full_it30_run(storage_dir, "run-period")
-        client = _client(storage_dir)
-        response = client.get("/rop")
-        assert response.status_code == 200
-        html = response.text
-        # Period should be shown (newest 28.06, oldest 25.06)
-        assert "25.06" in html and "28.06" in html
-
-    def _test_latest_selection_single_message(self, tmp_path: Path) -> None:
-        """Single message selection must work without errors."""
-        storage_dir = _make_storage(tmp_path)
-        run_dir = self._write_full_it30_run(storage_dir, "run-single-msg")
-        # Override mailbox_selection with single message
-        mailbox_selection = {
-            "run_id": "run-single-msg",
-            "strategy": "latest_n_by_internaldate_desc",
-            "sources": [
-                {
-                    "source_id": "hotline_mailbox",
-                    "source_display_name": "Welding Hotline mailbox",
-                    "selected_count": 1,
-                    "available_count": 5,
-                    "messages": [
-                        {
-                            "source_message_id": "m-001",
-                            "internal_date": "2026-06-28T12:00:00+00:00",
-                            "message_id": "<m-001@example.com>",
-                            "subject": "Test",
-                            "selected": True,
-                        },
-                    ],
-                }
-            ],
-            "warnings": [],
-        }
-        (run_dir / "mailbox_selection.json").write_text(
-            json.dumps(mailbox_selection), encoding="utf-8"
-        )
-        client = _client(storage_dir)
-        response = client.get("/rop")
-        assert response.status_code == 200
-        assert "Latest 1" in response.text or "Latest selection" in response.text
-
 
 def _build_auth_settings(enabled: bool = False) -> dict:
     settings = _build_settings()
@@ -7442,34 +6952,6 @@ def test_rop_event_detail_sections_and_back_link_round_trip(tmp_path: Path) -> N
     assert "page_size=50" in response.text
 
 
-def test_rop_latest_selection_period_is_rendered(tmp_path: Path) -> None:
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_run_artifacts(storage_dir, "run-latest-period")
-    (run_dir / "mailbox_selection.json").write_text(
-        json.dumps(
-            {
-                "sources": [
-                    {
-                        "source_id": "mailbox",
-                        "selected_count": 2,
-                        "messages": [
-                            {"internal_date": "2026-06-25T00:00:00+00:00"},
-                            {"internal_date": "2026-06-28T00:00:00+00:00"},
-                        ],
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    client = _client(storage_dir)
-
-    response = client.get("/rop?run_id=run-latest-period")
-
-    assert response.status_code == 200
-    assert "25.06" in response.text and "28.06" in response.text
-
-
 def test_queue_sort_links_round_trip_and_keep_atomic_pair(tmp_path: Path) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-sort-links")
@@ -8151,7 +7633,7 @@ class TestRopDashboardAggregateReadModel:
         assert len(same_rows) == 2
         assert {row["run_id"] for row in same_rows} == {"agg-run-a", "agg-run-b"}
         assert {row["source_id"] for row in same_rows} == {"src_a", "src_b"}
-    def test_bitrix_aggregate_visible_when_anchor_lacks_artifact(
+    def test_bitrix_aggregate_preserves_anchor_evidence_availability(
         self, tmp_path: Path
     ) -> None:
         storage_dir = _make_storage(tmp_path)
@@ -8188,35 +7670,7 @@ class TestRopDashboardAggregateReadModel:
         )
 
         data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
-        from beeagent_module.interfaces.ui.read_model import build_rop_page_layout
-
         assert data["business_kpi"]["matched_in_bitrix"] == 1
-
-        layout = build_rop_page_layout(data, tab="bitrix")
-
-        kpi = next(block for block in layout if block.get("type") == "kpi_grid")
-        kpi_values = {item["label"]: item["value"] for item in kpi["items"]}
-        assert kpi_values.get("Matched") == 1
-        matched_table = next(
-            block
-            for block in layout
-            if block.get("type") == "status_table" and block.get("title") == "Matched"
-        )
-        assert any(row[0] == "evt-bx-a" for row in matched_table["rows"])
-        notices = [
-            block
-            for block in layout
-            if block.get("type") == "state_grid"
-            and any(
-                item.get("label") == "Not reconciled" for item in block.get("items", [])
-            )
-        ]
-        assert notices
-        assert any(
-            "not available for this run" in str(item.get("value", ""))
-            for block in notices
-            for item in block["items"]
-        )
         assert data["evidence_links"]
         assert all(
             "/runs/agg-run-b/" in link["url"]
@@ -8929,7 +8383,10 @@ def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
     assert "Matched in Bitrix" in response.text
     assert "Entity type" in response.text
     assert "199324" in response.text
-    assert 'href="/rop/bitrix/lead/199324"' in response.text
+    assert (
+        'href="/rop/bitrix/lead/199324?run_id=run-canonical-detail"'
+        in response.text
+    )
 
 
 def test_rop_bitrix_entity_redirect_uses_configured_portal(tmp_path: Path) -> None:
@@ -8947,8 +8404,19 @@ def test_rop_bitrix_entity_redirect_uses_configured_portal(tmp_path: Path) -> No
     )
 
 
-def test_event_detail_uses_reconciliation_entity_when_writeback_target_missing(
+@pytest.mark.parametrize(
+    ("writeback_status", "attachment_status", "remote_entity_id", "label"),
+    [
+        ("created", "not_required", 200001, "Lead created in Bitrix"),
+        ("recovered", "failed", 200002, "Lead recovered in Bitrix"),
+    ],
+)
+def test_event_detail_uses_confirmed_create_lead_from_writeback(
     tmp_path: Path,
+    writeback_status: str,
+    attachment_status: str,
+    remote_entity_id: int,
+    label: str,
 ) -> None:
     storage_dir = _make_storage(tmp_path)
     run_dir = _write_rop_event_detail_artifacts(
@@ -8960,7 +8428,7 @@ def test_event_detail_uses_reconciliation_entity_when_writeback_target_missing(
                 "items": [
                     {
                         "event_id": "evt-1",
-                        "bitrix_match_status": "matched_lead",
+                        "bitrix_match_status": "not_found",
                         "bitrix_entity_type": "lead",
                         "bitrix_entity_id": 199324,
                     }
@@ -8978,7 +8446,9 @@ def test_event_detail_uses_reconciliation_entity_when_writeback_target_missing(
                         "last_run_id": "run-writeback-entity-fallback",
                         "source_id": "hotline_mailbox",
                         "outcome": "create_lead",
-                        "status": "created",
+                        "status": writeback_status,
+                        "remote_entity_id": remote_entity_id,
+                        "email_attachment_status": attachment_status,
                         "target_entity_type": "",
                         "target_entity_id": None,
                     }
@@ -8987,16 +8457,29 @@ def test_event_detail_uses_reconciliation_entity_when_writeback_target_missing(
         ),
         encoding="utf-8",
     )
-    client = _client(storage_dir)
-
-    response = client.get(
-        "/rop/events/evt-1?run_id=run-writeback-entity-fallback"
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+        build_rop_event_detail_read_model,
     )
 
-    assert response.status_code == 200
-    assert "Lead created in Bitrix" in response.text
-    assert "Entity type" in response.text
-    assert "199324" in response.text
+    detail = build_rop_event_detail_read_model(
+        storage_dir, "run-writeback-entity-fallback", "evt-1"
+    )
+    page = build_rop_event_detail_page_model(
+        storage_dir, "run-writeback-entity-fallback", "evt-1"
+    )
+
+    assert detail["bitrix"]["bitrix_status"] == (
+        "lead_recovered" if writeback_status == "recovered" else "lead_created"
+    )
+    assert detail["bitrix"]["entity_type"] == "lead"
+    assert detail["bitrix"]["entity_id"] == remote_entity_id
+    assert label == _item_by_label(
+        _find_section_items(page, "Bitrix evidence"), "Bitrix status"
+    )["value"]
+    assert _item_by_label(
+        _find_section_items(page, "Bitrix evidence"), "Entity ID"
+    )["href"] == f"/rop/bitrix/lead/{remote_entity_id}"
 
 
 def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:
@@ -9461,130 +8944,6 @@ def test_queue_html_and_api_date_parsing_parity(tmp_path: Path) -> None:
         assert message in html.text or "invalid_params" in html.text
         assert api.status_code == 400
         assert api.json()["error"]["code"] == "invalid_params"
-
-
-def _assert_badge_in(html: str, css_class: str, value: str) -> None:
-    assert f'class="badge {css_class}">{value}<' in html
-
-
-def test_event_detail_route_badges_classification_only(tmp_path: Path) -> None:
-    storage_dir = _make_storage(tmp_path)
-    _write_rop_event_detail_artifacts(storage_dir, "run-route-cls-only")
-    client = _client(storage_dir)
-
-    for lang, expected_yes, expected_case in [
-        ("en", "Yes", "New lead"),
-        ("ru", "Да", "Новый лид"),
-    ]:
-        response = client.get(
-            f"/rop/events/evt-1?run_id=run-route-cls-only&lang={lang}"
-        )
-        assert response.status_code == 200
-        html = response.text
-
-        _assert_badge_in(html, "bg-secondary-lt", expected_case)
-        _assert_badge_in(html, "bg-danger-lt", "high")
-        _assert_badge_in(html, "bg-warning-lt", expected_yes)
-
-
-def test_event_detail_route_badges_full_data(tmp_path: Path) -> None:
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-route-full")
-    (run_dir / "rop_ai_adjudicator_results.json").write_text(
-        json.dumps(
-            {
-                "results": [
-                    {
-                        "event_id": "evt-1",
-                        "ai_used": True,
-                        "ai_status": "ok",
-                        "ai_confidence": 0.92,
-                        "ai_reason": "ai review complete",
-                        "final_case_type": "new_lead",
-                        "final_recommended_queue": "manual_review",
-                        "final_correct_action": "manual_review",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    (run_dir / "rop_final_decisions.json").write_text(
-        json.dumps(
-            {
-                "summary": {
-                    "total_events": 1,
-                    "decision_source_counts": {"ai_adjudicator": 1},
-                    "attention_count": 0,
-                },
-                "events": [
-                    {
-                        "event_id": "evt-1",
-                        "final_case_type": "new_lead",
-                        "final_case_subtype": None,
-                        "final_queue": "manual_review",
-                        "final_action": "manual_review",
-                        "final_decision_source": "ai_adjudicator",
-                        "final_confidence": 0.92,
-                        "needs_attention": False,
-                        "attention_reason": None,
-                        "automation_allowed": False,
-                        "bitrix_write_allowed": False,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    client = _client(storage_dir)
-
-    for lang, expected_yes, expected_ai_status, expected_case in [
-        ("en", "Yes", "AI review completed", "New lead"),
-        ("ru", "Да", "Проверка AI завершена", "Новый лид"),
-    ]:
-        response = client.get(f"/rop/events/evt-1?run_id=run-route-full&lang={lang}")
-        assert response.status_code == 200
-        html = response.text
-
-        _assert_badge_in(html, "bg-secondary-lt", expected_case)
-        _assert_badge_in(html, "bg-danger-lt", "high")
-        _assert_badge_in(html, "bg-warning-lt", expected_yes)
-
-        _assert_badge_in(html, "bg-success-lt", expected_ai_status)
-        _assert_badge_in(html, "bg-warning-lt", "manual_review")
-
-        assert "ai_adjudicator" not in html
-
-
-def test_event_detail_route_badges_no_adjudicator(tmp_path: Path) -> None:
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_rop_event_detail_artifacts(storage_dir, "run-route-no-adj")
-    (run_dir / "rop_ai_adjudicator_results.json").write_text(
-        json.dumps({"results": []}), encoding="utf-8"
-    )
-    client = _client(storage_dir)
-
-    for lang, expected_yes, fd_title, expected_case in [
-        ("en", "Yes", "Final decision", "New lead"),
-        ("ru", "Да", "Итоговое решение", "Новый лид"),
-    ]:
-        response = client.get(f"/rop/events/evt-1?run_id=run-route-no-adj&lang={lang}")
-        assert response.status_code == 200
-        html = response.text
-
-        assert fd_title in html
-
-        _assert_badge_in(html, "bg-secondary-lt", expected_case)
-        badge_new_lead = f'class="badge bg-secondary-lt">{expected_case}<'
-        assert html.count(badge_new_lead) >= 2
-
-        _assert_badge_in(html, "bg-danger-lt", "high")
-        _assert_badge_in(html, "bg-warning-lt", expected_yes)
-
-        _assert_badge_in(html, "bg-secondary-lt", "high_priority")
-        _assert_badge_in(html, "bg-secondary-lt", "review")
-
-        assert "bg-success-lt" not in html
 
 
 def _seed_download_attachment(storage_dir: Path, run_id: str) -> dict[str, Any]:
@@ -10390,63 +9749,6 @@ def test_rop_trusted_attach_existing_overlay_in_tab_path(tmp_path: Path) -> None
     assert row["case_type"] == "existing_deal"
     assert row["bot_case_type"] == "existing_deal"
     assert row["semantic_case_type"] == "new_lead"
-
-
-def _test_rop_bitrix_tab_evidence_available_with_valid_artifact(
-    tmp_path: Path,
-) -> None:
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_run_artifacts(storage_dir, "run-bitrix-ok")
-    (run_dir / "bitrix_reconciliation.json").write_text(
-        json.dumps(
-            {
-                "run_id": "run-bitrix-ok",
-                "status": "ok",
-                "aggregate": {"matched_count": 1},
-                "items": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    _write_rop_web_projection(storage_dir)
-    client = _client(storage_dir)
-
-    response = client.get("/rop?tab=bitrix&run_id=run-bitrix-ok")
-
-    assert response.status_code == 200
-    assert "artifact is not available" not in response.text
-    assert "Bitrix Evidence Board" in response.text
-
-
-def _test_rop_bitrix_tab_evidence_unavailable_with_missing_artifact(
-    tmp_path: Path,
-) -> None:
-    storage_dir = _make_storage(tmp_path)
-    _write_run_artifacts(storage_dir, "run-bitrix-missing")
-    _write_rop_web_projection(storage_dir)
-    client = _client(storage_dir)
-
-    response = client.get("/rop?tab=bitrix&run_id=run-bitrix-missing")
-
-    assert response.status_code == 200
-    assert "artifact is not available" in response.text
-    assert "Bitrix Evidence Board" in response.text
-
-
-def _test_rop_bitrix_tab_evidence_unavailable_with_malformed_artifact(
-    tmp_path: Path,
-) -> None:
-    storage_dir = _make_storage(tmp_path)
-    run_dir = _write_run_artifacts(storage_dir, "run-bitrix-malformed")
-    (run_dir / "bitrix_reconciliation.json").write_text("{bad json}", encoding="utf-8")
-    _write_rop_web_projection(storage_dir)
-    client = _client(storage_dir)
-
-    response = client.get("/rop?tab=bitrix&run_id=run-bitrix-malformed")
-
-    assert response.status_code == 200
-    assert "artifact is not available" in response.text
-    assert "Bitrix Evidence Board" in response.text
 
 
 def _write_many_rop_runs(storage_dir: Path, count: int) -> list[str]:

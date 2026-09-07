@@ -3170,6 +3170,103 @@ class TestQueueFilters:
         assert dashboard["business_kpi"]["lost_in_bitrix"] == 0
         assert dashboard["queues"]["matched"][1]["event_id"] == "evt-002"
 
+    @pytest.mark.parametrize(
+        ("status", "attachment_status"),
+        [
+            ("created", "not_required"),
+            ("created", "failed"),
+            ("recovered", "pending"),
+        ],
+    )
+    def test_confirmed_create_lead_overrides_not_found(
+        self,
+        status: str,
+        attachment_status: str,
+    ) -> None:
+        writeback_state = {
+            "events": {
+                "welding|source-1|evt-1": {
+                    "last_run_id": "run-1",
+                    "source_id": "source-1",
+                    "event_id": "evt-1",
+                    "outcome": "create_lead",
+                    "status": status,
+                    "remote_entity_id": 123,
+                    "email_attachment_status": attachment_status,
+                }
+            }
+        }
+        confirmed = rop_dashboard_module._confirmed_bitrix_delivery_events(
+            writeback_state
+        )
+        state = rop_dashboard_module._build_bitrix_period_state(
+            [{"event_id": "evt-1", "source_id": "source-1"}],
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "source-1",
+                        "bitrix_match_status": "not_found",
+                    }
+                ]
+            },
+            "run-1",
+            confirmed_delivery_events=confirmed,
+        )
+
+        assert state["kpi"]["matched_in_bitrix"] == 1
+        assert state["kpi"]["lost_in_bitrix"] == 0
+        assert state["queues"]["matched"][0]["bitrix_status"] == "matched_lead"
+
+    @pytest.mark.parametrize(
+        ("status", "remote_entity_id"),
+        [
+            ("planned", 123),
+            ("pending", 123),
+            ("created", 0),
+            ("recovered", -1),
+            ("created", "123"),
+            ("recovered", True),
+        ],
+    )
+    def test_unconfirmed_create_lead_does_not_override_not_found(
+        self,
+        status: str,
+        remote_entity_id: Any,
+    ) -> None:
+        confirmed = rop_dashboard_module._confirmed_bitrix_delivery_events(
+            {
+                "events": {
+                    "welding|source-1|evt-1": {
+                        "last_run_id": "run-1",
+                        "source_id": "source-1",
+                        "event_id": "evt-1",
+                        "outcome": "create_lead",
+                        "status": status,
+                        "remote_entity_id": remote_entity_id,
+                        "email_attachment_status": "attached",
+                    }
+                }
+            }
+        )
+        state = rop_dashboard_module._build_bitrix_period_state(
+            [{"event_id": "evt-1", "source_id": "source-1"}],
+            {
+                "items": [
+                    {
+                        "event_id": "evt-1",
+                        "source_id": "source-1",
+                        "bitrix_match_status": "not_found",
+                    }
+                ]
+            },
+            "run-1",
+            confirmed_delivery_events=confirmed,
+        )
+
+        assert state["kpi"]["matched_in_bitrix"] == 0
+        assert state["kpi"]["lost_in_bitrix"] == 1
+
     def test_validate_filter_params_accepts_duplicate_aliases(self) -> None:
         errors = rop_dashboard_module.validate_filter_params(
             {"classification": "duplicate", "case_type": "duplicate"}

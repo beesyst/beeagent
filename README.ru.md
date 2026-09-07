@@ -94,7 +94,6 @@
 - строить business-facing `rop_dashboard.json`;
 - выполнять read-only Bitrix reconciliation;
 - применять Bitrix match quality gate для weak/ambiguous/unsafe candidates;
-- формировать read-only/draft-only `rop_action_drafts.json`;
 - формировать ROP MVP handoff/readiness pack;
 - использовать bounded email body preview через `rop.email_preview.body_chars_max`;
 - сохранять `body_preview`, `body_preview_chars`, `body_preview_truncated`, `body_preview_source` в `normalized_events.json`;
@@ -176,7 +175,6 @@ BeeAgent уже прошёл этап **module platform v0**:
 - ROP current-state index;
 - business-facing ROP dashboard read-model;
 - Bitrix match quality gate;
-- action drafts v0 без write-back;
 - MVP handoff/readiness pack.
 
 Итерация 30 добавила:
@@ -277,7 +275,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `base_classification` и `duplicate` evidence (candidate/confidence/reason) в `classified_events.json` и `rop_final_decisions.json`;
 - deterministic confident duplicate сохраняется в final decision (`deterministic` source) и не инвалидируется AI adjudicator/legacy AI assist (explicit skip);
 - `duplicate_count` в `operator_summary.json.classification`;
-- duplicate rows показываются в ROP Queue (`needs_review`), учитываются в current-state `needs_manual_review`;
+- duplicate rows доступны в ROP Queue и Classification filter; `needs_review` содержит fallback events;
 - Classification filter автоматически содержит `Duplicate` при наличии duplicate rows;
 - Event Detail показывает bounded duplicate evidence (candidate, confidence, reason) и `base_case_type`;
 - reviewed It20 reason code `duplicate_candidate_confirmed` покрыт reason catalog.
@@ -293,7 +291,6 @@ BeeAgent уже прошёл этап **module platform v0**:
 - deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved; несколько адресов на одном evidence level → `ambiguous` без выбора первого; `Cc` только evidence, никогда responsible;
 - BeeAgent-owned read-only Bitrix `user.get` directory lookup (exact normalized active user email, bounded pagination, не per-email API call);
 - новый read-only artifact `storage/runs/<run_id>/rop_recipient_routing.json` с `event_id` + `event_instance_id`, source provenance, recipient/ responsible statuses (resolved/ambiguous/unresolved, matched/not_found/connector_degraded/not_attempted);
-- обогащение `rop_action_drafts.json` proposed recipient/responsible evidence при сохранении `read_only`/`draft_only`;
 - секция Recipient routing на read-only Event Detail странице;
 - без CRM/mailbox write-back, `automation_allowed=false`, `bitrix_write_allowed=false`, `beeagent-rop` без изменений.
 
@@ -302,8 +299,8 @@ BeeAgent уже прошёл этап **module platform v0**:
 - `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`new_lead_assigned`/`irrelevant` и отдельный write credential env, который отличается от read credential и по env name, и по normalized URL; дополнительные `bitrix.writeback.email_attach` (email-activity binding) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»); `bitrix.writeback.email_completed` (boolean, по умолчанию `true`) задаёт состояние `COMPLETED` создаваемой email-активности — `false` оставляет письмо незавершённым/заметнее в таймлайне;
 - отдельный bounded `BitrixWriteClient` (exact mutation allowlist `crm.item.add`, `crm.activity.add`, `entityTypeId=1`) с отдельным env credential `BITRIX_WRITEBACK_WEBHOOK_URL`; `BitrixReadonlyClient` остаётся строго read-only и использует `crm.activity.list` только для idempotency reconciliation;
 - `irrelevant` включён в read-only reconciliation и delivery planning; `should_rop_see` не является execution gate;
-- authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy; `rop_action_drafts.json` не является execution authority;
-- canonical durable state `storage/interfaces/rop_writeback_state.json` + per-run read-only projection `storage/runs/<run_id>/rop_writeback_summary.json` (artifact allowlist); after external execution or recovery, every affected original run refreshes its summary and read-only action-draft projection from this canonical state;
+- authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy;
+- canonical durable state `storage/interfaces/rop_writeback_state.json` + per-run read-only projection `storage/runs/<run_id>/rop_writeback_summary.json` (artifact allowlist); after external execution or recovery, every affected original run refreshes its summary from this canonical state;
 - idempotent create через stable cross-run identity `client_id + source_id + (message_id → x_email_id → event_id)` и bounded `ORIGINATOR_ID`/`ORIGIN_ID`; recovery uncertain POST по idempotency lookup перед повторным POST; bounded retry для transport/429/5xx; terminal 400/401/403/API errors не ретраятся;
 - прикрепление письма к созданному или trusted exact thread Lead/Deal через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.email_attach: true`; activity получает target owner и его существующего responsible без reassignment CRM entity, а повторный/uncertain результат сначала сверяется read-only `crm.activity.list` по stable identity;
 - safe existing Deal доступен только через exact sender email/phone → exact Contact/Company → bounded read-only `crm.item.list` (`entityTypeId=2`) relation lookup по официальным `contactId`/`companyId`: один linked Deal = strong/safe, multiple/none/malformed/connector result не становится automatic target, title/subject similarity остаётся unsafe;
@@ -402,7 +399,6 @@ run:
 ./start.sh rop evaluate-review --run-id ID
 ./start.sh rop evaluate-review --tsv storage/runs/ID/rop_review_table.tsv
 ./start.sh rop reconcile-bitrix --run-id ID
-./start.sh rop action-drafts --run-id ID
 
 # ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
 ./start.sh rop mvp-pack --run-id ID [--period 7d]
@@ -447,7 +443,6 @@ cd beeagent
 | ROP                  | `./start.sh rop current ...`                        | Build current-state index                                                        |
 | ROP                  | `./start.sh rop dashboard ...`                      | Build ROP business dashboard                                                     |
 | ROP                  | `./start.sh rop reconcile-bitrix ...`               | Reconcile with Bitrix CRM (read-only)                                            |
-| ROP                  | `./start.sh rop action-drafts ...`                  | Generate action draft artifacts                                                  |
 | ROP                  | `./start.sh rop mvp-pack ...`                       | Build ROP MVP handoff/readiness pack                                             |
 | ROP                  | `./start.sh rop writeback plan ...`                 | Build authoritative write-back plan (zero writes)                                |
 | ROP                  | `./start.sh rop writeback execute ...`              | Execute pending write-back per policy                                            |
@@ -522,7 +517,7 @@ API artifact маршруты:
 - Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
 - `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
 - Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;
-- HTML tabs на `/rop`: Overview, Queue, Sources. Bitrix status доступен через фильтр `bitrix_status` во вкладке Queue.
+- HTML tabs на `/rop`: Overview, Queue, Sources, Blacklist. Bitrix status доступен через фильтр `bitrix_status` во вкладке Queue.
 - вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
 - при `?lang=ru` link label отображается как `Подробнее`.
 - Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
@@ -530,7 +525,7 @@ API artifact маршруты:
 - dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 500), attachment summary без raw content и evidence links по allowlist;
 - `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload с UI-6 полями: `latest_selection`, `thread_summary`, `threads`, `ai_assist_summary`, `ai_assist_events`.
 
-Web console только читает existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`.
+Read/dashboard routes Web Console читают existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`; UI-8.8 Blacklist Add/Update/Delete является отдельным bounded protected POST exception.
 Доступ к артефактам идёт только по allowlisted `artifact_id`, а не по произвольным именам файлов.
 Browser artifact routes возвращают BeeUI HTML, API artifact routes возвращают bounded/redacted JSON.
 Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
@@ -564,7 +559,7 @@ bitrix:
 В текущем scope не входят:
 
 - web-triggered `rop run`;
-- operator POST/write actions;
+- general operator POST/write actions, кроме explicit protected UI-8.8 Blacklist Add/Update/Delete;
 - config editing;
 - UI-triggered CRM/Bitrix write-back;
 - production listener/stream;
@@ -745,9 +740,6 @@ principal token rotation требует повторного входа; каж�
 
 # Выполнить read-only Bitrix reconciliation.
 ./start.sh rop reconcile-bitrix --run-id live-review-2026-05-15
-
-# Построить action drafts после reconciliation.
-./start.sh rop action-drafts --run-id live-review-2026-05-15
 
 # Собрать MVP handoff/readiness pack.
 ./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
@@ -1024,7 +1016,7 @@ beeagent/
 5. embedded BeeUI app;
 6. BeeAgent UI adapter/read-model/artifact allowlist;
 7. existing artifacts из `storage/`;
-8. read-only HTML/API operator view без мутаций.
+8. read-only HTML/API operator view по умолчанию; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception.
 
 Для внешних доменных модулей добавлен module execution path:
 
@@ -1073,7 +1065,6 @@ configured source(s)
 → rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если legacy bounded AI assist включён
 → rop_ai_adjudicator_requests.json / rop_ai_adjudicator_decisions.json / rop_ai_adjudicator_results.json, если ROP AI adjudicator включён
 → bitrix_reconciliation.json (optional read-only evidence)
-→ rop_action_drafts.json (optional draft-only artifact)
 → rop_current_state.json / interfaces current index
 → rop_dashboard.json
 → beeagent-rop rop_summary
@@ -1088,8 +1079,8 @@ configured source(s)
 
 `run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
 
-В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts.
-В scope всё ещё не входят production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions. Controlled server-side write-back через `rop run` / `rop poll` существует и включён в tracked production profile; explicit disabled и dry-run режимы сохраняют zero-write control.
+В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation.
+В scope всё ещё не входят production listener/stream и general UI-triggered runtime/CRM/mailbox execution. Controlled server-side Bitrix write-back через `rop run` / `rop poll` существует и включён в tracked production profile; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception, а explicit disabled и dry-run режимы сохраняют zero-write control.
 
 ## Запуск
 
@@ -1192,7 +1183,6 @@ uv run pytest -q
 - `./start.sh rop summary --run-id <run_id>`;
 - `./start.sh rop export-review --run-id <run_id> --format tsv`;
 - `./start.sh rop reconcile-bitrix --run-id <run_id>`;
-- `./start.sh rop action-drafts --run-id <run_id>`;
 - `./start.sh auth rotate <principal-id-or-username>`;
 - `./start.sh auth rotate all`;
 - `./start.sh auth rotate all --logout-all`;
@@ -1328,7 +1318,7 @@ rop:
 - proposed Bitrix responsible — exact normalized active user email через read-only `user.get` directory (bounded pagination);
 - статусы: recipient `resolved`/`ambiguous`/`unresolved`; responsible `matched`/`not_found`/`ambiguous`/`connector_degraded`/`not_attempted`;
 - каждый item содержит `event_id` + `event_instance_id` + source provenance;
-- action drafts и Event Detail показывают bounded recipient/responsible evidence без CRM/mailbox write-back.
+- Event Detail показывает bounded recipient/responsible evidence без CRM/mailbox write-back.
 - deliberate human reassignment by forwarding cannot be reliably distinguished from ordinary transport forwarding from email headers alone; It36 preserves `original_recipient` precedence, so this edge case may require operator correction.
 - automatic reassignment inference and a responsible override/reassignment workflow are outside It36 and require a separate explicit workflow/policy contract.
 
@@ -1518,7 +1508,6 @@ Write-back в этом path не выполняется.
 - `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
 - `storage/runs/<run_id>/rop_current_state.json`
 - `storage/runs/<run_id>/bitrix_reconciliation.json`
-- `storage/runs/<run_id>/rop_action_drafts.json`
 - `storage/runs/<run_id>/rop_mvp_pack.json`
 - `storage/runs/<run_id>/rop_mvp_report.md`
 - `storage/runs/<run_id>/rop_conversation.json` — BeeAgent-owned conversation relation (exact RFC authority, client/source scope)
@@ -1582,7 +1571,7 @@ BeeAgent не принимает business-решений на основе trans
 
 **Структура `rop_review_table.tsv` (v1):**
 
-Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` и `rop action-drafts` TSV расширяется Bitrix/action columns. Число колонок stage-dependent и не должно считаться фиксированным контрактом.
+Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` TSV может содержать Bitrix evidence columns. Число колонок stage-dependent и не должно считаться фиксированным контрактом.
 
 После It34 TSV также может содержать AI adjudicator trace fields:
 
@@ -1662,17 +1651,13 @@ BeeAgent не принимает business-решений на основе trans
 
 Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
 
-После `rop reconcile-bitrix` и `rop action-drafts` TSV также содержит:
+После `rop reconcile-bitrix` TSV также содержит:
 
 - `bitrix_match_status`
 - `bitrix_match_quality`
 - `bitrix_confidence`
 - `needs_manual_review`
 - `safe_to_use_as_target`
-- `recommended_action`
-- `recommended_next_step`
-- `action_queue`
-- `action_draft_id`
 
 Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
 
@@ -1775,7 +1760,6 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP current-state index** — DONE;
 - **ROP dashboard read-model** — DONE;
 - **ROP Bitrix match quality gate** — DONE;
-- **ROP action drafts v0** — DONE;
 - **ROP latest-N/source selection evidence** — DONE;
 - **ROP thread artifacts and bounded thread context** — DONE;
 - **ROP bounded AI assist execution v0** — DONE;
@@ -1786,11 +1770,7 @@ BeeAgent уже вышел из состояния “только демо”.
 - **ROP AI adjudicator payload/artifact safety** — DONE;
 - **ROP Review Workbench event details** — DONE;
 - **ROP review quality gate** — DONE;
-- **ROP context enrichment** — DONE;
-- **ROP routing map** — DONE;
-- **ROP delivery recommendations** — DONE;
 - **ROP Bitrix widget API** — DONE;
-- **ROP recommendations Web UI tab** — DONE;
 - **ROP MVP handoff/readiness pack** — DONE.
 
 Первый реальный модуль:
@@ -1807,12 +1787,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - `./start.sh rop run --all-sources` запускает multi-source ingestion;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
-- BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_action_drafts.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
+- BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
 - BeeAgent может выполнять `evaluate-review` по reviewed TSV и пишет `rop_evaluation.json`;
 - ROP Queue ведёт на read-only event detail page `/rop/events/{event_id}?run_id=...`;
 - BeeAgent отдаёт JSON detail через `/api/rop/events/{event_id}?run_id=...`;
 - event detail HTML рендерится через BeeUI generic detail renderer;
-- event detail использует bounded `body_preview_*`, classification, thread, AI, Bitrix, action draft, attachments metadata и evidence links;
+- event detail использует bounded `body_preview_*`, classification, thread, AI, Bitrix, attachments metadata и evidence links;
 - raw `.eml`, raw attachment content и secret-like payload не рендерятся;
 - BeeAgent передаёт bounded artifact-derived context через public `beeagent-rop` `ThreadContext` adapter; artifact shape и public module payload намеренно различаются;
 - BeeAgent пишет AI assist evidence artifacts;
@@ -1830,13 +1810,12 @@ BeeAgent уже вышел из состояния “только демо”.
 - linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
 - BeeAgent может строить Bitrix reconciliation artifact без CRM write-back;
 - Bitrix match quality gate не считает weak/unsafe matches безопасными target;
-- action drafts создаются как read-only/draft-only artifact, без выполнения действий в Bitrix;
 - BeeAgent отдаёт protected read-only Bitrix widget API;
 - It32 delivery/readiness layer находится в BeeAgent, а `beeagent-rop` остаётся владельцем domain classification / `ai_assist_merge` boundary;
 - MVP pack собирает handoff/readiness artifacts для operator/customer review;
 - live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
-- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation/action drafts уже входят в scope;
-- production listener/stream, UI/widget-triggered CRM/Bitrix write-back и POST actions всё ещё не входят в scope; controlled server-side write-back через `rop run` / `rop poll` существует и включён в tracked production profile; explicit disabled и dry-run режимы сохраняют zero-write control.
+- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation уже входят в scope;
+- production listener/stream и general UI-triggered runtime/CRM/mailbox execution всё ещё не входят в scope; controlled server-side Bitrix write-back через `rop run` / `rop poll` существует и включён в tracked production profile; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception, а explicit disabled и dry-run режимы сохраняют zero-write control.
 - `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
 - `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
 - web console показывает runs, run overview, module diagnostics и ROP dashboard;

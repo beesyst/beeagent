@@ -1664,7 +1664,6 @@ def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
 def _confirmed_bitrix_delivery_events(
     state: dict[str, Any] | None,
 ) -> set[tuple[str, str, str]]:
-    """Return events whose email activity was successfully attached in Bitrix."""
     if not isinstance(state, dict):
         return set()
     records = state.get("events")
@@ -1675,7 +1674,24 @@ def _confirmed_bitrix_delivery_events(
     for record in records.values():
         if not isinstance(record, dict):
             continue
-        if record.get("email_attachment_status") != "attached":
+        outcome = record.get("outcome")
+        status = record.get("status")
+        remote_entity_id = record.get("remote_entity_id")
+        create_lead_confirmed = (
+            outcome == "create_lead"
+            and status in ("created", "recovered")
+            and isinstance(remote_entity_id, int)
+            and not isinstance(remote_entity_id, bool)
+            and remote_entity_id > 0
+        )
+        attach_existing_confirmed = (
+            (
+                record.get("email_attachment_status") == "attached"
+                or (outcome == "attach_existing" and status == "attached")
+            )
+            and outcome != "create_lead"
+        )
+        if not create_lead_confirmed and not attach_existing_confirmed:
             continue
         run_id = record.get("last_run_id")
         source_id = record.get("source_id")
@@ -1690,7 +1706,6 @@ def _with_attachment_presence(
     normalized_list: list[dict[str, Any]],
     run_id: str,
 ) -> list[dict[str, Any]]:
-    """Annotate classified events with attachment presence from normalized mail."""
     exact_presence: dict[tuple[str, str, str, str], bool] = {}
     fallback_presence: dict[tuple[str, str, str], list[bool]] = {}
 
