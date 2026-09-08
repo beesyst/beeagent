@@ -466,6 +466,29 @@ def _poll_single_source(
                 run_id,
                 exc,
             )
+
+        state = build_rop_current_state(storage_dir, run_id, logger)
+        write_current_state(storage_dir, run_id, state, logger)
+        dashboard = build_rop_dashboard(
+            storage_dir,
+            settings["rop"]["dashboard"]["default_period"],
+            logger,
+            run_id,
+            aggregate_runs=True,
+        )
+        write_rop_dashboard(storage_dir, dashboard, logger)
+        refresh_rop_web_projection(
+            storage_dir=storage_dir,
+            periods=list(
+                settings["rop"]["dashboard"].get(
+                    "periods", [settings["rop"]["dashboard"]["default_period"]]
+                )
+            ),
+            run_id=run_id,
+            logger=logger,
+            is_new_run=False,
+        )
+
     logger.info(
         "mailbox poll completed: source_id=%s run_id=%s selected_count=%s",
         source_id,
