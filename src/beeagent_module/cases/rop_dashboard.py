@@ -166,8 +166,7 @@ def validate_filter_params(
     has_attachments = params.get("has_attachments", "")
     if has_attachments and has_attachments not in ("true", "false"):
         errors.append(
-            "Invalid has_attachments "
-            f"'{has_attachments}', expected 'true' or 'false'"
+            f"Invalid has_attachments '{has_attachments}', expected 'true' or 'false'"
         )
 
     bitrix_status = params.get("bitrix_status", "")
@@ -1685,18 +1684,17 @@ def _confirmed_bitrix_delivery_events(
             and remote_entity_id > 0
         )
         attach_existing_confirmed = (
-            (
-                record.get("email_attachment_status") == "attached"
-                or (outcome == "attach_existing" and status == "attached")
-            )
-            and outcome != "create_lead"
-        )
+            record.get("email_attachment_status") == "attached"
+            or (outcome == "attach_existing" and status == "attached")
+        ) and outcome != "create_lead"
         if not create_lead_confirmed and not attach_existing_confirmed:
             continue
         run_id = record.get("last_run_id")
         source_id = record.get("source_id")
         event_id = record.get("event_id")
-        if all(isinstance(value, str) and value for value in (run_id, source_id, event_id)):
+        if all(
+            isinstance(value, str) and value for value in (run_id, source_id, event_id)
+        ):
             confirmed.add((run_id, source_id, event_id))
     return confirmed
 
@@ -1719,8 +1717,10 @@ def _with_attachment_presence(
         origin_run_id = str(event.get("_dashboard_origin_run_id") or run_id)
         instance_id = str(event.get("event_instance_id") or "")
         attachments = event.get("attachments")
-        has_attachments = bool(attachments) if isinstance(attachments, list) else bool(
-            event.get("attachment_count")
+        has_attachments = (
+            bool(attachments)
+            if isinstance(attachments, list)
+            else bool(event.get("attachment_count"))
         )
         exact_presence[(origin_run_id, source_id, event_id, instance_id)] = (
             has_attachments
@@ -2304,9 +2304,7 @@ def _build_business_kpi(
         "lost_in_bitrix": _int(bitrix_kpi.get("lost_in_bitrix", 0)),
         "weak_match": _int(bitrix_kpi.get("weak_match", 0)),
         "ambiguous_or_duplicate": _int(bitrix_kpi.get("ambiguous_or_duplicate", 0)),
-        "identity_only_no_target": _int(
-            bitrix_kpi.get("identity_only_no_target", 0)
-        ),
+        "identity_only_no_target": _int(bitrix_kpi.get("identity_only_no_target", 0)),
         "unreconciled": _int(bitrix_kpi.get("unreconciled", 0)),
         "matched_in_bitrix": _int(bitrix_kpi.get("matched_in_bitrix", 0)),
         "bitrix_errors": _int(bitrix_kpi.get("bitrix_errors", 0)),
@@ -2652,7 +2650,9 @@ def _build_bitrix_period_state(
         elif status == "identity_only_no_target":
             kpi["identity_only_no_target"] += 1
             queues["identity_only_no_target"].append(
-                _bitrix_queue_entry(evt, status, origin_run_id, "identity_only_no_target")
+                _bitrix_queue_entry(
+                    evt, status, origin_run_id, "identity_only_no_target"
+                )
             )
         elif status == "skipped":
             continue

@@ -1146,10 +1146,6 @@ def test_poll_writeback_enabled_executes_after_checkpoint(monkeypatch, tmp_path:
     for name, result in (
         ("build_recipient_routing_artifact", {}),
         ("run_reconciliation", {"status": "ok"}),
-        ("build_rop_current_state", {}),
-        ("write_current_state", None),
-        ("build_rop_dashboard", {}),
-        ("write_rop_dashboard", None),
     ):
         monkeypatch.setattr(
             "beeagent_module.cases.rop_mailbox_poll." + name,
@@ -1160,6 +1156,26 @@ def test_poll_writeback_enabled_executes_after_checkpoint(monkeypatch, tmp_path:
         lambda *_args, **_kwargs: "x",
     )
     order: list[str] = []
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_rop_current_state",
+        lambda *_args, **_kwargs: order.append("current_state") or {},
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.write_current_state",
+        lambda *_args, **_kwargs: order.append("write_current_state"),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.build_rop_dashboard",
+        lambda *_args, **_kwargs: order.append("dashboard") or {},
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.write_rop_dashboard",
+        lambda *_args, **_kwargs: order.append("write_dashboard"),
+    )
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll.refresh_rop_web_projection",
+        lambda **kwargs: order.append(f"projection:{kwargs['is_new_run']}"),
+    )
     execute_kwargs: dict[str, object] = {}
     monkeypatch.setattr(
         "beeagent_module.cases.rop_mailbox_poll.build_writeback_plan",
@@ -1189,7 +1205,21 @@ def test_poll_writeback_enabled_executes_after_checkpoint(monkeypatch, tmp_path:
         tmp_path,
         logging.getLogger("test"),
     )
-    assert order == ["plan", "checkpoint", "execute"]
+    assert order == [
+        "plan",
+        "current_state",
+        "write_current_state",
+        "dashboard",
+        "write_dashboard",
+        "projection:True",
+        "checkpoint",
+        "execute",
+        "current_state",
+        "write_current_state",
+        "dashboard",
+        "write_dashboard",
+        "projection:False",
+    ]
     assert execute_kwargs["scope_run_id"] == "run"
     assert (
         json.loads(path.read_text())["sources"]["source"]["last_processed_uid"] == 103
