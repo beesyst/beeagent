@@ -86,6 +86,8 @@ EVIDENCE_LABELS: dict[str, str] = {
 }
 
 _TRUSTED_ATTACH_PROVENANCES = frozenset({"thread_resolved", "bitrix_outbound_exact"})
+
+
 def _trusted_attach_operational_case_types(
     storage_dir: Path,
 ) -> dict[tuple[str, str, str, str], str]:
@@ -2338,6 +2340,8 @@ def build_rop_dashboard_read_model(
         "current_state_queues": current_state_queues,
         "bitrix": bitrix_state,
         "business_kpi": business_kpi,
+        "email_trend": dashboard_payload.get("email_trend", {}),
+        "new_leads_trend": dashboard_payload.get("new_leads_trend", {}),
         "series": series,
         "queues": queues,
         "queue_rows": paginated_queue_rows,
@@ -2710,6 +2714,8 @@ def _build_rop_tab_read_model_legacy(
         "status": "ok",
         "warnings": warnings,
         "business_kpi": business_kpi,
+        "email_trend": dashboard_payload.get("email_trend", {}),
+        "new_leads_trend": dashboard_payload.get("new_leads_trend", {}),
         "series": series,
         "queues": queues,
         "rop_recommendations": dashboard_payload.get("rop_recommendations", []),
@@ -2995,7 +3001,6 @@ _OVERVIEW_PERIODS: tuple[str, ...] = (
 )
 
 
-
 def _period_label(period: str, locale: str = "en") -> str:
     return t(_PERIOD_LABELS.get(period, period), locale)
 
@@ -3026,8 +3031,6 @@ def _period_link_items(
     items: list[dict[str, Any]] = []
     for period_value in _OVERVIEW_PERIODS:
         label = _period_label(period_value, locale)
-        if period_value == current_period:
-            label = f"{label} ({t('current', locale)})"
         items.append(
             {
                 "period": period_value,
@@ -3383,12 +3386,53 @@ def _build_rop_overview_layout(
     source_count = kpis.get("source_count", 0)
     degraded_sources = kpis.get("degraded_source_count", 0)
     source_summary = (
-        t("{count} / {degraded} degraded", locale).format(count=source_count, degraded=degraded_sources)
-        if degraded_sources else t("{count} connected", locale).format(count=source_count)
+        t("{count} / {degraded} degraded", locale).format(
+            count=source_count, degraded=degraded_sources
+        )
+        if degraded_sources
+        else t("{count} connected", locale).format(count=source_count)
     )
-    bitrix_summary = t("{count} not reconciled", locale).format(count=unreconciled) if unreconciled else (t("OK", locale) if not lost_in_bitrix else t("{count} lost", locale).format(count=lost_in_bitrix))
-    period_emails = _int(business_kpi.get("processed_emails", business_kpi.get("processed_events", kpis.get("loaded_count", 0))))
-    todays_emails = period_emails
+    bitrix_summary = (
+        t("{count} not reconciled", locale).format(count=unreconciled)
+        if unreconciled
+        else (
+            t("OK", locale)
+            if not lost_in_bitrix
+            else t("{count} lost", locale).format(count=lost_in_bitrix)
+        )
+    )
+    period_emails = _int(
+        business_kpi.get(
+            "processed_emails",
+            business_kpi.get("processed_events", kpis.get("loaded_count", 0)),
+        )
+    )
+    email_trend = data.get("email_trend", {})
+    if not isinstance(email_trend, dict):
+        email_trend = {}
+    primary_trend: dict[str, Any] | None = None
+    if email_trend.get("status") == "available":
+        percentage = email_trend.get("percentage")
+        direction = email_trend.get("direction")
+        if (
+            isinstance(percentage, int)
+            and not isinstance(percentage, bool)
+            and direction in {"up", "down", "neutral"}
+        ):
+            primary_trend = {"percentage": percentage, "direction": direction}
+    new_leads_trend = data.get("new_leads_trend", {})
+    if not isinstance(new_leads_trend, dict):
+        new_leads_trend = {}
+    secondary_trend: dict[str, Any] | None = None
+    if new_leads_trend.get("status") == "available":
+        percentage = new_leads_trend.get("percentage")
+        direction = new_leads_trend.get("direction")
+        if (
+            isinstance(percentage, int)
+            and not isinstance(percentage, bool)
+            and direction in {"up", "down", "neutral"}
+        ):
+            secondary_trend = {"percentage": percentage, "direction": direction}
     layout: list[dict[str, Any]] = []
     bitrix_gap_count = (
         _int(unreconciled) + _int(lost_in_bitrix) + _int(ambiguous_or_duplicate)
@@ -3493,41 +3537,50 @@ def _build_rop_overview_layout(
                 locale,
             ),
             "status": "",
+            "illustration": {"asset": "tabler_email_dark", "alt": ""},
             "items": [
                 {
-                    "label": (
-                        t("TODAY'S EMAILS", locale)
-                        if current_period == "today"
-                        else t("Yesterday's emails", locale)
-                        if current_period == "yesterday"
-                        else t("Emails in period", locale)
-                    ),
-                    "value": todays_emails,
+                    "label": t("EMAILS", locale),
+                    "value": period_emails,
+                    "metric": True,
                     "progress": min(
                         100,
-                        max(8 if _int(todays_emails) else 0, _int(todays_emails) * 20),
+                        max(8 if _int(period_emails) else 0, _int(period_emails) * 20),
                     ),
                     "progress_tone": "bg-primary",
                 },
                 {
                     "label": t("NEW LEADS", locale),
                     "value": new_leads,
+                    "metric": True,
                     "progress": min(
                         100, max(8 if _int(new_leads) else 0, _int(new_leads) * 20)
                     ),
                     "progress_tone": "bg-success",
                 },
-                {"label": t("Sources", locale), "value": source_summary},
-                {"label": t("Bitrix", locale), "value": bitrix_summary},
             ],
             "primary_links": period_actions,
         }
     )
+    if primary_trend is not None:
+        layout[0]["items"][0]["trend"] = primary_trend
+        layout[0]["items"][0]["progress_tone"] = {
+            "up": "bg-success",
+            "down": "bg-danger",
+            "neutral": "bg-secondary",
+        }[primary_trend["direction"]]
+    if secondary_trend is not None:
+        layout[0]["items"][1]["trend"] = secondary_trend
+        layout[0]["items"][1]["progress_tone"] = {
+            "up": "bg-success",
+            "down": "bg-danger",
+            "neutral": "bg-secondary",
+        }[secondary_trend["direction"]]
     layout.append(
         {
             "type": "chart",
             "width": 6,
-            "title": t("Classification mix", locale),
+            "title": t("Classification", locale),
             "subtitle": t(
                 "{count} total leads in selected period",
                 locale,
@@ -3554,7 +3607,7 @@ def _build_rop_overview_layout(
     small_cards = [
         {
             "type": "venue_card",
-            "width": 6,
+            "width": 3,
             "compact": True,
             "title": t("Urgent leads", locale),
             "subtitle": t("High-priority emails", locale),
@@ -3583,7 +3636,30 @@ def _build_rop_overview_layout(
             "status": str(bitrix_gap_count),
             "items": [{"label": t("Count", locale), "value": bitrix_gap_count}],
             "links": [
-                {"label": t("Open Queue", locale), "href": queue_bitrix_gaps_href},
+                {
+                    "label": t("Open Queue", locale),
+                    "href": queue_bitrix_gaps_href,
+                }
+            ],
+        },
+        {
+            "type": "venue_card",
+            "width": 3,
+            "compact": True,
+            "title": t("Connected Sources", locale),
+            "subtitle": source_summary,
+            "status": str(source_count),
+            "items": [{"label": t("Count", locale), "value": source_count}],
+            "links": [
+                {
+                    "label": t("Sources", locale),
+                    "href": _rop_href(
+                        tab="sources",
+                        period=current_period,
+                        locale=locale,
+                        run_id=str(data.get("run_id", "")),
+                    ),
+                },
             ],
         },
     ]

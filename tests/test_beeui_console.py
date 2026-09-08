@@ -822,18 +822,21 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "AI adjudicator reason" in en_html.text
     assert "AI adjudicator reason" in invalid_html.text
     assert (
-        _item_by_label(_find_section_items(page_ru, "Базовая классификация"), "Причина")[
-            "value"
-        ]
+        _item_by_label(
+            _find_section_items(page_ru, "Базовая классификация"), "Причина"
+        )["value"]
         == "Новый лид: обнаружен сигнал запроса или RFQ"
     )
     assert (
         _item_by_label(_find_section_items(page_ru, "Проверка AI"), "Причина")["value"]
         == "Обнаружены противоречивые бизнес-сигналы"
     )
-    assert _item_by_label(
-        _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
-    ) == {}
+    assert (
+        _item_by_label(
+            _find_section_items(page_ru, "Итоговое решение"), "Причина внимания"
+        )
+        == {}
+    )
     assert (
         _item_by_label(_find_section_items(page_en, "Basic classification"), "Reason")[
             "value"
@@ -867,12 +870,9 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
     assert "unknown ai evidence code ignored" in data["warnings"]
     assert "not_allowed" not in data["warnings"]
     assert not any(
-        "ai_reason_code" in warning
-        for warning in legacy_api.json()["data"]["warnings"]
+        "ai_reason_code" in warning for warning in legacy_api.json()["data"]["warnings"]
     )
-    assert not any(
-        "ai_reason_code" in warning for warning in empty_data["warnings"]
-    )
+    assert not any("ai_reason_code" in warning for warning in empty_data["warnings"])
     assert empty_data["ai_adjudicator"]["ai_adjudicator_reason_display"] == (
         "AI output conflicted with signals; manual review required"
     )
@@ -895,13 +895,19 @@ def test_rop_event_detail_synthetic_reason_contract_is_read_only(
         "Legacy final-decision format: the attention reason code is missing. "
         "A compatible explanation is shown; no data was modified."
     ) in legacy_api_en.json()["data"]["warnings"]
-    assert _item_by_label(
-        _find_section_items(legacy_page_ru, "Итоговое решение"),
-        "Причина внимания",
-    ) == {}
-    assert _item_by_label(
-        _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
-    ) == {}
+    assert (
+        _item_by_label(
+            _find_section_items(legacy_page_ru, "Итоговое решение"),
+            "Причина внимания",
+        )
+        == {}
+    )
+    assert (
+        _item_by_label(
+            _find_section_items(legacy_page_en, "Final decision"), "Attention reason"
+        )
+        == {}
+    )
     assert any(
         "unknown ai_reason_code" in warning
         for warning in unknown_api.json()["data"]["warnings"]
@@ -993,7 +999,7 @@ class TestRopTabs:
         response = client.get("/rop?tab=overview")
         html = response.text
         assert "ROP Control Center" in html
-        assert "Emails in period" in html
+        assert "EMAILS" in html
         assert "NEW LEADS" in html
         assert "Urgent leads" in html
         assert "Fallback classifications" in html
@@ -1036,7 +1042,7 @@ class TestRopPageLayout:
 
     def test_section_aria_label(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
-        assert 'section aria-label="Page blocks"' in html
+        assert 'class="beeui-page-tabs-blocks" aria-label="Page blocks"' in html
 
     def test_subtitle_before_tabs(self, tmp_path: Path) -> None:
         html = self._rop_html(tmp_path)
@@ -1097,10 +1103,38 @@ class TestRopOverviewLayoutStructure:
         assert layout[0]["title"] == "ROP Control Center"
         assert layout[0]["width"] == 6
 
+    def test_primary_email_metric_uses_generic_label_and_trend(self) -> None:
+        data = self._mock_data()
+        data["email_trend"] = {
+            "status": "available",
+            "percentage": -25,
+            "direction": "down",
+        }
+
+        hero = build_rop_page_layout(data, tab="overview")[0]
+
+        assert hero["items"][0]["label"] == "EMAILS"
+        assert hero["items"][0]["metric"] is True
+        assert hero["items"][0]["trend"] == {"percentage": -25, "direction": "down"}
+        assert hero["illustration"] == {"asset": "tabler_email_dark", "alt": ""}
+
+    def test_primary_email_label_is_localized_to_russian(self) -> None:
+        hero = build_rop_page_layout(self._mock_data(), tab="overview", locale="ru")[0]
+
+        assert hero["items"][0]["label"] == "ПИСЬМА"
+
+    def test_primary_email_omits_unavailable_trend(self) -> None:
+        data = self._mock_data()
+        data["email_trend"] = {"status": "unavailable"}
+
+        hero = build_rop_page_layout(data, tab="overview")[0]
+
+        assert "trend" not in hero["items"][0]
+
     def test_top_row_has_two_chart_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         assert layout[1]["type"] == "chart"
-        assert layout[1]["title"] == "Classification mix"
+        assert layout[1]["title"] == "Classification"
         assert layout[1]["width"] == 6
 
     def test_classification_mix_uses_non_overlapping_case_types(self) -> None:
@@ -1138,15 +1172,16 @@ class TestRopOverviewLayoutStructure:
         assert "Needs review" in labels
         assert "Bitrix problems" in labels
 
-    def test_kpi_has_three_small_cards(self) -> None:
+    def test_kpi_has_four_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         cards = [block for block in layout if block["type"] == "venue_card"]
-        assert len(cards) == 3
+        assert len(cards) == 4
+        assert [card["width"] for card in cards] == [3, 3, 3, 3]
 
     def test_overview_desktop_rows_fill_the_grid(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         widths = [block["width"] for block in layout]
-        assert widths == [6, 6, 6, 3, 3, 6, 6, 12]
+        assert widths == [6, 6, 3, 3, 3, 3, 6, 6, 12]
 
     def test_no_run_selector_in_overview(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1317,7 +1352,7 @@ def test_rop_overview_contains_period_selector_from_payload() -> None:
 
     assert [item["label"] for item in items] == [
         "Today",
-        "Last 7 days (current)",
+        "Last 7 days",
         "Last 30 days",
         "All time",
     ]
@@ -1526,7 +1561,7 @@ def test_rop_queue_filter_options_from_queue_data() -> None:
             "label": "Without attachments",
             "checked": False,
             "toggle_href": "/rop?tab=queue&has_attachments=false",
-        }
+        },
     ]
     assert layout[0]["type"] == "data_table"
     assert "toolbar" in layout[0]
@@ -1539,7 +1574,10 @@ def test_bitrix_status_labels_are_translated_for_russian_locale() -> None:
     from beeagent_module.interfaces.ui.read_model import _bitrix_status_label
 
     assert _bitrix_status_label("matched_lead", "ru") == "Найдено в Bitrix"
-    assert _bitrix_status_label("identity_only_no_target", "ru") == "Контакт без лида/сделки"
+    assert (
+        _bitrix_status_label("identity_only_no_target", "ru")
+        == "Контакт без лида/сделки"
+    )
     assert _bitrix_status_label("unreconciled", "ru") == "Сверка не выполнена"
 
 
@@ -3900,7 +3938,7 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
                         "storage_status": "stored",
                         "reason_code": "docling_extraction_failed",
                         "analysis_status": "failed",
-                    }
+                    },
                 ]
             }
         ),
@@ -3924,7 +3962,9 @@ def test_rop_event_detail_trusted_attach_projects_operational_final(
     assert data["bitrix"]["entity_id"] == 1001
     page = build_rop_event_detail_page_model(storage_dir, "run-detail-op", "evt-1")
     bitrix_section = next(
-        section for section in page["sections"] if section.get("title") == "Bitrix evidence"
+        section
+        for section in page["sections"]
+        if section.get("title") == "Bitrix evidence"
     )
     bitrix_labels = [item["label"] for item in bitrix_section["items"]]
     assert "Match quality" not in bitrix_labels
@@ -4226,7 +4266,9 @@ def test_rop_event_detail_exposes_recipient_routing_section(tmp_path: Path) -> N
         section_titles.index("Bitrix evidence") + 1
     )
     routing_section = next(
-        section for section in page["sections"] if section.get("title") == "Recipient routing"
+        section
+        for section in page["sections"]
+        if section.get("title") == "Recipient routing"
     )
     assert [item["label"] for item in routing_section["items"]] == [
         "Recipient",
@@ -4631,7 +4673,9 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     assert response.status_code == 200
     html = response.text
     assert "Панель РОПа" in html
-    assert "ПИСЬМА ЗА ПЕРИОД" in html
+    assert "ПИСЬМА" in html
+    assert '/static/vendor/tabler/illustrations/dark/email.png' in html
+    assert "preview.tabler.io" not in html
     assert "НОВЫЕ ЛИДЫ" in html
     assert "Открыть очередь" in html
     assert "Требуют проверки" in html
@@ -4805,7 +4849,7 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     html = response.text
     assert "Email Workload" in html
     assert "Action Required" not in html
-    assert "Classification mix" in html
+    assert "Classification" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
     assert "chart-rop-email-workload" in html
@@ -4814,7 +4858,7 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     assert "chart-rop-bitrix" in html
     assert "chart-rop-source-contribution" in html
     assert "progress progress-sm" in html
-    assert 'class="card card-sm"' in html
+    assert 'class="card beeui-layout-card card-sm"' in html
 
 
 def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
@@ -4902,7 +4946,7 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "Business KPI" not in html
     assert "Detailed Metrics" not in html
     assert "Business metrics" not in html
-    assert "Emails in period" in html
+    assert "EMAILS" in html
     assert "NEW LEADS" in html
     assert "Urgent leads" in html
     assert "Fallback classifications" in html
@@ -4951,7 +4995,7 @@ def test_rop_overview_chart_titles_are_business_facing(tmp_path: Path) -> None:
     response = client.get("/rop?period=7d&tab=overview")
     html = response.text
     assert "Email Workload" in html
-    assert "Classification mix" in html
+    assert "Classification" in html
     assert "Bitrix reconciliation" in html
     assert "Source contribution" in html
 
@@ -5434,6 +5478,7 @@ class TestUi6It30:
         assert payload["oldest_message_at"] == "2026-06-25T07:30:00+00:00"
         assert payload["selected_count"] == 5
         assert payload["source_count"] == 1
+
 
 def _build_auth_settings(enabled: bool = False) -> dict:
     settings = _build_settings()
@@ -7274,8 +7319,7 @@ def test_attachment_queue_filter_is_accepted_and_filters_rows(tmp_path: Path) ->
     client = _client(storage_dir)
 
     response = client.get(
-        "/api/rop/dashboard?tab=queue&run_id=run-attachments-queue&"
-        "has_attachments=true"
+        "/api/rop/dashboard?tab=queue&run_id=run-attachments-queue&has_attachments=true"
     )
 
     assert response.status_code == 200
@@ -7633,6 +7677,7 @@ class TestRopDashboardAggregateReadModel:
         assert len(same_rows) == 2
         assert {row["run_id"] for row in same_rows} == {"agg-run-a", "agg-run-b"}
         assert {row["source_id"] for row in same_rows} == {"src_a", "src_b"}
+
     def test_bitrix_aggregate_preserves_anchor_evidence_availability(
         self, tmp_path: Path
     ) -> None:
@@ -8115,7 +8160,9 @@ def test_rop_event_detail_page_model_adjudicator_status_tone(tmp_path: Path) -> 
         assert _item_by_label(adj_items_ru, "Статус")["value"] == expected_ru_label
 
 
-def test_rop_event_detail_page_model_hides_queue_and_action_fields(tmp_path: Path) -> None:
+def test_rop_event_detail_page_model_hides_queue_and_action_fields(
+    tmp_path: Path,
+) -> None:
     from beeagent_module.interfaces.ui.rop_event_detail import (
         build_rop_event_detail_page_model,
     )
@@ -8383,17 +8430,12 @@ def test_event_detail_uses_canonical_date_and_bitrix_status_fields(
     assert "Matched in Bitrix" in response.text
     assert "Entity type" in response.text
     assert "199324" in response.text
-    assert (
-        'href="/rop/bitrix/lead/199324?run_id=run-canonical-detail"'
-        in response.text
-    )
+    assert 'href="/rop/bitrix/lead/199324?run_id=run-canonical-detail"' in response.text
 
 
 def test_rop_bitrix_entity_redirect_uses_configured_portal(tmp_path: Path) -> None:
     settings = _build_settings()
-    settings["bitrix"] = {
-        "embedded_app": {"portal_origin": "https://my.welding.kz"}
-    }
+    settings["bitrix"] = {"embedded_app": {"portal_origin": "https://my.welding.kz"}}
     client = _client(_make_storage(tmp_path), settings)
 
     response = client.get("/rop/bitrix/lead/199324", follow_redirects=False)
@@ -8474,12 +8516,18 @@ def test_event_detail_uses_confirmed_create_lead_from_writeback(
     )
     assert detail["bitrix"]["entity_type"] == "lead"
     assert detail["bitrix"]["entity_id"] == remote_entity_id
-    assert label == _item_by_label(
-        _find_section_items(page, "Bitrix evidence"), "Bitrix status"
-    )["value"]
-    assert _item_by_label(
-        _find_section_items(page, "Bitrix evidence"), "Entity ID"
-    )["href"] == f"/rop/bitrix/lead/{remote_entity_id}"
+    assert (
+        label
+        == _item_by_label(
+            _find_section_items(page, "Bitrix evidence"), "Bitrix status"
+        )["value"]
+    )
+    assert (
+        _item_by_label(_find_section_items(page, "Bitrix evidence"), "Entity ID")[
+            "href"
+        ]
+        == f"/rop/bitrix/lead/{remote_entity_id}"
+    )
 
 
 def test_queue_html_uses_generic_datepicker_contract(tmp_path: Path) -> None:

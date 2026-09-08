@@ -42,6 +42,92 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def test_email_trend_uses_immediately_preceding_equal_window() -> None:
+    period_info = {
+        "period_start_utc": "2026-09-02T00:00:00+00:00",
+        "period_end_utc": "2026-09-02T23:59:59.999999+00:00",
+    }
+    events = [
+        {"event_date": "2026-09-01T06:00:00+00:00"},
+        {"event_date": "2026-09-01T12:00:00+00:00"},
+        {"event_date": "2026-09-02T06:00:00+00:00"},
+        {"event_date": "2026-09-02T12:00:00+00:00"},
+        {"event_date": "2026-09-02T18:00:00+00:00"},
+    ]
+
+    trend = rop_dashboard_module._build_email_trend(
+        events,
+        period_info,
+        current_count=3,
+        fallback_ts=None,
+    )
+
+    assert trend == {
+        "status": "available",
+        "percentage": 50,
+        "direction": "up",
+        "current_count": 3,
+        "previous_count": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("current_count", "previous_count", "expected"),
+    [
+        (
+            0,
+            0,
+            {
+                "status": "available",
+                "percentage": 0,
+                "direction": "neutral",
+                "current_count": 0,
+                "previous_count": 0,
+            },
+        ),
+        (
+            2,
+            0,
+            {
+                "status": "available",
+                "percentage": 0,
+                "direction": "neutral",
+                "current_count": 2,
+                "previous_count": 0,
+            },
+        ),
+    ],
+)
+def test_email_trend_handles_zero_baseline(
+    current_count: int, previous_count: int, expected: dict[str, Any]
+) -> None:
+    period_info = {
+        "period_start_utc": "2026-09-02T00:00:00+00:00",
+        "period_end_utc": "2026-09-02T23:59:59.999999+00:00",
+    }
+    events = [
+        {"event_date": "2026-09-01T12:00:00+00:00"} for _ in range(previous_count)
+    ]
+
+    trend = rop_dashboard_module._build_email_trend(
+        events,
+        period_info,
+        current_count=current_count,
+        fallback_ts=None,
+    )
+
+    assert trend == expected
+
+
+def test_email_trend_is_unavailable_for_all_time() -> None:
+    assert rop_dashboard_module._build_email_trend(
+        [],
+        {"period_start_utc": None, "period_end_utc": None},
+        current_count=0,
+        fallback_ts=None,
+    ) == {"status": "unavailable"}
+
+
 def _copy_run(source: Path, name: str) -> Path:
     target = source.parent / name
     shutil.copytree(source, target)
@@ -3118,9 +3204,9 @@ class TestQueueFilters:
 
         assert state["kpi"]["identity_only_no_target"] == 1
         assert state["kpi"]["unreconciled"] == 0
-        assert [item["event_id"] for item in state["queues"]["identity_only_no_target"]] == [
-            "evt-1"
-        ]
+        assert [
+            item["event_id"] for item in state["queues"]["identity_only_no_target"]
+        ] == ["evt-1"]
 
     def test_confirmed_bitrix_delivery_overrides_not_found_status(self) -> None:
         state = rop_dashboard_module._build_bitrix_period_state(
