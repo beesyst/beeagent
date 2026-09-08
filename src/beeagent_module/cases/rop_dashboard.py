@@ -505,28 +505,28 @@ def parse_period(period: str) -> dict[str, Any]:
     if period == "7d":
         return {
             "period": "7d",
-            "period_start_utc": (today_start - timedelta(days=7)).isoformat(),
+            "period_start_utc": (today_start - timedelta(days=6)).isoformat(),
             "period_end_utc": today_end.isoformat(),
             "time_basis": "event_timestamp",
         }
     if period == "30d":
         return {
             "period": "30d",
-            "period_start_utc": (today_start - timedelta(days=30)).isoformat(),
+            "period_start_utc": (today_start - timedelta(days=29)).isoformat(),
             "period_end_utc": today_end.isoformat(),
             "time_basis": "event_timestamp",
         }
     if period == "90d":
         return {
             "period": "90d",
-            "period_start_utc": (today_start - timedelta(days=90)).isoformat(),
+            "period_start_utc": (today_start - timedelta(days=89)).isoformat(),
             "period_end_utc": today_end.isoformat(),
             "time_basis": "event_timestamp",
         }
     if period == "365d":
         return {
             "period": "365d",
-            "period_start_utc": (today_start - timedelta(days=365)).isoformat(),
+            "period_start_utc": (today_start - timedelta(days=364)).isoformat(),
             "period_end_utc": today_end.isoformat(),
             "time_basis": "event_timestamp",
         }
@@ -538,6 +538,70 @@ def parse_period(period: str) -> dict[str, Any]:
             "time_basis": "event_timestamp",
         }
     raise ValueError(f"Unsupported period: '{period}'")
+
+
+def _build_count_trend(
+    classified_list: list[dict[str, Any]],
+    period_info: dict[str, Any],
+    current_count: int,
+    fallback_ts: datetime | None,
+    case_type: str | None = None,
+) -> dict[str, Any]:
+    start = _parse_iso(period_info.get("period_start_utc"))
+    end = _parse_iso(period_info.get("period_end_utc"))
+    if start is None or end is None:
+        return {"status": "unavailable"}
+    previous_end = start - timedelta(microseconds=1)
+    previous_start = previous_end - (end - start)
+    previous_items, _ = _filter_by_period(
+        classified_list,
+        previous_start,
+        previous_end,
+        fallback_ts=fallback_ts,
+    )
+    previous_count = (
+        sum(item.get("case_type") == case_type for item in previous_items)
+        if case_type is not None
+        else len(previous_items)
+    )
+    if previous_count == 0:
+        return {
+            "status": "available",
+            "percentage": 0,
+            "direction": "neutral",
+            "current_count": current_count,
+            "previous_count": 0,
+        }
+
+    percentage = round((current_count - previous_count) * 100 / previous_count)
+    direction = "up" if percentage > 0 else "down" if percentage < 0 else "neutral"
+    return {
+        "status": "available",
+        "percentage": percentage,
+        "direction": direction,
+        "current_count": current_count,
+        "previous_count": previous_count,
+    }
+
+
+def _build_email_trend(
+    classified_list: list[dict[str, Any]],
+    period_info: dict[str, Any],
+    current_count: int,
+    fallback_ts: datetime | None,
+) -> dict[str, Any]:
+    return _build_count_trend(classified_list, period_info, current_count, fallback_ts)
+
+
+def _build_new_leads_trend(
+    classified_list: list[dict[str, Any]],
+    period_info: dict[str, Any],
+    current_count: int,
+    fallback_ts: datetime | None,
+) -> dict[str, Any]:
+    return _build_count_trend(
+        classified_list, period_info, current_count, fallback_ts, "new_lead"
+    )
 
 
 def validate_period(period: str) -> None:
@@ -618,6 +682,7 @@ def build_rop_dashboard(
             bitrix_reconciliation = aggregate["bitrix_reconciliation"]
             attachment_extraction = aggregate["attachment_extraction"]
 
+    all_classified_list = list(classified_list)
     if period_info["period"] != "all" and period_info.get("period_start_utc"):
         period_start = _parse_iso(period_info["period_start_utc"])
         period_end = _parse_iso(period_info["period_end_utc"])
@@ -663,6 +728,18 @@ def build_rop_dashboard(
         bitrix_state=bitrix_period_state,
         source_diag=source_diag,
         attachment_extraction=attachment_extraction,
+    )
+    email_trend = _build_email_trend(
+        all_classified_list,
+        period_info,
+        int(business_kpi.get("processed_emails", 0)),
+        fallback_ts,
+    )
+    new_leads_trend = _build_new_leads_trend(
+        all_classified_list,
+        period_info,
+        int(business_kpi.get("new_leads", 0)),
+        fallback_ts,
     )
 
     series = _build_series(
@@ -735,6 +812,8 @@ def build_rop_dashboard(
         "period_end_utc": period_info.get("period_end_utc"),
         "time_basis": period_info.get("time_basis", "run_generated_at"),
         "business_kpi": business_kpi,
+        "email_trend": email_trend,
+        "new_leads_trend": new_leads_trend,
         "series": series,
         "queues": queues,
         "rop_recommendations": rop_recommendations,
@@ -1320,6 +1399,8 @@ def build_rop_web_projection_v2_views(
     overview_fields = (
         "warnings",
         "business_kpi",
+        "email_trend",
+        "new_leads_trend",
         "series",
         "rop_recommendations",
         "updated_at",

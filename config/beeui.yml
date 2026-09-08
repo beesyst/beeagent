@@ -87,6 +87,7 @@ pages:
     tabs:
       variant: compact_fill_icons
       progressive: true
+      surface: separated
       active_param: tab
       items:
         - id: overview
