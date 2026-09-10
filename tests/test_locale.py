@@ -8,7 +8,7 @@ def test_beeagent_locale_labels_cover_run_list_and_needs_review() -> None:
     assert t("Read-only operator dashboard", "ru") == "Read-only дашборд оператора"
     assert t("Runs", "ru") == "Запуски"
     assert t("Run history", "ru") == "История запусков"
-    assert t("Needs review", "ru") == "Требуют проверки"
+    assert t("Needs review", "ru") == "Письма на проверку"
     assert t("Run list", "ru") == "Список запусков"
     assert t("Run ID", "ru") == "ID запуска"
     assert t("Status", "ru") == "Статус"

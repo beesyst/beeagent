@@ -24,7 +24,11 @@ from beeagent_module.cases.rop_dashboard import (
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
-from beeagent_module.interfaces.ui.locale import case_type_label, t
+from beeagent_module.interfaces.ui.locale import (
+    case_type_label,
+    format_rop_today_summary,
+    t,
+)
 from beeagent_module.interfaces.ui.url_builder import build_rop_event_url, build_rop_url
 
 ATTENTION_EVENTS_MAX = 500
@@ -1980,6 +1984,26 @@ def _int(value: Any) -> int:
     return 0
 
 
+def _rop_today_summary(payload: dict[str, Any]) -> dict[str, int] | None:
+    business_kpi = payload.get("business_kpi")
+    if not isinstance(business_kpi, dict):
+        return None
+    emails = business_kpi.get("processed_emails")
+    if emails is None:
+        emails = business_kpi.get("processed_events")
+    new_leads = business_kpi.get("new_leads")
+    if (
+        isinstance(emails, bool)
+        or not isinstance(emails, int)
+        or isinstance(new_leads, bool)
+        or not isinstance(new_leads, int)
+        or emails < 0
+        or new_leads < 0
+    ):
+        return None
+    return {"emails": emails, "new_leads": new_leads}
+
+
 def build_rop_dashboard_read_model(
     storage_dir: Path,
     run_id: str | None = None,
@@ -2549,6 +2573,21 @@ def build_rop_tab_read_model(
         warnings.extend(item for item in existing_warnings if isinstance(item, dict))
     result["warnings"] = warnings
 
+    if requested_tab == "overview" and tab != "api":
+        today_payload = payload
+        if view_period != "today":
+            today_payload = read_rop_web_projection_v2_view(
+                storage_dir=storage_dir,
+                manifest=manifest,
+                run_id=selected_run_id,
+                view_id="overview",
+                period="today",
+            )
+        if isinstance(today_payload, dict):
+            today_summary = _rop_today_summary(today_payload)
+            if today_summary is not None:
+                result["today_summary"] = today_summary
+
     if requested_tab == "queue" or tab == "api":
         canonical_rows = (
             result.get("queue_rows", [])
@@ -2732,6 +2771,13 @@ def _build_rop_tab_read_model_legacy(
         "sort": sort,
         "order": order,
     }
+
+    if requested_tab == "overview" and tab != "api" and isinstance(entries, dict):
+        today_entry = entries.get("today")
+        if isinstance(today_entry, dict):
+            today_summary = _rop_today_summary(today_entry)
+            if today_summary is not None:
+                result["today_summary"] = today_summary
 
     if requested_tab in {"overview", "queue"}:
         current_state = _read_json(run_dir / "rop_current_state.json")
@@ -3375,7 +3421,7 @@ def _build_rop_overview_layout(
         source_health = []
     current_period = data.get("period", "")
     period_hint = _period_label(current_period, locale) if current_period else ""
-    total_leads = business_kpi.get("processed_events", 0)
+    classified_emails = business_kpi.get("processed_events", 0)
     new_leads = business_kpi.get("new_leads", 0)
     high_priority = business_kpi.get("high_priority", 0)
     needs_review = business_kpi.get("needs_review", 0)
@@ -3384,14 +3430,6 @@ def _build_rop_overview_layout(
     unreconciled = business_kpi.get("unreconciled", 0)
     ambiguous_or_duplicate = business_kpi.get("ambiguous_or_duplicate", 0)
     source_count = kpis.get("source_count", 0)
-    degraded_sources = kpis.get("degraded_source_count", 0)
-    source_summary = (
-        t("{count} / {degraded} degraded", locale).format(
-            count=source_count, degraded=degraded_sources
-        )
-        if degraded_sources
-        else t("{count} connected", locale).format(count=source_count)
-    )
     bitrix_summary = (
         t("{count} not reconciled", locale).format(count=unreconciled)
         if unreconciled
@@ -3516,26 +3554,75 @@ def _build_rop_overview_layout(
         if isinstance(classification_series, dict)
         else []
     )
-    outcome_labels: list[str] = []
-    outcome_values: list[int] = []
+    classification_colors = {
+        "irrelevant": "blue",
+        "duplicate": "azure",
+        "new_lead": "red",
+        "existing_deal": "orange",
+    }
+
+    outcome_items: list[dict[str, Any]] = []
     if isinstance(raw_labels, list) and isinstance(raw_values, list):
         for raw_label, raw_value in zip(raw_labels, raw_values, strict=False):
             if not isinstance(raw_label, str) or isinstance(raw_value, bool):
                 continue
             if not isinstance(raw_value, (int, float)):
                 continue
-            outcome_labels.append(case_type_label(raw_label, locale))
-            outcome_values.append(int(raw_value))
+            outcome_items.append(
+                {
+                    "case_type": raw_label,
+                    "label": case_type_label(raw_label, locale),
+                    "value": int(raw_value),
+                    "color": classification_colors.get(raw_label, "secondary"),
+                }
+            )
+
+    outcome_items.sort(key=lambda item: item["value"])
+
+    outcome_labels = [item["label"] for item in outcome_items]
+    outcome_values = [item["value"] for item in outcome_items]
+    outcome_colors = [item["color"] for item in outcome_items]
+
+    hero_subtitle = t(
+        "Inbound email intake, lead quality and Bitrix reconciliation",
+        locale,
+    )
+    hero_subtitle_lines: list[str] = []
+    today_summary = data.get("today_summary")
+    if isinstance(today_summary, dict):
+        today_emails = today_summary.get("emails")
+        today_new_leads = today_summary.get("new_leads")
+        if (
+            isinstance(today_emails, int)
+            and not isinstance(today_emails, bool)
+            and isinstance(today_new_leads, int)
+            and not isinstance(today_new_leads, bool)
+            and today_emails >= 0
+            and today_new_leads >= 0
+        ):
+            hero_subtitle = format_rop_today_summary(
+                today_emails,
+                today_new_leads,
+                locale,
+            )
+
+            lead_marker = f" {today_new_leads} "
+            if today_new_leads > 0 and lead_marker in hero_subtitle:
+                first_line, second_line = hero_subtitle.rsplit(lead_marker, maxsplit=1)
+                hero_subtitle_lines = [
+                    first_line,
+                    f"{today_new_leads} {second_line}",
+                ]
+            else:
+                hero_subtitle_lines = hero_subtitle.split(", ", maxsplit=1)
 
     layout.append(
         {
             "type": "operator_hero",
             "width": 6,
             "title": t("ROP Control Center", locale),
-            "subtitle": t(
-                "Inbound email intake, lead quality and Bitrix reconciliation",
-                locale,
-            ),
+            "subtitle": hero_subtitle,
+            "subtitle_lines": hero_subtitle_lines,
             "status": "",
             "illustration": {"asset": "tabler_email_dark", "alt": ""},
             "items": [
@@ -3547,16 +3634,17 @@ def _build_rop_overview_layout(
                         100,
                         max(8 if _int(period_emails) else 0, _int(period_emails) * 20),
                     ),
-                    "progress_tone": "bg-primary",
+                    "progress_tone": "bg-success",
                 },
                 {
                     "label": t("NEW LEADS", locale),
                     "value": new_leads,
                     "metric": True,
                     "progress": min(
-                        100, max(8 if _int(new_leads) else 0, _int(new_leads) * 20)
+                        100,
+                        max(8 if _int(new_leads) else 0, _int(new_leads) * 20),
                     ),
-                    "progress_tone": "bg-success",
+                    "progress_tone": "bg-danger",
                 },
             ],
             "primary_links": period_actions,
@@ -3564,109 +3652,77 @@ def _build_rop_overview_layout(
     )
     if primary_trend is not None:
         layout[0]["items"][0]["trend"] = primary_trend
-        layout[0]["items"][0]["progress_tone"] = {
-            "up": "bg-success",
-            "down": "bg-danger",
-            "neutral": "bg-secondary",
-        }[primary_trend["direction"]]
     if secondary_trend is not None:
         layout[0]["items"][1]["trend"] = secondary_trend
-        layout[0]["items"][1]["progress_tone"] = {
-            "up": "bg-success",
-            "down": "bg-danger",
-            "neutral": "bg-secondary",
-        }[secondary_trend["direction"]]
     layout.append(
         {
             "type": "chart",
             "width": 6,
             "title": t("Classification", locale),
             "subtitle": t(
-                "{count} total leads in selected period",
+                "{count} classified emails in selected period",
                 locale,
-            ).format(count=total_leads),
+            ).format(count=classified_emails),
             "chart_id": "chart-rop-outcome-mix",
-            "kind": "donut",
-            "series": outcome_values,
-            "labels": outcome_labels,
-            "colors": [
-                "#6366f1",
-                "#0ea5e9",
-                "#10b981",
-                "#f59e0b",
-                "#ef4444",
-                "#8b5cf6",
-                "#14b8a6",
-                "#64748b",
+            "kind": "funnel",
+            "series": [
+                {
+                    "name": t("Classification", locale),
+                    "data": outcome_values,
+                }
             ],
-            "height": 260,
+            "categories": outcome_labels,
+            "colors": outcome_colors,
+            "barHeight": "84%",
+            "height": 210,
             "empty_message": t("No chart data for this period", locale),
         }
     )
 
     small_cards = [
         {
-            "type": "venue_card",
+            "type": "metric_card",
             "width": 3,
-            "compact": True,
             "title": t("Urgent leads", locale),
-            "subtitle": t("High-priority emails", locale),
-            "status": str(high_priority),
-            "items": [{"label": t("Count", locale), "value": high_priority}],
-            "links": [{"label": t("Open Queue", locale), "href": queue_urgent_href}],
+            "value": high_priority,
+            "href": queue_urgent_href,
+            "icon": "mail-heart",
+            "icon_tone": "red",
         },
         {
-            "type": "venue_card",
+            "type": "metric_card",
             "width": 3,
-            "compact": True,
-            "title": t("Needs review", locale),
-            "subtitle": t("Fallback classifications", locale),
-            "status": str(needs_review),
-            "items": [{"label": t("Count", locale), "value": needs_review}],
-            "links": [
-                {"label": t("Open Queue", locale), "href": queue_needs_review_href}
-            ],
+            "title": t("For review", locale),
+            "value": needs_review,
+            "href": queue_needs_review_href,
+            "icon": "mail-check",
+            "icon_tone": "azure",
         },
         {
-            "type": "venue_card",
+            "type": "metric_card",
             "width": 3,
-            "compact": True,
             "title": t("Bitrix problems", locale),
-            "subtitle": t("Emails with Bitrix problems", locale),
-            "status": str(bitrix_gap_count),
-            "items": [{"label": t("Count", locale), "value": bitrix_gap_count}],
-            "links": [
-                {
-                    "label": t("Open Queue", locale),
-                    "href": queue_bitrix_gaps_href,
-                }
-            ],
+            "value": bitrix_gap_count,
+            "href": queue_bitrix_gaps_href,
+            "icon": "mail-question",
+            "icon_tone": "orange",
         },
         {
-            "type": "venue_card",
+            "type": "metric_card",
             "width": 3,
-            "compact": True,
-            "title": t("Connected Sources", locale),
-            "subtitle": source_summary,
-            "status": str(source_count),
-            "items": [{"label": t("Count", locale), "value": source_count}],
-            "links": [
-                {
-                    "label": t("Sources", locale),
-                    "href": _rop_href(
-                        tab="sources",
-                        period=current_period,
-                        locale=locale,
-                        run_id=str(data.get("run_id", "")),
-                    ),
-                },
-            ],
+            "title": t("Sources", locale),
+            "value": source_count,
+            "href": _rop_href(
+                tab="sources",
+                period=current_period,
+                locale=locale,
+                run_id=str(data.get("run_id", "")),
+            ),
+            "icon": "mail-plus",
+            "icon_tone": "green",
         },
     ]
     layout.extend(small_cards)
-
-    # Order: Classification mix, Email Workload, Bitrix reconciliation,
-    # Source contribution
 
     layout.append(
         {
@@ -3708,6 +3764,7 @@ def _build_rop_overview_layout(
             "type": "chart",
             "width": 6,
             "title": t("Bitrix reconciliation", locale),
+            "subtitle": t("Reconciliation status for selected period", locale),
             "chart_id": "chart-rop-bitrix",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": bitrix_values}],
@@ -3732,6 +3789,7 @@ def _build_rop_overview_layout(
             "type": "chart",
             "width": 12,
             "title": t("Source contribution", locale),
+            "subtitle": t("Emails by source for selected period", locale),
             "chart_id": "chart-rop-source-contribution",
             "kind": "bar",
             "series": [{"name": t("Leads", locale), "data": source_values or [0]}],

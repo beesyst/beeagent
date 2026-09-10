@@ -865,8 +865,7 @@ def build_rop_event_detail_read_model(
             ),
             "classification_override_reason": (
                 t("Sender blacklisted", lang)
-                if final_decision.get("policy_override_reason")
-                == "sender_blacklisted"
+                if final_decision.get("policy_override_reason") == "sender_blacklisted"
                 else None
             ),
             "needs_attention": needs_attention,
@@ -1144,10 +1143,7 @@ def _kv(
 def _bitrix_entity_href(entity_type: Any, entity_id: Any) -> str:
     normalized_type = _str(entity_type).lower()
     normalized_id = _int(entity_id)
-    if (
-        normalized_type not in _BITRIX_LINKABLE_ENTITY_TYPES
-        or normalized_id <= 0
-    ):
+    if normalized_type not in _BITRIX_LINKABLE_ENTITY_TYPES or normalized_id <= 0:
         return ""
     return f"/rop/bitrix/{normalized_type}/{normalized_id}"
 
@@ -1215,27 +1211,34 @@ def build_rop_event_detail_page_model(
     sections: list[dict[str, Any]] = [
         {
             "kind": "key_value",
-            "title": t("Source", lang),
-            "items": _page_kv_items(
-                [
-                    _kv(t("Source", lang), source.get("source_id")),
-                    _kv(t("Client", lang), source.get("client_id")),
-                    _kv(t("Source type", lang), source.get("source_type")),
-                    _kv(t("Source role", lang), source.get("source_role")),
-                ]
-            ),
-        },
-        {
-            "kind": "key_value",
             "title": t("Message", lang),
             "items": _page_kv_items(
                 [
                     _kv(t("Subject", lang), message.get("subject")),
                     _kv(t("Sender", lang), message.get("sender")),
+                    _kv(t("Source", lang), source.get("source_id")),
                     _kv(
                         t("Body preview", lang),
                         message.get("body_preview"),
                         variant="modal_text",
+                        modal_trigger_label=t("Show message", lang),
+                        modal_title=t("Message", lang),
+                        modal_fields=[
+                            {"label": t("From", lang), "value": message.get("sender")},
+                            {
+                                "label": t("Subject", lang),
+                                "value": message.get("subject"),
+                            },
+                            {
+                                "label": t("Message text", lang),
+                                "value": message.get("body_preview"),
+                                "multiline": True,
+                            },
+                            {
+                                "label": t("Date", lang),
+                                "value": _format_iso_datetime(message.get("date")),
+                            },
+                        ],
                     ),
                     _kv(t("Date", lang), _format_iso_datetime(message.get("date"))),
                 ]
@@ -1358,8 +1361,7 @@ def build_rop_event_detail_page_model(
                     _kv(
                         t("Reasoning", lang),
                         ai_adjudicator.get("ai_adjudicator_reason"),
-                        variant="long_text",
-                        collapsible=True,
+                        variant="modal_text",
                         display=ai_adjudicator.get("ai_adjudicator_reason", ""),
                     ),
                 ]
@@ -1413,9 +1415,7 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Bitrix status", lang),
-                        _bitrix_status_display(
-                            _str(bitrix.get("bitrix_status")), lang
-                        ),
+                        _bitrix_status_display(_str(bitrix.get("bitrix_status")), lang),
                     ),
                     *(
                         [

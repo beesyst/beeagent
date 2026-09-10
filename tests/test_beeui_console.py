@@ -586,6 +586,79 @@ def test_api_rop_event_detail_route_remains_json(tmp_path: Path) -> None:
     assert response.headers["content-type"].startswith("application/json")
     data = response.json()
     assert data["data"]["message"]["subject"] == "Need welding quote"
+    assert data["data"]["source"] == {
+        "source_id": "hotline_mailbox",
+        "source_type": "mailbox_readonly",
+        "source_role": "technical_aggregator",
+        "source_display_name": "Welding Hotline mailbox",
+        "client_id": "welding",
+    }
+
+
+def test_rop_event_detail_source_is_composed_into_message(tmp_path: Path) -> None:
+    from beeagent_module.interfaces.ui.rop_event_detail import (
+        build_rop_event_detail_page_model,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_rop_event_detail_artifacts(storage_dir, "run-detail-source-message")
+
+    page = build_rop_event_detail_page_model(
+        storage_dir,
+        "run-detail-source-message",
+        "evt-1",
+    )
+
+    assert "Source" not in [section["title"] for section in page["sections"]]
+    message = next(
+        section for section in page["sections"] if section["title"] == "Message"
+    )
+    assert [item["label"] for item in message["items"]] == [
+        "Subject",
+        "Sender",
+        "Source",
+        "Body preview",
+        "Date",
+    ]
+    assert message["items"][2]["value"] == "hotline_mailbox"
+    body_preview = message["items"][3]
+    assert body_preview["modal_trigger_label"] == "Show message"
+    assert body_preview["modal_title"] == "Message"
+    assert body_preview["modal_fields"] == [
+        {"label": "From", "value": "client@example.com"},
+        {"label": "Subject", "value": "Need welding quote"},
+        {
+            "label": "Message text",
+            "value": "Please send pricing for welding equipment.",
+            "multiline": True,
+        },
+        {"label": "Date", "value": ""},
+    ]
+    assert "Client" not in [item["label"] for item in message["items"]]
+    assert "Source type" not in [item["label"] for item in message["items"]]
+    assert "Source role" not in [item["label"] for item in message["items"]]
+
+    client = _client(storage_dir)
+    response_en = client.get(
+        "/rop/events/evt-1?run_id=run-detail-source-message&lang=en"
+    )
+    response_ru = client.get(
+        "/rop/events/evt-1?run_id=run-detail-source-message&lang=ru"
+    )
+    assert response_en.status_code == 200
+    assert "Message" in response_en.text
+    assert "Source" in response_en.text
+    assert "Show message" in response_en.text
+    assert "Message text" in response_en.text
+    assert "modal-dialog-centered" in response_en.text
+    assert "Send Message" not in response_en.text
+    assert "Save changes" not in response_en.text
+    assert response_ru.status_code == 200
+    assert "Письмо" in response_ru.text
+    assert "Источник" in response_ru.text
+    assert "Показать письмо" in response_ru.text
+    assert "Текст письма" in response_ru.text
+    assert "hotline_mailbox" in response_ru.text
 
 
 def test_rop_event_detail_synthetic_reason_contract_is_read_only(
@@ -1002,7 +1075,7 @@ class TestRopTabs:
         assert "EMAILS" in html
         assert "NEW LEADS" in html
         assert "Urgent leads" in html
-        assert "Fallback classifications" in html
+        assert "For review" in html
         assert "Bitrix problems" in html
         assert "Unavailable block" not in html
         assert "Failed to render block type" not in html
@@ -1110,18 +1183,65 @@ class TestRopOverviewLayoutStructure:
             "percentage": -25,
             "direction": "down",
         }
+        data["new_leads_trend"] = {
+            "status": "available",
+            "percentage": 0,
+            "direction": "neutral",
+        }
 
         hero = build_rop_page_layout(data, tab="overview")[0]
 
         assert hero["items"][0]["label"] == "EMAILS"
         assert hero["items"][0]["metric"] is True
         assert hero["items"][0]["trend"] == {"percentage": -25, "direction": "down"}
+        assert hero["items"][0]["progress_tone"] == "bg-success"
+        assert hero["items"][1]["trend"] == {"percentage": 0, "direction": "neutral"}
+        assert hero["items"][1]["progress_tone"] == "bg-danger"
         assert hero["illustration"] == {"asset": "tabler_email_dark", "alt": ""}
 
     def test_primary_email_label_is_localized_to_russian(self) -> None:
         hero = build_rop_page_layout(self._mock_data(), tab="overview", locale="ru")[0]
 
         assert hero["items"][0]["label"] == "ПИСЬМА"
+
+    def test_hero_subtitle_uses_today_counts_without_changing_period_metrics(
+        self,
+    ) -> None:
+        data = self._mock_data()
+        data["business_kpi"].update({"processed_emails": 40, "new_leads": 3})
+        data["today_summary"] = {"emails": 12, "new_leads": 5}
+
+        hero_en = build_rop_page_layout(data, tab="overview")[0]
+        hero_ru = build_rop_page_layout(data, tab="overview", locale="ru")[0]
+
+        assert [item["value"] for item in hero_ru["items"]] == [40, 3]
+        assert hero_ru["subtitle"] == "За сегодня 12 писем, из них 5 новых лидов"
+        assert hero_en["subtitle"] == "Today: 12 emails, including 5 new leads"
+
+    @pytest.mark.parametrize(
+        ("emails", "new_leads", "expected"),
+        (
+            (1, 1, "За сегодня 1 письмо, из них 1 новый лид"),
+            (2, 2, "За сегодня 2 письма, из них 2 новых лида"),
+            (5, 5, "За сегодня 5 писем, из них 5 новых лидов"),
+            (8, 0, "За сегодня 8 писем, но пока новых лидов нет"),
+        ),
+    )
+    def test_format_rop_today_summary_russian_pluralization(
+        self,
+        emails: int,
+        new_leads: int,
+        expected: str,
+    ) -> None:
+        from beeagent_module.interfaces.ui.locale import format_rop_today_summary
+
+        assert format_rop_today_summary(emails, new_leads, "ru") == expected
+
+    def test_format_rop_today_summary_english_positive_and_zero(self) -> None:
+        from beeagent_module.interfaces.ui.locale import format_rop_today_summary
+
+        assert format_rop_today_summary(1, 1) == "Today: 1 email, including 1 new lead"
+        assert format_rop_today_summary(8, 0) == "Today: 8 emails, but no new leads yet"
 
     def test_primary_email_omits_unavailable_trend(self) -> None:
         data = self._mock_data()
@@ -1137,46 +1257,170 @@ class TestRopOverviewLayoutStructure:
         assert layout[1]["title"] == "Classification"
         assert layout[1]["width"] == 6
 
+    def test_classification_subtitle_uses_classified_email_count(self) -> None:
+        data = self._mock_data()
+
+        chart = build_rop_page_layout(data, tab="overview")[1]
+        chart_ru = build_rop_page_layout(data, tab="overview", locale="ru")[1]
+
+        assert data["business_kpi"]["processed_events"] == 38
+        assert data["business_kpi"]["new_leads"] == 12
+        assert chart["subtitle"] == "38 classified emails in selected period"
+        assert chart_ru["subtitle"] == "38 писем классифицировано за выбранный период"
+
+    def test_secondary_chart_subtitles_are_localized(self) -> None:
+        layout = build_rop_page_layout(self._mock_data(), tab="overview")
+        layout_ru = build_rop_page_layout(
+            self._mock_data(), tab="overview", locale="ru"
+        )
+
+        subtitles = {block["title"]: block.get("subtitle") for block in layout}
+        subtitles_ru = {block["title"]: block.get("subtitle") for block in layout_ru}
+
+        assert subtitles["Bitrix reconciliation"] == (
+            "Reconciliation status for selected period"
+        )
+        assert (
+            subtitles["Source contribution"] == "Emails by source for selected period"
+        )
+        assert subtitles_ru["Сверка с Битрикс"] == (
+            "Статусы сверки за выбранный период"
+        )
+        assert subtitles_ru["Вклад источников"] == (
+            "Письма по источникам за выбранный период"
+        )
+
     def test_classification_mix_uses_non_overlapping_case_types(self) -> None:
         data = self._mock_data()
+        data["business_kpi"]["processed_events"] = 20
+        data["business_kpi"]["new_leads"] = 1
         data["series"] = {
             "classification_distribution": {
                 "labels": [
-                    "new_lead",
+                    "duplicate",
                     "existing_deal",
-                    "follow_up",
-                    "needs_review",
                     "irrelevant",
+                    "new_lead",
                 ],
-                "series": [12, 8, 6, 5, 7],
+                "series": [1, 1, 17, 1],
             }
         }
 
         layout = build_rop_page_layout(data, tab="overview")
         chart = layout[1]
+        chart_ru = build_rop_page_layout(data, tab="overview", locale="ru")[1]
 
-        assert chart["labels"] == [
+        assert chart["kind"] == "funnel"
+        assert chart["categories"] == [
+            "Duplicate",
+            "Deal",
             "New lead",
-            "Existing deal",
-            "Follow-up",
-            "Needs review",
             "Irrelevant",
         ]
-        assert chart["series"] == [12, 8, 6, 5, 7]
-        assert sum(chart["series"]) == data["business_kpi"]["processed_events"]
+        assert chart_ru["categories"] == [
+            "Дубликат",
+            "Сделка",
+            "Новый лид",
+            "Нерелевантно",
+        ]
+        assert chart["series"] == [{"name": "Classification", "data": [1, 1, 1, 17]}]
+        assert chart["colors"] == ["azure", "orange", "red", "blue"]
+        assert (
+            sum(chart["series"][0]["data"]) == data["business_kpi"]["processed_events"]
+        )
+        assert data["business_kpi"]["new_leads"] == 1
+        assert (
+            data["series"]["classification_distribution"]["labels"][1]
+            == "existing_deal"
+        )
+
+    def test_classification_mix_sorts_dynamic_counts_with_semantic_colors(self) -> None:
+        data = self._mock_data()
+        data["business_kpi"]["processed_events"] = 40
+        data["business_kpi"]["new_leads"] = 3
+        data["series"] = {
+            "classification_distribution": {
+                "labels": [
+                    "duplicate",
+                    "existing_deal",
+                    "irrelevant",
+                    "new_lead",
+                ],
+                "series": [5, 1, 31, 3],
+            }
+        }
+
+        chart = build_rop_page_layout(data, tab="overview")[1]
+        chart_ru = build_rop_page_layout(data, tab="overview", locale="ru")[1]
+
+        assert chart["categories"] == ["Deal", "New lead", "Duplicate", "Irrelevant"]
+        assert chart_ru["categories"] == [
+            "Сделка",
+            "Новый лид",
+            "Дубликат",
+            "Нерелевантно",
+        ]
+        assert chart["series"] == [{"name": "Classification", "data": [1, 3, 5, 31]}]
+        assert chart["colors"] == ["orange", "red", "azure", "blue"]
+        assert (
+            sum(chart["series"][0]["data"]) == data["business_kpi"]["processed_events"]
+        )
+        assert (
+            data["series"]["classification_distribution"]["labels"][1]
+            == "existing_deal"
+        )
+
+    def test_existing_deal_keeps_raw_case_type_and_uses_presentation_label(
+        self,
+    ) -> None:
+        from beeagent_module.interfaces.ui.locale import case_type_label
+
+        assert case_type_label("existing_deal") == "Deal"
+        assert case_type_label("existing_deal", "ru") == "Сделка"
 
     def test_kpi_has_customer_facing_labels(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        labels = [block["title"] for block in layout if block["type"] == "venue_card"]
+        labels = [block["title"] for block in layout if block["type"] == "metric_card"]
         assert "Urgent leads" in labels
-        assert "Needs review" in labels
+        assert "For review" in labels
         assert "Bitrix problems" in labels
+        assert "Sources" in labels
 
     def test_kpi_has_four_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
-        cards = [block for block in layout if block["type"] == "venue_card"]
+        cards = [block for block in layout if block["type"] == "metric_card"]
         assert len(cards) == 4
         assert [card["width"] for card in cards] == [3, 3, 3, 3]
+        assert [card["value"] for card in cards] == [2, 5, 4, 3]
+        assert [card["icon"] for card in cards] == [
+            "mail-heart",
+            "mail-check",
+            "mail-question",
+            "mail-plus",
+        ]
+        assert [card["icon_tone"] for card in cards] == [
+            "red",
+            "azure",
+            "orange",
+            "green",
+        ]
+        urgent, needs_review, bitrix, sources = cards
+        assert parse_qs(urlparse(urgent["href"]).query)["priority"] == ["high"]
+        assert parse_qs(urlparse(needs_review["href"]).query)["queue"] == [
+            "needs_review"
+        ]
+        assert parse_qs(urlparse(bitrix["href"]).query)["bitrix_status"] == [
+            "not_found,ambiguous,duplicate_candidate,unreconciled"
+        ]
+        for card in cards:
+            query = parse_qs(urlparse(card["href"]).query)
+            assert query["period"] == ["7d"]
+            assert query["run_id"] == ["run-test-001"]
+            assert "status" not in card
+            assert "hint" not in card
+            assert "items" not in card
+            assert "links" not in card
+        assert parse_qs(urlparse(sources["href"]).query)["tab"] == ["sources"]
 
     def test_overview_desktop_rows_fill_the_grid(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
@@ -1422,6 +1666,28 @@ def test_rop_queue_tab_contains_data_table_when_queues_exist() -> None:
     ]
     assert layout[0]["rows"][0]["classification"] == "New lead"
     assert layout[0]["rows"][0]["priority"]["label"] == "high"
+
+
+def test_processed_emails_are_distinct_from_deduplicated_queue_rows() -> None:
+    from beeagent_module.interfaces.ui.read_model import _canonical_queue_rows
+
+    queues = {
+        "high_priority": [{"event_id": "evt-1"}],
+        "needs_review": [
+            {"event_id": "evt-1"},
+            {"event_id": "evt-2"},
+            {"event_id": "evt-3"},
+            {"event_id": "evt-4"},
+            {"event_id": "evt-5"},
+        ],
+        "lost_in_bitrix": [{"event_id": "evt-6"}],
+    }
+
+    processed_emails = 20
+    actionable_rows = _canonical_queue_rows(queues, [], {})
+
+    assert len(actionable_rows) == 6
+    assert processed_emails != len(actionable_rows)
 
 
 def test_rop_queue_tab_shows_data_table_when_queues_empty_with_attention_events() -> (
@@ -4312,6 +4578,7 @@ def test_rop_event_detail_message_body_uses_modal_text(tmp_path: Path) -> None:
     assert [item["label"] for item in message_section["items"]] == [
         "Subject",
         "Sender",
+        "Source",
         "Body preview",
         "Date",
     ]
@@ -4674,11 +4941,15 @@ def test_rop_lang_ru(tmp_path: Path) -> None:
     html = response.text
     assert "Панель РОПа" in html
     assert "ПИСЬМА" in html
-    assert '/static/vendor/tabler/illustrations/dark/email.png' in html
+    assert "/static/vendor/tabler/illustrations/dark/email.png" in html
     assert "preview.tabler.io" not in html
     assert "НОВЫЕ ЛИДЫ" in html
-    assert "Открыть очередь" in html
-    assert "Требуют проверки" in html
+    assert "Срочные лиды" in html
+    assert "Письма на проверку" in html
+    assert "Проблемы Bitrix" in html
+    assert "Источники" in html
+    assert "Количество" not in html
+    assert "Открыть очередь" not in html
     assert "Needs review" not in html
     assert "beeui-language-switcher" in html
     assert 'class="dropdown ms-auto"' in html
@@ -4858,7 +5129,18 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
     assert "chart-rop-bitrix" in html
     assert "chart-rop-source-contribution" in html
     assert "progress progress-sm" in html
-    assert 'class="card beeui-layout-card card-sm"' in html
+    assert html.count("beeui-metric-card") == 4
+    for title in (
+        "Urgent leads",
+        "For review",
+        "Bitrix problems",
+        "Sources",
+    ):
+        assert title in html
+    assert "priority=high" in html
+    assert "queue=needs_review" in html
+    assert "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled" in html
+    assert 'href="/rop?tab=sources&amp;run_id=run-chart-schema' in html
 
 
 def test_rop_overview_no_smoke_run_ids(tmp_path: Path) -> None:
@@ -4949,9 +5231,28 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "EMAILS" in html
     assert "NEW LEADS" in html
     assert "Urgent leads" in html
-    assert "Fallback classifications" in html
+    assert "For review" in html
     assert "Bitrix problems" in html
+    assert "Sources" in html
+    assert "Count" not in html
+    assert "Open Queue" not in html
     assert "high_priority" not in html
+
+
+def test_rop_overview_chart_subtitles_render_in_both_locales(tmp_path: Path) -> None:
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-chart-subtitles")
+    client = _client(storage_dir)
+
+    response_en = client.get("/rop?tab=overview&lang=en")
+    response_ru = client.get("/rop?tab=overview&lang=ru")
+
+    assert response_en.status_code == 200
+    assert "Reconciliation status for selected period" in response_en.text
+    assert "Emails by source for selected period" in response_en.text
+    assert response_ru.status_code == 200
+    assert "Статусы сверки за выбранный период" in response_ru.text
+    assert "Письма по источникам за выбранный период" in response_ru.text
 
 
 def test_rop_overview_no_run_selector(tmp_path: Path) -> None:
@@ -5751,7 +6052,7 @@ class TestAuthEnabled:
         response = client.get("/rop?tab=queue")
 
         assert response.status_code == 200
-        assert "Существующая сделка" in response.text
+        assert "Сделка" in response.text
         assert "Existing deal" not in response.text
         client.close()
 
@@ -5779,7 +6080,7 @@ class TestAuthEnabled:
         response = client.get("/rop?tab=queue&lang=en")
 
         assert response.status_code == 200
-        assert "Existing deal" in response.text
+        assert "Deal" in response.text
         assert "Существующая сделка" not in response.text
         client.close()
 
@@ -6191,8 +6492,6 @@ class TestPrincipalScopedAuthorization:
         self._login(client, "ropviewer", "ropviewer-test-token")
         html = client.get("/rop", headers={"accept": "text/html"}).text
         assert 'href="/rop"' in html
-        assert 'data-beeui-icon="dashboard"' not in html
-        assert 'data-beeui-icon="runs"' not in html
         assert 'href="/runs"' not in html
         assert 'href="/modules"' not in html
         assert 'nav-link-title">Dashboard</span>' not in html
@@ -6202,7 +6501,8 @@ class TestPrincipalScopedAuthorization:
         self._login(client, "admin1", "admin1-test-token")
         html = client.get("/", headers={"accept": "text/html"}).text
         assert 'data-beeui-icon="dashboard"' in html
-        assert 'data-beeui-icon="runs"' in html
+        assert 'data-beeui-icon="activity"' in html
+        assert 'data-beeui-icon="apps"' in html
         assert 'href="/runs"' in html
         assert 'href="/modules"' in html
         assert 'href="/rop"' in html
@@ -6212,8 +6512,6 @@ class TestPrincipalScopedAuthorization:
         self._login(client, "ropviewer", "ropviewer-test-token")
         html = client.get("/rop?lang=ru", headers={"accept": "text/html"}).text
         assert 'href="/rop' in html
-        assert 'data-beeui-icon="dashboard"' not in html
-        assert 'data-beeui-icon="runs"' not in html
         assert 'href="/runs' not in html
         assert 'href="/modules' not in html
 
@@ -9412,18 +9710,34 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
     html = response.text
     assert 'data-beeui-page-tabs-progressive="true"' in html
     assert 'data-beeui-page-tab="true"' in html
-    assert "beeui-tabs-compact" in html
-    assert "beeui-tabs-compact" in html
+    assert 'class="nav nav-tabs card-header-tabs nav-fill"' in html
+    assert "beeui-tabs-compact" not in html
+    assert 'href="/static/vendor/tabler-icons/tabler-icons.min.css?v=3.46.0"' in html
+    assert "https://cdn" not in html.lower()
+    assert "preview.tabler.io" not in html
+    assert (
+        client.get("/static/vendor/tabler-icons/tabler-icons.min.css").status_code
+        == 200
+    )
+    assert (
+        client.get("/static/vendor/tabler-icons/fonts/tabler-icons.woff2").status_code
+        == 200
+    )
 
     expected_icons = {
         "overview": "dashboard",
-        "queue": "queue",
-        "sources": "source",
+        "queue": "stack",
+        "sources": "database",
         "blacklist": "ban",
+    }
+    expected_titles = {
+        "overview": "Overview",
+        "queue": "Queue",
+        "sources": "Sources",
+        "blacklist": "Blacklist",
     }
 
     assert len(set(expected_icons.values())) == 4
-    assert html.count('data-beeui-tab-icon="') == 4
 
     for tab_id, icon in expected_icons.items():
         href = f"/rop?tab={tab_id}"
@@ -9431,7 +9745,12 @@ def test_rop_page_uses_released_icon_tab_contract(tmp_path: Path) -> None:
         anchor_end = html.index("</a>", href_pos)
         anchor_html = html[href_pos:anchor_end]
 
-        assert f'data-beeui-tab-icon="{icon}"' in anchor_html
+        assert f'data-beeui-icon="{icon}"' in anchor_html
+        assert expected_titles[tab_id] in anchor_html
+
+    russian_html = client.get("/rop?lang=ru&tab=overview").text
+    for title in ("Обзор", "Очередь", "Источники", "Чёрный список"):
+        assert title in russian_html
 
 
 def test_rop_projection_missing_root_index_fails_explicitly(tmp_path: Path) -> None:
@@ -9633,6 +9952,80 @@ def test_rop_projection_missing_period_entry_fails_explicitly(tmp_path: Path) ->
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "web_projection_unavailable"
+
+
+def test_rop_html_overview_uses_bounded_today_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beeagent_module.cases import rop_dashboard as rop_dashboard_module
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
+    from beeagent_module.interfaces.ui import read_model as read_model_module
+    from beeagent_module.interfaces.ui.read_model import build_rop_tab_read_model
+
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-today-summary")
+    _write_rop_web_projection(storage_dir)
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    metadata = manifest["runs"]["run-today-summary"]
+
+    for period, emails, new_leads in (("7d", 40, 3), ("today", 12, 5)):
+        path = rop_web_projection_v2_view_path(
+            storage_dir,
+            metadata["generation"],
+            "run-today-summary",
+            metadata["revision"],
+            f"overview.{period}",
+        )
+        assert path is not None
+        view = json.loads(path.read_text(encoding="utf-8"))
+        view["payload"]["business_kpi"].update(
+            {
+                "processed_emails": emails,
+                "processed_events": emails,
+                "new_leads": new_leads,
+            }
+        )
+        path.write_text(json.dumps(view), encoding="utf-8")
+
+    def fail_historical_read(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("historical aggregation must not run on GET")
+
+    monkeypatch.setattr(rop_dashboard_module, "_list_rop_run_ids", fail_historical_read)
+    monkeypatch.setattr(
+        rop_dashboard_module,
+        "_aggregate_period_events",
+        fail_historical_read,
+    )
+    monkeypatch.setattr(read_model_module, "build_rop_dashboard", fail_historical_read)
+
+    data = build_rop_tab_read_model(
+        storage_dir,
+        tab="overview",
+        period="7d",
+        default_period="7d",
+        configured_periods=_build_settings()["rop"]["dashboard"]["periods"],
+    )
+    assert data["business_kpi"]["processed_emails"] == 40
+    assert data["business_kpi"]["new_leads"] == 3
+    assert data["today_summary"] == {"emails": 12, "new_leads": 5}
+
+    client = _client(storage_dir)
+    response = client.get(
+        "/rop?tab=overview&run_id=run-today-summary&period=7d&lang=ru"
+    )
+    api = client.get("/api/rop/dashboard?run_id=run-today-summary&period=7d&lang=ru")
+
+    assert response.status_code == 200
+    assert 'aria-label="За сегодня 12 писем, из них 5 новых лидов"' in response.text
+    assert "За сегодня 12 писем," in response.text
+    assert "из них 5 новых лидов" in response.text
+    assert api.status_code == 200
+    assert "today_summary" not in api.json()["data"]
 
 
 def test_rop_projection_get_never_falls_back_to_run_enumeration(
