@@ -29,7 +29,6 @@ _LABELS_EN: dict[str, str] = {
     "Read-only operator dashboard": "Read-only operator dashboard",
     "ROP Dashboard": "ROP Dashboard",
     "Run Overview": "Run Overview",
-    "Connected Sources": "Connected Sources",
     "Loaded Items": "Loaded Items",
     "Classified Cases": "Classified Cases",
     "Need Review": "Need Review",
@@ -151,15 +150,14 @@ _LABELS_EN: dict[str, str] = {
     "Classification mix": "Classification mix",
     "Email Workload": "Email Workload",
     "Urgent leads": "Urgent leads",
-    "High-priority emails": "High-priority emails",
     "Operator queue": "Operator queue",
-    "Fallback classifications": "Fallback classifications",
     "Bitrix problems": "Bitrix problems",
-    "Emails with Bitrix problems": "Emails with Bitrix problems",
     "Count": "Count",
     "Email intake trend": "Email intake trend",
     "Bitrix reconciliation": "Bitrix reconciliation",
+    "Reconciliation status for selected period": "Reconciliation status for selected period",
     "Source contribution": "Source contribution",
+    "Emails by source for selected period": "Emails by source for selected period",
     "Priority review queue": "Priority review queue",
     "Priority/status": "Priority/status",
     "Sender / source": "Sender / source",
@@ -184,13 +182,11 @@ _LABELS_EN: dict[str, str] = {
     "Last year": "Last year",
     "All time": "All time",
     "current": "current",
-    "{count} / {degraded} degraded": "{count} / {degraded} degraded",
-    "{count} connected": "{count} connected",
     "{count} not reconciled": "{count} not reconciled",
     "{count} lost": "{count} lost",
     "OK": "OK",
     "{count} processed inbound items in selected period": "{count} processed inbound items in selected period",
-    "{count} total leads in selected period": "{count} total leads in selected period",
+    "{count} classified emails in selected period": "{count} classified emails in selected period",
     "Processed": "Processed",
     "Selected period": "Selected period",
     "No chart data for this period": "No chart data for this period",
@@ -199,6 +195,7 @@ _LABELS_EN: dict[str, str] = {
     "View details": "View details",
     "Message": "Message",
     "Message text": "Message text",
+    "Show message": "Show message",
     "Message body": "Message body",
     "Body preview": "Body preview",
     "Thread context": "Thread context",
@@ -462,10 +459,10 @@ _LABELS_RU: dict[str, str] = {
     "Read-only operator dashboard": "Read-only дашборд оператора",
     "ROP Dashboard": "ROP Дашборд",
     "Run Overview": "Обзор запуска",
-    "Connected Sources": "Подключенные источники",
+    "Sources": "Источники",
     "Loaded Items": "Загружено элементов",
     "Classified Cases": "Классифицировано",
-    "Need Review": "Требуют проверки",
+    "For review": "Письма на проверку",
     "High-Priority Cases": "Высокий приоритет",
     "Recommendations": "Рекомендации",
     "Source Health": "Состояние источников",
@@ -487,8 +484,8 @@ _LABELS_RU: dict[str, str] = {
     "Loaded Modules": "Загружено модулей",
     "Latest Run Status": "Статус последнего запуска",
     "ROP Classified Cases": "ROP классификаций",
-    "Needs Review": "Требуют проверки",
-    "Needs review": "Требуют проверки",
+    "Needs Review": "Письма на проверку",
+    "Needs review": "Письма на проверку",
     "Degraded Sources": "Проблемные источники",
     "Latest Activity": "Последняя активность",
     "Modules Overview": "Обзор модулей",
@@ -571,7 +568,7 @@ _LABELS_RU: dict[str, str] = {
     "Final type": "Итоговый тип",
     "Review AI low-confidence events": "Проверьте события с низкой уверенностью AI",
     "Adapter-backed run list": "Список запусков",
-    "ROP Control Center": "Панель РОПа",
+    "ROP Control Center": "Привет, РОП",
     "Inbound email intake, lead quality and Bitrix reconciliation": "Входящие письма, качество лидов и сверка с Битрикс",
     "EMAILS": "ПИСЬМА",
     "Yesterday's emails": "ПИСЬМА ЗА ВЧЕРА",
@@ -584,15 +581,16 @@ _LABELS_RU: dict[str, str] = {
     "Classification mix": "Распределение классификаций",
     "Email Workload": "Нагрузка по письмам",
     "Urgent leads": "Срочные лиды",
-    "High-priority emails": "Письма с высоким приоритетом",
     "Operator queue": "Очередь оператора",
-    "Fallback classifications": "Классификация по fallback",
-    "Bitrix problems": "Проблемы с Bitrix",
-    "Emails with Bitrix problems": "Письма с проблемами в Bitrix",
+    "ROP review required": "Нужна проверка РОП",
+    "Bitrix problems": "Проблемы Bitrix",
+    "Needs reconciliation": "Нужна сверка",
     "Count": "Количество",
     "Email intake trend": "Динамика входящих писем",
     "Bitrix reconciliation": "Сверка с Битрикс",
+    "Reconciliation status for selected period": "Статусы сверки за выбранный период",
     "Source contribution": "Вклад источников",
+    "Emails by source for selected period": "Письма по источникам за выбранный период",
     "Priority review queue": "Очередь приоритетной проверки",
     "Priority/status": "Приоритет/статус",
     "Sender / source": "Отправитель / источник",
@@ -617,13 +615,12 @@ _LABELS_RU: dict[str, str] = {
     "Today": "Сегодня",
     "Yesterday": "Вчера",
     "current": "текущий",
-    "{count} / {degraded} degraded": "{count} / {degraded} с деградацией",
-    "{count} connected": "{count} подключено",
+    "Connected": "Подключено",
     "{count} not reconciled": "{count} не сверено",
     "{count} lost": "{count} потеряно",
     "OK": "OK",
     "{count} processed inbound items in selected period": "{count} входящих обработано за выбранный период",
-    "{count} total leads in selected period": "{count} лидов всего за выбранный период",
+    "{count} classified emails in selected period": "{count} писем классифицировано за выбранный период",
     "Processed": "Обработано",
     "Selected period": "Выбранный период",
     "No chart data for this period": "Нет данных графика за этот период",
@@ -662,6 +659,7 @@ _LABELS_RU: dict[str, str] = {
     "View details": "Подробнее",
     "Message": "Письмо",
     "Message text": "Текст письма",
+    "Show message": "Показать письмо",
     "Message body": "Текст сообщения",
     "Body preview": "Превью текста",
     "Classification": "Классификация",
@@ -753,7 +751,7 @@ _LABELS_RU: dict[str, str] = {
     "Deterministic reason code": "Детерминированный код причины",
     "Deterministic fallback": "Детерминированный fallback",
     "Basic classification": "Базовая классификация",
-    "Fallback classification": "Классификация по fallback",
+    "Fallback classification": "Нужна проверка РОП",
     "AI review": "Проверка AI",
     "AI review completed": "Проверка AI завершена",
     "AI review not required": "Проверка AI не требуется",
@@ -934,9 +932,41 @@ def t(label: str, locale: str = "en") -> str:
     return _LABELS_EN.get(label, label)
 
 
+def _russian_count_form(count: int, singular: str, few: str, many: str) -> str:
+    remainder = abs(count) % 100
+    if 11 <= remainder <= 14:
+        return many
+    remainder %= 10
+    if remainder == 1:
+        return singular
+    if 2 <= remainder <= 4:
+        return few
+    return many
+
+
+def format_rop_today_summary(emails: int, new_leads: int, locale: str = "en") -> str:
+    if locale == "ru":
+        email_label = _russian_count_form(emails, "письмо", "письма", "писем")
+        if new_leads == 0:
+            return f"За сегодня {emails} {email_label}, но пока новых лидов нет"
+        lead_label = _russian_count_form(
+            new_leads,
+            "новый лид",
+            "новых лида",
+            "новых лидов",
+        )
+        return f"За сегодня {emails} {email_label}, из них {new_leads} {lead_label}"
+
+    email_label = "email" if emails == 1 else "emails"
+    if new_leads == 0:
+        return f"Today: {emails} {email_label}, but no new leads yet"
+    lead_label = "new lead" if new_leads == 1 else "new leads"
+    return f"Today: {emails} {email_label}, including {new_leads} {lead_label}"
+
+
 _CASE_TYPE_LABELS: dict[str, dict[str, str]] = {
     "new_lead": {"en": "New lead", "ru": "Новый лид"},
-    "existing_deal": {"en": "Existing deal", "ru": "Существующая сделка"},
+    "existing_deal": {"en": "Deal", "ru": "Сделка"},
     "existing_client": {"en": "Existing client", "ru": "Существующий клиент"},
     "existing_lead": {"en": "Existing lead", "ru": "Существующий лид"},
     "follow_up": {"en": "Follow-up", "ru": "Повторный контакт"},

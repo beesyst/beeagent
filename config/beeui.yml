@@ -54,12 +54,12 @@ navigation:
           en: Runs
           ru: Запуски
         path: /runs
-        icon: runs
+        icon: activity
       - title:
           en: Modules
           ru: Модули
         path: /modules
-        icon: modules
+        icon: apps
 
 data_sources: {}
 
@@ -85,7 +85,7 @@ pages:
       en: Inbound leads, review queue and Bitrix reconciliation
       ru: Входящие лиды, очередь проверки и сверка с Битрикс
     tabs:
-      variant: compact_fill_icons
+      variant: fill_icons
       progressive: true
       surface: separated
       active_param: tab
@@ -102,14 +102,14 @@ pages:
             en: Queue
             ru: Очередь
           href: /rop?tab=queue
-          icon: queue
+          icon: stack
 
         - id: sources
           title:
             en: Sources
             ru: Источники
           href: /rop?tab=sources
-          icon: source
+          icon: database
 
         - id: blacklist
           title:
