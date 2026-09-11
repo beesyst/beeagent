@@ -17,3 +17,8 @@ def test_beeagent_locale_labels_cover_run_list_and_needs_review() -> None:
     assert t("Open run", "ru") == "Открыть запуск"
     assert t("Adapter-backed product overview", "ru") == "Обзор продуктовой консоли"
     assert t("Adapter-backed run list", "ru") == "Список запусков"
+
+
+def test_source_mail_server_labels_are_localized() -> None:
+    assert t("Mail server", "en") == "Mail server"
+    assert t("Mail server", "ru") == "Почтовый сервер"

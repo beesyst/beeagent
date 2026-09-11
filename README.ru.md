@@ -116,7 +116,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 
 Итерация 17 добавила:
 
-- config-driven `rop.sources` contract в `config/settings.yml`;
+- config-driven ROP source registry в `config/rop/sources.yml` с `rop.sources_path` в `config/settings.yml`;
 - `json_batch` source type с load/validate/normalize flow;
 - `run_rop_batch_case(...)` — BeeAgent-owned batch handoff case без отдельного `run.mode`;
 - артефакты `intake_metadata.json` и `normalized_events.json` per run;
@@ -124,7 +124,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 
 Итерация 18 добавила:
 
-- `mailbox_readonly` source type в existing `rop.sources` contract;
+- `mailbox_readonly` source type в canonical ROP source registry;
 - read-only mailbox ingestion через stdlib `imaplib` без destructive mailbox actions;
 - `source_diagnostics.json` для explainable degraded/ok source behavior;
 - safe mailbox normalization в operator-facing artifacts без raw `.eml` и без attachment content.
@@ -162,7 +162,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 Итерация 24 добавила:
 
 - explicit multi-source ingestion в BeeAgent core без изменений `beeagent-rop`;
-- `./start.sh rop run --all-sources` для запуска всех enabled sources;
+- `./start.sh rop run` запускает все enabled sources, когда их больше одного; `./start.sh rop run --all-sources` сохраняется как явный эквивалент;
 - `selection_mode` для фиксации default / explicit single-source / all-sources режима;
 - `aggregate` + `sources[]` в source/intake artifacts;
 - source traceability в `normalized_events.json`, `classified_events.json` и `rop_review_table.tsv`;
@@ -287,7 +287,7 @@ BeeAgent уже прошёл этап **module platform v0**:
 - per-source UIDVALIDITY / last_processed_uid checkpoint: продвижение только после полного успешного flow source, failure одного source не блокирует остальные и не откатывает успешные checkpoints;
 - новый source без checkpoint получает только свой baseline без изменения существующих checkpoints;
 - per-source poll/rebaseline override через `./start.sh rop poll --source-id <id>`;
-- optional business fallback `rop.sources[].routing.email_recipient` (не IMAP username, не Bitrix ID);
+- optional business fallback `sources[].routing.email_recipient` в canonical registry (не IMAP username, не Bitrix ID);
 - deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved; несколько адресов на одном evidence level → `ambiguous` без выбора первого; `Cc` только evidence, никогда responsible;
 - BeeAgent-owned read-only Bitrix `user.get` directory lookup (exact normalized active user email, bounded pagination, не per-email API call);
 - новый read-only artifact `storage/runs/<run_id>/rop_recipient_routing.json` с `event_id` + `event_instance_id`, source provenance, recipient/ responsible statuses (resolved/ambiguous/unresolved, matched/not_found/connector_degraded/not_attempted);
@@ -356,7 +356,7 @@ BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private s
 
 Текущий фокус:
 
-1. использовать `rop.sources` как source of truth для single-source и multi-source ROP ingestion;
+1. использовать `config/rop/sources.yml` как source of truth для single-source и multi-source ROP ingestion;
 2. запускать ROP MVP pipeline через CLI (`--source-id` или `--all-sources`), а результат смотреть через Operator Web Console;
 3. использовать `source_diagnostics.json`, `intake_metadata.json`, dashboard/TSV для human review и фиксации ошибок классификации/source degradation;
 4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
@@ -707,7 +707,7 @@ principal token rotation требует повторного входа; каж�
 # новый source получает только свой baseline, failure одного source не блокирует остальные.
 
 # Запустить ROP batch через default enabled source из config/settings.yml.
-# Сейчас это может быть hotline_mailbox, если он включён в rop.sources.
+# Сейчас это может быть hotline_mailbox, если он включён в config/rop/sources.yml.
 ./start.sh rop run --items-max 20 --period 2026-05
 
 # Запустить ROP batch через конкретный source_id.
@@ -775,21 +775,14 @@ storage/runs/<run_id>/rop_review_table.tsv
 
 Этот TSV можно открыть или скопировать в Google Sheets для human review.
 
-Для dev-запуска через `rop_batch_sample` нужно вручную включить этот source в `config/settings.yml`:
-
-```
-rop:
-  sources:
-    - source_id: "rop_batch_sample"
-      enabled: true
-```
+Для dev-запуска через `rop_batch_sample` нужно вручную включить этот source в `config/rop/sources.yml`.
 
 По умолчанию `rop_batch_sample` может быть выключен, чтобы случайно не заменить live/source smoke path.
 
 Параметры:
 
-- `--source-id` — выбрать источник данных из `rop.sources`
-- `--all-sources` — запустить все enabled источники из `rop.sources`
+- `--source-id` — выбрать источник данных из `config/rop/sources.yml`
+- `--all-sources` — запустить все enabled источники из `config/rop/sources.yml`
 - `--items-max` — override max items для источника
 - `--period` — override period для batch источника
 - `--run-id` — explicit run_id (если не указан, генерируется)
@@ -1047,7 +1040,7 @@ beeagent/
 На текущем этапе есть два ROP input path:
 
 1. `/run_rop` — operator command с explicit demo payload;
-2. `run_rop_batch_case(...)` — controlled source path через `rop.sources`, `json_batch` и `mailbox_readonly`.
+2. `run_rop_batch_case(...)` — controlled source path через `config/rop/sources.yml`, `json_batch` и `mailbox_readonly`.
 
 `run_rop_batch_case(...)` выполняет batch pipeline:
 
@@ -1236,54 +1229,60 @@ modules:
       enabled: true
 ```
 
-ROP input sources задаются отдельно через `rop.sources`.
+ROP input sources задаются отдельно в canonical registry `config/rop/sources.yml`; `config/settings.yml` хранит только путь к registry и политику polling:
+
+```yaml
+rop:
+  mailbox_poll:
+    enabled: true
+    source_id: hotline_mailbox
+    sources_all: true
+  sources_path: config/rop/sources.yml
+```
 
 Пример controlled batch source:
 
 ```
-rop:
-  sources:
-    - source_id: "rop_batch_sample"
-      source_type: "json_batch"
-      source_role: "batch_sample"
-      client_id: "welding"
-      display_name: "ROP Batch Sample"
-      enabled: true
-      authority: "read_only"
-      items_max: 100
-      batch:
-        path: "storage/mock/rop_batch_sample.json"
-        period: "2026-05"
+version: 1
+sources:
+  - source_id: "rop_batch_sample"
+    source_type: "json_batch"
+    source_role: "batch_sample"
+    client_id: "welding"
+    display_name: "ROP Batch Sample"
+    enabled: true
+    authority: "read_only"
+    items_max: 100
+    batch:
+      path: "storage/mock/rop_batch_sample.json"
+      period: "2026-05"
 ```
 
 Пример controlled read-only mailbox source:
 
 ```
-rop:
-  sources:
-    - source_id: "hotline_mailbox"
-      source_type: "mailbox_readonly"
-      source_role: "technical_aggregator"
-      client_id: "welding"
-      display_name: "Welding Hotline mailbox"
-      enabled: false
-      authority: "read_only"
-      items_max: 10
-      mailbox:
-        host_env: "ROP_MAILBOX_HOST"
-        port: 993
-        use_ssl: true
-        folder_env: "ROP_MAILBOX_FOLDER"
-        username_env: "ROP_MAILBOX_USERNAME"
-        password_env: "ROP_MAILBOX_PASSWORD"
-      routing:
-        email_recipient: "hotline@welding.kz"
+version: 1
+sources:
+  - source_id: "hotline_mailbox"
+    source_type: "mailbox_readonly"
+    source_role: "technical_aggregator"
+    client_id: "welding"
+    display_name: "Welding Hotline mailbox"
+    enabled: true
+    authority: "read_only"
+    items_max: 20
+    mailbox:
+      host: web01.srv.welding.kz
+      port: 993
+      use_ssl: true
+      folder: INBOX
+      username_env: ROP_MAILBOX_USERNAME
+      password_env: ROP_MAILBOX_PASSWORD
+    routing:
+      email_recipient: hotline@welding.kz
 ```
 
-Для `mailbox_readonly` в config хранятся имена env-переменных.
-`ROP_MAILBOX_HOST` должен содержать IMAP host, например `web01.srv.welding.kz`, без `https://` и без `/webmail`.
-`ROP_MAILBOX_FOLDER` задаёт mailbox folder, например `INBOX` или `welding`.
-`ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` должны лежать в `.env` / runtime env и не должны попадать в logs или artifacts.
+Для `mailbox_readonly` host, folder, port и SSL — non-secret canonical значения в registry. `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` — значения `.env` / runtime env, на которые registry ссылается только по имени. В Sources UI есть узкое admin-only исключение: уполномоченный ROP admin видит username выбранного mailbox source, пароль всегда отображается только как `********` или `—`, а Add/Edit пишет лишь эти username/password refs в `.env`. В Edit пароль всегда пустой: пустое поле сохраняет прежний пароль, непустое заменяет его. Значения никогда не попадают в YAML, CSV, API, audit, logs или artifacts. Новые mailbox sources получают детерминированные env refs `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` и `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. При старте `load_dotenv(..., override=False)` сохраняет приоритет внешнего process environment.
 `routing.email_recipient` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
 
 Production mailbox polling:
@@ -1293,14 +1292,14 @@ rop:
   mailbox_poll:
     enabled: true
     source_id: "hotline_mailbox"
-    sources_all: false
+    sources_all: true
 ```
 
-- `source_id` — default single-source mode (backward-compatible);
+- `source_id` — explicit single-source override;
 - `sources_all: true` — poll каждый enabled read-only `mailbox_readonly` source независимо, с собственным checkpoint;
 - per-source override/rebaseline: `./start.sh rop poll --source-id <id>`.
 
-Обязательный source profile contract для каждого `rop.sources[]`:
+Обязательный source profile contract для каждого entry в `config/rop/sources.yml`:
 
 - `source_role`
 - `client_id`
@@ -1782,9 +1781,9 @@ BeeAgent уже вышел из состояния “только демо”.
 - `beeagent-rop` загружается через registry;
 - BeeAgent может вызвать `beeagent-rop` через `execute_module_case(...)`;
 - Telegram command `/run_rop` запускает первый ROP operator flow;
-- `run_rop_batch_case(...)` запускает ROP source flow через configurable `rop.sources`;
-- `run_rop_batch_case(...)` поддерживает explicit single-source и all enabled sources mode;
-- `./start.sh rop run --all-sources` запускает multi-source ingestion;
+- `run_rop_batch_case(...)` запускает ROP source flow через configurable canonical source registry;
+- `run_rop_batch_case(...)` поддерживает default multi-source, explicit single-source и all enabled sources mode;
+- `./start.sh rop run` запускает multi-source ingestion при нескольких enabled sources; `--all-sources` остаётся явным эквивалентом;
 - `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
 - BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
 - BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;

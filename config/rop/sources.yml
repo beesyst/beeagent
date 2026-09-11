@@ -1,0 +1,34 @@
+version: 1
+sources:
+- source_id: hotline_mailbox
+  source_type: mailbox_readonly
+  source_role: technical_aggregator
+  client_id: welding
+  display_name: Welding Hotline mailbox
+  enabled: true
+  authority: read_only
+  items_max: 20
+  mailbox:
+    host: web01.srv.welding.kz
+    port: 993
+    use_ssl: true
+    folder: INBOX
+    username_env: ROP_MAILBOX_USERNAME
+    password_env: ROP_MAILBOX_PASSWORD
+  routing:
+    email_recipient: hotline@welding.kz
+- source_id: mailbox_83df9dc9
+  source_type: mailbox_readonly
+  source_role: technical_aggregator
+  client_id: welding
+  display_name: ROP Batch Sample
+  enabled: false
+  authority: read_only
+  items_max: 20
+  mailbox:
+    host: 12345.mail.ru
+    port: 993
+    use_ssl: true
+    folder: INBOX
+    username_env: BEEAGENT_ROP_SOURCE_MAILBOX_83DF9DC9_USERNAME
+    password_env: BEEAGENT_ROP_SOURCE_MAILBOX_83DF9DC9_PASSWORD

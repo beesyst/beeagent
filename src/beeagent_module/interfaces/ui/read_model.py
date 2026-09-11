@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from beeagent_module.cases.rop_dashboard import (
     sort_queue_items,
 )
 from beeagent_module.core.rop_final_decision import load_or_build_final_decisions
+from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.interfaces.ui.locale import (
     case_type_label,
     format_rop_today_summary,
@@ -2804,6 +2804,16 @@ def _build_rop_tab_read_model_legacy(
                 else None,
                 run_dir=run_dir,
             )
+            source_contribution = series.get("source_contribution", {})
+            labels = (
+                source_contribution.get("labels", [])
+                if isinstance(source_contribution, dict)
+                else []
+            )
+            if isinstance(labels, list):
+                result["kpis"]["source_count"] = len(
+                    {label for label in labels if isinstance(label, str) and label}
+                )
             result["funnel"] = _build_funnel(
                 source_diag if isinstance(source_diag, dict) else None,
                 intake if isinstance(intake, dict) else None,
@@ -2958,48 +2968,32 @@ def _build_rop_tab_read_model_legacy(
     return result
 
 
-def build_config_read_model(settings: dict[str, Any]) -> dict[str, Any]:
-    raw_sources = settings.get("rop", {}).get("sources", [])
-    if not isinstance(raw_sources, list):
-        return {"sources": []}
+def build_config_read_model(
+    settings: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    raw_sources = load_rop_sources(project_root, settings)
 
     safe_sources: list[dict[str, Any]] = []
     for source in raw_sources:
-        if not isinstance(source, dict):
-            continue
         safe_source: dict[str, Any] = {
-            "source_id": source.get("source_id", ""),
-            "source_type": source.get("source_type", ""),
-            "source_role": source.get("source_role", ""),
-            "client_id": source.get("client_id", ""),
-            "display_name": source.get("display_name", ""),
-            "enabled": source.get("enabled", False),
-            "authority": source.get("authority", ""),
-            "items_max": source.get("items_max", 0),
+            "source_id": source["source_id"],
+            "source_type": source["source_type"],
+            "source_role": source["source_role"],
+            "client_id": source["client_id"],
+            "display_name": source["display_name"],
+            "enabled": source["enabled"],
+            "authority": source["authority"],
+            "items_max": source["items_max"],
         }
 
         mailbox = source.get("mailbox")
         if isinstance(mailbox, dict):
-            host = mailbox.get("host", "")
-            host_env = mailbox.get("host_env", "")
-            if (not isinstance(host, str) or not host) and isinstance(host_env, str):
-                host = os.environ.get(host_env, "")
-
-            folder = mailbox.get("folder", "")
-            folder_env = mailbox.get("folder_env", "")
-            if (not isinstance(folder, str) or not folder) and isinstance(
-                folder_env, str
-            ):
-                folder = os.environ.get(folder_env, "")
-
             safe_source["mailbox"] = {
-                "host": host,
-                "host_env": host_env,
-                "port": mailbox.get("port", 0),
-                "use_ssl": mailbox.get("use_ssl", False),
-                "folder": folder,
-                "folder_env": folder_env,
-                "username_env": mailbox.get("username_env", ""),
+                "host": mailbox["host"],
+                "port": mailbox["port"],
+                "use_ssl": mailbox["use_ssl"],
+                "folder": mailbox["folder"],
+                "username_env": mailbox["username_env"],
             }
 
         safe_sources.append(safe_source)
@@ -3429,7 +3423,7 @@ def _build_rop_overview_layout(
     identity_only_no_target = business_kpi.get("identity_only_no_target", 0)
     unreconciled = business_kpi.get("unreconciled", 0)
     ambiguous_or_duplicate = business_kpi.get("ambiguous_or_duplicate", 0)
-    source_count = kpis.get("source_count", 0)
+    available_source_count = kpis.get("available_source_count", 0)
     bitrix_summary = (
         t("{count} not reconciled", locale).format(count=unreconciled)
         if unreconciled
@@ -3710,15 +3704,16 @@ def _build_rop_overview_layout(
         {
             "type": "metric_card",
             "width": 3,
-            "title": t("Sources", locale),
-            "value": source_count,
+            "title": t("Available sources", locale),
+            "value": available_source_count,
+            "hint": t("Last checked state", locale),
             "href": _rop_href(
                 tab="sources",
                 period=current_period,
                 locale=locale,
                 run_id=str(data.get("run_id", "")),
             ),
-            "icon": "mail-plus",
+            "icon": "plug-connected",
             "icon_tone": "green",
         },
     ]

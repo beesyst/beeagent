@@ -18,6 +18,7 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+    monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
@@ -31,71 +32,21 @@ def test_load_settings_uses_ai_source_of_truth_without_llm(
     "mutate,match",
     [
         (lambda data: data["rop"]["mailbox_poll"].update(enabled="true"), "enabled"),
-        (lambda data: data["rop"]["mailbox_poll"].update(source_id=""), "source_id"),
         (
-            lambda data: data["rop"]["mailbox_poll"].update(source_id="missing"),
+            lambda data: data["rop"]["mailbox_poll"].update(
+                source_id="", sources_all=False
+            ),
+            "source_id",
+        ),
+        (
+            lambda data: data["rop"]["mailbox_poll"].update(
+                source_id="missing", sources_all=False
+            ),
             "not found",
         ),
         (
             lambda data: data["rop"]["mailbox_poll"].update(sources_all="true"),
             "sources_all",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                source_type="json_batch",
-                batch={"path": "storage/mock/rop_batch_sample.json", "period": "x"},
-            ),
-            "mailbox_readonly",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(authority="draft_only"),
-            "read_only",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(routing="invalid"),
-            "routing",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "not-an-email"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz,b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz;b@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "@welding.kz"}
-            ),
-            "email_recipient",
-        ),
-        (
-            lambda data: data["rop"]["sources"][1].update(
-                routing={"email_recipient": "a@welding.kz", "other": "x"}
-            ),
-            "Unsupported",
         ),
     ],
 )
@@ -114,6 +65,15 @@ def _base_env(monkeypatch) -> None:
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
+
+
+def test_legacy_inline_sources_are_rejected(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["rop"]["sources"] = []
+    with pytest.raises(RuntimeError, match="Unsupported rop.sources"):
+        validate_settings(changed)
 
 
 def test_mailbox_poll_sources_all_true_with_enabled_mailbox_passes(
@@ -142,17 +102,6 @@ def test_mailbox_poll_old_all_sources_key_fails(monkeypatch) -> None:
     changed = deepcopy(settings)
     changed["rop"]["mailbox_poll"]["all_sources"] = True
     with pytest.raises(RuntimeError, match="Unsupported.*all_sources"):
-        validate_settings(changed)
-
-
-def test_routing_old_recipient_email_key_fails(monkeypatch) -> None:
-    _base_env(monkeypatch)
-    settings = load_settings(_project_root() / "config" / "settings.yml")
-    changed = deepcopy(settings)
-    changed["rop"]["sources"][1]["routing"] = {
-        "recipient_email": "hotline@welding.kz"
-    }
-    with pytest.raises(RuntimeError, match="recipient_email"):
         validate_settings(changed)
 
 
@@ -212,18 +161,6 @@ def test_mailbox_poll_single_source_config_passes(monkeypatch) -> None:
     changed = deepcopy(settings)
     changed["rop"]["mailbox_poll"].pop("sources_all")
     validate_settings(changed)
-
-
-def test_mailbox_poll_sources_all_true_without_mailbox_source_fails(
-    monkeypatch,
-) -> None:
-    _base_env(monkeypatch)
-    settings = load_settings(_project_root() / "config" / "settings.yml")
-    changed = deepcopy(settings)
-    changed["rop"]["mailbox_poll"]["sources_all"] = True
-    changed["rop"]["sources"][1]["enabled"] = False
-    with pytest.raises(RuntimeError, match="sources_all"):
-        validate_settings(changed)
 
 
 def _attach_env(monkeypatch) -> None:

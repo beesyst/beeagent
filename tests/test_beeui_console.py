@@ -376,18 +376,12 @@ def _build_settings() -> dict:
                 "default_period": "7d",
                 "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
             },
-            "sources": [
-                {
-                    "source_id": "test_source",
-                    "source_type": "json_batch",
-                    "source_role": "test",
-                    "client_id": "test",
-                    "display_name": "Test Source",
-                    "enabled": True,
-                    "authority": "read_only",
-                    "items_max": 10,
-                }
-            ],
+            "sources_path": "config/rop/sources.yml",
+            "mailbox_poll": {
+                "enabled": False,
+                "source_id": "hotline_mailbox",
+                "sources_all": True,
+            },
         },
     }
 
@@ -1384,19 +1378,19 @@ class TestRopOverviewLayoutStructure:
         assert "Urgent leads" in labels
         assert "For review" in labels
         assert "Bitrix problems" in labels
-        assert "Sources" in labels
+        assert "Available sources" in labels
 
     def test_kpi_has_four_small_cards(self) -> None:
         layout = build_rop_page_layout(self._mock_data(), tab="overview")
         cards = [block for block in layout if block["type"] == "metric_card"]
         assert len(cards) == 4
         assert [card["width"] for card in cards] == [3, 3, 3, 3]
-        assert [card["value"] for card in cards] == [2, 5, 4, 3]
+        assert [card["value"] for card in cards] == [2, 5, 4, 0]
         assert [card["icon"] for card in cards] == [
             "mail-heart",
             "mail-check",
             "mail-question",
-            "mail-plus",
+            "plug-connected",
         ]
         assert [card["icon_tone"] for card in cards] == [
             "red",
@@ -1417,7 +1411,7 @@ class TestRopOverviewLayoutStructure:
             assert query["period"] == ["7d"]
             assert query["run_id"] == ["run-test-001"]
             assert "status" not in card
-            assert "hint" not in card
+            assert "hint" not in card or card["title"] == "Available sources"
             assert "items" not in card
             assert "links" not in card
         assert parse_qs(urlparse(sources["href"]).query)["tab"] == ["sources"]
@@ -2646,51 +2640,20 @@ def test_rop_config_read_model_safety(tmp_path: Path) -> None:
 
     settings = {
         "rop": {
-            "sources": [
-                {
-                    "source_id": "hotline",
-                    "source_type": "mailbox_readonly",
-                    "source_role": "technical_aggregator",
-                    "client_id": "welding",
-                    "display_name": "Hotline",
-                    "enabled": True,
-                    "authority": "read_only",
-                    "items_max": 20,
-                    "mailbox": {
-                        "host": "imap.example.com",
-                        "port": 993,
-                        "use_ssl": True,
-                        "folder": "INBOX",
-                        "username_env": "ROP_MAILBOX_USERNAME",
-                        "password_env": "ROP_MAILBOX_PASSWORD",
-                    },
-                }
-            ]
+            "sources_path": "config/rop/sources.yml",
+            "mailbox_poll": {
+                "enabled": False,
+                "source_id": "hotline_mailbox",
+                "sources_all": True,
+            },
         }
     }
 
-    model = build_config_read_model(settings)
+    model = build_config_read_model(settings, Path(__file__).resolve().parents[1])
     sources = model["sources"]
-    assert len(sources) == 1
-    source = sources[0]
-
-    assert source["source_id"] == "hotline"
-    assert source["source_type"] == "mailbox_readonly"
-    assert source["source_role"] == "technical_aggregator"
-    assert source["client_id"] == "welding"
-    assert source["display_name"] == "Hotline"
-    assert source["enabled"] is True
-    assert source["authority"] == "read_only"
-    assert source["items_max"] == 20
-
-    mailbox = source.get("mailbox", {})
-    assert mailbox["host"] == "imap.example.com"
-    assert mailbox["port"] == 993
-    assert mailbox["use_ssl"] is True
-    assert mailbox["folder"] == "INBOX"
-    assert mailbox["username_env"] == "ROP_MAILBOX_USERNAME"
-
-    assert "password_env" not in mailbox
+    assert sources
+    assert all("password_env" not in source.get("mailbox", {}) for source in sources)
+    assert all("password" not in str(source) for source in sources)
 
 
 def test_oversized_json_bounded(tmp_path: Path) -> None:
@@ -5134,12 +5097,15 @@ def test_rop_overview_renders_deterministic_chart_containers(tmp_path: Path) -> 
         "Urgent leads",
         "For review",
         "Bitrix problems",
-        "Sources",
+        "Available sources",
     ):
         assert title in html
     assert "priority=high" in html
     assert "queue=needs_review" in html
-    assert "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled" in html
+    assert (
+        "bitrix_status=not_found%2Cambiguous%2Cduplicate_candidate%2Cunreconciled"
+        in html
+    )
     assert 'href="/rop?tab=sources&amp;run_id=run-chart-schema' in html
 
 
@@ -5233,7 +5199,7 @@ def test_rop_overview_kpi_uses_business_labels(tmp_path: Path) -> None:
     assert "Urgent leads" in html
     assert "For review" in html
     assert "Bitrix problems" in html
-    assert "Sources" in html
+    assert "Available sources" in html
     assert "Count" not in html
     assert "Open Queue" not in html
     assert "high_priority" not in html
@@ -7007,7 +6973,7 @@ def _build_full_settings() -> dict:
                     "ocr_enabled": True,
                 },
             },
-            "sources": [],
+            "sources_path": "config/rop/sources.yml",
             "dashboard": {
                 "default_period": "7d",
                 "periods": ["today", "yesterday", "7d", "30d", "90d", "365d", "all"],
@@ -7706,6 +7672,10 @@ class TestRopDashboardAggregateReadModel:
         data = build_rop_dashboard_read_model(storage_dir, "agg-run-b", period="all")
 
         assert data["business_kpi"]["processed_events"] == 2
+        assert data["series"]["source_contribution"] == {
+            "labels": ["src_a", "src_b"],
+            "series": [1, 1],
+        }
         row_by_event = {row["event_id"]: row for row in data["queue_rows"]}
         assert set(row_by_event) == {"evt-a", "evt-b"}
         assert row_by_event["evt-a"]["run_id"] == "agg-run-a"

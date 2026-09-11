@@ -34,8 +34,35 @@ Production mailbox polling is a one-shot command: `./start.sh rop poll`. Its mut
 
 Polling mode is controlled by `rop.mailbox_poll` in `config/settings.yml`:
 
-- `source_id` — default single-source mode (backward-compatible);
-- `sources_all: true` — poll every enabled read-only `mailbox_readonly` source independently.
+- `sources_all: true` — default production mode that polls every enabled read-only `mailbox_readonly` source independently;
+- `source_id` — the explicit single-source override.
+
+## ROP source registry
+
+`config/rop/sources.yml` is the canonical source registry (`version: 1`, `sources:`). `config/settings.yml` contains only `rop.sources_path` and the `rop.mailbox_poll` selection policy:
+
+```yaml
+rop:
+  mailbox_poll:
+    enabled: true
+    source_id: hotline_mailbox
+    sources_all: true
+  sources_path: config/rop/sources.yml
+```
+
+The registry may be edited manually or through the protected Sources table; a normal Sources page read and the next ROP run or poll load the latest file. There is no filesystem watcher. Mailbox host, port, SSL and folder are non-secret registry fields. Credentials remain environment references only:
+
+```yaml
+mailbox:
+  host: web01.srv.welding.kz
+  port: 993
+  use_ssl: true
+  folder: INBOX
+  username_env: ROP_MAILBOX_USERNAME
+  password_env: ROP_MAILBOX_PASSWORD
+```
+
+The protected Sources UI gives an authorized ROP administrator a narrow credential-management exception. It resolves only each mailbox source's username reference for display, shows password solely as `********` when a nonempty value exists or `—` otherwise, and writes only the selected source's generated username/password references to the `# ROP mailbox` section of `.env`. Add requires both values. Edit starts with an empty password: blank preserves it and nonblank replaces it. Values never enter YAML, CSV, JSON APIs, audit records, logs or artifacts. New mailbox sources use `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` and `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. Current-process updates set only changed names; at startup `load_dotenv(..., override=False)` preserves externally supplied environment values over `.env`.
 
 Optional CLI overrides:
 
@@ -50,6 +77,17 @@ Per-source semantics:
 - one source failure never blocks the other selected sources and never rolls back successful checkpoints;
 - a new source without a checkpoint receives its own baseline without resetting existing sources;
 - an explicit per-source rebaseline does not reset unrelated sources.
+
+## Manual ROP runs
+
+`./start.sh rop run` is the manual latest-N/backfill path: it does not use mailbox checkpoints and can process messages already present in a mailbox. With no selector it runs every enabled source when more than one is enabled; with one enabled source it keeps the single-source path. `items_max` is a per-source, per-invocation limit and is applied in memory only.
+
+- `./start.sh rop run`
+- `./start.sh rop run --source-id hotline_mailbox`
+- `./start.sh rop run --all-sources`
+- `./start.sh rop run --items-max 5`
+
+`./start.sh rop poll` is the only-new UID path. It has a persistent per-source checkpoint; the first poll establishes a baseline without importing historical messages, and later polls process only higher UIDs. Use `./start.sh rop poll --source-id <id>` for one source. Existing controlled Bitrix write-back settings still govern both commands.
 
 When Bitrix reconciliation is enabled, the poll persists durable ROP write-back intent (`storage/interfaces/rop_writeback_state.json` via `build_writeback_plan`) before the source checkpoint advances. With `bitrix.writeback.enabled: true` plan persistence failure blocks checkpoint advancement; otherwise it is logged without blocking ingestion. The required ordering is durable intent → checkpoint → external execution → original per-run projection refresh. Automatic external execution is scoped strictly to the just-created poll run; a poll with no new messages does not execute legacy or historical write-back records. `rop writeback plan/execute` remains the explicit operator recovery path.
 

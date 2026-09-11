@@ -6,6 +6,10 @@ import yaml
 
 from beeagent_module.core.authorization import SCOPE_WILDCARD
 from beeagent_module.core.document_extractors import validate_selected_extractor
+from beeagent_module.core.rop_sources import (
+    RopSourcesError,
+    load_rop_sources,
+)
 
 REQUIRED_KEYS = (
     ("app", "name"),
@@ -53,7 +57,7 @@ REQUIRED_KEYS = (
     ("rop", "attachments", "extraction", "ocr_enabled"),
     ("rop", "ai_assist", "adjudicator", "attachment_chars_max"),
     ("rop", "email_preview", "body_chars_max"),
-    ("rop", "sources"),
+    ("rop", "sources_path"),
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
     ("web", "auth", "enabled"),
@@ -103,11 +107,11 @@ def load_settings(settings_path: Path) -> dict:
     if not isinstance(content, dict):
         raise RuntimeError("Settings file must contain a top-level mapping")
 
-    validate_settings(content)
+    validate_settings(content, project_root=settings_path.parent.parent)
     return content
 
 
-def validate_settings(settings: dict) -> None:
+def validate_settings(settings: dict, project_root: Path | None = None) -> None:
     apply_runtime_settings_overrides(settings)
     missing_keys: list[str] = []
 
@@ -278,9 +282,11 @@ def validate_settings(settings: dict) -> None:
             "Invalid rop.mailbox_poll.source_id, expected non-empty string"
         )
 
-    input_sources = _get_nested_value(settings, ("rop", "sources"))
-    if not isinstance(input_sources, list):
-        raise RuntimeError("Invalid type for rop.sources, expected list")
+    sources_path = _get_nested_value(settings, ("rop", "sources_path"))
+    if not isinstance(sources_path, str) or not sources_path.strip():
+        raise RuntimeError(
+            "Invalid type for rop.sources_path, expected non-empty string"
+        )
 
     attachments_cfg = _get_nested_value(settings, ("rop", "attachments"))
     if not isinstance(attachments_cfg, dict):
@@ -384,158 +390,15 @@ def validate_settings(settings: dict) -> None:
                 "attachment_chars_max <= attachments.extraction.chars_max"
             )
 
-    _VALID_SOURCE_TYPES = {"json_batch", "mailbox_readonly"}
-    _VALID_AUTHORITY_VALUES = {"read_only", "draft_only", "execution_capable"}
+    if "sources" in settings["rop"]:
+        raise RuntimeError("Unsupported rop.sources; use rop.sources_path")
 
-    for idx, source in enumerate(input_sources):
-        if not isinstance(source, dict):
-            raise RuntimeError(f"Invalid type for rop.sources[{idx}], expected mapping")
-        for key in (
-            "source_id",
-            "source_type",
-            "source_role",
-            "client_id",
-            "display_name",
-            "authority",
-        ):
-            value = source.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise RuntimeError(
-                    f"Invalid or missing rop.sources[{idx}].{key}, expected non-empty string"
-                )
-        if not isinstance(source.get("enabled"), bool):
-            raise RuntimeError(
-                f"Invalid or missing rop.sources[{idx}].enabled, expected bool"
-            )
-        items_max = source.get("items_max")
-        if not isinstance(items_max, int) or items_max <= 0:
-            raise RuntimeError(
-                f"Invalid or missing rop.sources[{idx}].items_max, expected int > 0"
-            )
-        source_type = source.get("source_type", "")
-        if source_type not in _VALID_SOURCE_TYPES:
-            raise RuntimeError(
-                f"Unsupported rop.sources[{idx}].source_type '{source_type}', "
-                f"expected one of: {sorted(_VALID_SOURCE_TYPES)}"
-            )
-        if source.get("authority") not in _VALID_AUTHORITY_VALUES:
-            raise RuntimeError(
-                f"Invalid rop.sources[{idx}].authority, "
-                f"expected one of: {sorted(_VALID_AUTHORITY_VALUES)}"
-            )
-        if source_type == "json_batch":
-            batch = source.get("batch")
-            if not isinstance(batch, dict):
-                raise RuntimeError(
-                    f"Missing or invalid rop.sources[{idx}].batch, expected mapping"
-                )
-            if not isinstance(batch.get("path"), str):
-                raise RuntimeError(
-                    f"Missing rop.sources[{idx}].batch.path, expected string"
-                )
-            if not isinstance(batch.get("period"), str):
-                raise RuntimeError(
-                    f"Missing rop.sources[{idx}].batch.period, expected string"
-                )
-        if source_type == "mailbox_readonly":
-            if source.get("authority") != "read_only":
-                raise RuntimeError(
-                    f"Invalid rop.sources[{idx}].authority for mailbox_readonly, expected 'read_only'"
-                )
-            mailbox = source.get("mailbox")
-            if not isinstance(mailbox, dict):
-                raise RuntimeError(
-                    f"Missing or invalid rop.sources[{idx}].mailbox, expected mapping"
-                )
-            host = mailbox.get("host")
-            host_env = mailbox.get("host_env")
-            has_host_env = isinstance(host_env, str) and bool(host_env)
-            has_host = isinstance(host, str) and bool(host)
-            if not (has_host_env or has_host):
-                raise RuntimeError(
-                    f"Missing rop.sources[{idx}].mailbox.host_env or rop.sources[{idx}].mailbox.host, expected non-empty string"
-                )
-            folder = mailbox.get("folder")
-            folder_env = mailbox.get("folder_env")
-            has_folder_env = isinstance(folder_env, str) and bool(folder_env)
-            has_folder = isinstance(folder, str) and bool(folder)
-            if not (has_folder_env or has_folder):
-                raise RuntimeError(
-                    f"Missing rop.sources[{idx}].mailbox.folder_env or rop.sources[{idx}].mailbox.folder, expected non-empty string"
-                )
-            for key in ("username_env", "password_env"):
-                value = mailbox.get(key)
-                if not isinstance(value, str) or not value:
-                    raise RuntimeError(
-                        f"Missing rop.sources[{idx}].mailbox.{key}, expected non-empty string"
-                    )
-            port = mailbox.get("port")
-            if not isinstance(port, int) or port <= 0:
-                raise RuntimeError(
-                    f"Missing or invalid rop.sources[{idx}].mailbox.port, expected int > 0"
-                )
-            if not isinstance(mailbox.get("use_ssl"), bool):
-                raise RuntimeError(
-                    f"Missing or invalid rop.sources[{idx}].mailbox.use_ssl, expected bool"
-                )
-        routing = source.get("routing")
-        if routing is not None:
-            if not isinstance(routing, dict):
-                raise RuntimeError(
-                    f"Invalid type for rop.sources[{idx}].routing, expected mapping"
-                )
-            unsupported_routing_keys = sorted(set(routing) - {"email_recipient"})
-            if unsupported_routing_keys:
-                raise RuntimeError(
-                    f"Unsupported rop.sources[{idx}].routing keys: "
-                    + ", ".join(unsupported_routing_keys)
-                )
-            email_recipient = routing.get("email_recipient")
-            if email_recipient is not None:
-                if not isinstance(email_recipient, str) or not email_recipient.strip():
-                    raise RuntimeError(
-                        f"Invalid or missing rop.sources[{idx}].routing.email_recipient, expected non-empty string"
-                    )
-                if not _is_single_plain_email(email_recipient):
-                    raise RuntimeError(
-                        f"Invalid rop.sources[{idx}].routing.email_recipient, expected a single email address"
-                    )
-
-    if mailbox_poll["enabled"]:
-        if poll_sources_all is True:
-            mailbox_sources = [
-                source
-                for source in input_sources
-                if source.get("enabled") is True
-                and source.get("source_type") == "mailbox_readonly"
-                and source.get("authority") == "read_only"
-            ]
-            if not mailbox_sources:
-                raise RuntimeError(
-                    "rop.mailbox_poll.sources_all requires at least one enabled "
-                    "read_only mailbox_readonly source in rop.sources"
-                )
-        else:
-            poll_source = next(
-                (
-                    source
-                    for source in input_sources
-                    if source.get("source_id") == poll_source_id
-                ),
-                None,
-            )
-            if poll_source is None:
-                raise RuntimeError(
-                    "rop.mailbox_poll.source_id not found in rop.sources"
-                )
-            if poll_source.get("enabled") is not True:
-                raise RuntimeError("rop.mailbox_poll source must be enabled")
-            if poll_source.get("source_type") != "mailbox_readonly":
-                raise RuntimeError("rop.mailbox_poll source must be mailbox_readonly")
-            if poll_source.get("authority") != "read_only":
-                raise RuntimeError(
-                    "rop.mailbox_poll source authority must be read_only"
-                )
+    if project_root is None:
+        project_root = Path(__file__).resolve().parents[3]
+    try:
+        load_rop_sources(project_root, settings)
+    except RopSourcesError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     _validate_rop_dashboard_settings(settings)
 
@@ -1292,8 +1155,7 @@ def _validate_bitrix_embedded_app_settings(settings: dict) -> None:
         )
     if default_role not in {"viewer", "operator"}:
         raise RuntimeError(
-            "Invalid bitrix.embedded_app.default_role, "
-            "expected 'viewer' or 'operator'"
+            "Invalid bitrix.embedded_app.default_role, expected 'viewer' or 'operator'"
         )
     if _get_nested_value(settings, ("web", "auth", "enabled")) is not True:
         raise RuntimeError(

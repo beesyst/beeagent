@@ -75,6 +75,40 @@ def test_select_rop_sources_all_enabled_returns_all_sources() -> None:
     assert [item["source_id"] for item in selected] == ["s1", "s3"]
 
 
+def test_select_rop_sources_defaults_to_all_enabled_sources() -> None:
+    sources = [
+        {"source_id": "s1", "enabled": True},
+        {"source_id": "s2", "enabled": False},
+        {"source_id": "s3", "enabled": True},
+    ]
+
+    selected, mode = select_rop_sources(sources)
+
+    assert mode == "all_enabled"
+    assert [item["source_id"] for item in selected] == ["s1", "s3"]
+
+
+def test_select_rop_sources_defaults_to_single_enabled_source() -> None:
+    selected, mode = select_rop_sources([{"source_id": "s1", "enabled": True}])
+
+    assert mode == "single_active"
+    assert [item["source_id"] for item in selected] == ["s1"]
+
+
+def test_select_rop_sources_defaults_to_no_enabled_source_error() -> None:
+    with pytest.raises(RuntimeError, match="no enabled source found"):
+        select_rop_sources([{"source_id": "s1", "enabled": False}])
+
+
+def test_select_rop_sources_rejects_combined_selectors() -> None:
+    with pytest.raises(RuntimeError, match="cannot be used together"):
+        select_rop_sources(
+            [{"source_id": "s1", "enabled": True}],
+            source_id="s1",
+            all_sources=True,
+        )
+
+
 def test_select_rop_sources_explicit_source_id() -> None:
     sources = [
         {"source_id": "s1", "enabled": True},

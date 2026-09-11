@@ -57,16 +57,13 @@ def find_active_rop_source(input_sources: list[dict]) -> dict:
     enabled = [s for s in input_sources if s.get("enabled", False)]
 
     if not enabled:
-        raise RuntimeError(
-            "rop.sources: no enabled source found; "
-            "set enabled: true for exactly one source"
-        )
+        raise RuntimeError("rop.sources: no enabled source found")
 
     if len(enabled) > 1:
         ids = ", ".join(str(s.get("source_id", "?")) for s in enabled)
         raise RuntimeError(
             f"rop.sources: multiple enabled sources found ({ids}); "
-            "v0 supports exactly one enabled source"
+            "use select_rop_sources for multi-source selection"
         )
 
     return enabled[0]
@@ -89,16 +86,14 @@ def select_rop_sources(
             return [source], "single_explicit"
         raise RuntimeError(f"rop.sources: source '{source_id}' not found")
 
-    if all_sources:
-        enabled = [source for source in input_sources if source.get("enabled", False)]
-        if not enabled:
-            raise RuntimeError(
-                "rop.sources: no enabled source found; "
-                "--all-sources requires at least one enabled source"
-            )
+    enabled = [source for source in input_sources if source.get("enabled", False)]
+    if not enabled:
+        raise RuntimeError("rop.sources: no enabled source found")
+
+    if all_sources or len(enabled) > 1:
         return enabled, "all_enabled"
 
-    return [find_active_rop_source(input_sources)], "single_active"
+    return enabled, "single_active"
 
 
 def load_rop_source(
@@ -534,7 +529,7 @@ def _bounded_email_value(value: Any) -> str:
         return ""
     try:
         pairs = getaddresses([value])
-    except (TypeError, ValueError, IndexError):
+    except TypeError, ValueError, IndexError:
         return ""
     if len(pairs) != 1:
         return ""

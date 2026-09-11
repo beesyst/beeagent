@@ -600,10 +600,7 @@ def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
     )
 
     assert result["status"] == "degraded"
-    assert (
-        "no input source" in result["summary"].lower()
-        or "empty" in result["summary"].lower()
-    )
+    assert "no enabled source" in result["summary"].lower()
     assert (
         tmp_path / "runs" / "run-rop-batch-no-source" / "operator_summary.json"
     ).exists()
@@ -957,7 +954,6 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
         registry=registry,
         run_id="run-rop-batch-all-sources",
         session_id="session-rop-batch-all-sources",
-        all_sources=True,
     )
 
     assert result["status"] == "ok"
@@ -3630,8 +3626,7 @@ def test_ai_adjudicator_preserves_deterministic_duplicate(
     assert final_by_id["adj-dup-2"]["final_decision_source"] == "deterministic"
     assert final_by_id["adj-dup-2"]["duplicate"]["is_duplicate"] is True
     adj2_prompts = [
-        call for call in provider_calls
-        if "adj-dup-2" in str(call.get("prompt", ""))
+        call for call in provider_calls if "adj-dup-2" in str(call.get("prompt", ""))
     ]
     assert len(adj2_prompts) <= 1, (
         "adj-dup-2 should appear in at most one prompt "

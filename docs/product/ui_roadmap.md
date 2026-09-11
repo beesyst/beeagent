@@ -3194,7 +3194,7 @@ Existing Bitrix irrelevant/JUNK write-back behavior используется б�
 - direct blacklist mutations use the protected product action boundary and do not require a browser preview or confirmation;
 - direct sender match produces effective `irrelevant`;
 - forwarded message matches original sender rather than technical forwarder when canonical original-sender evidence exists;
-- test scenario George → Kevin → automatic forward → `parsales@welding.kz` matches George;
+- test scenario George → Kevin → automatic forward → `technical-forwarder@example.com` matches George;
 - malformed/missing original-sender evidence safely falls back to canonical current sender;
 - no raw MIME reparsing is introduced;
 - base semantic classification remains auditable;
