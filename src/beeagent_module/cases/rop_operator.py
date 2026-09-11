@@ -41,6 +41,10 @@ from beeagent_module.core.rop_conversation import (
 )
 from beeagent_module.core.rop_final_decision import build_final_decisions
 from beeagent_module.core.rop_sender_blacklist import apply_sender_blacklist_policy
+from beeagent_module.core.rop_sources import (
+    load_rop_sources,
+    record_rop_source_connection_health,
+)
 from beeagent_module.core.rop_outbound_correlation import (
     collect_outbound_correlation_evidence,
     resolve_outbound_bridge,
@@ -94,6 +98,37 @@ _AI_MERGED_OUTPUT_KEYS = frozenset(
         "correct_action",
     }
 )
+
+
+def _refresh_mailbox_connection_health(
+    storage_dir: Path,
+    source: dict[str, Any],
+    diagnostics: dict[str, Any],
+    logger: logging.Logger,
+) -> None:
+    if source.get("source_type") != "mailbox_readonly":
+        return
+    source_id = source.get("source_id")
+    if not isinstance(source_id, str):
+        return
+    if (
+        diagnostics.get("status") == "ok"
+        or diagnostics.get("reason") == "all_messages_malformed"
+    ):
+        status, reason = "connected", "ok"
+    else:
+        reason = diagnostics.get("reason")
+        if reason not in {"missing_credentials", "auth_failure", "mailbox_unavailable"}:
+            return
+        status = "failed"
+    try:
+        record_rop_source_connection_health(storage_dir, source_id, status, reason)
+    except OSError:
+        logger.warning(
+            "ROP source connection health persistence failed: source_id=%s", source_id
+        )
+
+
 _NORMALIZED_EVENT_CONTEXT_KEYS = (
     "clean_subject",
     "transport_labels",
@@ -372,6 +407,19 @@ def _build_batch_operator_text(
     source_block = ""
     if isinstance(source, dict):
         if source.get("mode"):
+            failed_sources = source.get("failed_sources", [])
+            failed_text = ""
+            if isinstance(failed_sources, list):
+                failed_lines = [
+                    "- {source_id} [degraded] reason={reason}".format(
+                        source_id=item.get("source_id", "?"),
+                        reason=item.get("reason", "?"),
+                    )
+                    for item in failed_sources
+                    if isinstance(item, dict)
+                ]
+                if failed_lines:
+                    failed_text = "sources:\n" + "\n".join(failed_lines) + "\n"
             source_block = (
                 f"source_mode: {source.get('mode', '?')}\n"
                 f"source_count: {source.get('source_count', '?')}\n"
@@ -381,6 +429,7 @@ def _build_batch_operator_text(
                 f"loaded_count: {source.get('loaded_count', '?')}\n"
                 f"malformed_count: {source.get('malformed_count', '?')}\n"
                 f"status_reason: {source.get('reason', '?')}\n"
+                f"{failed_text}"
             )
         else:
             source_block = (
@@ -1128,7 +1177,12 @@ def run_rop_batch_case(
     adj_enabled = False
 
     try:
-        input_sources: list[dict] = settings.get("rop", {}).get("sources", [])
+        configured_sources = settings.get("rop", {}).get("sources")
+        input_sources = (
+            configured_sources
+            if isinstance(configured_sources, list)
+            else load_rop_sources(project_root, settings)
+        )
         selected_sources, selection_mode = select_rop_sources(
             input_sources=input_sources,
             source_id=source_id,
@@ -1165,6 +1219,9 @@ def run_rop_batch_case(
                 )
                 source_diagnostics_items.append(source_diag)
                 intake_sources.append(source_meta_item)
+                _refresh_mailbox_connection_health(
+                    storage_dir, selected, source_diag, logger
+                )
 
                 for event in events:
                     normalized_events.append(
@@ -1198,6 +1255,21 @@ def run_rop_batch_case(
                 }
                 degraded_diag.update(exc.diagnostics)
                 degraded_diag["status"] = "degraded"
+
+                _refresh_mailbox_connection_health(
+                    storage_dir, selected, degraded_diag, logger
+                )
+                reason = degraded_diag.get("reason")
+                if reason in {
+                    "missing_credentials",
+                    "auth_failure",
+                    "mailbox_unavailable",
+                }:
+                    logger.warning(
+                        "ROP source unavailable: source_id=%s reason=%s",
+                        degraded_diag["source_id"],
+                        reason,
+                    )
 
                 source_diagnostics_items.append(degraded_diag)
                 intake_sources.append(
@@ -1309,6 +1381,14 @@ def run_rop_batch_case(
                 "malformed_count": malformed_count,
                 "status": aggregate_status,
                 "reason": aggregate_reason,
+                "failed_sources": [
+                    {
+                        "source_id": item.get("source_id", "unknown"),
+                        "reason": item.get("reason", "source_load_error"),
+                    }
+                    for item in source_diagnostics_items
+                    if item.get("status") == "degraded"
+                ],
             }
 
         source_rollup = intake_sources

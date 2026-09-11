@@ -21,6 +21,7 @@ from beeagent_module.core.cli import (
     handle_rop_summary,
 )
 from beeagent_module.core.rop_review_export import review_tsv_columns
+from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.core.settings import load_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
@@ -39,6 +40,27 @@ def _null_logger() -> logging.Logger:
     logger.addHandler(logging.NullHandler())
     logger.propagate = False
     return logger
+
+
+def _with_sources(settings: dict) -> dict:
+    settings["rop"]["sources"] = [
+        {
+            "source_id": "rop_batch_sample",
+            "source_type": "json_batch",
+            "source_role": "batch_sample",
+            "client_id": "welding",
+            "display_name": "ROP Batch Sample",
+            "enabled": False,
+            "authority": "read_only",
+            "items_max": 100,
+            "batch": {
+                "path": "storage/mock/rop_batch_sample.json",
+                "period": "2026-05",
+            },
+        },
+        *load_rop_sources(_project_root(), settings),
+    ]
+    return settings
 
 
 def _project_root() -> Path:
@@ -137,7 +159,9 @@ class TestRopCliArgumentParser:
     def test_rop_dashboard_rejects_period_not_configured(self) -> None:
         import argparse
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         args = argparse.Namespace(period="14d", run_id="test-run-123")
 
         with pytest.raises(RopCliError, match="Invalid period"):
@@ -164,7 +188,9 @@ class TestRopCliArgumentParser:
     def test_rop_mvp_pack_rejects_period_not_configured(self) -> None:
         import argparse
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         args = argparse.Namespace(period="14d", run_id="test-run-123")
 
         with pytest.raises(RopCliError, match="Invalid period"):
@@ -177,7 +203,9 @@ class TestRopCliArgumentParser:
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "disabled")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
 
         assert settings["rop"]["ai_assist"]["enabled"] is True
         assert settings["rop"]["ai_assist"]["adjudicator"]["enabled"] is False
@@ -185,15 +213,17 @@ class TestRopCliArgumentParser:
 
 class TestSourceOverrides:
     def test_apply_source_overrides_with_source_id(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
 
         for source in settings["rop"]["sources"]:
-            if source["source_id"] == "rop_batch_sample":
+            if source["source_id"] == "hotline_mailbox":
                 source["enabled"] = True
 
         effective = _apply_source_overrides(
             settings=settings,
-            source_id="rop_batch_sample",
+            source_id="hotline_mailbox",
             all_sources=False,
             items_max=5,
             logger=_null_logger(),
@@ -201,7 +231,7 @@ class TestSourceOverrides:
 
         sources = effective["rop"]["sources"]
         batch_source = next(
-            (s for s in sources if s["source_id"] == "rop_batch_sample"), None
+            (s for s in sources if s["source_id"] == "hotline_mailbox"), None
         )
 
         assert batch_source is not None
@@ -209,11 +239,13 @@ class TestSourceOverrides:
         assert batch_source["items_max"] == 5
 
         for source in sources:
-            if source["source_id"] != "rop_batch_sample":
+            if source["source_id"] != "hotline_mailbox":
                 assert source["enabled"] is False
 
     def test_apply_source_overrides_nonexistent_source_raises_error(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
 
         with pytest.raises(RopCliError) as exc_info:
             _apply_source_overrides(
@@ -239,7 +271,9 @@ class TestSourceOverrides:
         assert "rop.sources is not configured" in str(exc_info.value)
 
     def test_apply_source_overrides_all_sources_requires_enabled(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         for source in settings["rop"]["sources"]:
             source["enabled"] = False
 
@@ -253,6 +287,32 @@ class TestSourceOverrides:
             )
         assert "No enabled sources found" in str(exc_info.value)
 
+    def test_apply_source_overrides_default_multi_source_items_max_is_in_memory(
+        self,
+    ) -> None:
+        settings = {
+            "rop": {
+                "sources": [
+                    {"source_id": "source_a", "enabled": True, "items_max": 20},
+                    {"source_id": "source_b", "enabled": True, "items_max": 20},
+                ]
+            }
+        }
+
+        effective = _apply_source_overrides(
+            settings=settings,
+            source_id=None,
+            all_sources=False,
+            items_max=5,
+            logger=_null_logger(),
+        )
+
+        assert [source["items_max"] for source in effective["rop"]["sources"]] == [5, 5]
+        assert [source["items_max"] for source in settings["rop"]["sources"]] == [
+            20,
+            20,
+        ]
+
 
 class TestRopCliRun:
     def test_rop_run_with_batch_source(
@@ -264,7 +324,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         batch_data = {
@@ -329,7 +391,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:
@@ -405,7 +469,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -463,7 +529,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         good_batch_path = tmp_path / "good_batch.json"
@@ -556,7 +624,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
@@ -597,7 +667,9 @@ class TestRopCliRun:
     def test_rop_run_missing_source_id_raises_error(self, tmp_path: Path) -> None:
         import argparse
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
 
         args = argparse.Namespace(
             source_id="nonexistent_source",
@@ -626,7 +698,9 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -794,7 +868,9 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -895,7 +971,9 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -949,7 +1027,9 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -1021,7 +1101,9 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -1227,7 +1309,9 @@ class TestRopCliExportReview:
         assert set(row.keys()) == set(expected_cols)
 
     def test_apply_source_overrides_disabled_source_raises_error(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
 
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
@@ -1297,7 +1381,9 @@ class TestRopCliExportReview:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = _with_sources(
+            load_settings(_project_root() / "config" / "settings.yml")
+        )
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:

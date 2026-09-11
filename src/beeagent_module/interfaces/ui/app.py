@@ -42,6 +42,8 @@ from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
     load_sender_blacklist_entries,
 )
+from beeagent_module.core.rop_sources import RopSourcesError, load_rop_sources
+from beeagent_module.core.paths import get_project_root
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
@@ -618,6 +620,16 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
         if session is None:
             return _unauthenticated_response(request)
 
+        source_admin_route = (
+            str(request.url.path) == "/rop/sources.csv"
+            or (
+                str(request.url.path) == "/rop"
+                and request.query_params.get("tab") == "sources"
+            )
+        )
+        if source_admin_route and session.role.value != "admin":
+            return _forbidden_response()
+
         settings = getattr(request.app.state, "beeagent_settings", {}) or {}
         scopes = _principal_scopes(settings, session.user_id)
         path = str(request.url.path)
@@ -867,6 +879,38 @@ def _register_custom_routes(
             },
         )
 
+    @app.get("/rop/sources.csv", include_in_schema=False)
+    async def rop_sources_csv() -> Response:
+        try:
+            sources = load_rop_sources(get_project_root(), adapter._settings)
+        except RopSourcesError as exc:
+            return _error_json("state_malformed", str(exc), status_code=400)
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow(["Source ID", "Display name", "Type", "Enabled", "Client ID"])
+        for source in sources:
+            writer.writerow(
+                [
+                    _csv_cell(str(source[key]))
+                    for key in (
+                        "source_id",
+                        "display_name",
+                        "source_type",
+                        "enabled",
+                        "client_id",
+                    )
+                ]
+            )
+        return Response(
+            output.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=rop-sources.csv",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            },
+        )
+
     @app.get("/api/rop/dashboard", include_in_schema=False)
     async def api_rop_dashboard(request: Request) -> JSONResponse:
         run_id = request.query_params.get("run_id")
@@ -1060,9 +1104,7 @@ def _register_custom_routes(
         settings = getattr(app.state, "beeagent_settings", {})
         bitrix_cfg = settings.get("bitrix", {}) if isinstance(settings, dict) else {}
         embedded_cfg = (
-            bitrix_cfg.get("embedded_app", {})
-            if isinstance(bitrix_cfg, dict)
-            else {}
+            bitrix_cfg.get("embedded_app", {}) if isinstance(bitrix_cfg, dict) else {}
         )
         portal_origin = (
             embedded_cfg.get("portal_origin", "")

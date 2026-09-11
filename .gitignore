@@ -41,6 +41,9 @@ Thumbs.db
 .env.*
 !.env.example
 
+config/rop/*.yml.lock
+config/rop/*.yaml.lock
+
 # Logs (keep folder only)
 logs/*
 !logs/.gitkeep

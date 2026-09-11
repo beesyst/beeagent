@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from beeagent_module.adapters.mailbox import ImapReadonlyMailboxClient
+from beeagent_module.adapters.mailbox import (
+    ImapReadonlyMailboxClient,
+    MailboxAuthError,
+    MailboxUnavailableError,
+)
 from beeagent_module.cases.rop_bitrix_reconciliation import run_reconciliation
 from beeagent_module.cases.rop_current_state import (
     build_rop_current_state,
@@ -26,6 +30,10 @@ from beeagent_module.cases.rop_writeback import (
     execute_writeback_pending,
 )
 from beeagent_module.core.rop_review_export import export_review_tsv_for_run
+from beeagent_module.core.rop_sources import (
+    load_rop_sources,
+    record_rop_source_connection_health,
+)
 
 CHECKPOINT_VERSION = 1
 CHECKPOINT_FILENAME = "rop_mailbox_checkpoint.json"
@@ -45,6 +53,17 @@ class _PrefetchedMailboxClient:
 
 def _checkpoint_path(storage_dir: Path) -> Path:
     return storage_dir / "interfaces" / CHECKPOINT_FILENAME
+
+
+def _record_poll_connection_health(
+    storage_dir: Path, source_id: str, status: str, reason: str, logger: logging.Logger
+) -> None:
+    try:
+        record_rop_source_connection_health(storage_dir, source_id, status, reason)
+    except OSError:
+        logger.warning(
+            "ROP source connection health persistence failed: source_id=%s", source_id
+        )
 
 
 def _load_checkpoint(
@@ -141,13 +160,19 @@ def _is_poll_mailbox_source(source: dict[str, Any]) -> bool:
 
 def _select_poll_sources(
     settings: dict[str, Any],
+    project_root: Path,
     source_id: str | None = None,
     all_sources: bool = False,
 ) -> list[dict[str, Any]]:
     if source_id and all_sources:
         raise MailboxPollError("--source-id and --all-sources cannot be used together")
 
-    input_sources = settings["rop"]["sources"]
+    configured_sources = settings.get("rop", {}).get("sources")
+    input_sources = (
+        configured_sources
+        if isinstance(configured_sources, list)
+        else load_rop_sources(project_root, settings)
+    )
 
     if source_id:
         for source in input_sources:
@@ -168,18 +193,14 @@ def _select_poll_sources(
         enabled = [
             source
             for source in input_sources
-            if source.get("enabled") is True and _is_poll_mailbox_source(source)
+            if source.get("enabled", True) is True and _is_poll_mailbox_source(source)
         ]
-        if not enabled:
-            raise MailboxPollError(
-                "no enabled read-only mailbox sources configured for all-sources poll"
-            )
         return enabled
 
     poll_source_id = settings["rop"]["mailbox_poll"]["source_id"]
     for source in input_sources:
         if source.get("source_id") == poll_source_id:
-            return [source]
+            return [source] if source.get("enabled", True) else []
     raise MailboxPollError("rop.mailbox_poll.source_id not found in rop.sources")
 
 
@@ -208,9 +229,13 @@ def handle_mailbox_poll(
 
     selected = _select_poll_sources(
         settings,
+        project_root,
         source_id=source_id,
         all_sources=effective_all_sources,
     )
+    if not selected:
+        logger.info("mailbox poll has no enabled selected sources")
+        return
 
     require_checkpoint_source = not (effective_all_sources or bool(source_id))
 
@@ -247,10 +272,18 @@ def handle_mailbox_poll(
             successes.append(source_key)
         except Exception as exc:
             failures.append(source_key)
+            message = str(exc).lower()
+            reason = (
+                "auth_failure"
+                if "authentication" in message
+                else "missing_credentials"
+                if "missing required mailbox environment" in message
+                else "mailbox_unavailable"
+            )
             logger.warning(
-                "mailbox poll source failed: source_id=%s reason=%s",
+                "ROP source unavailable: source_id=%s reason=%s",
                 source_key,
-                exc,
+                reason,
             )
 
     if failures and not successes:
@@ -296,6 +329,9 @@ def _poll_single_source(
     username = os.getenv(mailbox["username_env"], "").strip()
     password = os.getenv(mailbox["password_env"], "").strip()
     if not all((folder, host, username, password)):
+        _record_poll_connection_health(
+            storage_dir, source_id, "failed", "missing_credentials", logger
+        )
         raise MailboxPollError(
             f"Missing required mailbox environment for poll source: source_id={source_id}"
         )
@@ -306,7 +342,23 @@ def _poll_single_source(
     client = ImapReadonlyMailboxClient(
         host, mailbox["port"], mailbox["use_ssl"], username, password
     )
-    uidvalidity, available = client.uid_state(folder)
+    try:
+        uidvalidity, available = client.uid_state(folder)
+    except MailboxAuthError as exc:
+        _record_poll_connection_health(
+            storage_dir, source_id, "failed", "auth_failure", logger
+        )
+        raise MailboxPollError(
+            f"Mailbox authentication failed for source_id={source_id}"
+        ) from exc
+    except MailboxUnavailableError as exc:
+        _record_poll_connection_health(
+            storage_dir, source_id, "failed", "mailbox_unavailable", logger
+        )
+        raise MailboxPollError(
+            f"Mailbox unavailable for source_id={source_id}"
+        ) from exc
+    _record_poll_connection_health(storage_dir, source_id, "connected", "ok", logger)
     path = _checkpoint_path(storage_dir)
     if rebaseline:
         data = _load_rebaseline_checkpoint(path)
@@ -367,11 +419,26 @@ def _poll_single_source(
     if not selected:
         logger.info("mailbox poll: no new messages: source_id=%s", source_id)
         return False
-    messages = client.fetch_uids(
-        folder,
-        selected,
-        expected_uidvalidity=uidvalidity,
-    )
+    try:
+        messages = client.fetch_uids(
+            folder,
+            selected,
+            expected_uidvalidity=uidvalidity,
+        )
+    except MailboxAuthError as exc:
+        _record_poll_connection_health(
+            storage_dir, source_id, "failed", "auth_failure", logger
+        )
+        raise MailboxPollError(
+            f"Mailbox authentication failed for source_id={source_id}"
+        ) from exc
+    except MailboxUnavailableError as exc:
+        _record_poll_connection_health(
+            storage_dir, source_id, "failed", "mailbox_unavailable", logger
+        )
+        raise MailboxPollError(
+            f"Mailbox unavailable for source_id={source_id}"
+        ) from exc
     result = run_rop_batch_case(
         settings=settings,
         storage_dir=storage_dir,
@@ -393,6 +460,7 @@ def _poll_single_source(
         run_id=run_id,
         settings=settings,
         logger=logger,
+        project_root=project_root,
     )
     export_review_tsv_for_run(
         storage_dir=storage_dir,

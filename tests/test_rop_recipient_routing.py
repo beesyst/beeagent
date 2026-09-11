@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import yaml
 
 from beeagent_module.adapters.bitrix_client import BitrixConnectorError
 from beeagent_module.cases.rop_recipient_routing import (
@@ -96,9 +97,7 @@ class _FakeBitrixClient:
         self.calls: list[dict] = []
 
     def list_users(self, select=None, start=0, limit=None):
-        self.calls.append(
-            {"select": select, "start": start, "limit": limit}
-        )
+        self.calls.append({"select": select, "start": start, "limit": limit})
         page_size = limit if limit else len(self._users)
         begin = start if start else 0
         page = self._users[begin : begin + page_size]
@@ -178,7 +177,37 @@ class TestRecipientAttribution:
         item = artifact["items"][0]
         assert item["recipient"] == "fallback@welding.kz"
         assert item["recipient_evidence_source"] == "source_recipient"
-        assert item["recipient_status"] == "resolved"
+
+    def test_canonical_source_recipient_fallback(self, tmp_path: Path) -> None:
+        _write_run(tmp_path, "run-canonical-fallback", [_event()])
+        source = _settings(source_recipient="fallback@welding.kz")["rop"]["sources"][0]
+        registry = tmp_path / "config" / "rop"
+        registry.mkdir(parents=True)
+        (registry / "sources.yml").write_text(
+            yaml.safe_dump({"version": 1, "sources": [source]}, sort_keys=False),
+            encoding="utf-8",
+        )
+        settings = {
+            "rop": {
+                "sources_path": "config/rop/sources.yml",
+                "mailbox_poll": {
+                    "enabled": True,
+                    "source_id": "hotline",
+                    "sources_all": True,
+                },
+            },
+            "bitrix": {"enabled": False},
+        }
+        artifact = build_recipient_routing_artifact(
+            tmp_path,
+            "run-canonical-fallback",
+            settings,
+            _null_logger(),
+            project_root=tmp_path,
+        )
+        assert artifact["items"][0]["recipient"] == "fallback@welding.kz"
+        assert artifact["items"][0]["recipient_evidence_source"] == "source_recipient"
+        assert artifact["items"][0]["recipient_status"] == "resolved"
 
     def test_unresolved_without_evidence(self, tmp_path: Path) -> None:
         _write_run(tmp_path, "run-none", [_event()])
@@ -317,9 +346,7 @@ class TestResponsibleResolution:
             "run-match",
             [_event(to=["boss@welding.kz"])],
         )
-        client = _FakeBitrixClient(
-            [_active_user(12, "boss@welding.kz")]
-        )
+        client = _FakeBitrixClient([_active_user(12, "boss@welding.kz")])
         artifact = build_recipient_routing_artifact(
             tmp_path,
             "run-match",
@@ -340,9 +367,7 @@ class TestResponsibleResolution:
             "run-inactive",
             [_event(to=["boss@welding.kz"])],
         )
-        client = _FakeBitrixClient(
-            [_active_user(12, "boss@welding.kz", active="N")]
-        )
+        client = _FakeBitrixClient([_active_user(12, "boss@welding.kz", active="N")])
         artifact = build_recipient_routing_artifact(
             tmp_path,
             "run-inactive",
@@ -521,7 +546,9 @@ class TestResponsibleResolution:
         )
         assert len(client.calls) == 3
 
-    def test_incomplete_directory_degrades_all_resolutions(self, tmp_path: Path) -> None:
+    def test_incomplete_directory_degrades_all_resolutions(
+        self, tmp_path: Path
+    ) -> None:
         _write_run(
             tmp_path,
             "run-incomplete-directory",
@@ -604,7 +631,9 @@ class TestArtifactContract:
         assert artifact["aggregate"]["recipient_resolved_count"] == 1
         assert artifact["aggregate"]["responsible_matched_count"] == 1
 
-    def test_artifact_does_not_include_body_or_raw_content(self, tmp_path: Path) -> None:
+    def test_artifact_does_not_include_body_or_raw_content(
+        self, tmp_path: Path
+    ) -> None:
         _write_run(
             tmp_path,
             "run-noraw",

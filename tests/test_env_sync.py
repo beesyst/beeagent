@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from beeagent_module.core.env_sync import sync_env_with_example
+from beeagent_module.core.env_sync import (
+    read_selected_env_values,
+    remove_selected_env_values,
+    sync_env_with_example,
+    update_selected_env_values,
+)
 
 EXAMPLE_CONTENT = (
     "TELEGRAM_BOT_TOKEN=\n"
@@ -130,3 +135,80 @@ def test_does_not_print_secret_values(
     captured = capsys.readouterr()
     assert "my-secret-user" not in captured.out
     assert "my-secret-user" not in captured.err
+
+
+def test_selected_env_values_update_only_requested_names_and_process_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OTHER=keep\nMAIL_USER=before\n", encoding="utf-8")
+    monkeypatch.delenv("MAIL_USER", raising=False)
+    update_selected_env_values(
+        env_path, {"MAIL_USER": "after", "MAIL_PASSWORD": "value"}
+    )
+    assert _env_map(env_path) == {
+        "OTHER": "keep",
+        "MAIL_USER": "after",
+        "MAIL_PASSWORD": "value",
+    }
+    assert read_selected_env_values(env_path, {"MAIL_USER"}) == {"MAIL_USER": "after"}
+    assert os.environ["MAIL_USER"] == "after"
+
+
+def test_selected_env_values_preserve_process_environment_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("MAIL_USER=file-user\n", encoding="utf-8")
+    monkeypatch.setenv("MAIL_USER", "process-user")
+    assert read_selected_env_values(env_path, {"MAIL_USER"}) == {
+        "MAIL_USER": "process-user"
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file mode and symlink contract")
+def test_selected_env_values_preserve_env_symlink_and_mode(tmp_path: Path) -> None:
+    target = tmp_path / "runtime.env"
+    target.write_text("MAIL_USER=before\n", encoding="utf-8")
+    target.chmod(0o640)
+    env_path = tmp_path / ".env"
+    env_path.symlink_to(target.name)
+    update_selected_env_values(env_path, {"MAIL_USER": "after"})
+    assert env_path.is_symlink()
+    assert _env_map(target) == {"MAIL_USER": "after"}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+
+@pytest.mark.parametrize("value", ["bad\nvalue", "bad\rvalue", "bad\x00value", ""])
+def test_selected_env_values_reject_unsafe_values(tmp_path: Path, value: str) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("MAIL_USER=before\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        update_selected_env_values(env_path, {"MAIL_USER": value})
+    assert _env_map(env_path) == {"MAIL_USER": "before"}
+
+
+def test_selected_env_values_insert_new_keys_in_requested_section(
+    tmp_path: Path,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# ROP mailbox\nROP_MAILBOX_USERNAME=legacy\n\n# BeeAgent Web auth\nAUTH=keep\n",
+        encoding="utf-8",
+    )
+    update_selected_env_values(
+        env_path,
+        {"BEEAGENT_ROP_SOURCE_TEST_USERNAME": "user"},
+        section="# ROP mailbox",
+    )
+    assert env_path.read_text(encoding="utf-8") == (
+        "# ROP mailbox\nROP_MAILBOX_USERNAME=legacy\n\n"
+        "BEEAGENT_ROP_SOURCE_TEST_USERNAME=user\n# BeeAgent Web auth\nAUTH=keep\n"
+    )
+
+
+def test_remove_selected_env_values_removes_only_selected_keys(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("KEEP=value\nREMOVE=value\n", encoding="utf-8")
+    remove_selected_env_values(env_path, {"REMOVE"})
+    assert env_path.read_text(encoding="utf-8") == "KEEP=value\n"

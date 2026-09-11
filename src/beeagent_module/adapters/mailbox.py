@@ -85,6 +85,22 @@ class ImapReadonlyMailboxClient:
         finally:
             self._logout(client)
 
+    def check_access(self, folder: str, *, timeout_seconds: float = 10.0) -> None:
+        if (
+            not isinstance(timeout_seconds, (int, float))
+            or not 0 < timeout_seconds <= 30
+        ):
+            raise ValueError("mailbox access timeout is invalid")
+        try:
+            client = self._login_and_select(
+                folder, timeout_seconds=float(timeout_seconds)
+            )
+        except MailboxAuthError:
+            raise
+        except (imaplib.IMAP4.error, OSError) as exc:
+            raise MailboxUnavailableError("mailbox access check failed") from exc
+        self._logout(client)
+
     def uid_state(self, folder: str) -> tuple[int, list[int]]:
         client = self._login_and_select(folder)
         try:
@@ -133,14 +149,20 @@ class ImapReadonlyMailboxClient:
         finally:
             self._logout(client)
 
-    def _login_and_select(self, folder: str) -> imaplib.IMAP4:
-        client = self._connect()
+    def _login_and_select(
+        self, folder: str, *, timeout_seconds: float | None = None
+    ) -> imaplib.IMAP4:
+        client = self._connect(timeout_seconds=timeout_seconds)
         try:
             client.login(self._username, self._password)
         except imaplib.IMAP4.error as exc:
             self._logout(client)
             raise MailboxAuthError("mailbox authentication failed") from exc
-        status, _data = client.select(folder, readonly=True)
+        try:
+            status, _data = client.select(folder, readonly=True)
+        except (imaplib.IMAP4.error, OSError) as exc:
+            self._logout(client)
+            raise MailboxUnavailableError("mailbox folder select failed") from exc
         if status != "OK":
             self._logout(client)
             raise MailboxUnavailableError(f"mailbox folder select failed: {folder}")
@@ -151,11 +173,13 @@ class ImapReadonlyMailboxClient:
         with suppress(imaplib.IMAP4.error, OSError):
             client.logout()
 
-    def _connect(self) -> imaplib.IMAP4:
+    def _connect(self, *, timeout_seconds: float | None = None) -> imaplib.IMAP4:
         client_cls = imaplib.IMAP4_SSL if self._use_ssl else imaplib.IMAP4
 
         try:
-            return client_cls(self._host, self._port)
+            if timeout_seconds is None:
+                return client_cls(self._host, self._port)
+            return client_cls(self._host, self._port, timeout=timeout_seconds)
         except OSError as exc:
             raise MailboxUnavailableError(
                 f"mailbox connection failed: host={self._host} port={self._port}"

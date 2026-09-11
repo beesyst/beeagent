@@ -61,7 +61,7 @@ def test_sender_blacklist_prefers_original_sender_and_preserves_base(tmp_path: P
     add_sender_blacklist_email(tmp_path, "george@example.com")
     events = [
         {
-            "sender": "parsales@welding.kz",
+            "sender": "technical-forwarder@example.com",
             "original_sender_email": "George <george@example.com>",
             "case_type": "new_lead",
             "recommended_queue": "sales",
@@ -150,3 +150,7 @@ def test_blacklist_search_preserves_tab_and_page_size(tmp_path: Path) -> None:
     assert table["toolbar"]["hidden"] == {"tab": "blacklist", "page_size": "50", "lang": "ru"}
     assert [row["email"]["label"] for row in table["rows"]] == ["123@example.com"]
     assert table["pagination"]["pages"][0]["active"]
+    actions = table["rows"][0]["actions"]
+    assert actions[0]["icon"] == "edit"
+    assert "pending_action_id" not in actions[0]
+    assert actions[1]["icon"] == "trash"

@@ -12,6 +12,8 @@ from beeagent_module.adapters.bitrix_client import (
     BitrixMalformedResponse,
     build_bitrix_client,
 )
+from beeagent_module.core.paths import get_project_root
+from beeagent_module.core.rop_sources import load_rop_sources
 
 ROP_RECIPIENT_ROUTING_ARTIFACT = "rop_recipient_routing.json"
 
@@ -28,7 +30,7 @@ _DIRECTORY_SELECT_FIELDS = (
 
 
 def _bounded_email(value: str) -> str:
-    return value.strip().lower()[: _MAX_ADDRESS_LENGTH]
+    return value.strip().lower()[:_MAX_ADDRESS_LENGTH]
 
 
 def _extract_email_addresses(value: Any) -> list[str]:
@@ -48,7 +50,7 @@ def _extract_email_addresses(value: Any) -> list[str]:
             raw = raw[: _MAX_ORIGINAL_RECIPIENT_LENGTH * 4]
         try:
             pairs = getaddresses([raw])
-        except (TypeError, ValueError, IndexError):
+        except TypeError, ValueError, IndexError:
             continue
         for _name, addr in pairs:
             if not addr or "@" not in addr:
@@ -59,9 +61,17 @@ def _extract_email_addresses(value: Any) -> list[str]:
     return candidates
 
 
-def _source_recipient_map(settings: dict[str, Any]) -> dict[str, str]:
+def _source_recipient_map(
+    settings: dict[str, Any], project_root: Path | None = None
+) -> dict[str, str]:
     result: dict[str, str] = {}
-    input_sources = settings.get("rop", {}).get("sources", [])
+    rop = settings.get("rop", {})
+    if not isinstance(rop, dict):
+        return result
+    if isinstance(rop.get("sources_path"), str):
+        input_sources = load_rop_sources(project_root or get_project_root(), settings)
+    else:
+        input_sources = rop.get("sources", [])
     if not isinstance(input_sources, list):
         return result
     for source in input_sources:
@@ -266,6 +276,7 @@ def build_recipient_routing_artifact(
     settings: dict[str, Any],
     logger: logging.Logger,
     bitrix_client_factory: Callable[[dict[str, Any]], Any] | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     runs_root = (storage_dir / "runs").resolve()
     run_dir = (runs_root / run_id).resolve()
@@ -288,7 +299,7 @@ def build_recipient_routing_artifact(
     if not isinstance(raw_events, list):
         raise ValueError("normalized_events.json must be a list")
 
-    source_recipients = _source_recipient_map(settings)
+    source_recipients = _source_recipient_map(settings, project_root)
 
     items: list[dict[str, Any]] = []
     for event in raw_events:
@@ -310,15 +321,15 @@ def build_recipient_routing_artifact(
                 "source_display_name": str(event.get("source_display_name", "")),
                 "client_id": str(event.get("client_id", "")),
                 "to": [
-                    address[: _MAX_ADDRESS_LENGTH]
+                    address[:_MAX_ADDRESS_LENGTH]
                     for address in _extract_email_addresses(event.get("to"))
                 ],
                 "cc": [
-                    address[: _MAX_ADDRESS_LENGTH]
+                    address[:_MAX_ADDRESS_LENGTH]
                     for address in _extract_email_addresses(event.get("cc"))
                 ],
                 "original_recipient": str(event.get("original_recipient", ""))[
-                    : _MAX_ORIGINAL_RECIPIENT_LENGTH
+                    :_MAX_ORIGINAL_RECIPIENT_LENGTH
                 ],
                 **recipient,
                 "responsible": _not_attempted_responsible("bitrix_disabled"),
@@ -326,7 +337,9 @@ def build_recipient_routing_artifact(
         )
 
     bitrix_cfg = settings.get("bitrix", {})
-    bitrix_enabled = bitrix_cfg.get("enabled") is True if isinstance(bitrix_cfg, dict) else False
+    bitrix_enabled = (
+        bitrix_cfg.get("enabled") is True if isinstance(bitrix_cfg, dict) else False
+    )
     page_size = bitrix_cfg.get("page_size", 50) if isinstance(bitrix_cfg, dict) else 50
     pages_max = bitrix_cfg.get("pages_max", 3) if isinstance(bitrix_cfg, dict) else 3
 

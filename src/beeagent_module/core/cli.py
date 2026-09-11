@@ -22,6 +22,7 @@ from beeagent_module.cases.rop_mvp_pack import (
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.core.paths import get_project_root, get_storage_dir
+from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.core.rop_review_export import (
     RopReviewExportError,
     export_review_tsv_for_run,
@@ -485,6 +486,10 @@ def _apply_source_overrides(
     import copy
 
     effective = copy.deepcopy(settings)
+    if not isinstance(effective.get("rop", {}).get("sources"), list):
+        effective.setdefault("rop", {})["sources"] = load_rop_sources(
+            get_project_root(), settings
+        )
 
     sources = effective.get("rop", {}).get("sources", [])
     if not sources:

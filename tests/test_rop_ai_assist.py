@@ -162,7 +162,12 @@ def _valid_settings() -> dict:
                     "ocr_enabled": True,
                 },
             },
-            "sources": [],
+            "sources_path": "config/rop/sources.yml",
+            "mailbox_poll": {
+                "enabled": False,
+                "source_id": "hotline_mailbox",
+                "sources_all": True,
+            },
             "dashboard": {"default_period": "7d", "periods": ["7d", "30d", "all"]},
         },
         "bitrix": {

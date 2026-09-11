@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_ENV_VALUE_MAX_LENGTH = 4096
 
 
 def sync_env_with_example(project_root: Path) -> None:
@@ -97,6 +102,65 @@ def ensure_bootstrap_env(
                 print(f"{env_name}=<generated>")
 
     return generated
+
+
+def read_selected_env_values(env_path: Path, names: set[str]) -> dict[str, str]:
+    normalized_names = _validate_selected_env_names(names)
+    values = _parse_env_map(_read_env_lines(env_path))
+    result: dict[str, str] = {}
+    for name in normalized_names:
+        result[name] = os.environ.get(name, values.get(name, ""))
+    return result
+
+
+def update_selected_env_values(
+    env_path: Path,
+    updates: dict[str, str],
+    *,
+    section: str | None = None,
+) -> None:
+    if not isinstance(updates, dict) or not updates:
+        raise ValueError("Environment updates are required")
+    names = _validate_selected_env_names(set(updates))
+    normalized: dict[str, str] = {}
+    for name in names:
+        value = updates[name]
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > _ENV_VALUE_MAX_LENGTH
+            or any(character in value for character in ("\r", "\n", "\x00"))
+        ):
+            raise ValueError("Environment value is invalid")
+        normalized[name] = value
+    _update_env_file(env_path, _read_env_lines(env_path), normalized, section=section)
+    for name, value in normalized.items():
+        os.environ[name] = value
+
+
+def remove_selected_env_values(env_path: Path, names: set[str]) -> None:
+    normalized_names = _validate_selected_env_names(names)
+    _safe_write(
+        env_path,
+        "".join(
+            line
+            for line in _read_env_lines(env_path)
+            if line.rstrip("\n").rstrip("\r").split("=", 1)[0].strip()
+            not in normalized_names
+        ),
+    )
+
+
+def _validate_selected_env_names(names: set[str]) -> list[str]:
+    if not names or len(names) > 20:
+        raise ValueError("Environment names are invalid")
+    normalized = sorted(names)
+    if any(
+        not isinstance(name, str) or not _ENV_NAME.fullmatch(name)
+        for name in normalized
+    ):
+        raise ValueError("Environment names are invalid")
+    return normalized
 
 
 def _iter_dotenv_keys(text: str):
@@ -224,7 +288,13 @@ def _parse_env_map(lines: list[str]) -> dict[str, str]:
     return values
 
 
-def _update_env_file(env_path: Path, lines: list[str], updates: dict[str, str]) -> None:
+def _update_env_file(
+    env_path: Path,
+    lines: list[str],
+    updates: dict[str, str],
+    *,
+    section: str | None = None,
+) -> None:
     new_lines: list[str] = []
     found_keys: set[str] = set()
 
@@ -241,26 +311,60 @@ def _update_env_file(env_path: Path, lines: list[str], updates: dict[str, str]) 
         else:
             new_lines.append(line)
 
-    for key, value in updates.items():
-        if key not in found_keys:
+    missing = [key for key in updates if key not in found_keys]
+    if missing:
+        additions = [f"{key}={updates[key]}\n" for key in missing]
+        section_index = (
+            next(
+                (
+                    index
+                    for index, line in enumerate(new_lines)
+                    if line.strip() == section
+                ),
+                None,
+            )
+            if isinstance(section, str) and section.startswith("#")
+            else None
+        )
+        if section_index is None:
             if new_lines and not new_lines[-1].endswith("\n"):
                 new_lines.append("\n")
-            new_lines.append(f"{key}={value}\n")
+            new_lines.extend(additions)
+        else:
+            insertion_index = next(
+                (
+                    index
+                    for index in range(section_index + 1, len(new_lines))
+                    if new_lines[index].lstrip().startswith("#")
+                ),
+                len(new_lines),
+            )
+            new_lines[insertion_index:insertion_index] = additions
 
     _safe_write(env_path, "".join(new_lines))
 
 
 def _safe_write(path: Path, content: str) -> None:
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    target = path
+    if path.is_symlink():
+        try:
+            target = path.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError(
+                "Environment file symlink target is unavailable"
+            ) from exc
+        if not target.is_file():
+            raise RuntimeError("Environment file symlink target is invalid")
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
     existing_mode = None
     existing_gid = None
 
-    if os.name == "posix" and path.exists():
-        existing_stat = path.stat()
+    if os.name == "posix" and target.exists():
+        existing_stat = target.stat()
         existing_mode = stat.S_IMODE(existing_stat.st_mode)
         existing_gid = existing_stat.st_gid
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         fd = os.open(
             tmp_path,
@@ -276,4 +380,4 @@ def _safe_write(path: Path, content: str) -> None:
     else:
         tmp_path.write_text(content, encoding="utf-8")
 
-    tmp_path.replace(path)
+    tmp_path.replace(target)

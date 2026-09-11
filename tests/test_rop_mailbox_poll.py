@@ -7,6 +7,7 @@ import pytest
 from beeagent_module.adapters.mailbox import ImapReadonlyMailboxClient
 from beeagent_module.cases.rop_mailbox_poll import (
     _load_checkpoint,
+    _select_poll_sources,
     _write_checkpoint,
     handle_mailbox_poll,
 )
@@ -160,6 +161,22 @@ def test_uid_poll_uses_readonly_uid_and_body_peek(monkeypatch):
     assert client.fetch_uids("INBOX", [7], expected_uidvalidity=42) == [b"raw"]
     assert all(call[1].get("readonly") for call in fake.calls if call[0] == "select")
     assert ("uid", "FETCH", ("7", "(BODY.PEEK[])")) in fake.calls
+
+
+def test_check_access_only_logs_in_and_selects_readonly_folder(monkeypatch):
+    fake = _FakeImap()
+    timeout: dict[str, object] = {}
+
+    def client_factory(*_args, **kwargs):
+        timeout.update(kwargs)
+        return fake
+
+    monkeypatch.setattr("imaplib.IMAP4_SSL", client_factory)
+    ImapReadonlyMailboxClient("mail.example", 993, True, "u", "p").check_access(
+        "INBOX", timeout_seconds=10.0
+    )
+    assert timeout == {"timeout": 10.0}
+    assert fake.calls == [("select", {"readonly": True})]
 
 
 def test_checkpoint_atomic_writer_preserves_other_sources(tmp_path: Path):
@@ -621,6 +638,32 @@ def test_poll_all_sources_processes_all_enabled(monkeypatch, tmp_path: Path):
     assert mailboxes["user_b"].fetched == [201, 202]
 
 
+def test_default_multi_source_selection_uses_canonical_registry(
+    tmp_path: Path,
+) -> None:
+    settings = _multi_poll_settings()
+    sources = settings["rop"].pop("sources")
+    for source in sources:
+        source.update(
+            {
+                "source_role": "technical_aggregator",
+                "client_id": "test_client",
+                "display_name": source["source_id"],
+                "routing": {"email_recipient": "ops@example.test"},
+            }
+        )
+    settings["rop"]["sources_path"] = "config/rop/sources.yml"
+    registry_path = tmp_path / "config" / "rop" / "sources.yml"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps({"version": 1, "sources": sources}), encoding="utf-8"
+    )
+
+    selected = _select_poll_sources(settings, tmp_path, all_sources=True)
+
+    assert [source["source_id"] for source in selected] == ["source_a", "source_b"]
+
+
 def test_cli_all_sources_overrides_configured_single_source(
     monkeypatch, tmp_path: Path
 ):
@@ -643,6 +686,38 @@ def test_cli_all_sources_overrides_configured_single_source(
         all_sources=True,
     )
     assert selected == ["source_a", "source_b"]
+
+
+def test_disabled_configured_source_is_a_clean_noop(
+    monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = _multi_poll_settings()
+    settings["rop"]["mailbox_poll"]["sources_all"] = False
+    settings["rop"]["sources"][0]["enabled"] = False
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._poll_single_source",
+        lambda **_kwargs: pytest.fail("disabled source must not be polled"),
+    )
+    with caplog.at_level(logging.INFO):
+        handle_mailbox_poll(settings, tmp_path, tmp_path, logging.getLogger("test"))
+    assert "no enabled selected sources" in caplog.text
+    assert not (tmp_path / "interfaces" / "rop_mailbox_checkpoint.json").exists()
+
+
+def test_all_sources_with_no_enabled_mailboxes_is_a_clean_noop(
+    monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = _multi_poll_settings()
+    for source in settings["rop"]["sources"]:
+        source["enabled"] = False
+    monkeypatch.setattr(
+        "beeagent_module.cases.rop_mailbox_poll._poll_single_source",
+        lambda **_kwargs: pytest.fail("disabled sources must not be polled"),
+    )
+    with caplog.at_level(logging.INFO):
+        handle_mailbox_poll(settings, tmp_path, tmp_path, logging.getLogger("test"))
+    assert "no enabled selected sources" in caplog.text
+    assert not (tmp_path / "interfaces" / "rop_mailbox_checkpoint.json").exists()
 
 
 def test_poll_multi_source_no_new_messages_skips_pipeline(monkeypatch, tmp_path: Path):
