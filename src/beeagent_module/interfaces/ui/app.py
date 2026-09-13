@@ -31,6 +31,8 @@ from beeagent_module.core.attachment_store import (
 from beeagent_module.core.authorization import (
     EXTERNAL_PRINCIPAL_SCOPES,
     SCOPE_WILDCARD,
+    SCOPE_ROP_SOURCES_WRITE,
+    has_rop_capability_authority,
     home_path,
     is_resource_allowed,
 )
@@ -620,18 +622,16 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
         if session is None:
             return _unauthenticated_response(request)
 
-        source_admin_route = (
-            str(request.url.path) == "/rop/sources.csv"
-            or (
-                str(request.url.path) == "/rop"
-                and request.query_params.get("tab") == "sources"
-            )
+        source_management_route = str(request.url.path) == "/rop/sources.csv" or (
+            str(request.url.path) == "/rop"
+            and request.query_params.get("tab") == "sources"
         )
-        if source_admin_route and session.role.value != "admin":
-            return _forbidden_response()
-
         settings = getattr(request.app.state, "beeagent_settings", {}) or {}
         scopes = _principal_scopes(settings, session.user_id)
+        if source_management_route and not has_rop_capability_authority(
+            session.role.value, scopes, SCOPE_ROP_SOURCES_WRITE
+        ):
+            return _forbidden_response()
         path = str(request.url.path)
         if SCOPE_WILDCARD in scopes:
             allowed = is_resource_allowed(

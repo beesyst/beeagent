@@ -68,7 +68,10 @@ def _multi_poll_settings() -> dict:
                     },
                 },
             ],
-            "dashboard": {"default_period": "7d"},
+            "dashboard": {
+                "default_period": "7d",
+                "leaderboard": {"plan_lead": 20},
+            },
         },
         "bitrix": {"enabled": True, "reconciliation": {"enabled": True}},
     }
@@ -336,7 +339,10 @@ def _poll_settings() -> dict:
                     },
                 }
             ],
-            "dashboard": {"default_period": "7d"},
+            "dashboard": {
+                "default_period": "7d",
+                "leaderboard": {"plan_lead": 20},
+            },
         },
         "bitrix": {"enabled": True, "reconciliation": {"enabled": True}},
     }

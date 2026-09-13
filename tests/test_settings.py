@@ -67,6 +67,53 @@ def _base_env(monkeypatch) -> None:
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data["rop"]["dashboard"].pop("leaderboard"),
+        lambda data: data["rop"]["dashboard"]["leaderboard"].pop("plan_lead"),
+        lambda data: data["rop"]["dashboard"]["leaderboard"].update(plan_lead=0),
+        lambda data: data["rop"]["dashboard"]["leaderboard"].update(plan_lead=-1),
+        lambda data: data["rop"]["dashboard"]["leaderboard"].update(plan_lead=True),
+        lambda data: data["rop"]["dashboard"]["leaderboard"].update(plan_lead="20"),
+    ],
+)
+def test_leaderboard_plan_lead_fails_fast(monkeypatch, mutate) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    mutate(changed)
+    with pytest.raises(RuntimeError, match="leaderboard"):
+        validate_settings(changed)
+
+
+def test_leaderboard_plan_lead_is_valid(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    validate_settings(settings)
+
+
+def test_user_name_fallback_is_valid_with_user_id_fallback(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["bitrix"]["writeback"]["user_id_fallback"] = 167
+    changed["bitrix"]["writeback"]["user_name_fallback"] = "ROBOT WG"
+    validate_settings(changed)
+
+
+@pytest.mark.parametrize("fallback_name", [None, "", "  ", 167])
+def test_user_name_fallback_is_required_with_user_id_fallback(
+    monkeypatch, fallback_name
+) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["bitrix"]["writeback"]["user_name_fallback"] = fallback_name
+    with pytest.raises(RuntimeError, match="user_name_fallback"):
+        validate_settings(changed)
+
+
 def test_legacy_inline_sources_are_rejected(monkeypatch) -> None:
     _base_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")

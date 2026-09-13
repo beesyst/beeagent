@@ -106,6 +106,8 @@ rop:
       - 30d
       - 365d
       - all
+    leaderboard:
+      plan_lead: 20
   ai_assist:
     enabled: false
     events_max: 20

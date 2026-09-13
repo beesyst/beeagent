@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.test_beeui_console import _client, _make_storage, _write_run_artifacts
+from tests.beeui_console_support import _client, _make_storage, _write_run_artifacts
 
 
 def test_dashboard_renders_language_switcher(tmp_path: Path) -> None:
@@ -28,7 +28,6 @@ def test_dashboard_ru_marks_selected_locale_and_preserves_sidebar_lang(
     assert response.status_code == 200
     assert "Дашборд BeeAgent" in response.text
     assert "Read-only дашборд оператора" in response.text
-    assert "Оператор" in response.text
     assert "Дашборд" in response.text
     assert "РОП" in response.text
     assert "Запуски" in response.text
@@ -40,8 +39,8 @@ def test_dashboard_ru_marks_selected_locale_and_preserves_sidebar_lang(
     assert "Открыть запуск" in response.text
     assert '<strong class="beeui-lang-active">RU</strong>' in response.text
     assert 'hreflang="en"' in response.text
-    assert '/runs?lang=ru' in response.text
-    assert '/rop?lang=ru' in response.text
+    assert "/runs?lang=ru" in response.text
+    assert "/rop?lang=ru" in response.text
 
 
 def test_runs_renders_language_switcher_for_default_and_ru_locale(
@@ -67,8 +66,8 @@ def test_runs_renders_language_switcher_for_default_and_ru_locale(
     assert "Завершён" in response_ru.text
     assert "Открыть" in response_ru.text
     assert '<strong class="beeui-lang-active">RU</strong>' in response_ru.text
-    assert '/runs?lang=ru' in response_ru.text
-    assert '/rop?lang=ru' in response_ru.text
+    assert "/runs?lang=ru" in response_ru.text
+    assert "/rop?lang=ru" in response_ru.text
 
 
 def test_run_detail_renders_language_switcher(tmp_path: Path) -> None:

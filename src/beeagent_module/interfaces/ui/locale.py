@@ -172,6 +172,9 @@ _LABELS_EN: dict[str, str] = {
     "Open Queue": "Open Queue",
     "Classification mix": "Classification mix",
     "Email Workload": "Email Workload",
+    "Team leaderboard": "Team leaderboard",
+    "of record": "of record",
+    "of plan": "of plan",
     "Urgent leads": "Urgent leads",
     "Operator queue": "Operator queue",
     "Bitrix problems": "Bitrix problems",
@@ -629,6 +632,9 @@ _LABELS_RU: dict[str, str] = {
     "Open Queue": "Открыть очередь",
     "Classification mix": "Распределение классификаций",
     "Email Workload": "Нагрузка по письмам",
+    "Team leaderboard": "Рейтинг команды",
+    "of record": "от рекорда",
+    "of plan": "от плана",
     "Urgent leads": "Срочные лиды",
     "Operator queue": "Очередь оператора",
     "ROP review required": "Нужна проверка РОП",
@@ -1011,6 +1017,63 @@ def format_rop_today_summary(emails: int, new_leads: int, locale: str = "en") ->
         return f"Today: {emails} {email_label}, but no new leads yet"
     lead_label = "new lead" if new_leads == 1 else "new leads"
     return f"Today: {emails} {email_label}, including {new_leads} {lead_label}"
+
+
+def format_rop_month(month: str, locale: str = "en") -> str:
+    try:
+        year_raw, month_raw = month.split("-", 1)
+        year = int(year_raw)
+        number = int(month_raw)
+    except TypeError, ValueError:
+        return month
+    if not 1 <= number <= 12 or year < 1:
+        return month
+    en = (
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    )
+    ru = (
+        "Январь",
+        "Февраль",
+        "Март",
+        "Апрель",
+        "Май",
+        "Июнь",
+        "Июль",
+        "Август",
+        "Сентябрь",
+        "Октябрь",
+        "Ноябрь",
+        "Декабрь",
+    )
+    return f"{(ru if locale == 'ru' else en)[number - 1]} {year}"
+
+
+def format_rop_email_count(count: int, locale: str = "en") -> str:
+    if locale == "ru":
+        return f"{count} {_russian_count_form(count, 'письмо', 'письма', 'писем')}"
+    return f"{count} {'email' if count == 1 else 'emails'}"
+
+
+def format_rop_lead_count(count: int, locale: str = "en") -> str:
+    if locale == "ru":
+        return f"{count} {_russian_count_form(count, 'лид', 'лида', 'лидов')}"
+    return f"{count} {'lead' if count == 1 else 'leads'}"
+
+
+def rop_initials(name: str) -> str:
+    initials = [word[0] for word in name.split() if word and word[0].isalpha()]
+    return "".join(initials[:2]) or "?"
 
 
 _CASE_TYPE_LABELS: dict[str, dict[str, str]] = {

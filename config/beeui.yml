@@ -37,29 +37,25 @@ components:
 
 navigation:
   - title:
-      en: Operator
-      ru: Оператор
-    children:
-      - title:
-          en: Dashboard
-          ru: Дашборд
-        path: /
-        icon: dashboard
-      - title:
-          en: ROP
-          ru: РОП
-        path: /rop
-        icon: users
-      - title:
-          en: Runs
-          ru: Запуски
-        path: /runs
-        icon: activity
-      - title:
-          en: Modules
-          ru: Модули
-        path: /modules
-        icon: apps
+      en: Dashboard
+      ru: Дашборд
+    path: /
+    icon: dashboard
+  - title:
+      en: ROP
+      ru: РОП
+    path: /rop
+    icon: users
+  - title:
+      en: Runs
+      ru: Запуски
+    path: /runs
+    icon: activity
+  - title:
+      en: Modules
+      ru: Модули
+    path: /modules
+    icon: apps
 
 data_sources: {}
 

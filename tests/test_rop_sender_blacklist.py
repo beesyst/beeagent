@@ -94,10 +94,10 @@ def test_sender_blacklist_audit_excludes_raw_email(tmp_path: Path) -> None:
     assert record["email_sha256"]
 
 
-def test_admin_can_manage_sender_blacklist_with_rop_scope(tmp_path: Path) -> None:
+def test_admin_can_manage_sender_blacklist_with_wildcard_scope(tmp_path: Path) -> None:
     adapter = BeeAgentUiAdapter(
         tmp_path,
-        {"web": {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}},
+        {"web": {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}},
     )
 
     result = adapter.execute_action(

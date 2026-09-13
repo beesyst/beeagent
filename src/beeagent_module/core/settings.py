@@ -60,6 +60,7 @@ REQUIRED_KEYS = (
     ("rop", "sources_path"),
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
+    ("rop", "dashboard", "leaderboard", "plan_lead"),
     ("web", "auth", "enabled"),
     ("web", "auth", "mode"),
     ("web", "auth", "session_secret_env"),
@@ -486,7 +487,7 @@ def _validate_web_auth_settings(settings: dict) -> None:
 
     _ALLOWED_ROLES = frozenset({"viewer", "operator", "admin"})
     _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_]+$")
-    _SAFE_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+    _SAFE_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$")
 
     if enabled:
         session_secret = os.getenv(session_secret_env, "")
@@ -826,6 +827,15 @@ def _validate_rop_dashboard_settings(settings: dict) -> None:
             f"included in rop.dashboard.periods"
         )
 
+    leaderboard_cfg = dash_cfg.get("leaderboard")
+    if not isinstance(leaderboard_cfg, dict):
+        raise RuntimeError("Invalid rop.dashboard.leaderboard, expected mapping")
+    plan_lead = leaderboard_cfg.get("plan_lead")
+    if not isinstance(plan_lead, int) or isinstance(plan_lead, bool) or plan_lead <= 0:
+        raise RuntimeError(
+            "Invalid rop.dashboard.leaderboard.plan_lead, expected int > 0"
+        )
+
 
 def _validate_bitrix_settings(settings: dict) -> None:
     bitrix_cfg = _get_nested_value(settings, ("bitrix",))
@@ -1002,6 +1012,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 "use bitrix.writeback.user_id_fallback"
             )
         fallback_id = writeback_cfg.get("user_id_fallback")
+        fallback_name = writeback_cfg.get("user_name_fallback")
         if fallback_id is not None:
             if (
                 isinstance(fallback_id, bool)
@@ -1011,6 +1022,11 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 raise RuntimeError(
                     "Invalid bitrix.writeback.user_id_fallback, "
                     "expected positive int or null"
+                )
+            if not isinstance(fallback_name, str) or not fallback_name.strip():
+                raise RuntimeError(
+                    "Invalid bitrix.writeback.user_name_fallback, "
+                    "expected non-empty string when user_id_fallback is configured"
                 )
         stages_cfg = writeback_cfg.get("stages")
         if not isinstance(stages_cfg, dict):

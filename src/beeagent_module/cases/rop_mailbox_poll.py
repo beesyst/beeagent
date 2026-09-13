@@ -492,12 +492,16 @@ def _poll_single_source(
             )
     state = build_rop_current_state(storage_dir, run_id, logger)
     write_current_state(storage_dir, run_id, state, logger)
+    writeback_cfg = settings.get("bitrix", {}).get("writeback", {})
     dashboard = build_rop_dashboard(
         storage_dir,
         settings["rop"]["dashboard"]["default_period"],
         logger,
         run_id,
         aggregate_runs=True,
+        plan_lead=settings["rop"]["dashboard"]["leaderboard"]["plan_lead"],
+        fallback_user_id=writeback_cfg.get("user_id_fallback"),
+        fallback_user_name=writeback_cfg.get("user_name_fallback"),
     )
     write_rop_dashboard(storage_dir, dashboard, logger)
     refresh_rop_web_projection(
@@ -510,6 +514,9 @@ def _poll_single_source(
         run_id=run_id,
         logger=logger,
         is_new_run=True,
+        plan_lead=settings["rop"]["dashboard"]["leaderboard"]["plan_lead"],
+        fallback_user_id=writeback_cfg.get("user_id_fallback"),
+        fallback_user_name=writeback_cfg.get("user_name_fallback"),
     )
     data["sources"][source_id] = _entry(folder, uidvalidity, selected[-1])
     _write_checkpoint(path, data)
@@ -537,12 +544,16 @@ def _poll_single_source(
 
         state = build_rop_current_state(storage_dir, run_id, logger)
         write_current_state(storage_dir, run_id, state, logger)
+        writeback_cfg = settings.get("bitrix", {}).get("writeback", {})
         dashboard = build_rop_dashboard(
             storage_dir,
             settings["rop"]["dashboard"]["default_period"],
             logger,
             run_id,
             aggregate_runs=True,
+            plan_lead=settings["rop"]["dashboard"]["leaderboard"]["plan_lead"],
+            fallback_user_id=writeback_cfg.get("user_id_fallback"),
+            fallback_user_name=writeback_cfg.get("user_name_fallback"),
         )
         write_rop_dashboard(storage_dir, dashboard, logger)
         refresh_rop_web_projection(
@@ -555,6 +566,9 @@ def _poll_single_source(
             run_id=run_id,
             logger=logger,
             is_new_run=False,
+            plan_lead=settings["rop"]["dashboard"]["leaderboard"]["plan_lead"],
+            fallback_user_id=writeback_cfg.get("user_id_fallback"),
+            fallback_user_name=writeback_cfg.get("user_name_fallback"),
         )
 
     logger.info(

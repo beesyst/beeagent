@@ -62,7 +62,7 @@ mailbox:
   password_env: ROP_MAILBOX_PASSWORD
 ```
 
-The protected Sources UI gives an authorized ROP administrator a narrow credential-management exception. It resolves only each mailbox source's username reference for display, shows password solely as `********` when a nonempty value exists or `—` otherwise, and writes only the selected source's generated username/password references to the `# ROP mailbox` section of `.env`. Add requires both values. Edit starts with an empty password: blank preserves it and nonblank replaces it. Values never enter YAML, CSV, JSON APIs, audit records, logs or artifacts. New mailbox sources use `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` and `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. Current-process updates set only changed names; at startup `load_dotenv(..., override=False)` preserves externally supplied environment values over `.env`.
+The protected Sources UI gives an authorized ROP manager a narrow credential-management exception. It resolves only each mailbox source's username reference for display, shows password solely as `********` when a nonempty value exists or `—` otherwise, and writes only the selected source's generated username/password references to the `# ROP mailbox` section of `.env`. Add requires both values. Edit starts with an empty password: blank preserves it and nonblank replaces it. Values never enter YAML, CSV, JSON APIs, audit records, logs or artifacts. New mailbox sources use `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` and `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. Current-process updates set only changed names; at startup `load_dotenv(..., override=False)` preserves externally supplied environment values over `.env`.
 
 Optional CLI overrides:
 

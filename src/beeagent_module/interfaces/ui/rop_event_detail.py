@@ -390,7 +390,7 @@ def _bitrix_status_display(status: str, lang: str) -> str:
 
 
 def _match_attachment_extraction_items(
-    artifact: dict | None,
+    artifact: dict | list | None,
     event_id: str,
     event_instance_id: str | None,
 ) -> list[dict[str, Any]]:
@@ -913,7 +913,7 @@ def build_rop_event_detail_read_model(
         event_instance_id,
     )
     delivery_status = _bitrix_delivery_status(writeback)
-    if delivery_status:
+    if delivery_status and writeback is not None:
         bitrix_section = {
             "available": True,
             "bitrix_status": delivery_status,
@@ -1252,14 +1252,16 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Case type", lang),
-                        case_type_label(basic_classification.get("case_type"), lang),
+                        case_type_label(
+                            _str(basic_classification.get("case_type")), lang
+                        ),
                         variant="badge",
                         tone="default",
                     ),
                     _kv(
                         t("Subtype", lang),
                         case_subtype_label(
-                            basic_classification.get("case_subtype"), lang
+                            _str(basic_classification.get("case_subtype")), lang
                         ),
                     ),
                     _kv(
@@ -1288,7 +1290,7 @@ def build_rop_event_detail_page_model(
                             _kv(
                                 t("Base case type", lang),
                                 case_type_label(
-                                    classification.get("base_case_type"), lang
+                                    _str(classification.get("base_case_type")), lang
                                 ),
                             ),
                             _kv(
@@ -1329,7 +1331,7 @@ def build_rop_event_detail_page_model(
                             _kv(
                                 t("AI proposed case type", lang),
                                 case_type_label(
-                                    ai_adjudicator.get("final_case_type"), lang
+                                    _str(ai_adjudicator.get("final_case_type")), lang
                                 ),
                                 variant="badge",
                                 tone="default",
@@ -1375,7 +1377,9 @@ def build_rop_event_detail_page_model(
                 [
                     _kv(
                         t("Final case type", lang),
-                        case_type_label(final_decision.get("final_case_type"), lang),
+                        case_type_label(
+                            _str(final_decision.get("final_case_type")), lang
+                        ),
                         variant="badge",
                         tone="default",
                     ),
@@ -1525,7 +1529,7 @@ def build_rop_event_detail_page_model(
                     "sender": item.get("sender"),
                     "date": _format_iso_datetime(item.get("date")),
                     "role": _conversation_role_label(item.get("role"), lang),
-                    "case_type": case_type_label(item.get("case_type"), lang),
+                    "case_type": case_type_label(_str(item.get("case_type")), lang),
                     "writeback": writeback_outcome_label(
                         item.get("writeback", {}).get("outcome", ""), lang
                     ),

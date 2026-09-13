@@ -622,7 +622,7 @@ web:
 - вход через BeeUI login page `/auth/login`: введите `username` и `token` (обязательно пара);
 - identity привязывается к exact configured `username + token`;
 - successful session получает canonical configured principal `id`;
-- resource access определяется `scopes` (`*`, `dashboard`, `rop`, `runs`, `modules`), а не role;
+- identity = exact configured `username + token`; authority floor задаёт `role`; resource/capability access определяется `scopes` (`*`, `dashboard`, `rop`, `runs`, `modules`, `rop.sources.write`, `rop.blacklist.write`, `rop.routing.write`, `rop.users.write`, `rop.settings.write`, `rop.crm.write`);
 - authenticated unauthorized → `403`, unauthenticated API → `401`, unauthenticated HTML → redirect на `/auth/login`;
 - ROP-only principal после login попадает на `/rop` и не видит Dashboard/Runs/Modules;
 - `/health` остаётся публичным (sanitized);
@@ -669,14 +669,14 @@ web:
 - роли `viewer` / `operator` / `admin` валидируются и сохраняются как authority level;
 - resource access определяется только `scopes` каждого principal, role не даёт resource scope;
 - `scopes` обязательны, валидируются fail-fast (включая wildcard-правило `["*"]`);
-- `["*"]` сохраняет полный доступ; `["rop"]` даёт только ROP surface и bounded ROP evidence;
-- per-role operator actions остаются future scope.
+- `admin` + `["*"]` — global administrator; ROP operator не является global admin; fine-grained capability не открывает unrelated resources; `viewer` + `["rop"]` остаётся ROP read-only.
+- `rop` — resource scope. `rop.sources.write` и `rop.blacklist.write` разрешают только соответствующие bounded actions; `rop.routing.write`, `rop.users.write`, `rop.settings.write` и `rop.crm.write` не делают ничего, пока конкретный ROP backend action их явно не потребует. Они не дают global user/auth management, web.auth/system settings/secrets или arbitrary Bitrix REST execution.
 
 ##### Rollout
 
 При rollout новой auth-модели обязательна invalidation/rotation старых sessions и credentials:
 `./start.sh auth rotate all --logout-all` (session secret) аннулирует старые signed cookies;
-principal token rotation требует повторного входа; каждый principal в `web.auth.principals[]` должен получить явный `scopes`.
+principal token rotation требует повторного входа; каждый principal в `web.auth.principals[]` должен получить явный `scopes`. После изменения role/settings нужно перезапустить BeeAgent Web, invalidировать старую session (`./start.sh auth rotate session` или очистить `beeui_session`) и войти заново: роль сериализована в signed session cookie.
 
 ### ROP CLI
 
@@ -1282,7 +1282,7 @@ sources:
       email_recipient: hotline@welding.kz
 ```
 
-Для `mailbox_readonly` host, folder, port и SSL — non-secret canonical значения в registry. `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` — значения `.env` / runtime env, на которые registry ссылается только по имени. В Sources UI есть узкое admin-only исключение: уполномоченный ROP admin видит username выбранного mailbox source, пароль всегда отображается только как `********` или `—`, а Add/Edit пишет лишь эти username/password refs в `.env`. В Edit пароль всегда пустой: пустое поле сохраняет прежний пароль, непустое заменяет его. Значения никогда не попадают в YAML, CSV, API, audit, logs или artifacts. Новые mailbox sources получают детерминированные env refs `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` и `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. При старте `load_dotenv(..., override=False)` сохраняет приоритет внешнего process environment.
+Для `mailbox_readonly` host, folder, port и SSL — non-secret canonical значения в registry. `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` — значения `.env` / runtime env, на которые registry ссылается только по имени. Sources Add/Edit/Delete, Enable/Disable и Check требуют capability `operator`/`admin` + `rop` + `rop.sources.write`; global admin с `*` остаётся wildcard-исключением. Visibility username и bounded mutation username/password refs относятся только к этой source-management capability и не дают Dashboard, Runs, Modules, global auth/settings или unrelated Web Console execution authority. Пароль всегда отображается только как `********` или `—`, а Add/Edit пишет лишь эти username/password refs в `.env`. В Edit пароль всегда пустой: пустое поле сохраняет прежний пароль, непустое заменяет его. Значения никогда не попадают в YAML, CSV, API, audit, logs или artifacts. Новые mailbox sources получают детерминированные env refs `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` и `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. При старте `load_dotenv(..., override=False)` сохраняет приоритет внешнего process environment.
 `routing.email_recipient` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
 
 Production mailbox polling:

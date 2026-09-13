@@ -26,6 +26,11 @@ from beeagent_module.cases.rop_dashboard import (
     validate_filter_params,
     validate_pagination_params,
 )
+from beeagent_module.core.authorization import (
+    SCOPE_ROP_BLACKLIST_WRITE,
+    SCOPE_ROP_SOURCES_WRITE,
+    has_rop_capability_authority,
+)
 from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
     add_sender_blacklist_entry,
@@ -386,12 +391,16 @@ def _available_source_count(
     project_root: Path, storage_dir: Path, settings: dict[str, Any]
 ) -> int:
     health = load_rop_source_connection_health(storage_dir)
-    return sum(
-        1
-        for source in load_rop_sources(project_root, settings)
-        if source.get("enabled") is True
-        and health.get(source.get("source_id"), {}).get("status") == "connected"
-    )
+    count = 0
+    for source in load_rop_sources(project_root, settings):
+        source_id = source.get("source_id")
+        if (
+            source.get("enabled") is True
+            and isinstance(source_id, str)
+            and health.get(source_id, {}).get("status") == "connected"
+        ):
+            count += 1
+    return count
 
 
 def _connection_action_icon(health: dict[str, str] | None) -> str:
@@ -807,7 +816,9 @@ class BeeAgentUiAdapter:
             ),
             [],
         )
-        if "rop" not in scopes and "*" not in scopes:
+        if not isinstance(scopes, list) or not has_rop_capability_authority(
+            str(actor.get("role") or ""), scopes, SCOPE_ROP_BLACKLIST_WRITE
+        ):
             write_sender_blacklist_audit(
                 self._storage_dir,
                 action_id=action_id,
@@ -815,7 +826,9 @@ class BeeAgentUiAdapter:
                 outcome="permission_denied",
                 email=email,
             )
-            return error_result("permission_denied", "ROP scope is required")
+            return error_result(
+                "permission_denied", "ROP blacklist write scope is required"
+            )
         try:
             _validate_blacklist_payload(action_id, payload)
             email = normalize_sender_email(payload.get("email"))
@@ -871,9 +884,10 @@ class BeeAgentUiAdapter:
         )
         if (
             not isinstance(actor, dict)
-            or actor.get("role") != "admin"
             or not isinstance(scopes, list)
-            or ("rop" not in scopes and "*" not in scopes)
+            or not has_rop_capability_authority(
+                str(actor.get("role") or ""), scopes, SCOPE_ROP_SOURCES_WRITE
+            )
         ):
             write_rop_sources_audit(
                 self._storage_dir,
@@ -882,7 +896,9 @@ class BeeAgentUiAdapter:
                 source_id=source_id,
                 outcome="permission_denied",
             )
-            return error_result("permission_denied", "ROP admin scope is required")
+            return error_result(
+                "permission_denied", "ROP sources write scope is required"
+            )
         try:
             root = get_project_root()
             _validate_source_payload(action_id, payload)
@@ -894,7 +910,7 @@ class BeeAgentUiAdapter:
                     "enabled": payload["enabled"] == "true",
                 }
 
-                def persist_credentials(entry: dict[str, Any]) -> None:
+                def persist_new_source_credentials(entry: dict[str, Any]) -> None:
                     mailbox = entry["mailbox"]
                     try:
                         update_selected_env_values(
@@ -911,7 +927,7 @@ class BeeAgentUiAdapter:
                         ) from exc
 
                 _entry, changed = add_mailbox_source(
-                    root, self._settings, source, persist_credentials
+                    root, self._settings, source, persist_new_source_credentials
                 )
                 source_id = _entry["source_id"]
             elif action_id == "rop_source_update":
@@ -939,7 +955,9 @@ class BeeAgentUiAdapter:
                         payload["password"]
                     )
 
-                    def persist_credentials(_entry: dict[str, Any]) -> None:
+                    def persist_updated_source_credentials(
+                        _entry: dict[str, Any],
+                    ) -> None:
                         updates = {mailbox["username_env"]: payload["username"]}
                         if payload["password"]:
                             updates[mailbox["password_env"]] = payload["password"]
@@ -951,7 +969,11 @@ class BeeAgentUiAdapter:
                             ) from exc
 
                     _entry, changed = update_mailbox_source(
-                        root, self._settings, source_id, payload, persist_credentials
+                        root,
+                        self._settings,
+                        source_id,
+                        payload,
+                        persist_updated_source_credentials,
                     )
                     changed = changed or credentials_changed
                     _check_mailbox_source_access(root, self._storage_dir, _entry)
@@ -964,8 +986,13 @@ class BeeAgentUiAdapter:
                     )
             elif action_id == "rop_source_set_enabled":
                 source_id = payload.get("source_id")
+                if not isinstance(source_id, str):
+                    raise RopSourcesError("Source ID is invalid")
                 _entry, changed = set_rop_source_enabled(
-                    root, self._settings, source_id, payload.get("enabled")
+                    root,
+                    self._settings,
+                    source_id,
+                    payload.get("enabled"),
                 )
             elif action_id == "rop_source_check_connection":
                 source_id = payload.get("source_id")

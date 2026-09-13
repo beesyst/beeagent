@@ -619,6 +619,10 @@ def build_rop_dashboard(
     aggregate_runs: bool = False,
     aggregate: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
+    *,
+    plan_lead: int,
+    fallback_user_id: int | None = None,
+    fallback_user_name: str | None = None,
 ) -> dict[str, Any]:
     validate_period(period)
     period_info = parse_period(period)
@@ -654,6 +658,11 @@ def build_rop_dashboard(
     operator_summary = artifact_data["operator_summary"]
     ai_assist_results = artifact_data["ai_assist_results"]
     ai_adjudicator_results = artifact_data["ai_adjudicator_results"]
+    team_leaderboard: dict[str, Any] = {
+        "month": _utc_month(),
+        "plan_lead": plan_lead,
+        "items": [],
+    }
 
     warnings: list[dict[str, Any]] = []
     client_id = _resolve_client_id(source_diag, intake, current_state)
@@ -681,6 +690,15 @@ def build_rop_dashboard(
             normalized_list = aggregate["normalized"]
             bitrix_reconciliation = aggregate["bitrix_reconciliation"]
             attachment_extraction = aggregate["attachment_extraction"]
+            team_leaderboard = _build_team_leaderboard(
+                aggregate["classified"],
+                aggregate["recipient_routing"],
+                plan_lead,
+                client_id,
+                artifact_data["writeback_state"],
+                fallback_user_id,
+                fallback_user_name,
+            )
 
     all_classified_list = list(classified_list)
     if period_info["period"] != "all" and period_info.get("period_start_utc"):
@@ -820,6 +838,7 @@ def build_rop_dashboard(
         "evidence_links": evidence_links,
         "warnings": warnings,
         "ai_assist_summary": ai_assist_summary,
+        "team_leaderboard": team_leaderboard,
         "aggregate_runs": aggregate_runs,
     }
 
@@ -853,6 +872,10 @@ def build_rop_web_projection(
     periods: list[str],
     logger: logging.Logger,
     run_id: str | None = None,
+    *,
+    plan_lead: int,
+    fallback_user_id: int | None = None,
+    fallback_user_name: str | None = None,
 ) -> dict[str, Any]:
     selected_periods = list(dict.fromkeys(periods))
     for period in selected_periods:
@@ -892,12 +915,16 @@ def build_rop_web_projection(
                 aggregate_runs=True,
                 aggregate=aggregate,
                 artifacts=artifacts,
+                plan_lead=plan_lead,
+                fallback_user_id=fallback_user_id,
+                fallback_user_name=fallback_user_name,
             )
         dashboards[candidate_run_id] = entries
 
     return {
         "schema_version": 1,
         "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "plan_lead": plan_lead,
         "run_ids": run_ids,
         "total_runs": len(all_run_ids),
         "dashboards": dashboards,
@@ -976,6 +1003,7 @@ def write_rop_web_projection(
         total_runs=total_runs,
         periods_by_run=periods_by_run,
         logger=logger,
+        plan_lead=projection.get("plan_lead"),
     )
     _prune_rop_web_projection_entries(
         storage_dir,
@@ -997,6 +1025,10 @@ def refresh_rop_web_projection(
     run_id: str,
     logger: logging.Logger,
     is_new_run: bool = True,
+    *,
+    plan_lead: int,
+    fallback_user_id: int | None = None,
+    fallback_user_name: str | None = None,
 ) -> bool:
     index = rop_web_projection_index(storage_dir)
     if index is None:
@@ -1010,6 +1042,9 @@ def refresh_rop_web_projection(
         periods=periods,
         logger=logger,
         run_id=run_id,
+        plan_lead=plan_lead,
+        fallback_user_id=fallback_user_id,
+        fallback_user_name=fallback_user_name,
     )
     existing_run_ids = [
         value for value in index["run_ids"] if isinstance(value, str) and value
@@ -1252,6 +1287,7 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         required = {
             "business_kpi": dict,
             "series": dict,
+            "team_leaderboard": dict,
             "action_required_count": int,
         }
     elif view_key.startswith("api."):
@@ -1260,6 +1296,7 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
             "series": dict,
             "queues": dict,
             "canonical_queue_rows": list,
+            "team_leaderboard": dict,
         }
     else:
         required = required_types.get(view_key)
@@ -1269,6 +1306,17 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         isinstance(payload.get(name), expected) for name, expected in required.items()
     ):
         return False
+    if view_key.startswith(("overview.", "api.")):
+        leaderboard = payload.get("team_leaderboard")
+        if not isinstance(leaderboard, dict):
+            return False
+        plan_lead = leaderboard.get("plan_lead")
+        if (
+            not isinstance(plan_lead, int)
+            or isinstance(plan_lead, bool)
+            or plan_lead <= 0
+        ):
+            return False
     action_required_count = payload.get("action_required_count")
     return not isinstance(action_required_count, bool) and (
         not view_key.startswith("overview.")
@@ -1374,6 +1422,7 @@ def build_rop_web_projection_v2_views(
     storage_dir: Path,
     run_id: str,
     periods: list[str],
+    plan_lead: int,
 ) -> dict[str, dict[str, Any]]:
     from beeagent_module.interfaces.ui.read_model import (
         _build_rop_tab_read_model_legacy,
@@ -1392,6 +1441,7 @@ def build_rop_web_projection_v2_views(
             period=period,
             default_period=period,
             configured_periods=selected_periods,
+            plan_lead=plan_lead,
         )
     if not data_by_period or any("error" in value for value in data_by_period.values()):
         raise ValueError("ROP Web projection source data is unavailable")
@@ -1428,6 +1478,7 @@ def build_rop_web_projection_v2_views(
         "final_decision_summary",
         "current_state_kpi",
         "current_state_queues",
+        "team_leaderboard",
     )
     views: dict[str, dict[str, Any]] = {}
     for period, data in data_by_period.items():
@@ -1516,6 +1567,7 @@ def write_rop_web_projection_v2(
     total_runs: int,
     periods_by_run: dict[str, list[str]],
     logger: logging.Logger,
+    plan_lead: int | None = None,
 ) -> Path:
     existing = rop_web_projection_v2_manifest(storage_dir)
     interfaces_dir = storage_dir / "interfaces"
@@ -1533,11 +1585,19 @@ def write_rop_web_projection_v2(
         next_runs.update(existing.get("runs", {}))
     pending_views: list[tuple[str, str, dict[str, dict[str, Any]]]] = []
     for run_id, periods in periods_by_run.items():
+        if (
+            not isinstance(plan_lead, int)
+            or isinstance(plan_lead, bool)
+            or plan_lead <= 0
+        ):
+            raise ValueError("ROP Web projection plan_lead must be a positive integer")
         safe_run_id = _projection_identifier(run_id)
         if safe_run_id is None:
             raise ValueError("ROP Web projection run_id is invalid")
         revision = "r_" + uuid.uuid4().hex
-        views = build_rop_web_projection_v2_views(storage_dir, safe_run_id, periods)
+        views = build_rop_web_projection_v2_views(
+            storage_dir, safe_run_id, periods, plan_lead
+        )
         required_view_keys = _v2_required_view_keys(periods)
         if set(views) != required_view_keys:
             raise ValueError("ROP Web projection views are incomplete or uncontrolled")
@@ -1738,6 +1798,7 @@ def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
         "ai_adjudicator_results": _read_json_dict(
             run_dir / "rop_ai_adjudicator_results.json"
         ),
+        "recipient_routing": _read_json_dict(run_dir / "rop_recipient_routing.json"),
     }
 
 
@@ -1773,8 +1834,13 @@ def _confirmed_bitrix_delivery_events(
         run_id = record.get("last_run_id")
         source_id = record.get("source_id")
         event_id = record.get("event_id")
-        if all(
-            isinstance(value, str) and value for value in (run_id, source_id, event_id)
+        if (
+            isinstance(run_id, str)
+            and run_id
+            and isinstance(source_id, str)
+            and source_id
+            and isinstance(event_id, str)
+            and event_id
         ):
             confirmed.add((run_id, source_id, event_id))
     return confirmed
@@ -1998,6 +2064,7 @@ def _aggregate_period_events(
         "normalized": [],
         "bitrix_reconciliation": {"items": []},
         "attachment_extraction": {"items": []},
+        "recipient_routing": [],
         "warnings": [],
     }
     if not anchor_client_id or anchor_client_id == "unknown":
@@ -2065,12 +2132,28 @@ def _aggregate_period_events(
             candidate_run_id,
             result["warnings"],
         )
+        routing = _read_optional_artifact(
+            candidate_dir / "rop_recipient_routing.json",
+            candidate_run_id,
+            result["warnings"],
+        )
         attachment_by_source_event: dict[
             tuple[str, str, str], list[dict[str, Any]]
         ] = {}
         for item in (attachments or {}).get("items", []):
             if isinstance(item, dict) and isinstance(item.get("event_id"), str):
                 attachment_by_source_event.setdefault(
+                    (
+                        str(item.get("source_id") or ""),
+                        str(item.get("event_id")),
+                        str(item.get("event_instance_id") or ""),
+                    ),
+                    [],
+                ).append(item)
+        routing_by_source_event: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for item in (routing or {}).get("items", []):
+            if isinstance(item, dict) and isinstance(item.get("event_id"), str):
+                routing_by_source_event.setdefault(
                     (
                         str(item.get("source_id") or ""),
                         str(item.get("event_id")),
@@ -2190,6 +2273,7 @@ def _aggregate_period_events(
                 and event_occurrence_count.get((source_id, event_id), 0) > 1
             ):
                 attachment_items = []
+                routing_items = []
             else:
                 attachment_items = attachment_by_source_event.get(
                     (source_id, event_id, event_instance_id)
@@ -2210,6 +2294,23 @@ def _aggregate_period_events(
                             attachment_items = []
                     else:
                         attachment_items = []
+                routing_items = routing_by_source_event.get(
+                    (source_id, event_id, event_instance_id)
+                )
+                if routing_items is None:
+                    legacy_routing = routing_by_source_event.get(
+                        ("", event_id, event_instance_id)
+                    )
+                    if legacy_routing:
+                        sources = event_source_ids.get(event_id, set())
+                        if len(sources) == 1 and source_id in sources:
+                            routing_items = [dict(item) for item in legacy_routing]
+                            for item in routing_items:
+                                item["source_id"] = source_id
+                        else:
+                            routing_items = []
+                    else:
+                        routing_items = []
             winners[identity] = {
                 "classified": merged,
                 "normalized": dict(normalized_event)
@@ -2217,6 +2318,7 @@ def _aggregate_period_events(
                 else dict(merged),
                 "reconciliation": reconciliation_item,
                 "attachments": attachment_items,
+                "routing": routing_items,
             }
 
     for winner in winners.values():
@@ -2238,6 +2340,10 @@ def _aggregate_period_events(
             item = dict(attachment)
             item["_dashboard_origin_run_id"] = origin_run_id
             result["attachment_extraction"]["items"].append(item)
+        for routing in winner["routing"]:
+            item = dict(routing)
+            item["_dashboard_origin_run_id"] = origin_run_id
+            result["recipient_routing"].append(item)
     result["safe"] = True
     return result
 
@@ -2323,6 +2429,139 @@ def _event_timestamp(evt: dict[str, Any]) -> datetime | None:
             if parsed is not None:
                 return parsed
     return None
+
+
+def _utc_month(value: datetime | None = None) -> str:
+    current = value or datetime.now(UTC)
+    return current.astimezone(UTC).strftime("%Y-%m")
+
+
+def _dashboard_event_identity(event: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(event.get("_dashboard_origin_run_id") or ""),
+        str(event.get("source_id") or ""),
+        str(event.get("event_id") or ""),
+        str(event.get("event_instance_id") or ""),
+    )
+
+
+def _leaderboard_event_timestamp(event: dict[str, Any]) -> datetime | None:
+    return _event_timestamp(event) or _parse_iso(
+        str(event.get("_dashboard_fallback_ts") or "")
+    )
+
+
+def _build_team_leaderboard(
+    classified_events: list[dict[str, Any]],
+    routing_items: list[dict[str, Any]],
+    plan_lead: int,
+    client_id: str,
+    writeback_state: dict[str, Any] | None,
+    fallback_user_id: int | None,
+    fallback_user_name: str | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    month = _utc_month(now)
+    events_by_identity = {
+        _dashboard_event_identity(event): event
+        for event in classified_events
+        if isinstance(event, dict) and isinstance(event.get("event_id"), str)
+    }
+    routing_by_identity: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for routing in routing_items:
+        if not isinstance(routing, dict):
+            continue
+        identity = _dashboard_event_identity(routing)
+        if not identity[2] or identity not in events_by_identity:
+            continue
+        routing_by_identity.setdefault(identity, []).append(routing)
+
+    writeback_events = writeback_state.get("events", {}) if writeback_state else {}
+    if not isinstance(writeback_events, dict):
+        writeback_events = {}
+    monthly_counts: dict[int, int] = {}
+    names: dict[int, str] = {}
+    for identity, candidates in routing_by_identity.items():
+        if len(candidates) != 1:
+            continue
+        event = events_by_identity[identity]
+        if event.get("case_type") != "new_lead":
+            continue
+        responsible = candidates[0].get("responsible")
+        if not isinstance(responsible, dict):
+            continue
+        timestamp = _leaderboard_event_timestamp(event)
+        if timestamp is None or _utc_month(timestamp) != month:
+            continue
+        remote_id = next(
+            (
+                str(event.get(key) or "").strip()
+                for key in ("message_id", "x_email_id", "event_id")
+                if str(event.get(key) or "").strip()
+            ),
+            "",
+        )
+        state = writeback_events.get(
+            f"{client_id}|{event.get('source_id') or ''}|{remote_id}"
+        )
+        if not isinstance(state, dict):
+            continue
+        case_type = state.get("semantic_case_type") or state.get("case_type")
+        user_id = state.get("responsible_user_id")
+        state_status = state.get("responsible_status")
+        if (
+            case_type != "new_lead"
+            or state.get("outcome") != "create_lead"
+            or not isinstance(user_id, int)
+            or isinstance(user_id, bool)
+            or user_id <= 0
+        ):
+            continue
+        if state_status == "matched":
+            if (
+                responsible.get("status") != "matched"
+                or responsible.get("user_id") != user_id
+            ):
+                continue
+            name = responsible.get("name")
+        elif state_status == "fallback":
+            if (
+                responsible.get("status") != "not_found"
+                or user_id != fallback_user_id
+                or not isinstance(fallback_user_name, str)
+                or not fallback_user_name.strip()
+            ):
+                continue
+            name = fallback_user_name
+        else:
+            continue
+        monthly_counts[user_id] = monthly_counts.get(user_id, 0) + 1
+        if isinstance(name, str) and name.strip() and user_id not in names:
+            names[user_id] = name.strip()
+
+    items: list[dict[str, Any]] = []
+    for user_id, current_count in monthly_counts.items():
+        score_percent = round(current_count / plan_lead * 100)
+        items.append(
+            {
+                "user_id": user_id,
+                "name": names.get(user_id, "?"),
+                "current_month_count": current_count,
+                "score_percent": score_percent,
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            -item["current_month_count"],
+            item["name"].casefold(),
+            item["user_id"],
+        )
+    )
+    return {
+        "month": month,
+        "plan_lead": plan_lead,
+        "items": items[:5],
+    }
 
 
 def _event_needs_review(evt: dict[str, Any]) -> bool:

@@ -21,13 +21,22 @@ web:
         token_env: BEEAGENT_WEB_ADMIN_TOKEN
       - id: rop
         username: rop
-        role: viewer
-        scopes: ["rop"]
+        role: operator
+        scopes:
+          [
+            "rop",
+            "rop.sources.write",
+            "rop.blacklist.write",
+            "rop.routing.write",
+            "rop.users.write",
+            "rop.settings.write",
+            "rop.crm.write",
+          ]
         token_env: BEEAGENT_WEB_ROP_TOKEN
       - id: operator
         username: operator
         role: operator
-        scopes: ["dashboard", "rop", "runs", "modules"]
+        scopes: ["dashboard", "rop", "rop.blacklist.write", "runs", "modules"]
         token_env: BEEAGENT_WEB_OPERATOR_TOKEN
 
 telegram:
@@ -135,6 +144,8 @@ rop:
       - 90d
       - 365d
       - all
+    leaderboard:
+      plan_lead: 20
 
 bitrix:
   enabled: true # true/false - включить/выключить Bitrix connector
@@ -164,7 +175,8 @@ bitrix:
     email_completed: false # true/false - состояние COMPLETED создаваемой email-активности (false = письмо заметнее в таймлайне как незавершённое; true = завершённое)
     file_attach: true # true/false - отдельный switch физической доставки сохранённых attachment files в Bitrix email activity (crm.activity.update, FILES/fileData)
     source_id: "EMAIL" # Bitrix lead SOURCE_ID для создаваемых лидов (например EMAIL = "Входящее письмо"); пусто = не задавать
-    user_id_fallback: 167 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено); 167 = ROBOT WG (system@welding.kz, verified read-only)
+    user_id_fallback: 167 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено)
+    user_name_fallback: "ROBOT WG"
     stages: # customer Lead stageId mapping (configurable, validated against Bitrix before POST when enabled)
       new_lead: "NEW" # Bitrix stageId for new_lead with fallback responsible (required when enabled)
       new_lead_assigned: "2" # Bitrix stageId for new_lead with exact matched responsible (required when enabled; verified read-only: STATUS_ID "2" = «Лид назначен»)

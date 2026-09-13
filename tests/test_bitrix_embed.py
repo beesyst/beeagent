@@ -75,6 +75,7 @@ def _build_app(storage_dir: Path, monkeypatch: pytest.MonkeyPatch):
         storage_dir=storage_dir,
         periods=settings["rop"]["dashboard"]["periods"],
         logger=_logger(),
+        plan_lead=settings["rop"]["dashboard"]["leaderboard"]["plan_lead"],
     )
     write_rop_web_projection(storage_dir, projection, _logger())
     return build_beeui_app(
@@ -245,9 +246,7 @@ class TestSettingsValidation:
     ) -> None:
         self._validate(
             monkeypatch,
-            lambda s: s["bitrix"]["embedded_app"].update(
-                {"default_role": "operator"}
-            ),
+            lambda s: s["bitrix"]["embedded_app"].update({"default_role": "operator"}),
         )
 
     def test_invalid_default_role_rejected(
