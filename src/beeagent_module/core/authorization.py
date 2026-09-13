@@ -3,6 +3,12 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable
 
 SCOPE_WILDCARD = "*"
+SCOPE_ROP_SOURCES_WRITE = "rop.sources.write"
+SCOPE_ROP_BLACKLIST_WRITE = "rop.blacklist.write"
+SCOPE_ROP_ROUTING_WRITE = "rop.routing.write"
+SCOPE_ROP_USERS_WRITE = "rop.users.write"
+SCOPE_ROP_SETTINGS_WRITE = "rop.settings.write"
+SCOPE_ROP_CRM_WRITE = "rop.crm.write"
 
 SURFACE_DASHBOARD = "dashboard"
 SURFACE_ROP = "rop"
@@ -11,6 +17,19 @@ SURFACE_MODULES = "modules"
 SURFACE_UNKNOWN = "unknown"
 
 EXTERNAL_PRINCIPAL_SCOPES = frozenset({SURFACE_ROP})
+
+
+def has_rop_capability_authority(
+    role: str, scopes: Iterable[str], required_scope: str
+) -> bool:
+    scope_set = frozenset(scopes)
+    if role == "admin" and SCOPE_WILDCARD in scope_set:
+        return True
+    return (
+        role in {"operator", "admin"}
+        and SURFACE_ROP in scope_set
+        and required_scope in scope_set
+    )
 
 
 def _classify_path(path: str) -> tuple[str, str | None]:

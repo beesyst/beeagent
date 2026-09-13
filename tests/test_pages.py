@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.test_beeui_console import _client, _make_storage, _write_run_artifacts
+from tests.beeui_console_support import _client, _make_storage, _write_run_artifacts
 
 
 def test_adapter_custom_page_renders_language_switcher(tmp_path: Path) -> None:

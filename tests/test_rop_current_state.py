@@ -209,7 +209,9 @@ def test_symlinked_storage_uses_one_canonical_root_for_rop_artifacts(
     assert (run_dir / CURRENT_STATE_FILENAME).is_file()
     assert "runs/symlinked-storage-run/normalized_events.json" in state["artifact_refs"]
 
-    dashboard = build_rop_dashboard(storage_dir, "7d", _null_logger(), run_id=run_id)
+    dashboard = build_rop_dashboard(
+        storage_dir, "7d", _null_logger(), run_id=run_id, plan_lead=20
+    )
     dashboard_path = write_rop_dashboard(storage_dir, dashboard, _null_logger())
 
     assert dashboard_path == storage_dir / "interfaces" / "rop_dashboard.json"

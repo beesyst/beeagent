@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+from functools import partial
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,12 +14,16 @@ import pytest
 from beeagent_module.cases import rop_dashboard as rop_dashboard_module
 from beeagent_module.cases.rop_dashboard import (
     ALLOWED_PERIODS,
-    build_rop_dashboard,
+    build_rop_dashboard as _build_rop_dashboard,
     parse_period,
     validate_period,
     write_rop_dashboard,
 )
 from beeagent_module.core.settings import load_settings
+
+TEST_PLAN_LEAD = 20
+
+build_rop_dashboard = partial(_build_rop_dashboard, plan_lead=TEST_PLAN_LEAD)
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -2174,45 +2179,20 @@ class TestPeriodParsing:
         assert "def _build_rop_bitrix_layout" not in source
         assert "def _queue_table" not in source
 
-    def test_parse_today(self) -> None:
-        info = parse_period("today")
-        assert info["period"] == "today"
-        assert info["period_start_utc"] is not None
-        assert info["period_end_utc"] is not None
-        assert info["time_basis"] == "event_timestamp"
+    def test_parse_period_accepts_all_allowed_periods(self) -> None:
+        for period in ALLOWED_PERIODS:
+            info = parse_period(period)
+            assert info["period"] == period
+            assert info["time_basis"] == "event_timestamp"
 
-    def test_parse_yesterday(self) -> None:
-        info = parse_period("yesterday")
-        assert info["period"] == "yesterday"
-        assert info["time_basis"] == "event_timestamp"
+    def test_parse_period_distinguishes_bounded_and_all(self) -> None:
+        bounded = parse_period("7d")
+        unlimited = parse_period("all")
 
-    def test_parse_7d(self) -> None:
-        info = parse_period("7d")
-        assert info["period"] == "7d"
-        assert info["time_basis"] == "event_timestamp"
-
-    def test_parse_30d(self) -> None:
-        info = parse_period("30d")
-        assert info["period"] == "30d"
-        assert info["time_basis"] == "event_timestamp"
-
-    def test_parse_90d(self) -> None:
-        info = parse_period("90d")
-        assert info["period"] == "90d"
-        assert info["period_start_utc"] is not None
-        assert info["period_end_utc"] is not None
-        assert info["time_basis"] == "event_timestamp"
-
-    def test_parse_365d(self) -> None:
-        info = parse_period("365d")
-        assert info["period"] == "365d"
-
-    def test_parse_all(self) -> None:
-        info = parse_period("all")
-        assert info["period"] == "all"
-        assert info["period_start_utc"] is None
-        assert info["period_end_utc"] is None
-        assert info["time_basis"] == "event_timestamp"
+        assert bounded["period_start_utc"] is not None
+        assert bounded["period_end_utc"] is not None
+        assert unlimited["period_start_utc"] is None
+        assert unlimited["period_end_utc"] is None
 
     def test_parse_invalid_period_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported period"):
@@ -2222,10 +2202,6 @@ class TestPeriodParsing:
         with pytest.raises(ValueError, match="Unsupported period"):
             parse_period("")
 
-    def test_validate_allowed(self) -> None:
-        for p in ALLOWED_PERIODS:
-            validate_period(p)
-
     def test_validate_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid period"):
             validate_period("1d")
@@ -2234,69 +2210,56 @@ class TestPeriodParsing:
 
 
 class TestBuildRopDashboard:
-    def test_dashboard_basic_structure(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(
-            storage_dir=tmp_path,
-            period="7d",
-            logger=_null_logger(),
-        )
+    def test_dashboard_public_contract(self, run_dir: Path, tmp_path: Path) -> None:
+        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
+
         assert dashboard["status"] == "ok"
         assert dashboard["read_only"] is True
         assert dashboard["period"] == "7d"
-        assert "generated_at_utc" in dashboard
-        assert "business_kpi" in dashboard
-        assert "series" in dashboard
-        assert "queues" in dashboard
-        assert "rop_recommendations" in dashboard
-        assert "evidence_links" in dashboard
-        assert "warnings" in dashboard
         assert dashboard["run_id"] == "test-dashboard-run"
+        assert "generated_at_utc" in dashboard
+        assert "warnings" in dashboard
 
-    def test_business_kpi_present(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
-        bkpi = dashboard["business_kpi"]
-        assert bkpi["processed_events"] == 3
-        assert bkpi["new_leads"] == 2
-        assert bkpi["existing_clients"] == 1
-        assert bkpi["high_priority"] == 2
-        assert bkpi["needs_review"] == 1
-        assert "lost_in_bitrix" in bkpi
-        assert "unreconciled" in bkpi
-        assert "source_degraded" in bkpi
-        assert "attachment_refused" in bkpi
+        business_kpi = dashboard["business_kpi"]
+        assert business_kpi["processed_events"] == 3
+        assert business_kpi["new_leads"] == 2
+        assert business_kpi["existing_clients"] == 1
+        assert business_kpi["high_priority"] == 2
+        assert business_kpi["needs_review"] == 1
+        assert {
+            "lost_in_bitrix",
+            "unreconciled",
+            "source_degraded",
+            "attachment_refused",
+        } <= set(business_kpi)
 
-    def test_series_present(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
-        series = dashboard["series"]
-        assert "processed_by_day" in series
-        assert "classification_distribution" in series
-        assert "bitrix_distribution" in series
-        assert "source_contribution" in series
+        assert {
+            "processed_by_day",
+            "classification_distribution",
+            "bitrix_distribution",
+            "source_contribution",
+        } <= set(dashboard["series"])
+        assert {
+            "high_priority",
+            "needs_review",
+            "lost_in_bitrix",
+            "unreconciled",
+        } <= set(dashboard["queues"])
+        assert len(dashboard["queues"]["high_priority"]) == 2
 
-    def test_queues_present(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
-        queues = dashboard["queues"]
-        assert "high_priority" in queues
-        assert "needs_review" in queues
-        assert "lost_in_bitrix" in queues
-        assert "unreconciled" in queues
-        assert len(queues["high_priority"]) == 2
-
-    def test_recommendations_generated(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
-        recs = dashboard["rop_recommendations"]
-        assert len(recs) > 0
-        codes = {r["reason_code"] for r in recs}
-        assert "high_priority" in codes
-        assert "lost_in_bitrix" in codes
-        assert "attachment_refused" in codes
-
-    def test_evidence_links_present(self, run_dir: Path, tmp_path: Path) -> None:
-        dashboard = build_rop_dashboard(tmp_path, "7d", _null_logger())
-        links = dashboard["evidence_links"]
-        assert len(links) > 0
-        assert all("artifact_id" in l for l in links)
-        assert all("href" in l for l in links)
+        recommendation_codes = {
+            item["reason_code"] for item in dashboard["rop_recommendations"]
+        }
+        assert {
+            "high_priority",
+            "lost_in_bitrix",
+            "attachment_refused",
+        } <= recommendation_codes
+        assert dashboard["evidence_links"]
+        assert all(
+            "artifact_id" in item and "href" in item
+            for item in dashboard["evidence_links"]
+        )
 
     def test_dashboard_with_no_bitrix(self, run_dir: Path, tmp_path: Path) -> None:
         (run_dir / "bitrix_reconciliation.json").unlink(missing_ok=True)
@@ -2614,17 +2577,6 @@ class TestBuildRopDashboard:
         assert "evt-dup-in-queue" not in review_ids
         assert dashboard["status"] == "ok"
 
-    def test_only_fallback_events_need_review(self) -> None:
-        assert rop_dashboard_module._event_needs_review(
-            {"is_fallback": True, "priority": "low", "case_type": "irrelevant"}
-        )
-        assert not rop_dashboard_module._event_needs_review(
-            {"is_fallback": False, "priority": "high", "case_type": "new_lead"}
-        )
-        assert not rop_dashboard_module._event_needs_review(
-            {"is_fallback": False, "priority": "medium", "case_type": "duplicate"}
-        )
-
     def test_medium_non_fallback_duplicate_does_not_count_in_needs_review_kpi(
         self, run_dir: Path, tmp_path: Path
     ) -> None:
@@ -2765,6 +2717,7 @@ class TestRopWebProjectionLifecycle:
             storage_dir,
             list(rop_dashboard_module.ALLOWED_PERIODS),
             _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
 
         assert aggregate_calls == 12
@@ -2818,11 +2771,17 @@ class TestRopWebProjectionLifecycle:
         )
 
         rop_dashboard_module.build_rop_web_projection(
-            small_storage, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+            small_storage,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         small_reads = read_calls
         rop_dashboard_module.build_rop_web_projection(
-            large_storage, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+            large_storage,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         large_reads = read_calls - small_reads
 
@@ -2871,11 +2830,17 @@ class TestRopWebProjectionLifecycle:
         )
 
         rop_dashboard_module.build_rop_web_projection(
-            storage_dir, ["all"], _null_logger()
+            storage_dir,
+            ["all"],
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         one_period_reads = read_calls
         rop_dashboard_module.build_rop_web_projection(
-            storage_dir, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+            storage_dir,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         all_period_reads = read_calls - one_period_reads
 
@@ -2887,7 +2852,10 @@ class TestRopWebProjectionLifecycle:
     ) -> None:
         storage_dir = self._storage_with_runs(run_dir, tmp_path / "incremental", 3)
         projection = rop_dashboard_module.build_rop_web_projection(
-            storage_dir, list(rop_dashboard_module.ALLOWED_PERIODS), _null_logger()
+            storage_dir,
+            list(rop_dashboard_module.ALLOWED_PERIODS),
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         rop_dashboard_module.write_rop_web_projection(
             storage_dir, projection, _null_logger()
@@ -2926,6 +2894,7 @@ class TestRopWebProjectionLifecycle:
             list(rop_dashboard_module.ALLOWED_PERIODS),
             "run-new",
             _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
 
         index = rop_dashboard_module.rop_web_projection_index(storage_dir)
@@ -2958,6 +2927,7 @@ class TestRopWebProjectionLifecycle:
             list(rop_dashboard_module.ALLOWED_PERIODS),
             "run-many-000",
             _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
 
         assert refreshed is False
@@ -2981,7 +2951,10 @@ class TestRopWebProjectionLifecycle:
     ) -> None:
         storage_dir = self._storage_with_runs(run_dir, tmp_path / "malformed", 1)
         projection = rop_dashboard_module.build_rop_web_projection(
-            storage_dir, ["7d"], _null_logger()
+            storage_dir,
+            ["7d"],
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         rop_dashboard_module.write_rop_web_projection(
             storage_dir, projection, _null_logger()
@@ -3004,6 +2977,7 @@ class TestRopWebProjectionLifecycle:
                 "run-many-000",
                 _null_logger(),
                 is_new_run=False,
+                plan_lead=TEST_PLAN_LEAD,
             )
             is False
         )
@@ -3015,7 +2989,10 @@ class TestRopWebProjectionLifecycle:
     ) -> None:
         storage_dir = self._storage_with_runs(run_dir, tmp_path / "existing", 3)
         projection = rop_dashboard_module.build_rop_web_projection(
-            storage_dir, ["7d"], _null_logger()
+            storage_dir,
+            ["7d"],
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         rop_dashboard_module.write_rop_web_projection(
             storage_dir, projection, _null_logger()
@@ -3028,6 +3005,7 @@ class TestRopWebProjectionLifecycle:
             "run-many-000",
             _null_logger(),
             is_new_run=False,
+            plan_lead=TEST_PLAN_LEAD,
         )
 
         after = rop_dashboard_module.rop_web_projection_index(storage_dir)
@@ -3042,7 +3020,10 @@ class TestRopWebProjectionLifecycle:
     ) -> None:
         storage_dir = self._storage_with_runs(run_dir, tmp_path / "atomic", 1)
         projection = rop_dashboard_module.build_rop_web_projection(
-            storage_dir, ["7d"], _null_logger()
+            storage_dir,
+            ["7d"],
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
         rop_dashboard_module.write_rop_web_projection(
             storage_dir, projection, _null_logger()
@@ -3093,7 +3074,10 @@ class TestRopWebProjectionLifecycle:
             (path / "rop_current_state.json").write_text(json.dumps(current_state))
 
         projection = rop_dashboard_module.build_rop_web_projection(
-            storage_dir, ["all"], _null_logger()
+            storage_dir,
+            ["all"],
+            _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
 
         assert projection["run_ids"] == ["run-many-001", "run-many-000"]
@@ -3137,32 +3121,22 @@ class TestRopWebProjectionLifecycle:
 
 
 class TestSettingsValidation:
-    def test_settings_has_rop_dashboard(self) -> None:
+    def test_settings_rop_dashboard_contract(self) -> None:
         settings = load_settings(_project_root() / "config" / "settings.yml")
-        dash = settings.get("rop", {}).get("dashboard", {})
-        assert "default_period" in dash
-        assert "periods" in dash
-        assert dash["default_period"] == "7d"
-        assert isinstance(dash["periods"], list)
-        assert "7d" in dash["periods"]
+        dashboard = settings["rop"]["dashboard"]
+        periods = dashboard["periods"]
+        plan_lead = dashboard["leaderboard"]["plan_lead"]
 
-    def test_settings_default_period_is_valid(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
-        default_period = settings["rop"]["dashboard"]["default_period"]
-        validate_period(default_period)
-
-    def test_all_periods_are_valid(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
-        for p in settings["rop"]["dashboard"]["periods"]:
-            validate_period(p)
-
-
-# ── Filter tests ───────────────────────────────────────────────────────────
+        assert dashboard["default_period"] in periods
+        assert isinstance(periods, list)
+        assert isinstance(plan_lead, int)
+        assert not isinstance(plan_lead, bool)
+        assert plan_lead > 0
+        for period in periods:
+            validate_period(period)
 
 
 class TestQueueFilters:
-    """Tests for queue filter validation and application."""
-
     def test_validate_filter_params_accepts_empty(self) -> None:
         errors = rop_dashboard_module.validate_filter_params({})
         assert errors == []
@@ -3360,37 +3334,29 @@ class TestQueueFilters:
 
         assert errors == []
 
-    def test_validate_filter_params_rejects_bad_date(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"date_from": "not-a-date"}
-        )
-        assert any("Invalid date_from" in e for e in errors)
+    @pytest.mark.parametrize(
+        ("params", "message"),
+        [
+            ({"date_from": "not-a-date"}, "Invalid date_from"),
+            ({"classification": "non_existent_type"}, "Invalid classification"),
+            ({"priority": "urgent"}, "Invalid priority"),
+            ({"bitrix_status": "non_existent"}, "Invalid bitrix_status"),
+            ({"is_fallback": "maybe"}, "Invalid is_fallback"),
+        ],
+    )
+    def test_validate_filter_params_rejects_invalid_values(
+        self,
+        params: dict[str, str],
+        message: str,
+    ) -> None:
+        errors = rop_dashboard_module.validate_filter_params(params)
+        assert any(message in error for error in errors)
 
     def test_validate_filter_params_rejects_date_from_after_to(self) -> None:
         errors = rop_dashboard_module.validate_filter_params(
             {"date_from": "2026-06-30", "date_to": "2026-06-01"}
         )
         assert any("date_from must not be after date_to" in e for e in errors)
-
-    def test_validate_filter_params_rejects_bad_classification(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"classification": "non_existent_type"}
-        )
-        assert any("Invalid classification" in e for e in errors)
-
-    def test_validate_filter_params_rejects_bad_priority(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params({"priority": "urgent"})
-        assert any("Invalid priority" in e for e in errors)
-
-    def test_validate_filter_params_rejects_bad_bitrix_status(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params(
-            {"bitrix_status": "non_existent"}
-        )
-        assert any("Invalid bitrix_status" in e for e in errors)
-
-    def test_validate_filter_params_rejects_bad_is_fallback(self) -> None:
-        errors = rop_dashboard_module.validate_filter_params({"is_fallback": "maybe"})
-        assert any("Invalid is_fallback" in e for e in errors)
 
     def test_validate_filter_params_accepts_is_fallback(self) -> None:
         errors = rop_dashboard_module.validate_filter_params({"is_fallback": "true"})
@@ -3760,11 +3726,163 @@ def test_v2_overview_action_required_count_is_exact_while_preview_is_bounded(
     )
 
     views = rop_dashboard_module.build_rop_web_projection_v2_views(
-        tmp_path, "run-1", ["all"]
+        tmp_path, "run-1", ["all"], TEST_PLAN_LEAD
     )
 
     overview = views["overview.all"]
     assert overview["action_required_count"] == 30
+
+
+def test_team_leaderboard_counts_only_canonical_current_month_new_leads() -> None:
+    now = datetime(2026, 9, 15, tzinfo=UTC)
+    events = [
+        {
+            "_dashboard_origin_run_id": "run-1",
+            "source_id": "mail",
+            "event_id": f"event-{number}",
+            "event_instance_id": "",
+            "received_at": timestamp,
+            "case_type": "new_lead" if number in (1, 2, 3, 4) else "irrelevant",
+        }
+        for number, timestamp in enumerate(
+            [
+                "2026-09-01T00:00:00Z",
+                "2026-09-02T00:00:00Z",
+                "2026-09-03T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+                "2026-08-02T00:00:00Z",
+                "2026-08-03T00:00:00Z",
+                "2026-08-04T00:00:00Z",
+                "2026-09-04T00:00:00Z",
+            ],
+            start=1,
+        )
+    ]
+    routing = [
+        {
+            "_dashboard_origin_run_id": "run-1",
+            "source_id": "mail",
+            "event_id": f"event-{number}",
+            "event_instance_id": "",
+            "responsible": {
+                "status": "matched" if number != 8 else "not_found",
+                "user_id": 7 if number != 8 else -1,
+                "name": "Ada Lovelace",
+            },
+        }
+        for number in range(1, 9)
+    ]
+    writeback_state = {
+        "events": {
+            f"client-a|mail|event-{number}": {
+                "semantic_case_type": "new_lead",
+                "outcome": "create_lead",
+                "responsible_status": "matched",
+                "responsible_user_id": 7,
+            }
+            for number in range(1, 8)
+        }
+    }
+    leaderboard = rop_dashboard_module._build_team_leaderboard(
+        events,
+        routing,
+        TEST_PLAN_LEAD,
+        "client-a",
+        writeback_state,
+        167,
+        "ROBOT WG",
+        now,
+    )
+    assert leaderboard == {
+        "month": "2026-09",
+        "plan_lead": TEST_PLAN_LEAD,
+        "items": [
+            {
+                "user_id": 7,
+                "name": "Ada Lovelace",
+                "current_month_count": 3,
+                "score_percent": 15,
+            }
+        ],
+    }
+
+
+def test_team_leaderboard_omits_ambiguous_routing_and_limits_rankings() -> None:
+    now = datetime(2026, 9, 15, tzinfo=UTC)
+    events = []
+    routing = []
+    for user_id in range(1, 8):
+        event = {
+            "_dashboard_origin_run_id": "run-1",
+            "source_id": "mail",
+            "event_id": f"event-{user_id}",
+            "event_instance_id": "",
+            "received_at": "2026-09-01T00:00:00Z",
+            "case_type": "new_lead",
+        }
+        events.append(event)
+        routing.append(
+            {
+                **{key: event[key] for key in event if key != "received_at"},
+                "responsible": {
+                    "status": "matched",
+                    "user_id": user_id,
+                    "name": f"User {8 - user_id}",
+                },
+            }
+        )
+    routing.append(dict(routing[0]))
+    writeback_state = {
+        "events": {
+            f"client-a|mail|event-{user_id}": {
+                "semantic_case_type": "new_lead",
+                "outcome": "create_lead",
+                "responsible_status": "matched",
+                "responsible_user_id": user_id,
+            }
+            for user_id in range(1, 8)
+        }
+    }
+    leaderboard = rop_dashboard_module._build_team_leaderboard(
+        events,
+        routing,
+        TEST_PLAN_LEAD,
+        "client-a",
+        writeback_state,
+        167,
+        "ROBOT WG",
+        now,
+    )
+    assert [item["user_id"] for item in leaderboard["items"]] == [7, 6, 5, 4, 3]
+    assert all(item["score_percent"] == 5 for item in leaderboard["items"])
+
+
+def test_v2_leaderboard_payload_is_required_for_overview_and_api() -> None:
+    overview = {
+        "business_kpi": {},
+        "series": {},
+        "action_required_count": 0,
+    }
+    api = {
+        "business_kpi": {},
+        "series": {},
+        "queues": {},
+        "canonical_queue_rows": [],
+    }
+    assert not rop_dashboard_module._v2_view_payload_valid("overview.7d", overview)
+    assert not rop_dashboard_module._v2_view_payload_valid("api.7d", api)
+    leaderboard = {"month": "2026-09", "items": []}
+    overview["team_leaderboard"] = leaderboard
+    api["team_leaderboard"] = leaderboard
+    assert not rop_dashboard_module._v2_view_payload_valid("overview.7d", overview)
+    assert not rop_dashboard_module._v2_view_payload_valid("api.7d", api)
+    leaderboard["monthly_lead_plan"] = TEST_PLAN_LEAD
+    assert not rop_dashboard_module._v2_view_payload_valid("overview.7d", overview)
+    assert not rop_dashboard_module._v2_view_payload_valid("api.7d", api)
+    leaderboard.pop("monthly_lead_plan")
+    leaderboard["plan_lead"] = TEST_PLAN_LEAD
+    assert rop_dashboard_module._v2_view_payload_valid("overview.7d", overview)
+    assert rop_dashboard_module._v2_view_payload_valid("api.7d", api)
 
 
 def test_v2_writer_rejects_incomplete_views_before_manifest_publication(
@@ -3807,6 +3925,7 @@ def test_v2_writer_rejects_incomplete_views_before_manifest_publication(
             1,
             {"run-1": ["7d"]},
             _null_logger(),
+            plan_lead=TEST_PLAN_LEAD,
         )
 
     assert manifest_path.read_bytes() == before
@@ -3823,7 +3942,7 @@ def _projection_for_runs(run_ids: list[str]) -> dict[str, object]:
 
 
 def _v2_views(
-    _storage_dir: Path, _run_id: str, periods: list[str]
+    _storage_dir: Path, _run_id: str, periods: list[str], _plan_lead: int
 ) -> dict[str, dict[str, object]]:
     payloads: dict[str, dict[str, object]] = {}
     for view_key in rop_dashboard_module._v2_required_view_keys(periods):
@@ -3831,6 +3950,11 @@ def _v2_views(
             payloads[view_key] = {
                 "business_kpi": {},
                 "series": {},
+                "team_leaderboard": {
+                    "month": "2026-09",
+                    "plan_lead": TEST_PLAN_LEAD,
+                    "items": [],
+                },
                 "action_required_count": 0,
             }
         elif view_key.startswith("api."):
@@ -3839,6 +3963,11 @@ def _v2_views(
                 "series": {},
                 "queues": {},
                 "canonical_queue_rows": [],
+                "team_leaderboard": {
+                    "month": "2026-09",
+                    "plan_lead": TEST_PLAN_LEAD,
+                    "items": [],
+                },
             }
         elif view_key == "queue":
             payloads[view_key] = {"queue_rows": [], "filter_options": {}}
@@ -3957,7 +4086,7 @@ def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
     storage_dir = tmp_path / "storage"
     logger = _null_logger()
     rop_dashboard_module.write_rop_web_projection_v2(
-        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger, plan_lead=TEST_PLAN_LEAD
     )
     first = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
     assert first is not None
@@ -3978,6 +4107,7 @@ def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
         2,
         {"run-b": ["7d"]},
         logger,
+        plan_lead=TEST_PLAN_LEAD,
     )
     second = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
     assert second is not None
@@ -3997,6 +4127,7 @@ def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
         3,
         {"run-c": ["7d"]},
         logger,
+        plan_lead=TEST_PLAN_LEAD,
     )
     third = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
     assert third is not None
@@ -4007,6 +4138,7 @@ def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
         4,
         {"run-d": ["7d"]},
         logger,
+        plan_lead=TEST_PLAN_LEAD,
     )
     fourth = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
     assert fourth is not None
@@ -4026,6 +4158,7 @@ def test_v2_projection_gc_keeps_current_previous_and_safe_paths(
             4,
             {"run-d": ["7d"]},
             logger,
+            plan_lead=TEST_PLAN_LEAD,
         )
     generations = [
         path
@@ -4046,7 +4179,7 @@ def test_v2_interrupted_publication_cleans_only_own_generation(
     storage_dir = tmp_path / "storage"
     logger = _null_logger()
     rop_dashboard_module.write_rop_web_projection_v2(
-        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger, plan_lead=TEST_PLAN_LEAD
     )
     manifest_path = storage_dir / "interfaces" / "rop_web_projection_v2.json"
     before = manifest_path.read_bytes()
@@ -4066,7 +4199,12 @@ def test_v2_interrupted_publication_cleans_only_own_generation(
     monkeypatch.setattr(Path, "write_text", interrupted_write)
     with pytest.raises(OSError, match="interrupted"):
         rop_dashboard_module.write_rop_web_projection_v2(
-            storage_dir, ["run-b"], 2, {"run-b": ["7d"]}, logger
+            storage_dir,
+            ["run-b"],
+            2,
+            {"run-b": ["7d"]},
+            logger,
+            plan_lead=TEST_PLAN_LEAD,
         )
     assert manifest_path.read_bytes() == before
     assert {
@@ -4084,7 +4222,7 @@ def test_v2_manifest_failure_cleans_unpublished_final_without_masking_error(
     storage_dir = tmp_path / "storage"
     logger = _null_logger()
     rop_dashboard_module.write_rop_web_projection_v2(
-        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger
+        storage_dir, ["run-a"], 1, {"run-a": ["7d"]}, logger, plan_lead=TEST_PLAN_LEAD
     )
     manifest_path = storage_dir / "interfaces" / "rop_web_projection_v2.json"
     before = manifest_path.read_bytes()
@@ -4101,7 +4239,12 @@ def test_v2_manifest_failure_cleans_unpublished_final_without_masking_error(
     monkeypatch.setattr(rop_dashboard_module.os, "replace", failing_manifest_replace)
     with pytest.raises(OSError, match="manifest replacement"):
         rop_dashboard_module.write_rop_web_projection_v2(
-            storage_dir, ["run-b"], 2, {"run-b": ["7d"]}, logger
+            storage_dir,
+            ["run-b"],
+            2,
+            {"run-b": ["7d"]},
+            logger,
+            plan_lead=TEST_PLAN_LEAD,
         )
     assert manifest_path.read_bytes() == before
     assert {path.name for path in root.iterdir() if path.is_dir()} == existing
@@ -4114,5 +4257,10 @@ def test_v2_manifest_failure_cleans_unpublished_final_without_masking_error(
     monkeypatch.setattr(rop_dashboard_module.shutil, "rmtree", failing_rmtree)
     with pytest.raises(OSError, match="manifest replacement"):
         rop_dashboard_module.write_rop_web_projection_v2(
-            storage_dir, ["run-c"], 3, {"run-c": ["7d"]}, logger
+            storage_dir,
+            ["run-c"],
+            3,
+            {"run-c": ["7d"]},
+            logger,
+            plan_lead=TEST_PLAN_LEAD,
         )

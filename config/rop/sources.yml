@@ -17,7 +17,7 @@ sources:
     password_env: ROP_MAILBOX_PASSWORD
   routing:
     email_recipient: hotline@welding.kz
-- source_id: mailbox_83df9dc9
+- source_id: mailbox_87f793c3
   source_type: mailbox_readonly
   source_role: technical_aggregator
   client_id: welding
@@ -26,9 +26,9 @@ sources:
   authority: read_only
   items_max: 20
   mailbox:
-    host: 12345.mail.ru
+    host: bgfghgfh
     port: 993
     use_ssl: true
     folder: INBOX
-    username_env: BEEAGENT_ROP_SOURCE_MAILBOX_83DF9DC9_USERNAME
-    password_env: BEEAGENT_ROP_SOURCE_MAILBOX_83DF9DC9_PASSWORD
+    username_env: BEEAGENT_ROP_SOURCE_MAILBOX_87F793C3_USERNAME
+    password_env: BEEAGENT_ROP_SOURCE_MAILBOX_87F793C3_PASSWORD

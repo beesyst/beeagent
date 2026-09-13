@@ -168,7 +168,11 @@ def _valid_settings() -> dict:
                 "source_id": "hotline_mailbox",
                 "sources_all": True,
             },
-            "dashboard": {"default_period": "7d", "periods": ["7d", "30d", "all"]},
+            "dashboard": {
+                "default_period": "7d",
+                "periods": ["7d", "30d", "all"],
+                "leaderboard": {"plan_lead": 20},
+            },
         },
         "bitrix": {
             "enabled": True,

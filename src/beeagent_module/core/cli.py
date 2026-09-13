@@ -54,6 +54,15 @@ def _dashboard_periods(settings: dict) -> list[str]:
     return list(settings["rop"]["dashboard"]["periods"])
 
 
+def _dashboard_plan_lead(settings: dict) -> int:
+    return settings["rop"]["dashboard"]["leaderboard"]["plan_lead"]
+
+
+def _dashboard_fallback(settings: dict) -> tuple[int | None, str | None]:
+    writeback = settings["bitrix"]["writeback"]
+    return writeback.get("user_id_fallback"), writeback.get("user_name_fallback")
+
+
 def _refresh_rop_web_projection(
     storage_dir: Path,
     settings: dict,
@@ -68,6 +77,9 @@ def _refresh_rop_web_projection(
     refresh_rop_web_projection(
         storage_dir=storage_dir,
         periods=_dashboard_periods(settings),
+        plan_lead=_dashboard_plan_lead(settings),
+        fallback_user_id=_dashboard_fallback(settings)[0],
+        fallback_user_name=_dashboard_fallback(settings)[1],
         run_id=run_id,
         logger=logger,
         is_new_run=is_new_run,
@@ -201,6 +213,9 @@ def handle_rop_run(
                 storage_dir=storage_dir,
                 period=_dashboard_default_period(settings),
                 logger=logger,
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
                 run_id=effective_run_id,
                 aggregate_runs=True,
             )
@@ -456,6 +471,9 @@ def handle_rop_reconcile_bitrix(
                 storage_dir=storage_dir,
                 period=_dashboard_default_period(settings),
                 logger=logger,
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
                 run_id=run_id,
                 aggregate_runs=True,
             )
@@ -906,6 +924,9 @@ def handle_rop_current(
                 storage_dir=storage_dir,
                 period=_dashboard_default_period(settings),
                 logger=logger,
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
                 run_id=run_id,
                 aggregate_runs=True,
             )
@@ -963,6 +984,9 @@ def handle_rop_dashboard(
             storage_dir=storage_dir,
             period=period,
             logger=logger,
+            plan_lead=_dashboard_plan_lead(settings),
+            fallback_user_id=_dashboard_fallback(settings)[0],
+            fallback_user_name=_dashboard_fallback(settings)[1],
             run_id=run_id,
             aggregate_runs=run_id is None,
         )
@@ -975,6 +999,9 @@ def handle_rop_dashboard(
         projection = build_rop_web_projection(
             storage_dir=storage_dir,
             periods=_dashboard_periods(settings),
+            plan_lead=_dashboard_plan_lead(settings),
+            fallback_user_id=_dashboard_fallback(settings)[0],
+            fallback_user_name=_dashboard_fallback(settings)[1],
             logger=logger,
         )
         write_rop_web_projection(storage_dir, projection, logger)

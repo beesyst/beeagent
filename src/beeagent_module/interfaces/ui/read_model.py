@@ -26,7 +26,11 @@ from beeagent_module.core.rop_final_decision import load_or_build_final_decision
 from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.interfaces.ui.locale import (
     case_type_label,
+    format_rop_email_count,
+    format_rop_lead_count,
+    format_rop_month,
     format_rop_today_summary,
+    rop_initials,
     t,
 )
 from beeagent_module.interfaces.ui.url_builder import build_rop_event_url, build_rop_url
@@ -2010,6 +2014,7 @@ def build_rop_dashboard_read_model(
     period: str | None = None,
     default_period: str | None = None,
     configured_periods: list[str] | None = None,
+    plan_lead: int | None = None,
     filter_params: dict[str, str] | None = None,
     page: int = 1,
     page_size: int = 25,
@@ -2267,6 +2272,12 @@ def build_rop_dashboard_read_model(
 
     dashboard_payload: dict[str, Any] = {}
     if effective_period:
+        if (
+            not isinstance(plan_lead, int)
+            or isinstance(plan_lead, bool)
+            or plan_lead <= 0
+        ):
+            raise ValueError("ROP Web projection plan_lead must be a positive integer")
         try:
             dashboard_payload = build_rop_dashboard(
                 storage_dir=storage_dir,
@@ -2274,6 +2285,7 @@ def build_rop_dashboard_read_model(
                 logger=logging.getLogger("beeagent.ui.rop_dashboard"),
                 run_id=run_id,
                 aggregate_runs=True,
+                plan_lead=plan_lead,
             )
         except ValueError:
             warnings.append(
@@ -2630,6 +2642,7 @@ def _build_rop_tab_read_model_legacy(
     period: str | None = None,
     default_period: str | None = None,
     configured_periods: list[str] | None = None,
+    plan_lead: int | None = None,
     filter_params: dict[str, str] | None = None,
     page: int = 1,
     page_size: int = 25,
@@ -2758,6 +2771,9 @@ def _build_rop_tab_read_model_legacy(
         "series": series,
         "queues": queues,
         "rop_recommendations": dashboard_payload.get("rop_recommendations", []),
+        "team_leaderboard": dashboard_payload.get(
+            "team_leaderboard", {"month": "", "items": []}
+        ),
         "configured_periods": list(configured_periods or []),
         "default_period": default_period,
         "updated_at": dashboard_payload.get("generated_at_utc"),
@@ -3713,7 +3729,7 @@ def _build_rop_overview_layout(
                 locale=locale,
                 run_id=str(data.get("run_id", "")),
             ),
-            "icon": "plug-connected",
+            "icon": "mail-plus",
             "icon_tone": "green",
         },
     ]
@@ -3737,6 +3753,56 @@ def _build_rop_overview_layout(
             "colors": ["#4f46e5", "#818cf8"],
             "height": 240,
             "empty_message": t("No chart data for this period", locale),
+        }
+    )
+
+    leaderboard = data.get("team_leaderboard", {})
+    leaderboard_items = (
+        leaderboard.get("items", []) if isinstance(leaderboard, dict) else []
+    )
+    leaderboard_month = (
+        leaderboard.get("month", "") if isinstance(leaderboard, dict) else ""
+    )
+    presentation_items: list[dict[str, Any]] = []
+    tones = ("primary", "purple", "green", "yellow", "red")
+    if isinstance(leaderboard_items, list):
+        for item in leaderboard_items[:5]:
+            if not isinstance(item, dict):
+                continue
+            count = item.get("current_month_count")
+            score = item.get("score_percent")
+            name = item.get("name")
+            if (
+                not isinstance(count, int)
+                or isinstance(count, bool)
+                or count < 0
+                or not isinstance(score, int)
+                or isinstance(score, bool)
+                or score < 0
+                or not isinstance(name, str)
+            ):
+                continue
+            rank = len(presentation_items) + 1
+            tone = tones[rank - 1]
+            presentation_items.append(
+                {
+                    "rank": rank,
+                    "label": name.strip() or "?",
+                    "initials": rop_initials(name),
+                    "avatar_tone": tone,
+                    "value": format_rop_lead_count(count, locale),
+                    "meta": f"{score}% {t('of plan', locale)}",
+                    "progress": min(100, score),
+                    "progress_tone": tone,
+                }
+            )
+    layout.append(
+        {
+            "type": "leaderboard",
+            "width": 6,
+            "title": t("Team leaderboard", locale),
+            "subtitle": format_rop_month(leaderboard_month, locale),
+            "items": presentation_items,
         }
     )
 
@@ -3782,7 +3848,7 @@ def _build_rop_overview_layout(
     layout.append(
         {
             "type": "chart",
-            "width": 12,
+            "width": 6,
             "title": t("Source contribution", locale),
             "subtitle": t("Emails by source for selected period", locale),
             "chart_id": "chart-rop-source-contribution",

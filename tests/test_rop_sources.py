@@ -267,8 +267,9 @@ def test_source_status_toggle_persists_and_renders(monkeypatch, tmp_path: Path) 
     settings["web"] = {
         "auth": {
             "principals": [
-                {"id": "admin", "scopes": ["rop"]},
+                {"id": "admin", "scopes": ["*"]},
                 {"id": "operator", "scopes": ["rop"]},
+                {"id": "rop_manager", "scopes": ["rop", "rop.sources.write"]},
             ]
         }
     }
@@ -299,7 +300,7 @@ def test_source_status_toggle_persists_and_renders(monkeypatch, tmp_path: Path) 
     result = adapter.execute_action(
         "rop_source_set_enabled",
         {"source_id": "mailbox", "enabled": True},
-        actor,
+        {"user_id": "rop_manager", "role": "operator"},
     )
     assert result.status == "ok"
     assert load_rop_sources(tmp_path, settings)[0]["enabled"] is True
@@ -493,7 +494,7 @@ def test_admin_add_and_edit_mailbox_credentials(monkeypatch, tmp_path: Path) -> 
         check_access,
     )
     settings = _settings()
-    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
     adapter = BeeAgentUiAdapter(tmp_path / "storage", settings)
     actor = {"user_id": "admin", "role": "admin"}
     added = adapter.execute_action(
@@ -604,7 +605,7 @@ def test_connection_check_persists_safe_failure_without_action_error(
         reject_access,
     )
     settings = _settings()
-    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
     adapter = BeeAgentUiAdapter(tmp_path / "storage", settings)
     result = adapter.execute_action(
         "rop_source_check_connection",
@@ -628,7 +629,7 @@ def test_mailbox_credentials_reject_control_characters(
         "beeagent_module.interfaces.ui.adapter.get_project_root", lambda: tmp_path
     )
     settings = _settings()
-    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
     result = BeeAgentUiAdapter(tmp_path / "storage", settings).execute_action(
         "rop_source_add",
         {
@@ -662,7 +663,7 @@ def test_failed_credential_write_does_not_persist_source(
         fail_write,
     )
     settings = _settings()
-    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
     result = BeeAgentUiAdapter(tmp_path / "storage", settings).execute_action(
         "rop_source_add",
         {
@@ -688,7 +689,7 @@ def test_source_action_rejects_browser_supplied_environment_references(
         "beeagent_module.interfaces.ui.adapter.get_project_root", lambda: tmp_path
     )
     settings = _settings()
-    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["rop"]}]}}
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
     result = BeeAgentUiAdapter(tmp_path / "storage", settings).execute_action(
         "rop_source_add",
         {
