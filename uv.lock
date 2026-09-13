@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.59.2"
+version = "0.60.0"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -137,7 +137,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beeui", editable = "../beeui-pr130" },
+    { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
     { name = "fastapi", specifier = "==0.141.1" },
@@ -175,8 +175,8 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "beeui"
-version = "0.29.0"
-source = { editable = "../beeui-pr130" }
+version = "0.30.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
@@ -185,21 +185,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = "==0.141.1" },
-    { name = "jinja2", specifier = "==3.1.6" },
-    { name = "pydantic", specifier = "==2.13.4" },
-    { name = "python-multipart", specifier = "==0.0.32" },
-    { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "uvicorn", specifier = "==0.52.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx2", specifier = "==2.10.0" },
-    { name = "pytest", specifier = "==9.1.1" },
+sdist = { url = "https://files.pythonhosted.org/packages/f8/8f/953f687f2e1ddf8b7745f1d2a8e5fac9f9c84db68bbfa81e0ea87e41acc9/beeui-0.30.0.tar.gz", hash = "sha256:2e3b6145abe79ef67db83c66aae8673c46cee38752d80cb4ec74f36a1ca37638", size = 2649861, upload-time = "2026-09-13T15:32:38.643Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/10/e2c5638184981e6088c4fa4ad8be279d13be2974f2eb056b09dcca3062af/beeui-0.30.0-py3-none-any.whl", hash = "sha256:1f6f91828ae4e4022c8d73701fdf227dc33a4be59a3c626e50d67ce196ed2bac", size = 2552610, upload-time = "2026-09-13T15:32:30.908Z" },
 ]
 
 [[package]]
