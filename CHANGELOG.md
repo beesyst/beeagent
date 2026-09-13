@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.60.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.2...beeagent-v0.60.0) (2026-09-13)
+
+
+### Features
+
+* **rop:** add canonical source management and clean up tests ([556061d](https://github.com/beesyst/beeagent/commit/556061da1332eda424c6bf325e6244fe231bc34b))
+* **rop:** add team leaderboard and scoped permissions ([5629a22](https://github.com/beesyst/beeagent/commit/5629a220a7209fd2e47a739600a27156e9ee5a19))
+
+
+### Bug Fixes
+
+* **rop:** Add attachment queue filter ([efe50bd](https://github.com/beesyst/beeagent/commit/efe50bd90212cfbfc05b5e04c067815597e7b046))
+* **rop:** Clarify Bitrix queue statuses ([7c9640f](https://github.com/beesyst/beeagent/commit/7c9640fad694a302d2170eb814fd36218eafb8ba))
+* **rop:** expose period comparison trends ([9c3dcd3](https://github.com/beesyst/beeagent/commit/9c3dcd3e74cf2dd149d94b9f791871e73e5fdccb))
+* **rop:** finalize UI cleanup contracts ([4b7ac5b](https://github.com/beesyst/beeagent/commit/4b7ac5b6a8f9c40018fef9e6919a0e54151641d9))
+* **rop:** improve event detail view ([76492f7](https://github.com/beesyst/beeagent/commit/76492f76c0cc8cf59fd0364aed018b3fbba2f975))
+* **rop:** refresh projection after scoped writeback ([2947a32](https://github.com/beesyst/beeagent/commit/2947a32d34df5d773765e18669435ec44acf9875))
+* **rop:** Remove AI assist tab ([bba3e3e](https://github.com/beesyst/beeagent/commit/bba3e3eecf2cf9deaba1986b0d0957ae2f8a69c9))
+* **rop:** Remove attachments tab ([28f447b](https://github.com/beesyst/beeagent/commit/28f447beac743da00e4cfe48912035a14767690d))
+* **rop:** Remove Bitrix tab ([e2ac5c4](https://github.com/beesyst/beeagent/commit/e2ac5c44234cc01ce235e34157cc542ba3bdfce2))
+* **rop:** Remove evidence tab ([3225be0](https://github.com/beesyst/beeagent/commit/3225be0dc76586d688228743c27179552ceb239b))
+* **rop:** remove obsolete action drafts ([8497483](https://github.com/beesyst/beeagent/commit/8497483903983de3fe3cbc06d1cb172950ee3855))
+* **rop:** Remove ROP delivery recommendations ([f535af3](https://github.com/beesyst/beeagent/commit/f535af3684529a9463057ebfdc704dbbf2b7b987))
+* **rop:** Remove threads tab ([0b05912](https://github.com/beesyst/beeagent/commit/0b05912b404a65f10ed9d6cd74cc4af0114f6a5d))
+* **rop:** simplify event detail status ([813970b](https://github.com/beesyst/beeagent/commit/813970b99943a548536f40b0c29f5a531efdc9f4))
+* **rop:** Simplify ROP overview ([8800485](https://github.com/beesyst/beeagent/commit/8800485ad56ed345e7b692a90a3fdf84bb98d9fc))
+
 ## [0.59.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.1...beeagent-v0.59.2) (2026-09-04)
 
 
