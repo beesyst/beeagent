@@ -158,6 +158,16 @@ def resolve_sources_path(project_root: Path, settings: dict[str, Any]) -> Path:
     return candidate
 
 
+def runtime_sources_path(storage_dir: Path) -> Path:
+    root = storage_dir.resolve()
+    path = (root / "config" / "rop" / "sources.yml").resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise RopSourcesError("ROP runtime source registry path is invalid") from exc
+    return path
+
+
 def credential_env_names(source_id: Any) -> tuple[str, str]:
     if not isinstance(source_id, str) or not _SOURCE_ID.fullmatch(source_id):
         raise RopSourcesError("Source ID is invalid")
@@ -341,10 +351,7 @@ def validate_sources(
     return normalized
 
 
-def load_rop_sources(
-    project_root: Path, settings: dict[str, Any]
-) -> list[dict[str, Any]]:
-    path = resolve_sources_path(project_root, settings)
+def _load_rop_sources(path: Path, settings: dict[str, Any]) -> list[dict[str, Any]]:
     if not path.is_file():
         raise RopSourcesError("ROP source registry was not found")
     try:
@@ -360,6 +367,18 @@ def load_rop_sources(
     return validate_sources(
         data["sources"], settings.get("rop", {}).get("mailbox_poll", {})
     )
+
+
+def load_rop_sources(
+    project_root: Path,
+    settings: dict[str, Any],
+    storage_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    if storage_dir is not None:
+        runtime_path = runtime_sources_path(storage_dir)
+        if runtime_path.is_file():
+            return _load_rop_sources(runtime_path, settings)
+    return _load_rop_sources(resolve_sources_path(project_root, settings), settings)
 
 
 def _write(path: Path, sources: list[dict[str, Any]]) -> None:
@@ -382,14 +401,20 @@ def _write(path: Path, sources: list[dict[str, Any]]) -> None:
 
 
 def _mutate(
-    project_root: Path, settings: dict[str, Any], operation: Any
+    project_root: Path,
+    settings: dict[str, Any],
+    operation: Any,
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any] | str, bool]:
-    path = resolve_sources_path(project_root, settings)
+    if storage_dir is None:
+        path = resolve_sources_path(project_root, settings)
+    else:
+        path = runtime_sources_path(storage_dir)
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        sources = load_rop_sources(project_root, settings)
+        sources = load_rop_sources(project_root, settings, storage_dir)
         result, candidate, changed = operation(sources)
         validate_sources(candidate, settings["rop"]["mailbox_poll"])
         if changed:
@@ -398,7 +423,10 @@ def _mutate(
 
 
 def add_rop_source(
-    project_root: Path, settings: dict[str, Any], source: dict[str, Any]
+    project_root: Path,
+    settings: dict[str, Any],
+    source: dict[str, Any],
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -408,11 +436,18 @@ def add_rop_source(
             raise RopSourcesError("ROP source already exists")
         return source, [*sources, source], True
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def update_rop_source(
-    project_root: Path, settings: dict[str, Any], source_id: str, source: dict[str, Any]
+    project_root: Path,
+    settings: dict[str, Any],
+    source_id: str,
+    source: dict[str, Any],
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -431,11 +466,17 @@ def update_rop_source(
         ]
         return source, candidate, current != source
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def remove_rop_source(
-    project_root: Path, settings: dict[str, Any], source_id: str
+    project_root: Path,
+    settings: dict[str, Any],
+    source_id: str,
+    storage_dir: Path | None = None,
 ) -> tuple[str, bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -448,7 +489,10 @@ def remove_rop_source(
             True,
         )
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, str):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def add_mailbox_source(
@@ -456,6 +500,7 @@ def add_mailbox_source(
     settings: dict[str, Any],
     values: dict[str, Any],
     before_commit: Any | None = None,
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -505,7 +550,10 @@ def add_mailbox_source(
             before_commit(source)
         return source, candidate, True
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def update_mailbox_source(
@@ -514,6 +562,7 @@ def update_mailbox_source(
     source_id: str,
     values: dict[str, Any],
     before_commit: Any | None = None,
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -540,7 +589,10 @@ def update_mailbox_source(
             before_commit(candidate)
         return candidate, sources_candidate, candidate != current
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def update_rop_source_display_name(
@@ -548,6 +600,7 @@ def update_rop_source_display_name(
     settings: dict[str, Any],
     source_id: str,
     display_name: Any,
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     def operation(
         sources: list[dict[str, Any]],
@@ -564,11 +617,18 @@ def update_rop_source_display_name(
             candidate != current,
         )
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def set_rop_source_enabled(
-    project_root: Path, settings: dict[str, Any], source_id: str, enabled: Any
+    project_root: Path,
+    settings: dict[str, Any],
+    source_id: str,
+    enabled: Any,
+    storage_dir: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     if not isinstance(enabled, bool):
         raise RopSourcesError("Source enabled value is invalid")
@@ -588,7 +648,10 @@ def set_rop_source_enabled(
             candidate != current,
         )
 
-    return _mutate(project_root, settings, operation)  # type: ignore[return-value]
+    result, changed = _mutate(project_root, settings, operation, storage_dir)
+    if not isinstance(result, dict):
+        raise RopSourcesError("ROP source mutation returned an invalid result")
+    return result, changed
 
 
 def write_rop_sources_audit(

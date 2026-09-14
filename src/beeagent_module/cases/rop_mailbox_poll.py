@@ -163,6 +163,7 @@ def _select_poll_sources(
     project_root: Path,
     source_id: str | None = None,
     all_sources: bool = False,
+    storage_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     if source_id and all_sources:
         raise MailboxPollError("--source-id and --all-sources cannot be used together")
@@ -171,7 +172,7 @@ def _select_poll_sources(
     input_sources = (
         configured_sources
         if isinstance(configured_sources, list)
-        else load_rop_sources(project_root, settings)
+        else load_rop_sources(project_root, settings, storage_dir)
     )
 
     if source_id:
@@ -232,6 +233,7 @@ def handle_mailbox_poll(
         project_root,
         source_id=source_id,
         all_sources=effective_all_sources,
+        storage_dir=storage_dir,
     )
     if not selected:
         logger.info("mailbox poll has no enabled selected sources")

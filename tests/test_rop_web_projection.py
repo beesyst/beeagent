@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ import pytest
 from beeagent_module.cases import rop_dashboard as rop_dashboard_module
 from beeagent_module.cases.rop_dashboard import (
     build_rop_dashboard as _build_rop_dashboard,
+)
+from beeagent_module.interfaces.ui.read_model import (
+    build_rop_page_layout,
+    build_rop_tab_read_model,
 )
 from tests.rop_dashboard_test_support import seed_rop_dashboard_run
 
@@ -345,6 +350,215 @@ class TestRopWebProjectionLifecycle:
             )
             is not None
         )
+
+    def test_normal_refresh_publishes_current_additions_from_legacy_v2(
+        self, run_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run_id = run_dir.name
+        storage_dir = run_dir.parent.parent
+        now = datetime.now(UTC).replace(microsecond=0)
+        events = [
+            ("lead-current-a", now, "new_lead"),
+            ("lead-current-b", now, "new_lead"),
+            ("deal-current", now, "existing_deal"),
+            ("lead-previous", now - timedelta(days=10), "new_lead"),
+        ]
+        normalized = [
+            {
+                "event_id": event_id,
+                "source_id": "rop_batch_sample",
+                "message_id": f"<{event_id}@example.test>",
+                "event_date": timestamp.isoformat(),
+                "attachments": [],
+            }
+            for event_id, timestamp, _case_type in events
+        ]
+        classified = [
+            {
+                "event_id": event_id,
+                "source_id": "rop_batch_sample",
+                "message_id": f"<{event_id}@example.test>",
+                "event_date": timestamp.isoformat(),
+                "case_type": case_type,
+                "priority": "high",
+                "confidence": 0.95,
+                "is_fallback": False,
+            }
+            for event_id, timestamp, case_type in events
+        ]
+        routing = {
+            "items": [
+                {
+                    "event_id": event_id,
+                    "source_id": "rop_batch_sample",
+                    "responsible": {
+                        "status": "matched",
+                        "user_id": 7,
+                        "name": "Ada Lovelace",
+                    },
+                }
+                for event_id in ("lead-current-a", "lead-current-b")
+            ]
+        }
+        writeback_state = {
+            "events": {
+                f"welding|rop_batch_sample|<{event_id}@example.test>": {
+                    "semantic_case_type": "new_lead",
+                    "outcome": "create_lead",
+                    "responsible_status": "matched",
+                    "responsible_user_id": 7,
+                }
+                for event_id in ("lead-current-a", "lead-current-b")
+            }
+        }
+        (run_dir / "normalized_events.json").write_text(
+            json.dumps(normalized), encoding="utf-8"
+        )
+        (run_dir / "classified_events.json").write_text(
+            json.dumps(classified), encoding="utf-8"
+        )
+        (run_dir / "rop_recipient_routing.json").write_text(
+            json.dumps(routing), encoding="utf-8"
+        )
+        current_state_path = run_dir / "rop_current_state.json"
+        current_state = json.loads(current_state_path.read_text(encoding="utf-8"))
+        current_state["generated_at_utc"] = now.isoformat()
+        current_state_path.write_text(json.dumps(current_state), encoding="utf-8")
+        interfaces_dir = storage_dir / "interfaces"
+        interfaces_dir.mkdir(exist_ok=True)
+        (interfaces_dir / "rop_writeback_state.json").write_text(
+            json.dumps(writeback_state), encoding="utf-8"
+        )
+
+        periods = list(rop_dashboard_module.ALLOWED_PERIODS)
+        projection = rop_dashboard_module.build_rop_web_projection(
+            storage_dir,
+            periods,
+            _null_logger(),
+            run_id=run_id,
+            plan_lead=TEST_PLAN_LEAD,
+        )
+        rop_dashboard_module.write_rop_web_projection(
+            storage_dir, projection, _null_logger()
+        )
+        legacy_manifest = rop_dashboard_module.rop_web_projection_v2_manifest(
+            storage_dir
+        )
+        assert legacy_manifest is not None
+        legacy_run = legacy_manifest["runs"][run_id]
+        for view_key in ("overview.7d", "api.7d"):
+            path = rop_dashboard_module.rop_web_projection_v2_view_path(
+                storage_dir,
+                legacy_run["generation"],
+                run_id,
+                legacy_run["revision"],
+                view_key,
+            )
+            assert path is not None
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            for field in (
+                "email_trend",
+                "new_leads_trend",
+                "team_leaderboard",
+            ):
+                persisted["payload"].pop(field)
+            path.write_text(json.dumps(persisted), encoding="utf-8")
+        assert (
+            rop_dashboard_module.read_rop_web_projection_v2_view(
+                storage_dir, legacy_manifest, run_id, "overview", "7d"
+            )
+            is not None
+        )
+
+        def fail_history_rebuild(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("normal refresh must not reconstruct history")
+
+        monkeypatch.setattr(
+            rop_dashboard_module, "build_rop_web_projection", fail_history_rebuild
+        )
+        monkeypatch.setattr(
+            rop_dashboard_module, "_prepare_rop_history", fail_history_rebuild
+        )
+        monkeypatch.setattr(
+            rop_dashboard_module,
+            "_list_rop_run_ids",
+            fail_history_rebuild,
+        )
+
+        assert rop_dashboard_module.refresh_rop_web_projection(
+            storage_dir,
+            periods,
+            run_id,
+            _null_logger(),
+            is_new_run=False,
+            plan_lead=TEST_PLAN_LEAD,
+        )
+
+        manifest = rop_dashboard_module.rop_web_projection_v2_manifest(storage_dir)
+        assert manifest is not None
+        overview = rop_dashboard_module.read_rop_web_projection_v2_view(
+            storage_dir, manifest, run_id, "overview", "7d"
+        )
+        assert overview is not None
+        assert overview["email_trend"] == {
+            "status": "available",
+            "percentage": 200,
+            "direction": "up",
+            "current_count": 3,
+            "previous_count": 1,
+        }
+        assert overview["new_leads_trend"] == {
+            "status": "available",
+            "percentage": 100,
+            "direction": "up",
+            "current_count": 2,
+            "previous_count": 1,
+        }
+        assert overview["team_leaderboard"]["items"] == [
+            {
+                "user_id": 7,
+                "name": "Ada Lovelace",
+                "current_month_count": 2,
+                "score_percent": 10,
+            }
+        ]
+        all_period = rop_dashboard_module.read_rop_web_projection_v2_view(
+            storage_dir, manifest, run_id, "overview", "all"
+        )
+        assert all_period is not None
+        assert all_period["email_trend"] == {"status": "unavailable"}
+        assert all_period["new_leads_trend"] == {"status": "unavailable"}
+
+        read_model = build_rop_tab_read_model(
+            storage_dir,
+            "overview",
+            run_id=run_id,
+            period="7d",
+            default_period="7d",
+            configured_periods=periods,
+        )
+        layout = build_rop_page_layout(read_model, "overview")
+        assert layout[0]["items"][0]["trend"] == {
+            "percentage": 200,
+            "direction": "up",
+        }
+        assert layout[0]["items"][1]["trend"] == {
+            "percentage": 100,
+            "direction": "up",
+        }
+        leaderboard = next(block for block in layout if block["type"] == "leaderboard")
+        assert leaderboard["items"] == [
+            {
+                "rank": 1,
+                "label": "Ada Lovelace",
+                "initials": "AL",
+                "avatar_tone": "primary",
+                "value": "2 leads",
+                "meta": "10% of plan",
+                "progress": 10,
+                "progress_tone": "primary",
+            }
+        ]
 
     def test_missing_projection_stays_unavailable_until_bootstrap(
         self, run_dir: Path, tmp_path: Path
@@ -679,7 +893,7 @@ def test_v2_overview_action_required_count_is_exact_while_preview_is_bounded(
     assert overview["action_required_count"] == 30
 
 
-def test_v2_reader_accepts_missing_leaderboard_but_writer_requires_it() -> None:
+def test_v2_reader_accepts_missing_additions_but_writer_requires_them() -> None:
     overview = {
         "business_kpi": {},
         "series": {},
@@ -715,6 +929,14 @@ def test_v2_reader_accepts_missing_leaderboard_but_writer_requires_it() -> None:
     assert rop_dashboard_module._v2_view_payload_valid("api.7d", api)
     leaderboard.pop("monthly_lead_plan")
     leaderboard["plan_lead"] = TEST_PLAN_LEAD
+    overview["email_trend"] = {
+        "status": "available",
+        "percentage": 25,
+        "direction": "up",
+    }
+    overview["new_leads_trend"] = {"status": "unavailable"}
+    api["email_trend"] = dict(overview["email_trend"])
+    api["new_leads_trend"] = dict(overview["new_leads_trend"])
     assert rop_dashboard_module._v2_view_payload_valid(
         "overview.7d", overview, require_current_additions=True
     )
@@ -801,6 +1023,8 @@ def _v2_views(
                     "plan_lead": TEST_PLAN_LEAD,
                     "items": [],
                 },
+                "email_trend": {"status": "unavailable"},
+                "new_leads_trend": {"status": "unavailable"},
                 "action_required_count": 0,
             }
         elif view_key.startswith("api."):
@@ -814,6 +1038,8 @@ def _v2_views(
                     "plan_lead": TEST_PLAN_LEAD,
                     "items": [],
                 },
+                "email_trend": {"status": "unavailable"},
+                "new_leads_trend": {"status": "unavailable"},
             }
         elif view_key == "queue":
             payloads[view_key] = {"queue_rows": [], "filter_options": {}}

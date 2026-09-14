@@ -899,49 +899,24 @@ def build_rop_web_projection(
         all_run_ids = [run_id]
         run_ids = [run_id]
 
-    dashboards: dict[str, dict[str, dict[str, Any]]] = {}
     shared_writeback_state = _read_json_dict(
         storage_dir / "interfaces" / "rop_writeback_state.json"
     )
-    for position, candidate_run_id in enumerate(run_ids, start=1):
-        if prepared_history is not None:
-            logger.info(
-                "ROP Web projection rebuild: materialized anchor generation %d/%d",
-                position,
-                len(run_ids),
-            )
-        candidate_dir = runs_dir / candidate_run_id
-        artifacts = _load_rop_dashboard_artifacts(
-            candidate_dir, shared_writeback_state=shared_writeback_state
-        )
-        source_diag = artifacts["source_diag"]
-        intake = artifacts["intake"]
-        current_state = artifacts["current_state"]
-        client_id = _resolve_client_id(source_diag, intake, current_state)
-
-        aggregate = _aggregate_period_events(
-            runs_dir=runs_dir,
-            anchor_run_id=candidate_run_id,
-            anchor_client_id=client_id,
-            logger=logger,
+    dashboards = {
+        candidate_run_id: _build_rop_web_projection_run_entries(
+            storage_dir,
+            runs_dir,
+            selected_periods,
+            logger,
+            candidate_run_id,
+            plan_lead=plan_lead,
+            fallback_user_id=fallback_user_id,
+            fallback_user_name=fallback_user_name,
+            shared_writeback_state=shared_writeback_state,
             prepared_history=prepared_history,
         )
-
-        entries: dict[str, dict[str, Any]] = {}
-        for period in selected_periods:
-            entries[period] = build_rop_dashboard(
-                storage_dir=storage_dir,
-                period=period,
-                logger=logger,
-                run_id=candidate_run_id,
-                aggregate_runs=True,
-                aggregate=aggregate,
-                artifacts=artifacts,
-                plan_lead=plan_lead,
-                fallback_user_id=fallback_user_id,
-                fallback_user_name=fallback_user_name,
-            )
-        dashboards[candidate_run_id] = entries
+        for candidate_run_id in run_ids
+    }
 
     return {
         "schema_version": 1,
@@ -949,6 +924,91 @@ def build_rop_web_projection(
         "plan_lead": plan_lead,
         "run_ids": run_ids,
         "total_runs": len(all_run_ids),
+        "dashboards": dashboards,
+    }
+
+
+def _build_rop_web_projection_run_entries(
+    storage_dir: Path,
+    runs_dir: Path,
+    periods: list[str],
+    logger: logging.Logger,
+    run_id: str,
+    *,
+    plan_lead: int,
+    fallback_user_id: int | None,
+    fallback_user_name: str | None,
+    shared_writeback_state: dict[str, Any] | None,
+    prepared_history: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    candidate_dir = runs_dir / run_id
+    artifacts = _load_rop_dashboard_artifacts(
+        candidate_dir, shared_writeback_state=shared_writeback_state
+    )
+    source_diag = artifacts["source_diag"]
+    intake = artifacts["intake"]
+    current_state = artifacts["current_state"]
+    client_id = _resolve_client_id(source_diag, intake, current_state)
+
+    aggregate = _aggregate_period_events(
+        runs_dir=runs_dir,
+        anchor_run_id=run_id,
+        anchor_client_id=client_id,
+        logger=logger,
+        prepared_history=prepared_history,
+    )
+
+    return {
+        period: build_rop_dashboard(
+            storage_dir=storage_dir,
+            period=period,
+            logger=logger,
+            run_id=run_id,
+            aggregate_runs=True,
+            aggregate=aggregate,
+            artifacts=artifacts,
+            plan_lead=plan_lead,
+            fallback_user_id=fallback_user_id,
+            fallback_user_name=fallback_user_name,
+        )
+        for period in periods
+    }
+
+
+def _build_rop_web_projection_for_current_run(
+    storage_dir: Path,
+    periods: list[str],
+    logger: logging.Logger,
+    run_id: str,
+    *,
+    plan_lead: int,
+    fallback_user_id: int | None = None,
+    fallback_user_name: str | None = None,
+) -> dict[str, Any]:
+    selected_periods = list(dict.fromkeys(periods))
+    for period in selected_periods:
+        validate_period(period)
+    dashboards = {
+        run_id: _build_rop_web_projection_run_entries(
+            storage_dir,
+            storage_dir / "runs",
+            selected_periods,
+            logger,
+            run_id,
+            plan_lead=plan_lead,
+            fallback_user_id=fallback_user_id,
+            fallback_user_name=fallback_user_name,
+            shared_writeback_state=_read_json_dict(
+                storage_dir / "interfaces" / "rop_writeback_state.json"
+            ),
+        )
+    }
+    return {
+        "schema_version": 1,
+        "generated_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "plan_lead": plan_lead,
+        "run_ids": [run_id],
+        "total_runs": 1,
         "dashboards": dashboards,
     }
 
@@ -1066,11 +1126,11 @@ def refresh_rop_web_projection(
         )
         return False
 
-    projection = build_rop_web_projection(
-        storage_dir=storage_dir,
-        periods=periods,
-        logger=logger,
-        run_id=run_id,
+    projection = _build_rop_web_projection_for_current_run(
+        storage_dir,
+        periods,
+        logger,
+        run_id,
         plan_lead=plan_lead,
         fallback_user_id=fallback_user_id,
         fallback_user_name=fallback_user_name,
@@ -1293,7 +1353,11 @@ def _v2_view_payload_valid(
     if (
         require_current_additions
         and view_key.startswith(("overview.", "api."))
-        and not _v2_team_leaderboard_valid(payload.get("team_leaderboard"))
+        and (
+            not _v2_trend_valid(payload.get("email_trend"))
+            or not _v2_trend_valid(payload.get("new_leads_trend"))
+            or not _v2_team_leaderboard_valid(payload.get("team_leaderboard"))
+        )
     ):
         return False
     action_required_count = payload.get("action_required_count")
@@ -1307,9 +1371,31 @@ def _v2_view_payload_valid(
 def _v2_team_leaderboard_valid(value: object) -> bool:
     if not isinstance(value, dict):
         return False
+    month = value.get("month")
     plan_lead = value.get("plan_lead")
     return (
-        isinstance(plan_lead, int) and not isinstance(plan_lead, bool) and plan_lead > 0
+        isinstance(month, str)
+        and bool(month)
+        and isinstance(value.get("items"), list)
+        and isinstance(plan_lead, int)
+        and not isinstance(plan_lead, bool)
+        and plan_lead > 0
+    )
+
+
+def _v2_trend_valid(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    status = value.get("status")
+    if status == "unavailable":
+        return True
+    if status != "available":
+        return False
+    percentage = value.get("percentage")
+    return (
+        isinstance(percentage, int)
+        and not isinstance(percentage, bool)
+        and value.get("direction") in {"up", "down", "neutral"}
     )
 
 
@@ -1361,6 +1447,9 @@ def read_rop_web_projection_v2_view(
         and not _v2_team_leaderboard_valid(payload["team_leaderboard"])
     ):
         payload.pop("team_leaderboard")
+    for trend_name in ("email_trend", "new_leads_trend"):
+        if trend_name in payload and not _v2_trend_valid(payload[trend_name]):
+            payload.pop(trend_name)
     return payload
 
 

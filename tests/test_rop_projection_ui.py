@@ -164,8 +164,12 @@ def test_rop_projection_v2_without_additive_leaderboard_remains_readable(
         payload = json.loads(path.read_text(encoding="utf-8"))
         if view_key == "overview.today":
             payload["payload"].pop("team_leaderboard", None)
+            payload["payload"].pop("email_trend", None)
+            payload["payload"].pop("new_leads_trend", None)
         else:
             payload["payload"]["team_leaderboard"] = {"plan_lead": "bad"}
+            payload["payload"]["email_trend"] = {"status": "available"}
+            payload["payload"]["new_leads_trend"] = {"status": "bad"}
         path.write_text(json.dumps(payload), encoding="utf-8")
 
     client = TestClient(_build_rop_app(storage_dir))
@@ -174,6 +178,8 @@ def test_rop_projection_v2_without_additive_leaderboard_remains_readable(
     api = client.get("/api/rop/dashboard?period=7d")
     assert api.status_code == 200
     assert "team_leaderboard" not in api.json()["data"]
+    assert "email_trend" not in api.json()["data"]
+    assert "new_leads_trend" not in api.json()["data"]
 
 
 @pytest.mark.parametrize(

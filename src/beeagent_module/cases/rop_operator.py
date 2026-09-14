@@ -40,14 +40,14 @@ from beeagent_module.core.rop_conversation import (
     write_conversation_artifacts,
 )
 from beeagent_module.core.rop_final_decision import build_final_decisions
+from beeagent_module.core.rop_outbound_correlation import (
+    collect_outbound_correlation_evidence,
+    resolve_outbound_bridge,
+)
 from beeagent_module.core.rop_sender_blacklist import apply_sender_blacklist_policy
 from beeagent_module.core.rop_sources import (
     load_rop_sources,
     record_rop_source_connection_health,
-)
-from beeagent_module.core.rop_outbound_correlation import (
-    collect_outbound_correlation_evidence,
-    resolve_outbound_bridge,
 )
 from beeagent_module.core.rop_thread_context import build_public_thread_context
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
@@ -1133,8 +1133,478 @@ def _sum_int(values: list[Any]) -> int:
     return total
 
 
+def _load_rop_batch_source(
+    selected: dict[str, Any],
+    settings: dict[str, Any],
+    storage_dir: Path,
+    project_root: Path,
+    logger: logging.Logger,
+    mailbox_client_factory: Any | None,
+    period_override: str | None,
+) -> dict[str, Any]:
+    try:
+        events, intake_metadata, source_diag = load_rop_source(
+            source=selected,
+            project_root=project_root,
+            logger=logger,
+            email_preview_body_chars_max=settings["rop"]["email_preview"][
+                "body_chars_max"
+            ],
+            mailbox_client_factory=mailbox_client_factory,
+            attachment_storage_settings=settings.get("rop", {}).get("attachments", {}),
+        )
+        effective_period = str(period_override or intake_metadata.get("period") or "")
+        intake_metadata["period"] = effective_period
+        source_meta = _build_source_meta_from_intake(
+            intake_metadata=intake_metadata,
+            source_diagnostics=source_diag,
+        )
+        _refresh_mailbox_connection_health(storage_dir, selected, source_diag, logger)
+        return {
+            "events": [
+                _attach_source_metadata_to_event(event=event, source_meta=source_meta)
+                for event in events
+            ],
+            "source_diagnostics": source_diag,
+            "source_meta": source_meta,
+            "source_error_message": None,
+        }
+    except InputSourceError as exc:
+        degraded_diag = {
+            "source_id": str(selected.get("source_id", "unknown")),
+            "source_type": str(selected.get("source_type", "unknown")),
+            "source_role": str(selected.get("source_role", "")),
+            "client_id": str(selected.get("client_id", "")),
+            "source_display_name": str(selected.get("display_name", "")),
+            "authority": str(selected.get("authority", "")),
+            "mailbox_folder": (
+                selected.get("mailbox", {}).get("folder")
+                if isinstance(selected.get("mailbox"), dict)
+                else None
+            ),
+            "items_max": selected.get("items_max"),
+            "status": "degraded",
+            "reason": "source_load_error",
+            "fetched_count": 0,
+            "loaded_count": 0,
+            "processed_count": 0,
+            "skipped_count": 0,
+            "malformed_count": 0,
+        }
+        degraded_diag.update(exc.diagnostics)
+        degraded_diag["status"] = "degraded"
+        _refresh_mailbox_connection_health(storage_dir, selected, degraded_diag, logger)
+        reason = degraded_diag.get("reason")
+        if reason in {"missing_credentials", "auth_failure", "mailbox_unavailable"}:
+            logger.warning(
+                "ROP source unavailable: source_id=%s reason=%s",
+                degraded_diag["source_id"],
+                reason,
+            )
+        return {
+            "events": [],
+            "source_diagnostics": degraded_diag,
+            "source_meta": _build_source_meta_from_diagnostics(degraded_diag),
+            "source_error_message": str(exc),
+        }
+
+
+def _load_rop_batch_intake(
+    settings: dict[str, Any],
+    storage_dir: Path,
+    project_root: Path,
+    logger: logging.Logger,
+    mailbox_client_factory: Any | None,
+    period_override: str | None,
+    source_id: str | None,
+    all_sources: bool,
+) -> dict[str, Any]:
+    configured_sources = settings.get("rop", {}).get("sources")
+    input_sources = (
+        configured_sources
+        if isinstance(configured_sources, list)
+        else load_rop_sources(project_root, settings, storage_dir)
+    )
+    selected_sources, selection_mode = select_rop_sources(
+        input_sources=input_sources,
+        source_id=source_id,
+        all_sources=all_sources,
+    )
+    normalized_events: list[dict[str, Any]] = []
+    source_diagnostics_items: list[dict[str, Any]] = []
+    intake_sources: list[dict[str, Any]] = []
+    source_error_messages: list[str] = []
+
+    for selected in selected_sources:
+        loaded_source = _load_rop_batch_source(
+            selected=selected,
+            settings=settings,
+            storage_dir=storage_dir,
+            project_root=project_root,
+            logger=logger,
+            mailbox_client_factory=mailbox_client_factory,
+            period_override=period_override,
+        )
+        normalized_events.extend(loaded_source["events"])
+        source_diagnostics_items.append(loaded_source["source_diagnostics"])
+        intake_sources.append(loaded_source["source_meta"])
+        source_error_message = loaded_source["source_error_message"]
+        if isinstance(source_error_message, str):
+            source_error_messages.append(source_error_message)
+
+    source_total = len(source_diagnostics_items)
+    loaded_sources = sum(
+        1 for item in source_diagnostics_items if item.get("status") == "ok"
+    )
+    degraded_sources = source_total - loaded_sources
+    aggregate_status = "ok" if loaded_sources > 0 else "degraded"
+    aggregate_reason = None
+    if source_total == 0:
+        aggregate_reason = "no_sources_selected"
+    elif degraded_sources > 0 and loaded_sources > 0:
+        aggregate_reason = "partial_degradation"
+    elif loaded_sources == 0:
+        aggregate_reason = "all_sources_failed"
+
+    fetched_count = _sum_int(
+        [item.get("fetched_count") for item in source_diagnostics_items]
+    )
+    loaded_count = _sum_int(
+        [item.get("loaded_count") for item in source_diagnostics_items]
+    )
+    malformed_count = _sum_int(
+        [item.get("malformed_count") for item in source_diagnostics_items]
+    )
+    source_diagnostics: dict[str, Any] = {
+        "selection_mode": selection_mode,
+        "status": aggregate_status,
+        "reason": aggregate_reason,
+        "aggregate": {
+            "source_count": source_total,
+            "loaded_source_count": loaded_sources,
+            "degraded_source_count": degraded_sources,
+            "fetched_count": fetched_count,
+            "loaded_count": loaded_count,
+            "malformed_count": malformed_count,
+        },
+        "sources": source_diagnostics_items,
+    }
+    period_value = str(period_override or "")
+    if not period_value:
+        for item in intake_sources:
+            period_candidate = item.get("period")
+            if isinstance(period_candidate, str) and period_candidate:
+                period_value = period_candidate
+                break
+    intake_metadata: dict[str, Any] = {
+        "selection_mode": selection_mode,
+        "period": period_value,
+        "raw_item_count": fetched_count,
+        "loaded_item_count": loaded_count,
+        "fetched_count": fetched_count,
+        "loaded_count": loaded_count,
+        "malformed_count": malformed_count,
+        "source_count": source_total,
+        "loaded_source_count": loaded_sources,
+        "degraded_source_count": degraded_sources,
+        "sources": intake_sources,
+    }
+    if len(intake_sources) == 1:
+        single_source = intake_sources[0]
+        source_diagnostics.update(
+            {
+                "status": single_source.get("status", aggregate_status),
+                "reason": single_source.get("reason"),
+                "source_id": single_source.get("source_id"),
+                "source_type": single_source.get("source_type"),
+                "source_role": single_source.get("source_role"),
+                "client_id": single_source.get("client_id"),
+                "source_display_name": single_source.get("source_display_name"),
+                "authority": single_source.get("authority"),
+                "mailbox_folder": single_source.get("mailbox_folder"),
+                "items_max": single_source.get("items_max"),
+                "fetched_count": single_source.get("fetched_count"),
+                "loaded_count": single_source.get("loaded_count"),
+                "processed_count": single_source.get("loaded_count"),
+                "malformed_count": single_source.get("malformed_count"),
+            }
+        )
+        intake_metadata.update(
+            {
+                "source_id": single_source.get("source_id"),
+                "source_type": single_source.get("source_type"),
+                "source_role": single_source.get("source_role"),
+                "client_id": single_source.get("client_id"),
+                "source_display_name": single_source.get("source_display_name"),
+                "authority": single_source.get("authority"),
+                "mailbox_folder": single_source.get("mailbox_folder"),
+                "items_max": single_source.get("items_max"),
+            }
+        )
+        source_meta = single_source
+    else:
+        source_meta = {
+            "mode": selection_mode,
+            "source_count": source_total,
+            "loaded_source_count": loaded_sources,
+            "degraded_source_count": degraded_sources,
+            "fetched_count": fetched_count,
+            "loaded_count": loaded_count,
+            "malformed_count": malformed_count,
+            "status": aggregate_status,
+            "reason": aggregate_reason,
+            "failed_sources": [
+                {
+                    "source_id": item.get("source_id", "unknown"),
+                    "reason": item.get("reason", "source_load_error"),
+                }
+                for item in source_diagnostics_items
+                if item.get("status") == "degraded"
+            ],
+        }
+    if loaded_sources == 0:
+        error_message = (
+            source_error_messages[0]
+            if source_error_messages
+            else "all selected sources failed"
+        )
+        raise InputSourceError(
+            error_message,
+            diagnostics={
+                **source_diagnostics,
+                "_rop_source_meta": source_meta,
+                "_rop_source_rollup": intake_sources,
+            },
+        )
+    return {
+        "normalized_events": normalized_events,
+        "source_diagnostics_items": source_diagnostics_items,
+        "intake_metadata": intake_metadata,
+        "source_diagnostics": source_diagnostics,
+        "source_meta": source_meta,
+        "source_rollup": intake_sources,
+    }
+
+
+def _find_rop_event_thread_context(
+    thread_context: dict[str, Any],
+    event_id: Any,
+    event_instance_id: str,
+) -> dict[str, Any] | None:
+    for context in thread_context.get("contexts", []):
+        if (
+            isinstance(context, dict)
+            and context.get("event_id") == event_id
+            and str(context.get("event_instance_id") or "") == event_instance_id
+        ):
+            return context
+    return None
+
+
+def _run_rop_batch_ai_stages(
+    settings: dict[str, Any],
+    storage_dir: Path,
+    run_id: str,
+    session_id: str,
+    registry: ModuleRegistry,
+    module_id: str,
+    logger: logging.Logger,
+    thread_context: dict[str, Any],
+    enriched_classified: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    ai_cfg = settings.get("rop", {}).get("ai_assist", {})
+    ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
+    adjudicator_state = get_rop_ai_adjudicator_runtime_state(settings)
+    legacy_ai_assist_enabled = bool(
+        ai_enabled
+        and not adjudicator_state["enabled"]
+        and not adjudicator_state["env_override_present"]
+        and not adjudicator_state["yaml_enabled"]
+    )
+    effective_ai_cfg = (
+        resolve_ai_profile(ai_cfg, settings.get("ai", {}))
+        if legacy_ai_assist_enabled and isinstance(ai_cfg, dict)
+        else {}
+    )
+    ai_requests: list[dict[str, Any]] = []
+    ai_decisions: list[dict[str, Any]] = []
+    ai_results: list[dict[str, Any]] = []
+    ai_requested_count = 0
+    ai_used_count = 0
+    ai_invalid_count = 0
+    ai_degraded_count = 0
+
+    if legacy_ai_assist_enabled:
+        min_conf = float(ai_cfg["ai_confidence_min"])
+        events_max = int(ai_cfg["events_max"])
+        eligible_events = [
+            event
+            for event in enriched_classified
+            if _is_event_eligible_for_ai_assist(event, min_conf)
+        ][:events_max]
+        ai_requested_count = len(eligible_events)
+        for event in eligible_events:
+            event_id = event.get("event_id", "")
+            event_instance_id = str(event.get("event_instance_id") or "")
+            assist_result = run_ai_assist_for_event(
+                event=event,
+                ai_cfg=effective_ai_cfg,
+                thread_context=_find_rop_event_thread_context(
+                    thread_context,
+                    event_id,
+                    event_instance_id,
+                ),
+                min_ai_confidence=min_conf,
+                logger=logger,
+            )
+            ai_requests.append(assist_result.get("request", {}))
+            ai_decisions.append(assist_result.get("decision", {}))
+            ai_results.append(assist_result.get("result", {}))
+            result_data = assist_result.get("result", {})
+            status = result_data.get("ai_assist_status", "")
+            if status == "ok":
+                merge_result, merged_event = _merge_ai_result_via_public_contract(
+                    registry=registry,
+                    module_id=module_id,
+                    storage_dir=storage_dir,
+                    logger=logger,
+                    run_id=run_id,
+                    session_id=session_id,
+                    event=event,
+                    ai_result=result_data,
+                )
+                ai_results[-1] = merge_result
+                if (
+                    merge_result.get("ai_assist_status") == "ok"
+                    and merged_event is not None
+                ):
+                    ai_used_count += 1
+                    _apply_public_merged_event(event, merged_event)
+                else:
+                    ai_degraded_count += 1
+            elif status == "invalid":
+                ai_invalid_count += 1
+            elif status in ("degraded", "low_confidence", "blocked"):
+                ai_degraded_count += 1
+
+    ai_refs = write_ai_assist_artifacts(
+        storage_dir=storage_dir,
+        run_id=run_id,
+        requests=ai_requests,
+        decisions=ai_decisions,
+        results=ai_results,
+        counters={
+            "ai_assist_enabled": 1 if legacy_ai_assist_enabled else 0,
+            "ai_assist_requested_count": ai_requested_count,
+            "ai_assist_used_count": ai_used_count,
+            "ai_assist_invalid_count": ai_invalid_count,
+            "ai_assist_degraded_count": ai_degraded_count,
+        },
+        logger=logger,
+    )
+    adj_requests, adj_decisions, adj_results, adj_counters = run_adjudicator_batch(
+        events=enriched_classified,
+        settings=settings,
+        logger=logger,
+    )
+    adj_requested_count = adj_counters.get("adjudicator_eligible_count", 0)
+    adj_used_count = adj_counters.get("adjudicator_used_count", 0)
+    adj_degraded_count = adj_counters.get("adjudicator_degraded_count", 0)
+    adj_enabled = bool(adj_counters.get("adjudicator_enabled", 0))
+    adj_refs = write_adjudicator_artifacts(
+        storage_dir=storage_dir,
+        run_id=run_id,
+        requests=adj_requests,
+        decisions=adj_decisions,
+        results=adj_results,
+        counters=adj_counters,
+        logger=logger,
+    )
+    _apply_ai_adjudicator_results(enriched_classified, adj_results)
+    sender_blacklist_applied = apply_sender_blacklist_policy(
+        enriched_classified, storage_dir
+    )
+    return (
+        adj_results,
+        {
+            "ai_assist_enabled": legacy_ai_assist_enabled,
+            "ai_assist_requested_count": ai_requested_count,
+            "ai_assist_used_count": ai_used_count,
+            "ai_assist_invalid_count": ai_invalid_count,
+            "ai_assist_degraded_count": ai_degraded_count,
+            "ai_adjudicator_enabled": adj_enabled,
+            "ai_adjudicator_eligible_count": adj_requested_count,
+            "ai_adjudicator_used_count": adj_used_count,
+            "ai_adjudicator_degraded_count": adj_degraded_count,
+            "sender_blacklist_applied_count": sender_blacklist_applied,
+        },
+        [*ai_refs, *adj_refs],
+    )
+
+
+def _update_rop_batch_classification_diagnostics(
+    classification_diagnostics: dict[str, Any],
+    normalized_events: list[dict[str, Any]],
+    enriched_classified: list[dict[str, Any]],
+    thread_context: dict[str, Any],
+) -> None:
+    classification_diagnostics["latest_n_strategy"] = True
+    classification_diagnostics["threaded_event_count"] = len(
+        thread_context.get("contexts", [])
+    )
+    classification_diagnostics["thread_context_available_count"] = sum(
+        1
+        for event in enriched_classified
+        if isinstance(event, dict) and event.get("thread_context_ref")
+    )
+    classification_diagnostics["forwarded_wrapper_count"] = sum(
+        1 for event in normalized_events if event.get("forwarded_wrapper")
+    )
+    classification_diagnostics["spam_label_count"] = sum(
+        1 for event in normalized_events if event.get("spam_label_present")
+    )
+    classification_diagnostics["transport_label_count"] = sum(
+        1
+        for event in normalized_events
+        if isinstance(event.get("transport_labels"), list)
+        and len(event.get("transport_labels", [])) > 0
+    )
+    classification_diagnostics["original_date_used_count"] = sum(
+        1
+        for event in normalized_events
+        if event.get("date_source") == "original_forwarded_date"
+    )
+    classification_diagnostics["date_fallback_count"] = sum(
+        1 for event in normalized_events if event.get("_date_fallback")
+    )
+    case_subtype_counts: dict[str, int] = {}
+    recommended_queue_counts: dict[str, int] = {}
+    correct_action_counts: dict[str, int] = {}
+    for event in enriched_classified:
+        if not isinstance(event, dict):
+            continue
+        case_subtype = event.get("case_subtype")
+        if isinstance(case_subtype, str) and case_subtype:
+            case_subtype_counts[case_subtype] = (
+                case_subtype_counts.get(case_subtype, 0) + 1
+            )
+        recommended_queue = event.get("recommended_queue")
+        if isinstance(recommended_queue, str) and recommended_queue:
+            recommended_queue_counts[recommended_queue] = (
+                recommended_queue_counts.get(recommended_queue, 0) + 1
+            )
+        correct_action = event.get("correct_action")
+        if isinstance(correct_action, str) and correct_action:
+            correct_action_counts[correct_action] = (
+                correct_action_counts.get(correct_action, 0) + 1
+            )
+    classification_diagnostics["case_subtype_counts"] = case_subtype_counts
+    classification_diagnostics["recommended_queue_counts"] = recommended_queue_counts
+    classification_diagnostics["correct_action_counts"] = correct_action_counts
+
+
 def run_rop_batch_case(
-    settings: dict,
+    settings: dict[str, Any],
     storage_dir: Path,
     project_root: Path,
     logger: logging.Logger,
@@ -1177,229 +1647,22 @@ def run_rop_batch_case(
     adj_enabled = False
 
     try:
-        configured_sources = settings.get("rop", {}).get("sources")
-        input_sources = (
-            configured_sources
-            if isinstance(configured_sources, list)
-            else load_rop_sources(project_root, settings)
-        )
-        selected_sources, selection_mode = select_rop_sources(
-            input_sources=input_sources,
+        intake = _load_rop_batch_intake(
+            settings=settings,
+            storage_dir=storage_dir,
+            project_root=project_root,
+            logger=logger,
+            mailbox_client_factory=mailbox_client_factory,
+            period_override=period_override,
             source_id=source_id,
             all_sources=all_sources,
         )
-
-        normalized_events: list[dict[str, Any]] = []
-        source_diagnostics_items: list[dict[str, Any]] = []
-        intake_sources: list[dict[str, Any]] = []
-        source_error_messages: list[str] = []
-
-        for selected in selected_sources:
-            try:
-                events, intake_metadata, source_diag = load_rop_source(
-                    source=selected,
-                    project_root=project_root,
-                    logger=logger,
-                    email_preview_body_chars_max=settings["rop"]["email_preview"][
-                        "body_chars_max"
-                    ],
-                    mailbox_client_factory=mailbox_client_factory,
-                    attachment_storage_settings=settings.get("rop", {}).get(
-                        "attachments", {}
-                    ),
-                )
-                effective_period = str(
-                    period_override or intake_metadata.get("period") or ""
-                )
-                intake_metadata["period"] = effective_period
-
-                source_meta_item = _build_source_meta_from_intake(
-                    intake_metadata=intake_metadata,
-                    source_diagnostics=source_diag,
-                )
-                source_diagnostics_items.append(source_diag)
-                intake_sources.append(source_meta_item)
-                _refresh_mailbox_connection_health(
-                    storage_dir, selected, source_diag, logger
-                )
-
-                for event in events:
-                    normalized_events.append(
-                        _attach_source_metadata_to_event(
-                            event=event,
-                            source_meta=source_meta_item,
-                        )
-                    )
-            except InputSourceError as exc:
-                source_error_messages.append(str(exc))
-                degraded_diag = {
-                    "source_id": str(selected.get("source_id", "unknown")),
-                    "source_type": str(selected.get("source_type", "unknown")),
-                    "source_role": str(selected.get("source_role", "")),
-                    "client_id": str(selected.get("client_id", "")),
-                    "source_display_name": str(selected.get("display_name", "")),
-                    "authority": str(selected.get("authority", "")),
-                    "mailbox_folder": (
-                        selected.get("mailbox", {}).get("folder")
-                        if isinstance(selected.get("mailbox"), dict)
-                        else None
-                    ),
-                    "items_max": selected.get("items_max"),
-                    "status": "degraded",
-                    "reason": "source_load_error",
-                    "fetched_count": 0,
-                    "loaded_count": 0,
-                    "processed_count": 0,
-                    "skipped_count": 0,
-                    "malformed_count": 0,
-                }
-                degraded_diag.update(exc.diagnostics)
-                degraded_diag["status"] = "degraded"
-
-                _refresh_mailbox_connection_health(
-                    storage_dir, selected, degraded_diag, logger
-                )
-                reason = degraded_diag.get("reason")
-                if reason in {
-                    "missing_credentials",
-                    "auth_failure",
-                    "mailbox_unavailable",
-                }:
-                    logger.warning(
-                        "ROP source unavailable: source_id=%s reason=%s",
-                        degraded_diag["source_id"],
-                        reason,
-                    )
-
-                source_diagnostics_items.append(degraded_diag)
-                intake_sources.append(
-                    _build_source_meta_from_diagnostics(degraded_diag)
-                )
-
-        source_total = len(source_diagnostics_items)
-        loaded_sources = sum(
-            1 for item in source_diagnostics_items if item.get("status") == "ok"
-        )
-        degraded_sources = source_total - loaded_sources
-        aggregate_status = "ok" if loaded_sources > 0 else "degraded"
-        aggregate_reason = None
-        if source_total == 0:
-            aggregate_reason = "no_sources_selected"
-        elif degraded_sources > 0 and loaded_sources > 0:
-            aggregate_reason = "partial_degradation"
-        elif loaded_sources == 0:
-            aggregate_reason = "all_sources_failed"
-
-        fetched_count = _sum_int(
-            [item.get("fetched_count") for item in source_diagnostics_items]
-        )
-        loaded_count = _sum_int(
-            [item.get("loaded_count") for item in source_diagnostics_items]
-        )
-        malformed_count = _sum_int(
-            [item.get("malformed_count") for item in source_diagnostics_items]
-        )
-
-        source_diagnostics = {
-            "selection_mode": selection_mode,
-            "status": aggregate_status,
-            "reason": aggregate_reason,
-            "aggregate": {
-                "source_count": source_total,
-                "loaded_source_count": loaded_sources,
-                "degraded_source_count": degraded_sources,
-                "fetched_count": fetched_count,
-                "loaded_count": loaded_count,
-                "malformed_count": malformed_count,
-            },
-            "sources": source_diagnostics_items,
-        }
-
-        period_value = str(period_override or "")
-        if not period_value:
-            for item in intake_sources:
-                period_candidate = item.get("period")
-                if isinstance(period_candidate, str) and period_candidate:
-                    period_value = period_candidate
-                    break
-
-        intake_metadata = {
-            "selection_mode": selection_mode,
-            "period": period_value,
-            "raw_item_count": fetched_count,
-            "loaded_item_count": loaded_count,
-            "fetched_count": fetched_count,
-            "loaded_count": loaded_count,
-            "malformed_count": malformed_count,
-            "source_count": source_total,
-            "loaded_source_count": loaded_sources,
-            "degraded_source_count": degraded_sources,
-            "sources": intake_sources,
-        }
-
-        if len(intake_sources) == 1:
-            single_source = intake_sources[0]
-            source_diagnostics.update(
-                {
-                    "status": single_source.get("status", aggregate_status),
-                    "reason": single_source.get("reason"),
-                    "source_id": single_source.get("source_id"),
-                    "source_type": single_source.get("source_type"),
-                    "source_role": single_source.get("source_role"),
-                    "client_id": single_source.get("client_id"),
-                    "source_display_name": single_source.get("source_display_name"),
-                    "authority": single_source.get("authority"),
-                    "mailbox_folder": single_source.get("mailbox_folder"),
-                    "items_max": single_source.get("items_max"),
-                    "fetched_count": single_source.get("fetched_count"),
-                    "loaded_count": single_source.get("loaded_count"),
-                    "processed_count": single_source.get("loaded_count"),
-                    "malformed_count": single_source.get("malformed_count"),
-                }
-            )
-            intake_metadata.update(
-                {
-                    "source_id": single_source.get("source_id"),
-                    "source_type": single_source.get("source_type"),
-                    "source_role": single_source.get("source_role"),
-                    "client_id": single_source.get("client_id"),
-                    "source_display_name": single_source.get("source_display_name"),
-                    "authority": single_source.get("authority"),
-                    "mailbox_folder": single_source.get("mailbox_folder"),
-                    "items_max": single_source.get("items_max"),
-                }
-            )
-            source_meta = single_source
-        else:
-            source_meta = {
-                "mode": selection_mode,
-                "source_count": source_total,
-                "loaded_source_count": loaded_sources,
-                "degraded_source_count": degraded_sources,
-                "fetched_count": fetched_count,
-                "loaded_count": loaded_count,
-                "malformed_count": malformed_count,
-                "status": aggregate_status,
-                "reason": aggregate_reason,
-                "failed_sources": [
-                    {
-                        "source_id": item.get("source_id", "unknown"),
-                        "reason": item.get("reason", "source_load_error"),
-                    }
-                    for item in source_diagnostics_items
-                    if item.get("status") == "degraded"
-                ],
-            }
-
-        source_rollup = intake_sources
-
-        if loaded_sources == 0:
-            error_message = (
-                source_error_messages[0]
-                if source_error_messages
-                else ("all selected sources failed")
-            )
-            raise InputSourceError(error_message, diagnostics=source_diagnostics)
+        normalized_events = intake["normalized_events"]
+        source_diagnostics_items = intake["source_diagnostics_items"]
+        intake_metadata = intake["intake_metadata"]
+        source_diagnostics = intake["source_diagnostics"]
+        source_meta = intake["source_meta"]
+        source_rollup = intake["source_rollup"]
 
         diagnostics_path = run_dir / "source_diagnostics.json"
         diagnostics_path.write_text(
@@ -1418,8 +1681,8 @@ def run_rop_batch_case(
             "intake_metadata written: run_id=%s loaded_items=%d source_count=%d mode=%s",
             effective_run_id,
             intake_metadata["loaded_item_count"],
-            source_total,
-            selection_mode,
+            intake_metadata["source_count"],
+            intake_metadata["selection_mode"],
         )
 
         normalized_path = run_dir / "normalized_events.json"
@@ -1624,146 +1887,28 @@ def run_rop_batch_case(
             conversation_relation=conversation_relation,
         )
 
-        ai_cfg = settings.get("rop", {}).get("ai_assist", {})
-        ai_enabled = ai_cfg.get("enabled", False) if isinstance(ai_cfg, dict) else False
-        adjudicator_state = get_rop_ai_adjudicator_runtime_state(settings)
-        legacy_ai_assist_enabled = bool(
-            ai_enabled
-            and not adjudicator_state["enabled"]
-            and not adjudicator_state["env_override_present"]
-            and not adjudicator_state["yaml_enabled"]
-        )
-        effective_ai_cfg = (
-            resolve_ai_profile(ai_cfg, settings.get("ai", {}))
-            if legacy_ai_assist_enabled and isinstance(ai_cfg, dict)
-            else {}
-        )
-
-        ai_requests: list[dict[str, Any]] = []
-        ai_decisions: list[dict[str, Any]] = []
-        ai_results: list[dict[str, Any]] = []
-
-        if legacy_ai_assist_enabled:
-            min_conf = float(ai_cfg["ai_confidence_min"])
-            events_max = int(ai_cfg["events_max"])
-
-            eligible_events = [
-                e
-                for e in enriched_classified
-                if _is_event_eligible_for_ai_assist(e, min_conf)
-            ]
-            eligible_events = eligible_events[:events_max]
-            ai_requested_count = len(eligible_events)
-
-            for event in eligible_events:
-                event_id = event.get("event_id", "")
-                event_instance_id = str(event.get("event_instance_id") or "")
-                tc = None
-                for ctx in thread_context.get("contexts", []):
-                    if (
-                        isinstance(ctx, dict)
-                        and ctx.get("event_id") == event_id
-                        and str(ctx.get("event_instance_id") or "") == event_instance_id
-                    ):
-                        tc = ctx
-                        break
-
-                assist_result = run_ai_assist_for_event(
-                    event=event,
-                    ai_cfg=effective_ai_cfg,
-                    thread_context=tc,
-                    min_ai_confidence=min_conf,
-                    logger=logger,
-                )
-                ai_requests.append(assist_result.get("request", {}))
-                ai_decisions.append(assist_result.get("decision", {}))
-                ai_results.append(assist_result.get("result", {}))
-
-                result_data = assist_result.get("result", {})
-                status = result_data.get("ai_assist_status", "")
-                if status == "ok":
-                    merge_result, merged_event = _merge_ai_result_via_public_contract(
-                        registry=registry,
-                        module_id=module_id,
-                        storage_dir=storage_dir,
-                        logger=logger,
-                        run_id=effective_run_id,
-                        session_id=effective_session_id,
-                        event=event,
-                        ai_result=result_data,
-                    )
-                    ai_results[-1] = merge_result
-
-                    if (
-                        merge_result.get("ai_assist_status") == "ok"
-                        and merged_event is not None
-                    ):
-                        ai_used_count += 1
-                        _apply_public_merged_event(event, merged_event)
-                    else:
-                        ai_degraded_count += 1
-                elif status == "invalid":
-                    ai_invalid_count += 1
-                elif status in ("degraded", "low_confidence", "blocked"):
-                    ai_degraded_count += 1
-
-        ai_refs = write_ai_assist_artifacts(
-            storage_dir=storage_dir,
-            run_id=effective_run_id,
-            requests=ai_requests,
-            decisions=ai_decisions,
-            results=ai_results,
-            counters={
-                "ai_assist_enabled": 1 if legacy_ai_assist_enabled else 0,
-                "ai_assist_requested_count": ai_requested_count,
-                "ai_assist_used_count": ai_used_count,
-                "ai_assist_invalid_count": ai_invalid_count,
-                "ai_assist_degraded_count": ai_degraded_count,
-            },
-            logger=logger,
-        )
-        artifact_refs.extend(ai_refs)
-
-        classification_diagnostics["ai_assist_enabled"] = legacy_ai_assist_enabled
-        classification_diagnostics["ai_assist_requested_count"] = ai_requested_count
-        classification_diagnostics["ai_assist_used_count"] = ai_used_count
-        classification_diagnostics["ai_assist_invalid_count"] = ai_invalid_count
-        classification_diagnostics["ai_assist_degraded_count"] = ai_degraded_count
-
-        adj_requests, adj_decisions, adj_results, adj_counters = run_adjudicator_batch(
-            events=enriched_classified,
+        adj_results, ai_diagnostics, ai_artifact_refs = _run_rop_batch_ai_stages(
             settings=settings,
-            logger=logger,
-        )
-        adj_requested_count = adj_counters.get("adjudicator_eligible_count", 0)
-        adj_used_count = adj_counters.get("adjudicator_used_count", 0)
-        adj_degraded_count = adj_counters.get("adjudicator_degraded_count", 0)
-        adj_enabled = bool(adj_counters.get("adjudicator_enabled", 0))
-
-        adj_refs = write_adjudicator_artifacts(
             storage_dir=storage_dir,
             run_id=effective_run_id,
-            requests=adj_requests,
-            decisions=adj_decisions,
-            results=adj_results,
-            counters=adj_counters,
+            session_id=effective_session_id,
+            registry=registry,
+            module_id=module_id,
             logger=logger,
+            thread_context=thread_context,
+            enriched_classified=enriched_classified,
         )
-        artifact_refs.extend(adj_refs)
-
-        classification_diagnostics["ai_adjudicator_enabled"] = adj_enabled
-        classification_diagnostics["ai_adjudicator_eligible_count"] = (
-            adj_requested_count
-        )
-        classification_diagnostics["ai_adjudicator_used_count"] = adj_used_count
-        classification_diagnostics["ai_adjudicator_degraded_count"] = adj_degraded_count
-        _apply_ai_adjudicator_results(enriched_classified, adj_results)
-        sender_blacklist_applied = apply_sender_blacklist_policy(
-            enriched_classified, storage_dir
-        )
-        classification_diagnostics["sender_blacklist_applied_count"] = (
-            sender_blacklist_applied
-        )
+        artifact_refs.extend(ai_artifact_refs)
+        classification_diagnostics.update(ai_diagnostics)
+        ai_enabled = ai_diagnostics["ai_assist_enabled"]
+        ai_requested_count = ai_diagnostics["ai_assist_requested_count"]
+        ai_used_count = ai_diagnostics["ai_assist_used_count"]
+        ai_invalid_count = ai_diagnostics["ai_assist_invalid_count"]
+        ai_degraded_count = ai_diagnostics["ai_assist_degraded_count"]
+        adj_enabled = ai_diagnostics["ai_adjudicator_enabled"]
+        adj_requested_count = ai_diagnostics["ai_adjudicator_eligible_count"]
+        adj_used_count = ai_diagnostics["ai_adjudicator_used_count"]
+        adj_degraded_count = ai_diagnostics["ai_adjudicator_degraded_count"]
 
         classified_path = run_dir / "classified_events.json"
         classified_path.write_text(
@@ -1829,79 +1974,18 @@ def run_rop_batch_case(
             )
         )
 
-        if isinstance(classification_diagnostics, dict):
-            classification_diagnostics["latest_n_strategy"] = True
-            classification_diagnostics["threaded_event_count"] = (
-                len(thread_context.get("contexts", []))
-                if isinstance(thread_context, dict)
-                else 0
-            )
-            classification_diagnostics["thread_context_available_count"] = (
-                sum(
-                    1
-                    for e in enriched_classified
-                    if isinstance(e, dict) and e.get("thread_context_ref")
-                )
-                if enriched_classified
-                else 0
-            )
-
-            forwarded_wrapper_count = sum(
-                1 for e in normalized_events if e.get("forwarded_wrapper")
-            )
-            spam_label_count = sum(
-                1 for e in normalized_events if e.get("spam_label_present")
-            )
-            transport_label_count = sum(
-                1
-                for e in normalized_events
-                if isinstance(e.get("transport_labels"), list)
-                and len(e.get("transport_labels", [])) > 0
-            )
-            original_date_used_count = sum(
-                1
-                for e in normalized_events
-                if e.get("date_source") == "original_forwarded_date"
-            )
-            date_fallback_count = sum(
-                1 for e in normalized_events if e.get("_date_fallback")
-            )
-
-            classification_diagnostics["forwarded_wrapper_count"] = (
-                forwarded_wrapper_count
-            )
-            classification_diagnostics["spam_label_count"] = spam_label_count
-            classification_diagnostics["transport_label_count"] = transport_label_count
-            classification_diagnostics["original_date_used_count"] = (
-                original_date_used_count
-            )
-            classification_diagnostics["date_fallback_count"] = date_fallback_count
-
-            case_subtype_counts: dict[str, int] = {}
-            recommended_queue_counts: dict[str, int] = {}
-            correct_action_counts: dict[str, int] = {}
-            for e in enriched_classified:
-                if isinstance(e, dict):
-                    st = e.get("case_subtype")
-                    if isinstance(st, str) and st:
-                        case_subtype_counts[st] = case_subtype_counts.get(st, 0) + 1
-                    rq = e.get("recommended_queue")
-                    if isinstance(rq, str) and rq:
-                        recommended_queue_counts[rq] = (
-                            recommended_queue_counts.get(rq, 0) + 1
-                        )
-                    ca = e.get("correct_action")
-                    if isinstance(ca, str) and ca:
-                        correct_action_counts[ca] = correct_action_counts.get(ca, 0) + 1
-
-            classification_diagnostics["case_subtype_counts"] = case_subtype_counts
-            classification_diagnostics["recommended_queue_counts"] = (
-                recommended_queue_counts
-            )
-            classification_diagnostics["correct_action_counts"] = correct_action_counts
+        _update_rop_batch_classification_diagnostics(
+            classification_diagnostics=classification_diagnostics,
+            normalized_events=normalized_events,
+            enriched_classified=enriched_classified,
+            thread_context=thread_context,
+        )
 
     except InputSourceError as exc:
         module_summary = str(exc)
+        error_diagnostics = dict(exc.diagnostics)
+        error_source_meta = error_diagnostics.pop("_rop_source_meta", None)
+        error_source_rollup = error_diagnostics.pop("_rop_source_rollup", None)
         source_diagnostics = {
             "selection_mode": "unknown",
             "status": "degraded",
@@ -1915,8 +1999,12 @@ def run_rop_batch_case(
                 "malformed_count": 0,
             },
             "sources": [],
-            **exc.diagnostics,
+            **error_diagnostics,
         }
+        if isinstance(error_source_meta, dict):
+            source_meta = error_source_meta
+        if isinstance(error_source_rollup, list):
+            source_rollup = error_source_rollup
         if source_meta is None:
             source_meta = _build_source_meta_from_diagnostics(source_diagnostics)
             source_rollup = [source_meta]

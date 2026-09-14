@@ -4,7 +4,10 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+
 import pytest
+from beeui_module.adapters.envelopes import AdapterResult
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tests.beeui_console_support import (
@@ -482,6 +485,83 @@ class TestAuthEnabled:
         data = response.json()
         assert data["status"] == "ok"
 
+    def test_source_removal_returns_safe_http_result_and_persists_runtime_state(
+        self, tmp_path: Path
+    ) -> None:
+        from beeagent_module.core.paths import get_project_root
+        from beeagent_module.core.rop_sources import load_rop_sources
+        from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-source-action")
+        client = _auth_client(storage_dir)
+        settings = _build_auth_settings(enabled=True)
+        seed_path = get_project_root() / "config" / "rop" / "sources.yml"
+        seed_before = seed_path.read_bytes()
+
+        assert self._login(client, "admin", "admin-test-token").status_code == 200
+        csrf_token = client.get("/auth/csrf").json()["data"]["csrf_token"]
+        response = client.post(
+            "/api/actions/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "action_id": "rop_source_remove",
+                "payload": {"source_id": "hotline_mailbox"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert "adapter_error" not in response.text
+        assert "Adapter error" not in response.text
+        assert seed_path.read_bytes() == seed_before
+        assert all(
+            source["source_id"] != "hotline_mailbox"
+            for source in load_rop_sources(get_project_root(), settings, storage_dir)
+        )
+        assert client.get("/rop?tab=sources").status_code == 200
+        page = BeeAgentUiAdapter(storage_dir, settings).get_page(
+            "rop", {"tab": "sources"}
+        )
+        assert isinstance(page, AdapterResult)
+        assert page.data["layout"][0]["id"] == "rop-sources"
+        assert all(
+            row["status"]["args"]["source_id"] != "hotline_mailbox"
+            for row in page.data["layout"][0]["rows"]
+        )
+
+    def test_source_registry_write_failure_has_safe_http_envelope(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from beeagent_module.core import rop_sources
+
+        storage_dir = _make_storage(tmp_path)
+        _write_run_artifacts(storage_dir, "run-source-write-failure")
+        client = _auth_client(storage_dir)
+
+        def fail_registry_write(_path: Path, _sources: list[dict[str, Any]]) -> None:
+            raise OSError("denied")
+
+        monkeypatch.setattr(rop_sources, "_write", fail_registry_write)
+        assert self._login(client, "admin", "admin-test-token").status_code == 200
+        csrf_token = client.get("/auth/csrf").json()["data"]["csrf_token"]
+        response = client.post(
+            "/api/actions/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "action_id": "rop_source_remove",
+                "payload": {"source_id": "hotline_mailbox"},
+            },
+        )
+
+        assert response.status_code == 502
+        assert response.json()["error"] == {
+            "code": "source_registry_write_failed",
+            "message": "Failed to update ROP source registry",
+        }
+        assert "adapter_error" not in response.text
+        assert "Adapter error" not in response.text
+
     def test_static_remains_public(self, tmp_path: Path) -> None:
         storage_dir = _make_storage(tmp_path)
         client = _auth_client(storage_dir)
@@ -859,7 +939,11 @@ class TestPrincipalScopedAuthorization:
         client = self._client(tmp_path)
         login = self._login(client, "rop", "rop-test-token", follow_redirects=False)
         assert login.status_code == 302
-        service = client.app.state.beeui_auth_service
+
+        app = client.app
+        assert isinstance(app, FastAPI)
+
+        service = app.state.beeui_auth_service
         session = service.verify_session(client.cookies.get(service.cookie_name()))
         assert session is not None
         assert session.user_id == "rop"

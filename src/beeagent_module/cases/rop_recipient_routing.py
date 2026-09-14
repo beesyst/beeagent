@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import getaddresses
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from beeagent_module.adapters.bitrix_client import (
     BitrixConnectorError,
@@ -62,14 +63,18 @@ def _extract_email_addresses(value: Any) -> list[str]:
 
 
 def _source_recipient_map(
-    settings: dict[str, Any], project_root: Path | None = None
+    settings: dict[str, Any],
+    storage_dir: Path,
+    project_root: Path | None = None,
 ) -> dict[str, str]:
     result: dict[str, str] = {}
     rop = settings.get("rop", {})
     if not isinstance(rop, dict):
         return result
     if isinstance(rop.get("sources_path"), str):
-        input_sources = load_rop_sources(project_root or get_project_root(), settings)
+        input_sources = load_rop_sources(
+            project_root or get_project_root(), settings, storage_dir
+        )
     else:
         input_sources = rop.get("sources", [])
     if not isinstance(input_sources, list):
@@ -299,7 +304,7 @@ def build_recipient_routing_artifact(
     if not isinstance(raw_events, list):
         raise ValueError("normalized_events.json must be a list")
 
-    source_recipients = _source_recipient_map(settings, project_root)
+    source_recipients = _source_recipient_map(settings, storage_dir, project_root)
 
     items: list[dict[str, Any]] = []
     for event in raw_events:

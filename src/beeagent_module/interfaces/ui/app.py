@@ -30,12 +30,13 @@ from beeagent_module.core.attachment_store import (
 )
 from beeagent_module.core.authorization import (
     EXTERNAL_PRINCIPAL_SCOPES,
-    SCOPE_WILDCARD,
     SCOPE_ROP_SOURCES_WRITE,
+    SCOPE_WILDCARD,
     has_rop_capability_authority,
     home_path,
     is_resource_allowed,
 )
+from beeagent_module.core.paths import get_project_root
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
@@ -45,15 +46,14 @@ from beeagent_module.core.rop_sender_blacklist import (
     load_sender_blacklist_entries,
 )
 from beeagent_module.core.rop_sources import RopSourcesError, load_rop_sources
-from beeagent_module.core.paths import get_project_root
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
 )
 from beeagent_module.interfaces.ui.bitrix_embed import (
     EMBEDDED_SESSION_AGE_MAX_SECONDS,
-    is_valid_https_origin,
     is_bitrix_principal_user_id,
+    is_valid_https_origin,
 )
 from beeagent_module.interfaces.ui.locale import (
     reset_current_locale,
@@ -882,7 +882,9 @@ def _register_custom_routes(
     @app.get("/rop/sources.csv", include_in_schema=False)
     async def rop_sources_csv() -> Response:
         try:
-            sources = load_rop_sources(get_project_root(), adapter._settings)
+            sources = load_rop_sources(
+                get_project_root(), adapter._settings, app.state.beeagent_storage_dir
+            )
         except RopSourcesError as exc:
             return _error_json("state_malformed", str(exc), status_code=400)
         output = io.StringIO(newline="")

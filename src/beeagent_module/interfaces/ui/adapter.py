@@ -18,6 +18,11 @@ from beeui_module.adapters.envelopes import (
 )
 from beeui_module.adapters.ids import validate_run_id
 
+from beeagent_module.adapters.mailbox import (
+    ImapReadonlyMailboxClient,
+    MailboxAuthError,
+    MailboxUnavailableError,
+)
 from beeagent_module.cases.rop_dashboard import (
     ALLOWED_PAGE_SIZES,
     ALLOWED_PERIODS,
@@ -31,6 +36,12 @@ from beeagent_module.core.authorization import (
     SCOPE_ROP_SOURCES_WRITE,
     has_rop_capability_authority,
 )
+from beeagent_module.core.env_sync import (
+    read_selected_env_values,
+    remove_selected_env_values,
+    update_selected_env_values,
+)
+from beeagent_module.core.paths import get_project_root
 from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
     add_sender_blacklist_entry,
@@ -54,17 +65,6 @@ from beeagent_module.core.rop_sources import (
     update_rop_source_display_name,
     write_rop_sources_audit,
 )
-from beeagent_module.adapters.mailbox import (
-    ImapReadonlyMailboxClient,
-    MailboxAuthError,
-    MailboxUnavailableError,
-)
-from beeagent_module.core.env_sync import (
-    read_selected_env_values,
-    remove_selected_env_values,
-    update_selected_env_values,
-)
-from beeagent_module.core.paths import get_project_root
 from beeagent_module.interfaces.ui.artifacts import (
     is_artifact_id_allowed,
     list_available_artifact_ids,
@@ -86,7 +86,6 @@ from beeagent_module.interfaces.ui.read_model import (
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +391,7 @@ def _available_source_count(
 ) -> int:
     health = load_rop_source_connection_health(storage_dir)
     count = 0
-    for source in load_rop_sources(project_root, settings):
+    for source in load_rop_sources(project_root, settings, storage_dir):
         source_id = source.get("source_id")
         if (
             source.get("enabled") is True
@@ -927,7 +926,11 @@ class BeeAgentUiAdapter:
                         ) from exc
 
                 _entry, changed = add_mailbox_source(
-                    root, self._settings, source, persist_new_source_credentials
+                    root,
+                    self._settings,
+                    source,
+                    persist_new_source_credentials,
+                    self._storage_dir,
                 )
                 source_id = _entry["source_id"]
             elif action_id == "rop_source_update":
@@ -937,7 +940,9 @@ class BeeAgentUiAdapter:
                 current = next(
                     (
                         item
-                        for item in load_rop_sources(root, self._settings)
+                        for item in load_rop_sources(
+                            root, self._settings, self._storage_dir
+                        )
                         if item["source_id"] == source_id
                     ),
                     None,
@@ -974,6 +979,7 @@ class BeeAgentUiAdapter:
                         source_id,
                         payload,
                         persist_updated_source_credentials,
+                        self._storage_dir,
                     )
                     changed = changed or credentials_changed
                     _check_mailbox_source_access(root, self._storage_dir, _entry)
@@ -983,6 +989,7 @@ class BeeAgentUiAdapter:
                         self._settings,
                         source_id,
                         payload.get("display_name"),
+                        self._storage_dir,
                     )
             elif action_id == "rop_source_set_enabled":
                 source_id = payload.get("source_id")
@@ -993,6 +1000,7 @@ class BeeAgentUiAdapter:
                     self._settings,
                     source_id,
                     payload.get("enabled"),
+                    self._storage_dir,
                 )
             elif action_id == "rop_source_check_connection":
                 source_id = payload.get("source_id")
@@ -1001,7 +1009,9 @@ class BeeAgentUiAdapter:
                 current = next(
                     (
                         item
-                        for item in load_rop_sources(root, self._settings)
+                        for item in load_rop_sources(
+                            root, self._settings, self._storage_dir
+                        )
                         if item["source_id"] == source_id
                     ),
                     None,
@@ -1020,12 +1030,16 @@ class BeeAgentUiAdapter:
                 current = next(
                     (
                         item
-                        for item in load_rop_sources(root, self._settings)
+                        for item in load_rop_sources(
+                            root, self._settings, self._storage_dir
+                        )
                         if item["source_id"] == source_id
                     ),
                     None,
                 )
-                _entry, changed = remove_rop_source(root, self._settings, source_id)
+                _entry, changed = remove_rop_source(
+                    root, self._settings, source_id, self._storage_dir
+                )
                 if changed and isinstance(current, dict):
                     mailbox = current.get("mailbox")
                     if isinstance(mailbox, dict) and (
@@ -1071,11 +1085,24 @@ class BeeAgentUiAdapter:
                 outcome="invalid_input",
             )
             return error_result("invalid_input", str(exc))
+        except OSError:
+            write_rop_sources_audit(
+                self._storage_dir,
+                action_id=action_id,
+                actor_id=actor_id if isinstance(actor_id, str) else None,
+                source_id=source_id,
+                outcome="write_failed",
+            )
+            return error_result(
+                "source_registry_write_failed", "Failed to update ROP source registry"
+            )
 
     def _sources_layout(
         self, query: Mapping[str, str], locale: str
     ) -> list[dict[str, Any]]:
-        sources = load_rop_sources(get_project_root(), self._settings)
+        sources = load_rop_sources(
+            get_project_root(), self._settings, self._storage_dir
+        )
         health = load_rop_source_connection_health(self._storage_dir)
         processed_totals = _source_processed_totals(self._storage_dir, self._settings)
         query_text = query.get("q", "").strip().lower()
