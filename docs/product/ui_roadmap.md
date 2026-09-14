@@ -3035,7 +3035,7 @@ ROP Web Console больше не реконструирует historical ROP st
 
 - normal ROP lifecycle refresh обновляет только entry изменившегося run и existing bounded index; он не выполняет полный historical rebuild всего Web catalog;
 - если derived index отсутствует или malformed, normal refresh сохраняет explicit fail-closed состояние и требует явного bootstrap;
-- explicit bootstrap/regeneration для existing storage выполняется через `./start.sh rop dashboard --period 7d`; он один раз перечисляет historical ROP runs, materializes bounded recent run entries (по одному historical aggregate на каждый materialized run, B ≤ 20) и публикует index только после готовности entries;
+- normal `./start.sh rop dashboard --period 7d` refreshes only the effective run in the bounded catalog. Explicit full bootstrap/regeneration is `./start.sh rop dashboard --period 7d --rebuild-web-projection`; it prepares historical artifacts once, materializes bounded recent run entries and publishes the index only after entries are ready;
 - `total_runs` остается materialized scalar, а `run_ids` остается bounded recent catalog;
 - статус остаётся `IN PROGRESS` до deployment и production TTFB/smoke verification corrected lifecycle.
 

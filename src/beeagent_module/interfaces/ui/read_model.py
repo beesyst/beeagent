@@ -26,7 +26,6 @@ from beeagent_module.core.rop_final_decision import load_or_build_final_decision
 from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.interfaces.ui.locale import (
     case_type_label,
-    format_rop_email_count,
     format_rop_lead_count,
     format_rop_month,
     format_rop_today_summary,
@@ -2648,6 +2647,9 @@ def _build_rop_tab_read_model_legacy(
     page_size: int = 25,
     sort: str = "received_at",
     order: str = "desc",
+    projection_entry: dict[str, Any] | None = None,
+    cached_artifacts: dict[Path, Any] | None = None,
+    cached_derived: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     requested_tab = "overview" if tab == "api" else tab
     runs_dir = storage_dir / "runs"
@@ -2694,9 +2696,15 @@ def _build_rop_tab_read_model_legacy(
         effective_period = "all"
 
     dashboard_payload: dict[str, Any] = {}
-    projection_entry = _read_json(
-        rop_web_projection_entry_path(storage_dir, selected_run_id)
-    )
+    if projection_entry is None:
+        loaded_projection_entry = _read_json(
+            rop_web_projection_entry_path(storage_dir, selected_run_id)
+        )
+        projection_entry = (
+            loaded_projection_entry
+            if isinstance(loaded_projection_entry, dict)
+            else None
+        )
     if (
         not isinstance(projection_entry, dict)
         or projection_entry.get("schema_version") != 1
@@ -2723,6 +2731,13 @@ def _build_rop_tab_read_model_legacy(
 
     dashboard_payload = entry
 
+    def read_artifact(path: Path) -> Any:
+        if cached_artifacts is None:
+            return _read_json(path)
+        if path not in cached_artifacts:
+            cached_artifacts[path] = _read_json(path)
+        return cached_artifacts[path]
+
     for warning in dashboard_payload.get("warnings", []):
         if isinstance(warning, dict):
             warnings.append(warning)
@@ -2730,7 +2745,14 @@ def _build_rop_tab_read_model_legacy(
     queues = dashboard_payload.get("queues", {})
     if not isinstance(queues, dict):
         queues = {}
-    attach_overrides = _trusted_attach_operational_case_types(storage_dir)
+    if cached_derived is None:
+        attach_overrides = _trusted_attach_operational_case_types(storage_dir)
+    else:
+        if "attach_overrides" not in cached_derived:
+            cached_derived["attach_overrides"] = _trusted_attach_operational_case_types(
+                storage_dir
+            )
+        attach_overrides = cached_derived["attach_overrides"]
     if attach_overrides:
         for queue_items in queues.values():
             if not isinstance(queue_items, list):
@@ -2796,17 +2818,17 @@ def _build_rop_tab_read_model_legacy(
                 result["today_summary"] = today_summary
 
     if requested_tab in {"overview", "queue"}:
-        current_state = _read_json(run_dir / "rop_current_state.json")
+        current_state = read_artifact(run_dir / "rop_current_state.json")
         if isinstance(current_state, dict):
             result["current_state_kpi"] = current_state.get("kpi", {})
             result["current_state_queues"] = current_state.get("queues", {})
         if requested_tab == "overview":
-            summary = _read_json(run_dir / "operator_summary.json")
-            source_diag = _read_json(run_dir / "source_diagnostics.json")
-            intake = _read_json(run_dir / "intake_metadata.json")
-            normalized = _read_json(run_dir / "normalized_events.json")
-            classified = _read_json(run_dir / "classified_events.json")
-            extraction = _read_json(run_dir / "attachment_extraction.json")
+            summary = read_artifact(run_dir / "operator_summary.json")
+            source_diag = read_artifact(run_dir / "source_diagnostics.json")
+            intake = read_artifact(run_dir / "intake_metadata.json")
+            normalized = read_artifact(run_dir / "normalized_events.json")
+            classified = read_artifact(run_dir / "classified_events.json")
+            extraction = read_artifact(run_dir / "attachment_extraction.json")
             result["kpis"] = _build_kpis(
                 run_id=selected_run_id,
                 total_runs=total_runs,
@@ -2871,11 +2893,18 @@ def _build_rop_tab_read_model_legacy(
             )
             result["fallback_count"] = result["kpis"].get("fallback_count", 0)
             result["normalized_count"] = result["kpis"].get("normalized_count", 0)
-            adjudicator = _read_json(run_dir / "rop_ai_adjudicator_results.json")
+            adjudicator = read_artifact(run_dir / "rop_ai_adjudicator_results.json")
             result["ai_adjudicator_summary"] = _build_ai_adjudicator_summary(
                 adjudicator if isinstance(adjudicator, dict) else None
             )
-            final_decisions, final_source = load_or_build_final_decisions(run_dir)
+            if cached_derived is None:
+                final_decisions, final_source = load_or_build_final_decisions(run_dir)
+            else:
+                if "final_decisions" not in cached_derived:
+                    cached_derived["final_decisions"] = load_or_build_final_decisions(
+                        run_dir
+                    )
+                final_decisions, final_source = cached_derived["final_decisions"]
             result["final_decisions"] = final_decisions
             result["final_decision_summary"] = final_decisions["summary"]
             if final_source == "computed":
@@ -2896,7 +2925,7 @@ def _build_rop_tab_read_model_legacy(
                 locale="en",
                 run_id=selected_run_id,
             )
-            selection = _read_json(run_dir / "mailbox_selection.json")
+            selection = read_artifact(run_dir / "mailbox_selection.json")
             result["latest_selection"] = _build_latest_selection(
                 selection if isinstance(selection, dict) else None
             )
@@ -2912,10 +2941,10 @@ def _build_rop_tab_read_model_legacy(
                 )
             result["evidence_links"] = evidence_links
     if tab == "api":
-        classified = _read_json(run_dir / "classified_events.json")
-        normalized = _read_json(run_dir / "normalized_events.json")
-        thread_index = _read_json(run_dir / "mail_thread_index.json")
-        thread_context = _read_json(run_dir / "mail_thread_context.json")
+        classified = read_artifact(run_dir / "classified_events.json")
+        normalized = read_artifact(run_dir / "normalized_events.json")
+        thread_index = read_artifact(run_dir / "mail_thread_index.json")
+        thread_context = read_artifact(run_dir / "mail_thread_context.json")
         result["thread_summary"] = _build_thread_summary(
             thread_index if isinstance(thread_index, dict) else None,
             thread_context if isinstance(thread_context, dict) else None,
@@ -2927,9 +2956,9 @@ def _build_rop_tab_read_model_legacy(
             classified if isinstance(classified, list) else None,
             normalized if isinstance(normalized, list) else None,
         )
-        requests = _read_json(run_dir / "rop_ai_assist_requests.json")
-        decisions = _read_json(run_dir / "rop_ai_assist_decisions.json")
-        ai_results = _read_json(run_dir / "rop_ai_assist_results.json")
+        requests = read_artifact(run_dir / "rop_ai_assist_requests.json")
+        decisions = read_artifact(run_dir / "rop_ai_assist_decisions.json")
+        ai_results = read_artifact(run_dir / "rop_ai_assist_results.json")
         result["ai_assist_summary"] = _build_ai_assist_summary(
             requests if isinstance(requests, dict) else None,
             decisions if isinstance(decisions, dict) else None,
@@ -2945,8 +2974,8 @@ def _build_rop_tab_read_model_legacy(
     if requested_tab == "queue" or tab == "api":
         attention_events: list[dict[str, Any]] = []
         if not queues:
-            classified = _read_json(run_dir / "classified_events.json")
-            normalized = _read_json(run_dir / "normalized_events.json")
+            classified = read_artifact(run_dir / "classified_events.json")
+            normalized = read_artifact(run_dir / "normalized_events.json")
             attention_events = _build_attention_events(
                 classified if isinstance(classified, list) else None,
                 normalized if isinstance(normalized, list) else None,
@@ -2972,9 +3001,9 @@ def _build_rop_tab_read_model_legacy(
         result["page_size"] = pagination["page_size"]
 
     if requested_tab == "sources":
-        source_diag = _read_json(run_dir / "source_diagnostics.json")
-        intake = _read_json(run_dir / "intake_metadata.json")
-        classified = _read_json(run_dir / "classified_events.json")
+        source_diag = read_artifact(run_dir / "source_diagnostics.json")
+        intake = read_artifact(run_dir / "intake_metadata.json")
+        classified = read_artifact(run_dir / "classified_events.json")
         result["source_health"] = _build_source_health(
             source_diag if isinstance(source_diag, dict) else None,
             intake if isinstance(intake, dict) else None,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -135,6 +136,44 @@ def test_rop_projection_malformed_root_index_fails_explicitly(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "web_projection_unavailable"
+
+
+def test_rop_projection_v2_without_additive_leaderboard_remains_readable(
+    tmp_path: Path,
+) -> None:
+    from beeagent_module.cases.rop_dashboard import (
+        rop_web_projection_v2_manifest,
+        rop_web_projection_v2_view_path,
+    )
+
+    storage_dir = _make_storage(tmp_path)
+    _write_run_artifacts(storage_dir, "run-old-v2")
+    _write_rop_web_projection(storage_dir)
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    assert manifest is not None
+    entry = manifest["runs"]["run-old-v2"]
+    for view_key in ("overview.today", "overview.7d", "api.7d"):
+        path = rop_web_projection_v2_view_path(
+            storage_dir,
+            entry["generation"],
+            "run-old-v2",
+            entry["revision"],
+            view_key,
+        )
+        assert path is not None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if view_key == "overview.today":
+            payload["payload"].pop("team_leaderboard", None)
+        else:
+            payload["payload"]["team_leaderboard"] = {"plan_lead": "bad"}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    client = TestClient(_build_rop_app(storage_dir))
+
+    assert client.get("/rop?period=7d").status_code == 200
+    api = client.get("/api/rop/dashboard?period=7d")
+    assert api.status_code == 200
+    assert "team_leaderboard" not in api.json()["data"]
 
 
 @pytest.mark.parametrize(

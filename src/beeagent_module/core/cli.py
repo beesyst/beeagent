@@ -22,11 +22,11 @@ from beeagent_module.cases.rop_mvp_pack import (
 )
 from beeagent_module.cases.rop_operator import run_rop_batch_case
 from beeagent_module.core.paths import get_project_root, get_storage_dir
-from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.core.rop_review_export import (
     RopReviewExportError,
     export_review_tsv_for_run,
 )
+from beeagent_module.core.rop_sources import load_rop_sources
 
 _SAFE_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
@@ -975,36 +975,79 @@ def handle_rop_dashboard(
     from beeagent_module.cases.rop_dashboard import (
         build_rop_dashboard,
         build_rop_web_projection,
+        refresh_rop_web_projection,
         write_rop_dashboard,
         write_rop_web_projection,
     )
 
     try:
-        dashboard = build_rop_dashboard(
-            storage_dir=storage_dir,
-            period=period,
-            logger=logger,
-            plan_lead=_dashboard_plan_lead(settings),
-            fallback_user_id=_dashboard_fallback(settings)[0],
-            fallback_user_name=_dashboard_fallback(settings)[1],
-            run_id=run_id,
-            aggregate_runs=run_id is None,
-        )
-
-        path = write_rop_dashboard(
-            storage_dir=storage_dir,
-            dashboard=dashboard,
-            logger=logger,
-        )
-        projection = build_rop_web_projection(
-            storage_dir=storage_dir,
-            periods=_dashboard_periods(settings),
-            plan_lead=_dashboard_plan_lead(settings),
-            fallback_user_id=_dashboard_fallback(settings)[0],
-            fallback_user_name=_dashboard_fallback(settings)[1],
-            logger=logger,
-        )
-        write_rop_web_projection(storage_dir, projection, logger)
+        if getattr(args, "rebuild_web_projection", False):
+            logger.info("ROP Web projection rebuild: started")
+            projection = build_rop_web_projection(
+                storage_dir=storage_dir,
+                periods=_dashboard_periods(settings),
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
+                logger=logger,
+            )
+            projection_run_ids = projection.get("run_ids", [])
+            effective_run_id = run_id or (
+                projection_run_ids[0] if projection_run_ids else None
+            )
+            if (
+                not isinstance(effective_run_id, str)
+                or effective_run_id not in projection_run_ids
+            ):
+                raise RopCliError(
+                    "Requested run_id is outside the rebuilt ROP Web projection catalog"
+                )
+            dashboard_entries = projection.get("dashboards", {}).get(
+                effective_run_id, {}
+            )
+            dashboard = dashboard_entries.get(period)
+            if not isinstance(dashboard, dict):
+                raise RopCliError("ROP Web projection dashboard is unavailable")
+            write_rop_web_projection(storage_dir, projection, logger)
+            path = write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+            logger.info("ROP Web projection rebuild: completion")
+        else:
+            dashboard = build_rop_dashboard(
+                storage_dir=storage_dir,
+                period=period,
+                logger=logger,
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
+                run_id=run_id,
+                aggregate_runs=run_id is None,
+            )
+            path = write_rop_dashboard(
+                storage_dir=storage_dir,
+                dashboard=dashboard,
+                logger=logger,
+            )
+            effective_run_id = dashboard.get("run_id")
+            if not isinstance(effective_run_id, str) or not effective_run_id:
+                raise RopCliError("ROP dashboard did not resolve an effective run_id")
+            if not refresh_rop_web_projection(
+                storage_dir=storage_dir,
+                periods=_dashboard_periods(settings),
+                run_id=effective_run_id,
+                logger=logger,
+                is_new_run=False,
+                plan_lead=_dashboard_plan_lead(settings),
+                fallback_user_id=_dashboard_fallback(settings)[0],
+                fallback_user_name=_dashboard_fallback(settings)[1],
+            ):
+                raise RopCliError(
+                    "ROP Web projection is missing or malformed; bootstrap it with "
+                    "./start.sh rop dashboard --period 7d --rebuild-web-projection"
+                )
 
         status = dashboard.get("status", "?")
         bkpi = dashboard.get("business_kpi", {})
@@ -1323,6 +1366,11 @@ def create_rop_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Period for dashboard analytics; defaults to rop.dashboard.default_period",
+    )
+    dashboard_parser.add_argument(
+        "--rebuild-web-projection",
+        action="store_true",
+        help="Explicitly rebuild the full historical ROP Web projection catalog",
     )
     dashboard_parser.add_argument(
         "--run-id",
