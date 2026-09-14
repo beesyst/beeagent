@@ -77,6 +77,7 @@ ROP_WEB_PROJECTION_V2_VIEW_IDS: tuple[str, ...] = (
 _SAFE_PROJECTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _SAFE_PROJECTION_REVISION_RE = re.compile(r"^[gr]_[a-f0-9]{32}$")
 _ROP_WEB_PROJECTION_ENTRY_RE = re.compile(r"^[a-f0-9]{64}\.json$")
+_UNSET = object()
 
 ALLOWED_QUEUE_IDS: tuple[str, ...] = (
     "high_priority",
@@ -882,17 +883,37 @@ def build_rop_web_projection(
         validate_period(period)
 
     runs_dir = storage_dir / "runs"
+    prepared_history: dict[str, Any] | None = None
     if run_id is None:
-        all_run_ids = _list_rop_run_ids(runs_dir) if runs_dir.is_dir() else []
+        logger.info("ROP Web projection rebuild: history preparation started")
+        prepared_history = _prepare_rop_history(runs_dir)
+        all_run_ids = prepared_history["rop_run_ids"]
         run_ids = all_run_ids[:ROP_WEB_PROJECTION_RUNS_MAX]
+        logger.info(
+            "ROP Web projection rebuild: history preparation complete "
+            "runs=%d anchors=%d",
+            len(prepared_history["run_ids"]),
+            len(run_ids),
+        )
     else:
         all_run_ids = [run_id]
         run_ids = [run_id]
 
     dashboards: dict[str, dict[str, dict[str, Any]]] = {}
-    for candidate_run_id in run_ids:
+    shared_writeback_state = _read_json_dict(
+        storage_dir / "interfaces" / "rop_writeback_state.json"
+    )
+    for position, candidate_run_id in enumerate(run_ids, start=1):
+        if prepared_history is not None:
+            logger.info(
+                "ROP Web projection rebuild: materialized anchor generation %d/%d",
+                position,
+                len(run_ids),
+            )
         candidate_dir = runs_dir / candidate_run_id
-        artifacts = _load_rop_dashboard_artifacts(candidate_dir)
+        artifacts = _load_rop_dashboard_artifacts(
+            candidate_dir, shared_writeback_state=shared_writeback_state
+        )
         source_diag = artifacts["source_diag"]
         intake = artifacts["intake"]
         current_state = artifacts["current_state"]
@@ -903,6 +924,7 @@ def build_rop_web_projection(
             anchor_run_id=candidate_run_id,
             anchor_client_id=client_id,
             logger=logger,
+            prepared_history=prepared_history,
         )
 
         entries: dict[str, dict[str, Any]] = {}
@@ -1031,7 +1053,14 @@ def refresh_rop_web_projection(
     fallback_user_name: str | None = None,
 ) -> bool:
     index = rop_web_projection_index(storage_dir)
-    if index is None:
+    manifest = rop_web_projection_v2_manifest(storage_dir)
+    if (
+        index is None
+        or manifest is None
+        or index["run_ids"] != manifest["run_ids"]
+        or index["latest_run_id"] != manifest["latest_run_id"]
+        or index["total_runs"] != manifest["total_runs"]
+    ):
         logger.warning(
             "ROP Web projection refresh skipped: explicit dashboard regeneration is required"
         )
@@ -1227,58 +1256,15 @@ def rop_web_projection_v2_manifest(storage_dir: Path) -> dict[str, Any] | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError, json.JSONDecodeError, TypeError:
         return None
-    if not isinstance(data, dict) or data.get("schema_version") != 2:
-        return None
-    generation = _projection_revision(data.get("generation"))
-    latest_run_id = _projection_identifier(data.get("latest_run_id"))
-    run_ids = data.get("run_ids")
-    total_runs = data.get("total_runs")
-    runs = data.get("runs")
-    if (
-        generation is None
-        or latest_run_id is None
-        or not isinstance(run_ids, list)
-        or not run_ids
-        or len(run_ids) > ROP_WEB_PROJECTION_RUNS_MAX
-        or not isinstance(total_runs, int)
-        or isinstance(total_runs, bool)
-        or total_runs < len(run_ids)
-        or not isinstance(runs, dict)
-    ):
-        return None
-    normalized_run_ids: list[str] = []
-    for run_id in run_ids:
-        safe_run_id = _projection_identifier(run_id)
-        entry = runs.get(run_id) if isinstance(run_id, str) else None
-        if safe_run_id is None or not isinstance(entry, dict):
-            return None
-        revision = _projection_revision(entry.get("revision"))
-        entry_generation = _projection_revision(entry.get("generation"))
-        view_keys = entry.get("view_keys")
-        if (
-            revision is None
-            or entry_generation is None
-            or not isinstance(view_keys, list)
-            or not view_keys
-            or not all(isinstance(value, str) for value in view_keys)
-        ):
-            return None
-        for view_key in view_keys:
-            try:
-                _v2_view_key(
-                    *view_key.split(".", 1)
-                ) if "." in view_key else _v2_view_key(view_key)
-            except ValueError:
-                return None
-        normalized_run_ids.append(safe_run_id)
-    if latest_run_id != normalized_run_ids[0] or len(set(normalized_run_ids)) != len(
-        normalized_run_ids
-    ):
-        return None
-    return data
+    return rop_web_projection_v2_manifest_data(data)
 
 
-def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
+def _v2_view_payload_valid(
+    view_key: str,
+    payload: dict[str, Any],
+    *,
+    require_current_additions: bool = False,
+) -> bool:
     required_types: dict[str, dict[str, type]] = {
         "queue": {"queue_rows": list, "filter_options": dict},
         "sources": {"source_health": list},
@@ -1287,7 +1273,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         required = {
             "business_kpi": dict,
             "series": dict,
-            "team_leaderboard": dict,
             "action_required_count": int,
         }
     elif view_key.startswith("api."):
@@ -1296,7 +1281,6 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
             "series": dict,
             "queues": dict,
             "canonical_queue_rows": list,
-            "team_leaderboard": dict,
         }
     else:
         required = required_types.get(view_key)
@@ -1306,22 +1290,26 @@ def _v2_view_payload_valid(view_key: str, payload: dict[str, Any]) -> bool:
         isinstance(payload.get(name), expected) for name, expected in required.items()
     ):
         return False
-    if view_key.startswith(("overview.", "api.")):
-        leaderboard = payload.get("team_leaderboard")
-        if not isinstance(leaderboard, dict):
-            return False
-        plan_lead = leaderboard.get("plan_lead")
-        if (
-            not isinstance(plan_lead, int)
-            or isinstance(plan_lead, bool)
-            or plan_lead <= 0
-        ):
-            return False
+    if (
+        require_current_additions
+        and view_key.startswith(("overview.", "api."))
+        and not _v2_team_leaderboard_valid(payload.get("team_leaderboard"))
+    ):
+        return False
     action_required_count = payload.get("action_required_count")
     return not isinstance(action_required_count, bool) and (
         not view_key.startswith("overview.")
         or isinstance(action_required_count, int)
         and action_required_count >= 0
+    )
+
+
+def _v2_team_leaderboard_valid(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    plan_lead = value.get("plan_lead")
+    return (
+        isinstance(plan_lead, int) and not isinstance(plan_lead, bool) and plan_lead > 0
     )
 
 
@@ -1366,7 +1354,14 @@ def read_rop_web_projection_v2_view(
         or not _v2_view_payload_valid(view_key, data["payload"])
     ):
         return None
-    return data["payload"]
+    payload = dict(data["payload"])
+    if (
+        view_key.startswith(("overview.", "api."))
+        and "team_leaderboard" in payload
+        and not _v2_team_leaderboard_valid(payload["team_leaderboard"])
+    ):
+        payload.pop("team_leaderboard")
+    return payload
 
 
 def _v2_payload_fields(data: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
@@ -1432,6 +1427,20 @@ def build_rop_web_projection_v2_views(
     selected_periods = list(dict.fromkeys(periods))
     for period in selected_periods:
         validate_period(period)
+    entry_path = rop_web_projection_entry_path(storage_dir, run_id)
+    try:
+        projection_entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("ROP Web projection source data is unavailable") from exc
+    if (
+        not isinstance(projection_entry, dict)
+        or projection_entry.get("schema_version") != 1
+        or projection_entry.get("run_id") != run_id
+        or not isinstance(projection_entry.get("dashboards"), dict)
+    ):
+        raise ValueError("ROP Web projection source data is unavailable")
+    cached_artifacts: dict[Path, Any] = {}
+    cached_derived: dict[str, Any] = {}
     data_by_period: dict[str, dict[str, Any]] = {}
     for period in selected_periods:
         data_by_period[period] = _build_rop_tab_read_model_legacy(
@@ -1442,6 +1451,9 @@ def build_rop_web_projection_v2_views(
             default_period=period,
             configured_periods=selected_periods,
             plan_lead=plan_lead,
+            projection_entry=projection_entry,
+            cached_artifacts=cached_artifacts,
+            cached_derived=cached_derived,
         )
     if not data_by_period or any("error" in value for value in data_by_period.values()):
         raise ValueError("ROP Web projection source data is unavailable")
@@ -1602,7 +1614,10 @@ def write_rop_web_projection_v2(
         if set(views) != required_view_keys:
             raise ValueError("ROP Web projection views are incomplete or uncontrolled")
         if not all(
-            isinstance(payload, dict) and _v2_view_payload_valid(view_key, payload)
+            isinstance(payload, dict)
+            and _v2_view_payload_valid(
+                view_key, payload, require_current_additions=True
+            )
             for view_key, payload in views.items()
         ):
             raise ValueError("ROP Web projection view payload is malformed")
@@ -1707,7 +1722,7 @@ def _v2_manifest_fields_valid(data: dict[str, Any]) -> bool:
         return False
     if (
         len(run_ids) > ROP_WEB_PROJECTION_RUNS_MAX
-        or data.get("latest_run_id") != run_ids[0]
+        or _projection_identifier(data.get("latest_run_id")) != run_ids[0]
     ):
         return False
     total_runs = data.get("total_runs")
@@ -1717,15 +1732,22 @@ def _v2_manifest_fields_valid(data: dict[str, Any]) -> bool:
         or total_runs < len(run_ids)
     ):
         return False
-    return all(
-        _projection_identifier(run_id) is not None
-        and isinstance(runs.get(run_id), dict)
-        and _projection_revision(runs[run_id].get("generation")) is not None
-        and _projection_revision(runs[run_id].get("revision")) is not None
-        and isinstance(runs[run_id].get("view_keys"), list)
-        and bool(runs[run_id]["view_keys"])
-        for run_id in run_ids
-    )
+    for run_id in run_ids:
+        entry = runs.get(run_id) if isinstance(run_id, str) else None
+        if (
+            _projection_identifier(run_id) is None
+            or not isinstance(entry, dict)
+            or _projection_revision(entry.get("generation")) is None
+            or _projection_revision(entry.get("revision")) is None
+            or not isinstance(entry.get("view_keys"), list)
+            or not entry["view_keys"]
+            or not all(
+                isinstance(view_key, str) and view_key
+                for view_key in entry["view_keys"]
+            )
+        ):
+            return False
+    return len(set(run_ids)) == len(run_ids)
 
 
 def rop_web_projection_index(
@@ -1777,7 +1799,10 @@ def _rop_web_projection_entry_valid(storage_dir: Path, run_id: str) -> bool:
     )
 
 
-def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
+def _load_rop_dashboard_artifacts(
+    run_dir: Path,
+    shared_writeback_state: dict[str, Any] | None | object = _UNSET,
+) -> dict[str, Any]:
     return {
         "normalized_events": _read_json_list(run_dir / "normalized_events.json"),
         "classified_events": _read_json_list(run_dir / "classified_events.json"),
@@ -1787,7 +1812,9 @@ def _load_rop_dashboard_artifacts(run_dir: Path) -> dict[str, Any]:
         "bitrix_reconciliation": _read_json_dict(
             run_dir / "bitrix_reconciliation.json"
         ),
-        "writeback_state": _read_json_dict(
+        "writeback_state": shared_writeback_state
+        if shared_writeback_state is not _UNSET
+        else _read_json_dict(
             run_dir.parents[1] / "interfaces" / "rop_writeback_state.json"
         ),
         "attachment_extraction": _read_json_dict(
@@ -1946,6 +1973,44 @@ def _list_rop_run_ids(runs_dir: Path) -> list[str]:
     return rop_run_ids
 
 
+def _prepare_rop_history(runs_dir: Path) -> dict[str, Any]:
+    if not runs_dir.is_dir():
+        return {"run_ids": [], "rop_run_ids": [], "artifacts": {}}
+    run_ids = _list_run_ids(runs_dir)
+    artifacts: dict[str, dict[str, Any]] = {}
+    for run_id in run_ids:
+        run_dir = runs_dir / run_id
+        optional_paths = {
+            "bitrix_reconciliation": run_dir / "bitrix_reconciliation.json",
+            "attachment_extraction": run_dir / "attachment_extraction.json",
+            "recipient_routing": run_dir / "rop_recipient_routing.json",
+        }
+        artifacts[run_id] = {
+            "source_diag": _read_json_dict(run_dir / "source_diagnostics.json"),
+            "intake": _read_json_dict(run_dir / "intake_metadata.json"),
+            "current_state": _read_json_dict(run_dir / "rop_current_state.json"),
+            "operator_summary": _read_json_dict(run_dir / "operator_summary.json"),
+            "classified": _read_json_list(run_dir / "classified_events.json"),
+            "normalized": _read_json_list(run_dir / "normalized_events.json"),
+            "optional": {
+                name: _read_json_dict(path) for name, path in optional_paths.items()
+            },
+            "optional_exists": {
+                name: path.exists() for name, path in optional_paths.items()
+            },
+            "run_dir": run_dir,
+        }
+    return {
+        "run_ids": run_ids,
+        "rop_run_ids": [
+            run_id
+            for run_id in run_ids
+            if isinstance(artifacts[run_id]["classified"], list)
+        ],
+        "artifacts": artifacts,
+    }
+
+
 def _read_json_list(path: Path) -> list[dict[str, Any]] | None:
     if not path.exists():
         return None
@@ -2052,11 +2117,40 @@ def _read_optional_artifact(
     return data
 
 
+def _prepared_optional_artifact(
+    prepared: dict[str, Any] | None,
+    name: str,
+    path: Path,
+    run_id: str,
+    warnings: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(prepared, dict):
+        return _read_optional_artifact(path, run_id, warnings)
+    optional = prepared.get("optional", {})
+    optional_exists = prepared.get("optional_exists", {})
+    data = optional.get(name) if isinstance(optional, dict) else None
+    exists = optional_exists.get(name) if isinstance(optional_exists, dict) else False
+    if data is None and exists:
+        warnings.append(
+            {
+                "code": "malformed_optional_artifact",
+                "run_id": run_id,
+                "artifact": path.name,
+                "message": (
+                    "Optional artifact exists but could not be parsed as a JSON "
+                    "object; it was ignored."
+                ),
+            }
+        )
+    return data if isinstance(data, dict) else None
+
+
 def _aggregate_period_events(
     runs_dir: Path,
     anchor_run_id: str,
     anchor_client_id: str,
     logger: logging.Logger,
+    prepared_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "safe": False,
@@ -2076,7 +2170,14 @@ def _aggregate_period_events(
         )
         return result
 
-    ordered_run_ids = _list_run_ids(runs_dir)
+    prepared_artifacts = (
+        prepared_history.get("artifacts", {}) if prepared_history is not None else {}
+    )
+    ordered_run_ids = (
+        list(prepared_history.get("run_ids", []))
+        if prepared_history is not None
+        else _list_run_ids(runs_dir)
+    )
     if anchor_run_id in ordered_run_ids:
         ordered_run_ids.remove(anchor_run_id)
     ordered_run_ids.insert(0, anchor_run_id)
@@ -2084,14 +2185,31 @@ def _aggregate_period_events(
     winners: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     for candidate_run_id in ordered_run_ids:
         candidate_dir = runs_dir / candidate_run_id
-        source_diag = _read_json_dict(candidate_dir / "source_diagnostics.json")
-        intake = _read_json_dict(candidate_dir / "intake_metadata.json")
-        current_state = _read_json_dict(candidate_dir / "rop_current_state.json")
+        prepared = prepared_artifacts.get(candidate_run_id)
+        source_diag = (
+            prepared.get("source_diag")
+            if isinstance(prepared, dict)
+            else _read_json_dict(candidate_dir / "source_diagnostics.json")
+        )
+        intake = (
+            prepared.get("intake")
+            if isinstance(prepared, dict)
+            else _read_json_dict(candidate_dir / "intake_metadata.json")
+        )
+        current_state = (
+            prepared.get("current_state")
+            if isinstance(prepared, dict)
+            else _read_json_dict(candidate_dir / "rop_current_state.json")
+        )
         run_client_ids = _resolve_client_ids(source_diag, intake, current_state)
         if anchor_client_id not in run_client_ids:
             continue
         single_client_run = len(run_client_ids) == 1
-        summary = _read_json_dict(candidate_dir / "operator_summary.json")
+        summary = (
+            prepared.get("operator_summary")
+            if isinstance(prepared, dict)
+            else _read_json_dict(candidate_dir / "operator_summary.json")
+        )
         if _is_incomplete_run(summary):
             result["warnings"].append(
                 {
@@ -2101,10 +2219,18 @@ def _aggregate_period_events(
                 }
             )
             continue
-        classified = _read_json_list(candidate_dir / "classified_events.json")
+        classified = (
+            prepared.get("classified")
+            if isinstance(prepared, dict)
+            else _read_json_list(candidate_dir / "classified_events.json")
+        )
         if not classified:
             continue
-        normalized = _read_json_list(candidate_dir / "normalized_events.json") or []
+        normalized = (
+            prepared.get("normalized")
+            if isinstance(prepared, dict)
+            else _read_json_list(candidate_dir / "normalized_events.json")
+        ) or []
         normalized_by_source_event: dict[tuple[str, str, str], dict[str, Any]] = {}
         for item in normalized:
             if isinstance(item, dict) and isinstance(item.get("event_id"), str):
@@ -2116,7 +2242,9 @@ def _aggregate_period_events(
                     )
                 ] = item
         generated_at = _resolve_generated_at(current_state, candidate_dir, logger)
-        reconciliation = _read_optional_artifact(
+        reconciliation = _prepared_optional_artifact(
+            prepared,
+            "bitrix_reconciliation",
             candidate_dir / "bitrix_reconciliation.json",
             candidate_run_id,
             result["warnings"],
@@ -2127,12 +2255,16 @@ def _aggregate_period_events(
                 reconciliation_by_source_event[
                     (str(item.get("source_id") or ""), str(item.get("event_id")))
                 ] = item
-        attachments = _read_optional_artifact(
+        attachments = _prepared_optional_artifact(
+            prepared,
+            "attachment_extraction",
             candidate_dir / "attachment_extraction.json",
             candidate_run_id,
             result["warnings"],
         )
-        routing = _read_optional_artifact(
+        routing = _prepared_optional_artifact(
+            prepared,
+            "recipient_routing",
             candidate_dir / "rop_recipient_routing.json",
             candidate_run_id,
             result["warnings"],

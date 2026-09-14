@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -155,6 +156,11 @@ class TestRopCliArgumentParser:
         assert args.rop_command == "dashboard"
         assert args.period is None
         assert args.run_id == "test-run-123"
+        assert args.rebuild_web_projection is False
+        rebuilt = parser.parse_args(
+            ["dashboard", "--rebuild-web-projection", "--period", "7d"]
+        )
+        assert rebuilt.rebuild_web_projection is True
 
     def test_rop_dashboard_rejects_period_not_configured(self) -> None:
         import argparse
@@ -947,12 +953,55 @@ class TestRopCliRun:
         index = rop_web_projection_index(tmp_path)
         assert index is None
 
+        with pytest.raises(RopCliError) as exc_info:
+            handle_rop_dashboard(
+                argparse.Namespace(
+                    period="7d",
+                    run_id=None,
+                    rebuild_web_projection=False,
+                ),
+                settings=settings,
+                logger=_null_logger(),
+            )
+
+        assert "./start.sh rop dashboard --period 7d --rebuild-web-projection" in str(
+            exc_info.value
+        )
+        assert rop_web_projection_index(tmp_path) is None
+
+        from beeagent_module.cases import rop_dashboard as dashboard_module
+
+        aggregate_calls = 0
+        original_aggregate = dashboard_module._aggregate_period_events
+
+        def counted_aggregate(
+            runs_dir: Path,
+            anchor_run_id: str,
+            anchor_client_id: str,
+            logger: logging.Logger,
+            prepared_history: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            nonlocal aggregate_calls
+            aggregate_calls += 1
+            return original_aggregate(
+                runs_dir,
+                anchor_run_id,
+                anchor_client_id,
+                logger,
+                prepared_history=prepared_history,
+            )
+
+        monkeypatch.setattr(
+            dashboard_module, "_aggregate_period_events", counted_aggregate
+        )
+
         handle_rop_dashboard(
-            argparse.Namespace(period="7d", run_id=None),
+            argparse.Namespace(period="7d", run_id=None, rebuild_web_projection=True),
             settings=settings,
             logger=_null_logger(),
         )
 
+        assert aggregate_calls == 1
         index = rop_web_projection_index(tmp_path)
         assert index is not None
         assert index["latest_run_id"] == "test-cli-run-wb-final"
@@ -1072,7 +1121,7 @@ class TestRopCliRun:
         assert (tmp_path / "runs" / run_id).is_dir()
 
         handle_rop_dashboard(
-            argparse.Namespace(period="7d", run_id=None),
+            argparse.Namespace(period="7d", run_id=None, rebuild_web_projection=True),
             settings=settings,
             logger=_null_logger(),
         )
@@ -1146,7 +1195,7 @@ class TestRopCliRun:
             logger=_null_logger(),
         )
         handle_rop_dashboard(
-            argparse.Namespace(period="7d", run_id=None),
+            argparse.Namespace(period="7d", run_id=None, rebuild_web_projection=True),
             settings=settings,
             logger=_null_logger(),
         )

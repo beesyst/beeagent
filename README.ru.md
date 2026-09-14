@@ -751,12 +751,13 @@ principal token rotation требует повторного входа; каж�
 
 **ROP dashboard (`rop dashboard`):**
 
-`rop dashboard` строит business-facing dashboard read-model с period analytics, chart-ready series, Bitrix evidence и deterministic рекомендациями.
+`rop dashboard` строит business-facing dashboard read-model с period analytics, chart-ready series, Bitrix evidence и deterministic рекомендациями. Обычный запуск обновляет только affected run в bounded persistent Web projection; совместимый schema-v2 переиспользуется при deployment, а additive UI/read-model fields не требуют rebuild. Полный historical bootstrap является явной maintenance operation; HTTP GET никогда не rebuild/migrate projection.
 
 ```bash
 ./start.sh rop dashboard --period 7d
 ./start.sh rop dashboard --period today
 ./start.sh rop dashboard --period all --run-id <run_id>
+./start.sh rop dashboard --period 7d --rebuild-web-projection
 ```
 
 Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all`.
