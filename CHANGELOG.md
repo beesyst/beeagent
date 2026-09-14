@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.1...beeagent-v0.60.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **rop:** restore runtime dashboard data and persistent sources ([#246](https://github.com/beesyst/beeagent/issues/246)) ([1cc7175](https://github.com/beesyst/beeagent/commit/1cc717523e5f708258bdbd34875051d51aeee5b7))
+
 ## [0.60.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.0...beeagent-v0.60.1) (2026-09-14)
 
 
