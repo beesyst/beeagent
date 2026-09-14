@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.0...beeagent-v0.60.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **rop:** make web projection lifecycle backward compatible ([#244](https://github.com/beesyst/beeagent/issues/244)) ([9337638](https://github.com/beesyst/beeagent/commit/9337638c6dbcca390f4c1fa908f2011d666fd4fd))
+
 ## [0.60.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.59.2...beeagent-v0.60.0) (2026-09-13)
 
 
