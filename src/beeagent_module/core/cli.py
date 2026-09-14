@@ -96,6 +96,7 @@ def handle_rop_run(
 
     effective_settings = _apply_source_overrides(
         settings=settings,
+        storage_dir=storage_dir,
         source_id=args.source_id,
         all_sources=args.all_sources,
         items_max=args.items_max,
@@ -500,13 +501,14 @@ def _apply_source_overrides(
     all_sources: bool,
     items_max: int | None,
     logger: logging.Logger,
+    storage_dir: Path | None = None,
 ) -> dict:
     import copy
 
     effective = copy.deepcopy(settings)
     if not isinstance(effective.get("rop", {}).get("sources"), list):
         effective.setdefault("rop", {})["sources"] = load_rop_sources(
-            get_project_root(), settings
+            get_project_root(), settings, storage_dir
         )
 
     sources = effective.get("rop", {}).get("sources", [])

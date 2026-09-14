@@ -6,7 +6,6 @@ import pytest
 import yaml
 
 from beeagent_module.adapters.mailbox import MailboxAuthError
-from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
 from beeagent_module.core.rop_sources import (
     RopSourcesError,
     add_mailbox_source,
@@ -14,14 +13,15 @@ from beeagent_module.core.rop_sources import (
     credential_env_names,
     load_rop_source_connection_health,
     load_rop_sources,
-    remove_rop_source,
     record_rop_source_connection_health,
+    remove_rop_source,
     remove_rop_source_connection_health,
     resolve_sources_path,
-    update_rop_source,
     update_mailbox_source,
+    update_rop_source,
     update_rop_source_display_name,
 )
+from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
 
 
 def _settings() -> dict:
@@ -285,7 +285,10 @@ def test_source_status_toggle_persists_and_renders(monkeypatch, tmp_path: Path) 
         actor,
     )
     assert result.status == "ok"
-    assert load_rop_sources(tmp_path, settings)[0]["enabled"] is False
+    assert (
+        load_rop_sources(tmp_path, settings, tmp_path / "storage")[0]["enabled"]
+        is False
+    )
     table = adapter._sources_layout({"tab": "sources"}, "en")[0]
     assert table["rows"][0]["status"]["checked"] is False
 
@@ -295,7 +298,10 @@ def test_source_status_toggle_persists_and_renders(monkeypatch, tmp_path: Path) 
         {"user_id": "operator", "role": "operator"},
     )
     assert denied.status == "error"
-    assert load_rop_sources(tmp_path, settings)[0]["enabled"] is False
+    assert (
+        load_rop_sources(tmp_path, settings, tmp_path / "storage")[0]["enabled"]
+        is False
+    )
 
     result = adapter.execute_action(
         "rop_source_set_enabled",
@@ -303,9 +309,45 @@ def test_source_status_toggle_persists_and_renders(monkeypatch, tmp_path: Path) 
         {"user_id": "rop_manager", "role": "operator"},
     )
     assert result.status == "ok"
-    assert load_rop_sources(tmp_path, settings)[0]["enabled"] is True
+    assert (
+        load_rop_sources(tmp_path, settings, tmp_path / "storage")[0]["enabled"] is True
+    )
     table = adapter._sources_layout({"tab": "sources"}, "en")[0]
     assert table["rows"][0]["status"]["checked"] is True
+
+
+def test_runtime_registry_overlays_seed_and_persists_source_removal(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_registry(tmp_path, [_mailbox_source()])
+    seed_path = tmp_path / "config" / "rop" / "sources.yml"
+    seed_before = seed_path.read_bytes()
+    settings = _settings()
+    settings["web"] = {"auth": {"principals": [{"id": "admin", "scopes": ["*"]}]}}
+    storage_dir = tmp_path / "storage"
+    monkeypatch.setattr(
+        "beeagent_module.interfaces.ui.adapter.get_project_root", lambda: tmp_path
+    )
+
+    result = BeeAgentUiAdapter(storage_dir, settings).execute_action(
+        "rop_source_remove",
+        {"source_id": "mailbox"},
+        {"user_id": "admin", "role": "admin"},
+    )
+
+    assert result.status == "ok"
+    assert seed_path.read_bytes() == seed_before
+    assert load_rop_sources(tmp_path, settings, storage_dir) == []
+    assert (
+        BeeAgentUiAdapter(storage_dir, settings)._sources_layout(
+            {"tab": "sources"}, "en"
+        )[0]["rows"]
+        == []
+    )
+    registry = yaml.safe_load(
+        (storage_dir / "config" / "rop" / "sources.yml").read_text(encoding="utf-8")
+    )
+    assert registry == {"version": 1, "sources": []}
 
 
 def test_source_layout_uses_mail_server_without_credentials(
@@ -515,7 +557,7 @@ def test_admin_add_and_edit_mailbox_credentials(monkeypatch, tmp_path: Path) -> 
     assert "new-user" not in str(added.data)
     assert "new-value" not in str(added.data)
     assert checks == []
-    new_source = load_rop_sources(tmp_path, settings)[1]
+    new_source = load_rop_sources(tmp_path, settings, tmp_path / "storage")[1]
     mailbox = new_source["mailbox"]
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert f"{mailbox['username_env']}=new-user" in env_text
