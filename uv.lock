@@ -97,10 +97,11 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.60.2"
+version = "0.61.0"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
+    { name = "beedrill" },
     { name = "beesdk" },
     { name = "beeui" },
     { name = "fastapi" },
@@ -138,6 +139,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
+    { name = "beedrill", editable = "../beedrill" },
     { name = "beesdk", editable = "../beesdk" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
@@ -176,8 +178,22 @@ source = { editable = "../beeagent-rop" }
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
+name = "beedrill"
+version = "0.4.0"
+source = { editable = "../beedrill" }
+dependencies = [
+    { name = "beesdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "beesdk", editable = "../beesdk" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = "==9.1.1" }]
+
+[[package]]
 name = "beesdk"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../beesdk" }
 
 [package.metadata]

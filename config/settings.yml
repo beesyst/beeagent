@@ -83,11 +83,16 @@ quiz:
   path: "config/quiz/pharmacy_quiz.json" # путь к JSON с контентом квиза (относительно корня проекта)
 
 modules:
-  registry: # список объявленных локальных модулей
-    - id: "beeagent-rop" # уникальный идентификатор модуля внутри registry
-      package: "beeagent_rop" # Python import name пакета
-      entry: "RopModule" # имя атрибута в __init__ пакета (класс или фабрика)
-      enabled: true # true/false - включить/выключить загрузку модуля
+  registry:
+    - id: "beeagent-rop"
+      package: "beeagent_rop"
+      entry: "RopModule"
+      enabled: true
+
+    - id: "beedrill"
+      package: "beedrill.module"
+      entry: "BeeDrillModule"
+      enabled: true
 
 rop:
   mailbox_poll:

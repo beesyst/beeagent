@@ -11,7 +11,8 @@ dependencies = [
     "langgraph==1.2.11",
     "pydantic==2.13.4",
     "beeagent-rop==0.19.8",
-    "beesdk==0.1.0",
+    "beedrill==0.4.0",
+    "beesdk==0.2.0",
     "jinja2==3.1.6",
     "fastapi==0.141.1",
     "uvicorn==0.52.1",
@@ -67,6 +68,7 @@ filterwarnings = [
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
+beedrill = { path = "../beedrill", editable = true }
 beesdk = { path = "../beesdk", editable = true }
 torch = [
     { index = "pytorch-cpu", extra = "docling-cpu" },
