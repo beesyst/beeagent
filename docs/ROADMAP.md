@@ -9285,6 +9285,124 @@ Existing executor продолжает выполнять тот же bounded `c
 - Добавлены focused regressions: settings validation для `new_lead_assigned` (missing/empty при enabled), planner matched/fallback/unresolved/degraded/irrelevant/trusted-attach stage selection, executor exact `STAGE_ID`+`ASSIGNED_BY_ID` для matched и fallback, invalid assigned stage → zero writes, replay/idempotency.
 - `beeagent-rop` и `beeui` не изменялись; новых dependencies нет; `pyproject.toml.version` не изменялся.
 
+### Итерация 43 — Bounded isolated Solana capability for BeeDrill
+
+**Статус:** PLANNED
+
+#### Goal
+
+Добавить минимальный BeeAgent-owned execution path для второго реального domain module — BeeDrill — чтобы модуль мог запросить один bounded isolated Solana lifecycle через host-provided capability boundary без прямого process/RPC authority.
+
+#### Scope
+
+Включено:
+
+- consumption approved BeeSDK `ModuleContext` capability injection contract;
+- BeeAgent-owned scoped `CapabilityCaller`;
+- host binding:
+  - `module_id`;
+  - `run_id`;
+  - `session_id`;
+  - `case_type`;
+  - authority;
+
+- explicit module/case/capability policy;
+- одна capability:
+
+```text
+solana.isolated_lifecycle
+```
+
+- один approved isolated target profile:
+
+```text
+surfpool_local
+```
+
+- Surfpool startup;
+- machine-verifiable readiness;
+- один fixed host-selected read-only Solana RPC smoke;
+- bounded timeout;
+- shutdown;
+- forced cleanup when required;
+- process reaping;
+- bounded `ok/refused/timeout/error` result;
+- real BeeDrill/BeeAgent/Surfpool integration smoke.
+
+#### Excluded
+
+- arbitrary subprocess capability;
+- module-controlled executable/path/argv;
+- module-controlled RPC endpoint or method;
+- generic Solana provider abstraction;
+- generic sandbox/execution framework;
+- mainnet or production mutation;
+- production private keys;
+- BeeDrill domain logic;
+- attack/detector/containment behavior from later BeeDrill iterations.
+
+#### Deliverable
+
+One real host-owned lifecycle:
+
+```text
+BeeDrill bounded request
+→ BeeAgent scoped CapabilityCaller
+→ solana.isolated_lifecycle
+→ Surfpool start
+→ ready
+→ bounded RPC
+→ stop
+→ clean
+→ bounded CapabilityResult
+```
+
+#### Acceptance criteria
+
+- capability caller is injected by BeeAgent;
+- module cannot override host identity or authority;
+- only approved module/case/capability combinations are allowed;
+- forbidden targets and unexpected execution-shaped fields are refused;
+- no mainnet fallback exists;
+- Surfpool starts reproducibly;
+- startup/readiness/RPC failures are explicit;
+- readiness and runtime are bounded by timeout;
+- shutdown and forced cleanup are bounded;
+- no tested success/failure path leaves an orphan managed process;
+- no production key is required;
+- BeeDrill remains `READ_ONLY`;
+- capability result does not grant new module authority;
+- no generic execution framework is introduced.
+
+#### Checks
+
+```text
+targeted capability/runtime tests
+full pytest
+allowed capability
+unknown capability
+wrong module/case refusal
+forbidden target refusal
+untrusted payload refusal
+startup failure
+early process exit
+readiness failure
+timeout
+RPC failure
+successful real lifecycle
+shutdown failure
+forced cleanup
+no orphan process
+BeeDrill/BeeAgent integration smoke
+log/artifact inspection
+SAST
+SCA if dependency surface changes
+```
+
+#### DoD
+
+BeeAgent provides BeeDrill with one real bounded isolated Solana execution capability while retaining complete ownership of process lifecycle, RPC target selection, policy, authority, timeout and cleanup.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
