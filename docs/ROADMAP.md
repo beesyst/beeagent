@@ -9287,7 +9287,7 @@ Existing executor продолжает выполнять тот же bounded `c
 
 ### Итерация 43 — Bounded isolated Solana capability for BeeDrill
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
@@ -9402,6 +9402,106 @@ SCA if dependency surface changes
 #### DoD
 
 BeeAgent provides BeeDrill with one real bounded isolated Solana execution capability while retaining complete ownership of process lifecycle, RPC target selection, policy, authority, timeout and cleanup.
+
+### Итерация 44 — Bounded BeeDrill reference-target baseline capability
+
+**Статус:** PLANNED
+
+#### Goal
+
+Extend the existing BeeDrill isolated-Solana host boundary with the smallest bounded capability required to prepare, inspect and reproduce the BeeDrill reference target for BeeDrill Iteration 5.
+
+#### Scope
+
+Included:
+
+- reuse of the existing BeeDrill-scoped host `CapabilityCaller`;
+- one additional bounded capability: `solana.reference_target_baseline`;
+- explicit scope to the BeeDrill reference-target baseline case;
+- fixed `surfpool_local` execution target;
+- fixed allowlisted BeeDrill reference target identity;
+- host-side resolution of the approved BeeDrill target resource;
+- isolated Surfpool startup/readiness;
+- bounded target preparation/deployment and initialization;
+- bounded state/control observation;
+- canonical reset or fresh-state reproduction;
+- bounded timeout and failure evidence;
+- shutdown, forced cleanup and process reaping;
+- real BeeDrill/BeeAgent/reference-target integration smoke.
+
+#### Excluded
+
+- arbitrary program or filesystem path supplied by the module;
+- arbitrary executable or argv;
+- arbitrary RPC endpoint or method;
+- generic transaction submission API;
+- generic Solana provider/framework;
+- Iteration 6 attack semantics or gross-loss evidence;
+- detector verdicts;
+- containment verdicts or production response;
+- mainnet/production mutation;
+- production private keys;
+- BeeSDK contract changes.
+
+#### Deliverable
+
+One host-owned path:
+
+```text
+BeeDrill bounded baseline request
+→ BeeAgent policy
+→ local Surfpool
+→ fixed reference target preparation
+→ bounded state evidence
+→ reset/reproduction
+→ cleanup
+→ CapabilityResult
+```
+
+#### Acceptance criteria
+
+- only the approved BeeDrill module/case/capability combination is accepted;
+- target profile and target identity are fixed/allowlisted;
+- module input cannot supply executable, argv, program path, RPC target/method or credentials;
+- target resource resolution is host-owned;
+- preparation/init failures are explicit;
+- bounded baseline state evidence is returned;
+- repeated fresh runs produce equivalent relevant target state;
+- timeout and cleanup remain bounded;
+- no tested path leaves an orphan managed process;
+- no mainnet fallback exists;
+- BeeDrill remains `READ_ONLY`;
+- capability evidence does not grant module authority;
+- existing `beeagent-rop` behavior remains compatible;
+- existing `solana.isolated_lifecycle` behavior remains compatible.
+
+#### Checks
+
+```text
+targeted capability/runtime tests
+full pytest
+approved module/case/capability
+wrong module/case/capability refusal
+forbidden target refusal
+execution-shaped payload refusal
+target-resource resolution failure
+target preparation/init failure
+state-observation failure
+reset/reproduction
+timeout
+cleanup
+no orphan process
+real BeeDrill/reference-target smoke
+beeagent-rop module integration regression
+log/artifact inspection
+SAST
+SCA only if dependency surface changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can safely prepare and reproduce the BeeDrill reference target inside the fixed isolated Solana environment while retaining complete ownership of runtime execution, RPC, target resolution, authority, timeout and cleanup.
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
