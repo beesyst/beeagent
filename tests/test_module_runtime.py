@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+from beesdk.capabilities import CapabilityStatus
+
 from beeagent_module.core.module_contract import (
     AuthorityLevel,
     ModuleContext,
@@ -73,6 +75,33 @@ class _StubBadResultModule:
             authority=self.authority,
             status="ok",
             summary="invalid",
+        )
+
+
+class _StubBeeDrillCapabilityModule:
+    @property
+    def module_id(self) -> str:
+        return "beedrill"
+
+    @property
+    def authority(self) -> AuthorityLevel:
+        return AuthorityLevel.READ_ONLY
+
+    def supported_case_types(self) -> list[str]:
+        return ["isolated_solana_smoke"]
+
+    def handle(self, context: ModuleContext) -> ModuleResult:
+        if context.capability_caller is None:
+            raise RuntimeError("capability_caller is required")
+        refusal = context.capability_caller.call("unexpected", {})
+        if refusal.status is not CapabilityStatus.REFUSED:
+            raise RuntimeError("unexpected capability must be refused")
+        return ModuleResult(
+            module_id=self.module_id,
+            case_type=context.case_type,
+            authority=self.authority,
+            status="ok",
+            summary="host-bound caller injected",
         )
 
 
@@ -218,5 +247,42 @@ def test_execute_module_case_rejects_inconsistent_module_result(tmp_path: Path) 
             assert False, "Expected RuntimeError for inconsistent module result"
         except RuntimeError as exc:
             assert "inconsistent module_id" in str(exc)
+    finally:
+        _remove_fake_package(pkg_name)
+
+
+def test_execute_module_case_injects_a_host_bound_beedrill_caller(
+    tmp_path: Path,
+) -> None:
+    pkg_name = "_test_stub_beedrill_capability_module_pkg"
+    entry_name = "StubBeeDrillCapabilityModule"
+    _make_fake_package(pkg_name, entry_name, _StubBeeDrillCapabilityModule)
+
+    try:
+        registry = ModuleRegistry(
+            config=[
+                {
+                    "id": "beedrill",
+                    "package": pkg_name,
+                    "entry": entry_name,
+                    "enabled": True,
+                }
+            ],
+            logger=_null_logger(),
+        )
+
+        result = execute_module_case(
+            registry=registry,
+            module_id="beedrill",
+            case_type="isolated_solana_smoke",
+            payload={"authority": "execution_capable"},
+            storage_dir=tmp_path,
+            logger=_null_logger(),
+            run_id="run-test123",
+            session_id="session-test123",
+        )
+
+        assert result.status == "ok"
+        assert result.authority is AuthorityLevel.READ_ONLY
     finally:
         _remove_fake_package(pkg_name)

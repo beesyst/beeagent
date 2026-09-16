@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from beeagent_module.core.artifact_api import ArtifactAPI
+from beeagent_module.core.isolated_solana_capability import create_capability_caller
 from beeagent_module.core.module_contract import (
     AuthorityLevel,
     ModuleContext,
@@ -79,6 +80,14 @@ def execute_module_case(
         session_id=runtime_context.session_id,
         authority=module_authority,
         artifact_api=artifact_api,
+        capability_caller=create_capability_caller(
+            run_id=runtime_context.run_id,
+            session_id=runtime_context.session_id,
+            module_id=module_id,
+            case_type=case_type,
+            authority=module_authority,
+            logger=logger,
+        ),
     )
 
     result = module.handle(module_context)

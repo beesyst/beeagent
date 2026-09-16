@@ -106,6 +106,13 @@
 - использовать BeeAgent artifact/runtime contracts
 - не ломать authority boundary
 
+For BeeDrill's `isolated_solana_smoke`, BeeAgent injects a caller bound to the
+host-generated run, session, module, case and read-only module authority. The
+caller accepts only `solana.isolated_lifecycle` with the fixed
+`surfpool_local` intent, then owns the offline Surfpool process, fixed local
+read-only RPC check and cleanup. The returned capability evidence reports the
+host-applied execution-capable authority without changing the module authority.
+
 ### 5.3 Что не должен делать модуль
 
 Модуль не должен:
