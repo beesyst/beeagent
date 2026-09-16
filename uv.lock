@@ -101,6 +101,7 @@ version = "0.60.2"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
+    { name = "beesdk" },
     { name = "beeui" },
     { name = "fastapi" },
     { name = "jinja2" },
@@ -137,6 +138,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
+    { name = "beesdk", editable = "../beesdk" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
@@ -172,6 +174,16 @@ source = { editable = "../beeagent-rop" }
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+
+[[package]]
+name = "beesdk"
+version = "0.1.0"
+source = { editable = "../beesdk" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = "==9.1.1" }]
 
 [[package]]
 name = "beeui"

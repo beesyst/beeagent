@@ -12,6 +12,8 @@ class AuthorityLevel(str, Enum):
 
 
 if TYPE_CHECKING:
+    from beesdk.capabilities import CapabilityCaller
+
     from beeagent_module.core.artifact_api import ArtifactAPI
 
 
@@ -23,7 +25,8 @@ class ModuleContext:
     payload: dict[str, Any] = field(default_factory=dict)
     session_id: str = ""
     authority: AuthorityLevel | None = None
-    artifact_api: "ArtifactAPI | None" = None
+    artifact_api: ArtifactAPI | None = None
+    capability_caller: CapabilityCaller | None = None
 
 
 @dataclass(frozen=True)
