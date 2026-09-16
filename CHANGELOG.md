@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.2...beeagent-v0.61.0) (2026-09-16)
+
+
+### Features
+
+* **capabilities:** add bounded isolated Solana lifecycle for BeeDrill ([#249](https://github.com/beesyst/beeagent/issues/249)) ([f60d275](https://github.com/beesyst/beeagent/commit/f60d275d9b02877b9cd6ae87ce366cf909d62444))
+
 ## [0.60.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.1...beeagent-v0.60.2) (2026-09-14)
 
 
