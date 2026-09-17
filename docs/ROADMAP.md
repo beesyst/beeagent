@@ -9405,7 +9405,7 @@ BeeAgent provides BeeDrill with one real bounded isolated Solana execution capab
 
 ### Итерация 44 — Bounded BeeDrill reference-target baseline capability
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
