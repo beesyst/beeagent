@@ -113,6 +113,11 @@ caller accepts only `solana.isolated_lifecycle` with the fixed
 read-only RPC check and cleanup. The returned capability evidence reports the
 host-applied execution-capable authority without changing the module authority.
 
+For BeeDrill's `reference_target_baseline`, the same host-bound caller accepts
+only `solana.reference_target_baseline` with the fixed `surfpool_local` and
+`reference_vault` payload. BeeAgent resolves the public BeeDrill package
+resource itself and returns only bounded canonical economic/control evidence.
+
 ### 5.3 Что не должен делать модуль
 
 Модуль не должен:
