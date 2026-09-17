@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.61.0...beeagent-v0.62.0) (2026-09-17)
+
+
+### Features
+
+* **capabilities:** add bounded BeeDrill reference baseline ([#252](https://github.com/beesyst/beeagent/issues/252)) ([28723f2](https://github.com/beesyst/beeagent/commit/28723f2deb675cc75dff006feea9790927d89205))
+
 ## [0.61.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.60.2...beeagent-v0.61.0) (2026-09-16)
 
 
