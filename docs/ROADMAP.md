@@ -9562,6 +9562,92 @@ BeeAgent can safely prepare and reproduce the BeeDrill reference target inside t
 
 BeeAgent безопасно выполняет только фиксированную BeeDrill reference-target attack в approved isolated environment и возвращает bounded evidence, сохраняя host ownership execution, RPC, policy, authority, timeout и cleanup.
 
+### Итерация 44.2 — Bounded BeeDrill reference-target detection capability
+
+**Статус:** PLANNED
+
+#### Goal
+
+Provide the smallest BeeAgent-owned execution path required by BeeDrill Iteration 7 to observe the fixed `reference_vault` attack through an independent technical reference monitor and return bounded detection evidence.
+
+#### Scope
+
+Included:
+
+- reuse of the existing BeeDrill-scoped `CapabilityCaller`;
+- one additional bounded capability: `solana.reference_target_detection`;
+- exact scope to the BeeDrill reference-target detection case;
+- fixed `surfpool_local` and `reference_vault`;
+- reuse of existing reference-target preparation, fixed attack execution, RPC, timeout and cleanup behavior;
+- one independent host-owned reference monitor for the fixed `vault_outflow_signal`;
+- attack-start slot reference;
+- first valid detection slot when observed;
+- explicit bounded `observed` / `not_observed` detection evidence;
+- explicit timeout/error outcomes distinct from successful observation with no detection;
+- fresh-state repeatability;
+- real BeeDrill/BeeAgent integration smoke.
+
+#### Excluded
+
+- generic detector framework;
+- broad Solana subscription API exposed to modules;
+- arbitrary RPC endpoint or method;
+- arbitrary executable, argv, path or transaction;
+- module-controlled detector rules;
+- MTTD calculation;
+- containment or verdict behavior;
+- SIEM/PagerDuty integration;
+- production/mainnet mutation;
+- production credentials;
+- BeeSDK contract changes;
+- changes to existing lifecycle, baseline or attack capability semantics.
+
+#### Deliverable
+
+One host-owned bounded capability that executes the fixed reference attack while an independent reference monitor observes the fixed detector signal and returns machine-verifiable detection timing evidence.
+
+#### Acceptance criteria
+
+- only the exact BeeDrill module/case/capability/authority/payload scope is accepted;
+- monitor observation is independent from the attack executor's success assertion;
+- target and detector signal are fixed and host-controlled;
+- real detection produces bounded attack-start and detection slot evidence;
+- a completed observation window without a signal is represented as `not_observed`;
+- detector/runtime failure and timeout are distinct from `not_observed`;
+- module input cannot choose RPC target/method, detector rule, executable, argv, path, transaction or credentials;
+- fresh runs preserve equivalent security-relevant detection behavior;
+- timeout and cleanup are bounded;
+- no tested path leaves an orphan managed process;
+- no production/mainnet fallback or production secret is introduced;
+- existing lifecycle, baseline and attack capabilities remain compatible.
+
+#### Checks
+
+```text
+targeted capability/runtime tests
+full pytest
+approved module/case/capability
+wrong module/case/capability refusal
+forbidden payload refusal
+real detection produced
+completed observation with detection absent
+delayed observation
+detector observation failure
+timeout
+cleanup
+no orphan process
+fresh-state replay
+BeeDrill cross-repository integration smoke
+log/artifact inspection
+SAST
+SCA only if dependency surface changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can independently observe the fixed BeeDrill reference attack and return bounded detection evidence while retaining complete ownership of execution, RPC, policy, authority, timing bounds and cleanup.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
