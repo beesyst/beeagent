@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.63.0...beeagent-v0.64.0) (2026-09-18)
+
+
+### Features
+
+* add bounded reference target detection ([#258](https://github.com/beesyst/beeagent/issues/258)) ([a28eec5](https://github.com/beesyst/beeagent/commit/a28eec57a58dcab97983aa7fb2a07ae19e6c33be))
+
 ## [0.63.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.62.0...beeagent-v0.63.0) (2026-09-18)
 
 
