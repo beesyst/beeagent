@@ -9505,7 +9505,7 @@ BeeAgent can safely prepare and reproduce the BeeDrill reference target inside t
 
 ### Итерация 44.1 — Bounded BeeDrill reference-target attack capability
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
