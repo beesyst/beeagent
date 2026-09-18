@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.62.0...beeagent-v0.63.0) (2026-09-18)
+
+
+### Features
+
+* add bounded reference-vault attack capability ([#255](https://github.com/beesyst/beeagent/issues/255)) ([746b142](https://github.com/beesyst/beeagent/commit/746b14201a4f2ef283bc3599299c83d0283f3fb1))
+
 ## [0.62.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.61.0...beeagent-v0.62.0) (2026-09-17)
 
 
