@@ -9503,6 +9503,65 @@ git diff --check
 
 BeeAgent can safely prepare and reproduce the BeeDrill reference target inside the fixed isolated Solana environment while retaining complete ownership of runtime execution, RPC, target resolution, authority, timeout and cleanup.
 
+### Итерация 44.1 — Bounded BeeDrill reference-target attack capability
+
+**Статус:** PLANNED
+
+#### Goal
+
+Добавить минимальный host-owned путь, необходимый BeeDrill Iteration 6 для выполнения одной фиксированной экономической атаки на `reference_vault` в изолированном Surfpool и получения проверяемого attack evidence.
+
+#### Scope
+
+- один новый BeeDrill-scoped case/capability pair для фиксированной атаки;
+- reuse существующего scoped `CapabilityCaller`, offline Surfpool lifecycle, target-resource resolution, timeout и cleanup;
+- только `surfpool_local` и `reference_vault`;
+- host-owned preparation, deployment, canonical initialization, attack transaction и state observation;
+- bounded evidence: fixed identities, transaction signature(s), slot/timing reference, balances/state до и после, gross loss в integer lamports;
+- explicit `ok/refused/timeout/error` outcomes;
+- negative policy, timeout, cleanup и evidence tests;
+- cross-repository integration smoke после доступности BeeDrill consumer.
+
+#### Excluded
+
+- generic transaction submission API;
+- arbitrary program/executable/path/argv;
+- module-controlled RPC target, method, raw transaction or credentials;
+- mainnet/production mutation;
+- detector, containment, metrics или verdict behavior;
+- BeeSDK contract/dependency changes;
+- новый Solana framework.
+
+#### Deliverable
+
+Одна bounded capability, выполняющая только allowlisted reference-vault attack и возвращающая machine-verifiable attack/economic evidence без передачи execution authority BeeDrill.
+
+#### Acceptance criteria
+
+- capability разрешена только для exact BeeDrill module/case/authority/payload scope;
+- атака меняет состояние изолированного reference target;
+- evidence содержит доказуемые state transition и gross loss;
+- повторный fresh run сохраняет эквивалентный security outcome;
+- malformed/forbidden intent отказан до host execution;
+- failure, timeout и cleanup outcomes явны;
+- no mainnet fallback, secrets или orphan processes;
+- существующие lifecycle и baseline capabilities остаются совместимыми.
+
+#### Checks
+
+- targeted isolated-Solana capability tests;
+- full `pytest -q`;
+- allowed and forbidden scope/payload tests;
+- attack success, transaction/state evidence, economic-delta and replay tests;
+- preparation, transaction, observation, timeout and cleanup failure tests;
+- real isolated integration smoke;
+- log/artifact inspection;
+- SAST; SCA только при изменении dependency surface.
+
+#### DoD
+
+BeeAgent безопасно выполняет только фиксированную BeeDrill reference-target attack в approved isolated environment и возвращает bounded evidence, сохраняя host ownership execution, RPC, policy, authority, timeout и cleanup.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
