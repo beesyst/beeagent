@@ -118,6 +118,16 @@ only `solana.reference_target_baseline` with the fixed `surfpool_local` and
 `reference_vault` payload. BeeAgent resolves the public BeeDrill package
 resource itself and returns only bounded canonical economic/control evidence.
 
+For BeeDrill's `reference_target_attack`, the same caller accepts only
+`solana.reference_target_attack` with that exact fixed payload and only from the
+read-only BeeDrill attack case. BeeAgent owns the offline Surfpool lifecycle,
+target preparation and fixed attack transaction. On success it returns exact
+target and initial-state identities, a bounded transaction signature, a local
+slot reference, fixed before/after lamport balances, unsafe-withdraw transition
+counts and integer gross loss. It returns explicit refusal, timeout or error
+otherwise; it never accepts module-supplied RPC, executable, path, raw
+transaction or credential fields.
+
 ### 5.3 Что не должен делать модуль
 
 Модуль не должен:

@@ -4,6 +4,7 @@ import logging
 import signal
 import subprocess
 from base64 import b64encode
+from contextlib import contextmanager
 
 import pytest
 from beesdk.capabilities import CapabilityStatus
@@ -36,6 +37,10 @@ def _caller(
 
 def _reference_target_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_target_baseline")
+
+
+def _reference_target_attack_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="reference_target_attack")
 
 
 class _Process:
@@ -88,6 +93,17 @@ def test_caller_is_created_only_for_the_approved_module_case() -> None:
             "session-1",
             "beedrill",
             "reference_target_baseline",
+            AuthorityLevel.READ_ONLY,
+            logging.getLogger("test"),
+        )
+        is not None
+    )
+    assert (
+        create_capability_caller(
+            "run-1",
+            "session-1",
+            "beedrill",
+            "reference_target_attack",
             AuthorityLevel.READ_ONLY,
             logging.getLogger("test"),
         )
@@ -514,6 +530,234 @@ def test_reference_target_caller_returns_bounded_evidence_and_reaps(
     assert result.data["unsafe_condition"] == "reachable"
     assert result.data["reset"] == "equivalent"
     assert process.poll() is not None
+
+
+_REFERENCE_TARGET_ATTACK_EVIDENCE = {
+    "target_id": "reference_vault",
+    "initial_state_id": "reference_vault_canonical_v1",
+    "economic_unit": "lamports",
+    "attack_start_slot": 42,
+    "attack_transaction_signature": "attack-signature",
+    "vault_lamports_before": 1_000_000,
+    "vault_lamports_after": 999_900,
+    "unsafe_withdraw_count_before": 0,
+    "unsafe_withdraw_count_after": 1,
+    "gross_loss_lamports": 100,
+}
+
+
+def test_reference_target_attack_uses_fixed_scope_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_attack",
+        lambda: _REFERENCE_TARGET_ATTACK_EVIDENCE,
+    )
+
+    result = _reference_target_attack_caller().call(
+        "solana.reference_target_attack",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert result.status is CapabilityStatus.OK
+    assert result.data == _REFERENCE_TARGET_ATTACK_EVIDENCE
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize(
+    ("module_id", "case_type", "authority"),
+    [
+        ("other", "reference_target_attack", AuthorityLevel.READ_ONLY),
+        ("beedrill", "other", AuthorityLevel.READ_ONLY),
+        ("beedrill", "reference_target_attack", AuthorityLevel.DRAFT_ONLY),
+    ],
+)
+def test_reference_target_attack_refuses_invalid_scope(
+    module_id: str,
+    case_type: str,
+    authority: AuthorityLevel,
+) -> None:
+    result = _caller(module_id, case_type, authority).call(
+        "solana.reference_target_attack",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "scope_not_allowed"}
+
+
+@pytest.mark.parametrize(
+    ("capability_name", "payload"),
+    [
+        ("other", {"target_profile": "surfpool_local", "target_id": "reference_vault"}),
+        (
+            "solana.reference_target_attack",
+            {"target_profile": "other", "target_id": "reference_vault"},
+        ),
+        (
+            "solana.reference_target_attack",
+            {
+                "target_profile": "surfpool_local",
+                "target_id": "reference_vault",
+                "raw_transaction": "untrusted",
+            },
+        ),
+    ],
+)
+def test_reference_target_attack_refuses_untrusted_input(
+    capability_name: str,
+    payload: dict[str, str],
+) -> None:
+    result = _reference_target_attack_caller().call(capability_name, payload)
+
+    assert result.status is CapabilityStatus.REFUSED
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "executable",
+        "command",
+        "argv",
+        "filesystem",
+        "path",
+        "program_path",
+        "rpc_url",
+        "rpc_endpoint",
+        "rpc_method",
+        "raw_transaction",
+        "credential",
+    ],
+)
+def test_reference_target_attack_refuses_all_execution_shaped_fields(
+    field: str,
+) -> None:
+    payload = {"target_profile": "surfpool_local", "target_id": "reference_vault"}
+    payload[field] = "untrusted"
+
+    result = _reference_target_attack_caller().call(
+        "solana.reference_target_attack", payload
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+
+
+def test_reference_target_attack_maps_failure_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_attack",
+        lambda: (_ for _ in ()).throw(
+            solana_capability._ReferenceTargetFailure("attack_transaction_failed")
+        ),
+    )
+
+    result = _reference_target_attack_caller().call(
+        "solana.reference_target_attack",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "attack_transaction_failed"}
+    assert process.poll() is not None
+
+
+def test_reference_target_attack_reports_deterministic_economic_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    before = (1_000_000, 0, 0, 0, 0)
+    after = (999_900, 0, 0, 0, 1)
+    monkeypatch.setattr(
+        solana_capability,
+        "_prepared_reference_target",
+        prepared_target,
+    )
+    monkeypatch.setattr(solana_capability, "_run_target_operation", lambda *_: before)
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: 42)
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_: (after, "attack-signature"),
+    )
+
+    assert (
+        solana_capability._run_reference_target_attack()
+        == _REFERENCE_TARGET_ATTACK_EVIDENCE
+    )
+
+
+def test_reference_target_attack_rejects_inconsistent_economic_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    monkeypatch.setattr(
+        solana_capability,
+        "_prepared_reference_target",
+        prepared_target,
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_target_operation",
+        lambda *_: (1_000_000, 0, 0, 0, 0),
+    )
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: 42)
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_: ((999_901, 0, 0, 0, 1), "attack-signature"),
+    )
+
+    with pytest.raises(
+        solana_capability._ReferenceTargetFailure,
+        match="attack_evidence_inconsistent",
+    ):
+        solana_capability._run_reference_target_attack()
+
+
+@pytest.mark.parametrize("slot", [True, -1, "42"])
+def test_attack_slot_requires_non_negative_integer(
+    monkeypatch: pytest.MonkeyPatch,
+    slot: object,
+) -> None:
+    monkeypatch.setattr(solana_capability, "_rpc_call", lambda *_: slot)
+
+    with pytest.raises(ValueError, match="slot response"):
+        solana_capability._read_slot()
 
 
 def test_transaction_confirmation_requires_confirmed_success(

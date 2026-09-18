@@ -12,7 +12,8 @@ import signal
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, overload
@@ -29,9 +30,11 @@ from beeagent_module.core.module_contract import AuthorityLevel
 
 _CAPABILITY_NAME = "solana.isolated_lifecycle"
 _REFERENCE_TARGET_CAPABILITY_NAME = "solana.reference_target_baseline"
+_REFERENCE_TARGET_ATTACK_CAPABILITY_NAME = "solana.reference_target_attack"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
+_REFERENCE_TARGET_ATTACK_CASE_TYPE = "reference_target_attack"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
@@ -44,6 +47,13 @@ _RPC_TIMEOUT_SECONDS = 2.0
 _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
 TargetState = tuple[int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class _PreparedReferenceTarget:
+    payer: Keypair
+    state: Keypair
+    program: Keypair
 
 
 class _ReferenceTargetFailure(ValueError):
@@ -88,6 +98,8 @@ class ScopedSolanaLifecycleCaller:
             return self._refused(capability_name, "scope_not_allowed")
         if self.case_type == _REFERENCE_TARGET_CASE_TYPE:
             return self._call_reference_target_baseline(capability_name, payload)
+        if self.case_type == _REFERENCE_TARGET_ATTACK_CASE_TYPE:
+            return self._call_reference_target_attack(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -145,7 +157,12 @@ class ScopedSolanaLifecycleCaller:
     def _is_allowed_scope(self) -> bool:
         return (
             self.module_id == _MODULE_ID
-            and self.case_type in {_CASE_TYPE, _REFERENCE_TARGET_CASE_TYPE}
+            and self.case_type
+            in {
+                _CASE_TYPE,
+                _REFERENCE_TARGET_CASE_TYPE,
+                _REFERENCE_TARGET_ATTACK_CASE_TYPE,
+            }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
 
@@ -209,6 +226,66 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_reference_target_attack(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _REFERENCE_TARGET_ATTACK_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_reference_target_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        if not _reference_target_resource_is_valid():
+            return self._error(capability_name, "target_resource_unavailable")
+
+        executable = shutil.which("surfpool")
+        if executable is None:
+            return self._error(capability_name, "executable_unavailable")
+
+        process: subprocess.Popen[bytes] | None = None
+        result: CapabilityResult
+        try:
+            process = _start_reference_target_surfpool(executable)
+            readiness = _wait_for_readiness(process)
+            if readiness != "ready":
+                if readiness == "timeout":
+                    result = self._timeout(capability_name, "readiness_timeout")
+                else:
+                    result = self._error(capability_name, readiness)
+            else:
+                evidence = _run_reference_target_attack()
+                result = CapabilityResult(
+                    capability_name=capability_name,
+                    status=CapabilityStatus.OK,
+                    authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+                    summary="Reference target attack completed",
+                    data=evidence,
+                )
+        except _ReferenceTargetTimeout as exc:
+            result = self._timeout(capability_name, str(exc))
+        except _ReferenceTargetFailure as exc:
+            result = self._error(capability_name, str(exc))
+        except TimeoutError:
+            result = self._timeout(capability_name, "transaction_confirmation_timeout")
+        except OSError:
+            result = self._error(capability_name, "prepare_failed")
+        except ValueError:
+            result = self._error(capability_name, "observe_failed")
+        except Exception:
+            result = self._error(capability_name, "runtime_error")
+        finally:
+            if process is not None:
+                cleanup = _reap_process(process)
+                if cleanup != "ok":
+                    self.logger.warning(
+                        "reference target attack cleanup failed: module_id=%s run_id=%s reason=%s",
+                        self.module_id,
+                        self.run_id,
+                        cleanup,
+                    )
+                    result = self._error(capability_name, f"cleanup_{cleanup}")
+        return result
+
     def _refused(self, capability_name: str, reason: str) -> CapabilityResult:
         return CapabilityResult(
             capability_name=capability_name,
@@ -248,6 +325,7 @@ def create_capability_caller(
     if module_id != _MODULE_ID or case_type not in {
         _CASE_TYPE,
         _REFERENCE_TARGET_CASE_TYPE,
+        _REFERENCE_TARGET_ATTACK_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -348,7 +426,8 @@ def _reference_target_resource_is_valid() -> bool:
     )
 
 
-def _run_reference_target_baseline() -> dict[str, str | int]:
+@contextmanager
+def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
     build_tool = shutil.which("cargo-build-sbf")
     solana = shutil.which("solana")
     if build_tool is None or solana is None:
@@ -414,41 +493,82 @@ def _run_reference_target_baseline() -> dict[str, str | int]:
                 raise _ReferenceTargetFailure(
                     "state_account_preparation_failed"
                 ) from exc
-            canonical = _run_target_operation(
-                payer, state, program_keypair, 0, "initialization_failed"
-            )
-            normal = _run_target_operation(
-                payer, state, program_keypair, 1, "normal_invocation_failed"
-            )
-            _run_target_operation(
-                payer, state, program_keypair, 0, "reset_reproduction_failed"
-            )
-            unsafe = _run_target_operation(
-                payer, state, program_keypair, 2, "unsafe_invocation_failed"
-            )
-            _run_target_operation(
-                payer, state, program_keypair, 0, "reset_reproduction_failed"
-            )
-            _run_target_operation(
-                payer, state, program_keypair, 3, "control_invocation_failed"
-            )
-            breaker = _run_target_operation(
-                payer,
-                state,
-                program_keypair,
-                2,
-                "control_invocation_failed",
-                expect_failure=True,
-            )
-            _run_target_operation(
-                payer, state, program_keypair, 5, "control_invocation_failed"
-            )
-            broken = _run_target_operation(
-                payer, state, program_keypair, 2, "unsafe_invocation_failed"
-            )
-            reset = _run_target_operation(
-                payer, state, program_keypair, 0, "reset_reproduction_failed"
-            )
+            yield _PreparedReferenceTarget(payer, state, program_keypair)
+
+
+def _run_reference_target_baseline() -> dict[str, str | int]:
+    with _prepared_reference_target() as target:
+        canonical = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "initialization_failed",
+        )
+        normal = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            1,
+            "normal_invocation_failed",
+        )
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "reset_reproduction_failed",
+        )
+        unsafe = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            2,
+            "unsafe_invocation_failed",
+        )
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "reset_reproduction_failed",
+        )
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            3,
+            "control_invocation_failed",
+        )
+        breaker = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            2,
+            "control_invocation_failed",
+            expect_failure=True,
+        )
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            5,
+            "control_invocation_failed",
+        )
+        broken = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            2,
+            "unsafe_invocation_failed",
+        )
+        reset = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "reset_reproduction_failed",
+        )
     if (
         canonical != (1_000_000, 0, 0, 0, 0)
         or normal != (1_000_010, 0, 0, 1, 0)
@@ -470,6 +590,55 @@ def _run_reference_target_baseline() -> dict[str, str | int]:
         "containment_config": "broken_available",
         "reset": "equivalent",
         "cleanup": "ok",
+    }
+
+
+def _run_reference_target_attack() -> dict[str, str | int]:
+    with _prepared_reference_target() as target:
+        before = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "initialization_failed",
+        )
+        try:
+            attack_start_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("state_observation_timeout") from exc
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("state_observation_failed") from exc
+        try:
+            after, signature = _invoke_and_observe_with_signature(
+                target.payer,
+                target.state,
+                target.program,
+                2,
+            )
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("attack_transaction_failed") from exc
+    if (
+        before != (1_000_000, 0, 0, 0, 0)
+        or after is None
+        or signature is None
+        or after != (999_900, 0, 0, 0, 1)
+    ):
+        raise _ReferenceTargetFailure("attack_evidence_inconsistent")
+    return {
+        "target_id": _REFERENCE_TARGET_ID,
+        "initial_state_id": "reference_vault_canonical_v1",
+        "economic_unit": "lamports",
+        "attack_start_slot": attack_start_slot,
+        "attack_transaction_signature": signature,
+        "vault_lamports_before": before[0],
+        "vault_lamports_after": after[0],
+        "unsafe_withdraw_count_before": before[4],
+        "unsafe_withdraw_count_after": after[4],
+        "gross_loss_lamports": before[0] - after[0],
     }
 
 
@@ -565,11 +734,28 @@ def _invoke_and_observe(
     code: int,
     expect_failure: bool = False,
 ) -> TargetState | None:
+    observed_state, _ = _invoke_and_observe_with_signature(
+        payer,
+        state,
+        program,
+        code,
+        expect_failure,
+    )
+    return observed_state
+
+
+def _invoke_and_observe_with_signature(
+    payer: Keypair,
+    state: Keypair,
+    program: Keypair,
+    code: int,
+    expect_failure: bool = False,
+) -> tuple[TargetState | None, str | None]:
     instruction = Instruction(
         program.pubkey(), bytes([code]), [AccountMeta(state.pubkey(), False, True)]
     )
     try:
-        _send_transaction(
+        signature = _send_transaction(
             payer,
             [payer],
             instruction,
@@ -577,17 +763,20 @@ def _invoke_and_observe(
         )
     except _TargetInstructionRejected:
         if expect_failure:
-            return None
+            return None, None
         raise
     if expect_failure:
         raise ValueError("breaker did not refuse unsafe instruction")
     data = _read_target_state(state)
     return (
-        int.from_bytes(data[2:10], "little"),
-        data[0],
-        data[1],
-        int.from_bytes(data[10:14], "little"),
-        int.from_bytes(data[14:18], "little"),
+        (
+            int.from_bytes(data[2:10], "little"),
+            data[0],
+            data[1],
+            int.from_bytes(data[10:14], "little"),
+            int.from_bytes(data[14:18], "little"),
+        ),
+        signature,
     )
 
 
@@ -621,7 +810,7 @@ def _send_transaction(
     signers: list[Keypair],
     instruction: Instruction,
     allow_target_instruction_rejection: bool = False,
-) -> None:
+) -> str:
     result = _rpc_call("getLatestBlockhash", [])
     if not isinstance(result, Mapping):
         raise ValueError("fixed local blockhash response is invalid")
@@ -636,21 +825,30 @@ def _send_transaction(
         [instruction], payer.pubkey(), signers, blockhash
     )
     try:
-        _confirm_transaction(
-            _rpc_call(
-                "sendTransaction",
-                [
-                    base64.b64encode(bytes(transaction)).decode("ascii"),
-                    {"encoding": "base64"},
-                ],
-            )
+        signature = _rpc_call(
+            "sendTransaction",
+            [
+                base64.b64encode(bytes(transaction)).decode("ascii"),
+                {"encoding": "base64"},
+            ],
         )
+        _confirm_transaction(signature)
     except (_ConfirmedTransactionFailure, _RpcRequestFailure) as exc:
         if allow_target_instruction_rejection and _is_instruction_rejection(exc.detail):
             raise _TargetInstructionRejected(
                 "fixed target instruction rejected"
             ) from exc
         raise
+    if not isinstance(signature, str):
+        raise ValueError("fixed local transaction signature is invalid")
+    return signature
+
+
+def _read_slot() -> int:
+    slot = _rpc_call("getSlot", [])
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot < 0:
+        raise ValueError("fixed local slot response is invalid")
+    return slot
 
 
 def _is_instruction_rejection(detail: object) -> bool:
