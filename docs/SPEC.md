@@ -128,6 +128,16 @@ counts and integer gross loss. It returns explicit refusal, timeout or error
 otherwise; it never accepts module-supplied RPC, executable, path, raw
 transaction or credential fields.
 
+For BeeDrill's `reference_target_detection`, the same caller accepts only
+`solana.reference_target_detection` with the fixed `surfpool_local` and
+`reference_vault` payload from the read-only detection case. BeeAgent installs
+the fixed `reference_vault_outflow_monitor` before the attack, independently
+observes `vault_outflow_signal` through the fixed local RPC state read, and
+returns only detector identity, signal identity, observation status,
+attack-start slot, and (when observed) first-detection slot. A completed
+monitoring window without the signal is `not_observed`; runtime and timeout
+outcomes remain capability errors rather than no-alert evidence.
+
 ### 5.3 Что не должен делать модуль
 
 Модуль не должен:

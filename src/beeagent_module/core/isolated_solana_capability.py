@@ -31,10 +31,12 @@ from beeagent_module.core.module_contract import AuthorityLevel
 _CAPABILITY_NAME = "solana.isolated_lifecycle"
 _REFERENCE_TARGET_CAPABILITY_NAME = "solana.reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CAPABILITY_NAME = "solana.reference_target_attack"
+_REFERENCE_TARGET_DETECTION_CAPABILITY_NAME = "solana.reference_target_detection"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CASE_TYPE = "reference_target_attack"
+_REFERENCE_TARGET_DETECTION_CASE_TYPE = "reference_target_detection"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
@@ -100,6 +102,8 @@ class ScopedSolanaLifecycleCaller:
             return self._call_reference_target_baseline(capability_name, payload)
         if self.case_type == _REFERENCE_TARGET_ATTACK_CASE_TYPE:
             return self._call_reference_target_attack(capability_name, payload)
+        if self.case_type == _REFERENCE_TARGET_DETECTION_CASE_TYPE:
+            return self._call_reference_target_detection(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -162,6 +166,7 @@ class ScopedSolanaLifecycleCaller:
                 _CASE_TYPE,
                 _REFERENCE_TARGET_CASE_TYPE,
                 _REFERENCE_TARGET_ATTACK_CASE_TYPE,
+                _REFERENCE_TARGET_DETECTION_CASE_TYPE,
             }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
@@ -286,6 +291,66 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_reference_target_detection(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _REFERENCE_TARGET_DETECTION_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_reference_target_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        if not _reference_target_resource_is_valid():
+            return self._error(capability_name, "target_resource_unavailable")
+
+        executable = shutil.which("surfpool")
+        if executable is None:
+            return self._error(capability_name, "executable_unavailable")
+
+        process: subprocess.Popen[bytes] | None = None
+        result: CapabilityResult
+        try:
+            process = _start_reference_target_surfpool(executable)
+            readiness = _wait_for_readiness(process)
+            if readiness != "ready":
+                if readiness == "timeout":
+                    result = self._timeout(capability_name, "readiness_timeout")
+                else:
+                    result = self._error(capability_name, readiness)
+            else:
+                evidence = _run_reference_target_detection()
+                result = CapabilityResult(
+                    capability_name=capability_name,
+                    status=CapabilityStatus.OK,
+                    authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+                    summary="Reference target detection completed",
+                    data=evidence,
+                )
+        except _ReferenceTargetTimeout as exc:
+            result = self._timeout(capability_name, str(exc))
+        except _ReferenceTargetFailure as exc:
+            result = self._error(capability_name, str(exc))
+        except TimeoutError:
+            result = self._timeout(capability_name, "transaction_confirmation_timeout")
+        except OSError:
+            result = self._error(capability_name, "prepare_failed")
+        except ValueError:
+            result = self._error(capability_name, "detector_observation_failed")
+        except Exception:
+            result = self._error(capability_name, "runtime_error")
+        finally:
+            if process is not None:
+                cleanup = _reap_process(process)
+                if cleanup != "ok":
+                    self.logger.warning(
+                        "reference target detection cleanup failed: module_id=%s run_id=%s reason=%s",
+                        self.module_id,
+                        self.run_id,
+                        cleanup,
+                    )
+                    result = self._error(capability_name, f"cleanup_{cleanup}")
+        return result
+
     def _refused(self, capability_name: str, reason: str) -> CapabilityResult:
         return CapabilityResult(
             capability_name=capability_name,
@@ -326,6 +391,7 @@ def create_capability_caller(
         _CASE_TYPE,
         _REFERENCE_TARGET_CASE_TYPE,
         _REFERENCE_TARGET_ATTACK_CASE_TYPE,
+        _REFERENCE_TARGET_DETECTION_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -640,6 +706,64 @@ def _run_reference_target_attack() -> dict[str, str | int]:
         "unsafe_withdraw_count_after": after[4],
         "gross_loss_lamports": before[0] - after[0],
     }
+
+
+def _run_reference_target_detection() -> dict[str, str | int]:
+    with _prepared_reference_target() as target:
+        initial = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "initialization_failed",
+        )
+        try:
+            monitor_started_with_signal = _reference_vault_outflow_signal(target.state)
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("detector_observation_timeout") from exc
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("detector_observation_failed") from exc
+        if initial != (1_000_000, 0, 0, 0, 0) or monitor_started_with_signal:
+            raise _ReferenceTargetFailure("detector_initial_state_inconsistent")
+        try:
+            attack_start_slot = _read_slot()
+            attack_state, _ = _invoke_and_observe_with_signature(
+                target.payer,
+                target.state,
+                target.program,
+                2,
+            )
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("attack_transaction_failed") from exc
+        if attack_state != (999_900, 0, 0, 0, 1):
+            raise _ReferenceTargetFailure("attack_evidence_inconsistent")
+        try:
+            detected = _reference_vault_outflow_signal(target.state)
+            observation_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("detector_observation_timeout") from exc
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("detector_observation_failed") from exc
+    evidence: dict[str, str | int] = {
+        "detector_id": "reference_vault_outflow_monitor",
+        "signal_id": "vault_outflow_signal",
+        "detection_status": "observed" if detected else "not_observed",
+        "attack_start_slot": attack_start_slot,
+    }
+    if detected:
+        if observation_slot < attack_start_slot:
+            raise _ReferenceTargetFailure("detector_timing_inconsistent")
+        evidence["first_detection_slot"] = observation_slot
+    return evidence
+
+
+def _reference_vault_outflow_signal(state: Keypair) -> bool:
+    data = _read_target_state(state)
+    return int.from_bytes(data[14:18], "little") > 0
 
 
 def _run_target_command(

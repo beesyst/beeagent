@@ -43,6 +43,10 @@ def _reference_target_attack_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_target_attack")
 
 
+def _reference_target_detection_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="reference_target_detection")
+
+
 class _Process:
     def __init__(self, force_cleanup: bool = False) -> None:
         self.exit_code: int | None = None
@@ -93,6 +97,17 @@ def test_caller_is_created_only_for_the_approved_module_case() -> None:
             "session-1",
             "beedrill",
             "reference_target_baseline",
+            AuthorityLevel.READ_ONLY,
+            logging.getLogger("test"),
+        )
+        is not None
+    )
+    assert (
+        create_capability_caller(
+            "run-1",
+            "session-1",
+            "beedrill",
+            "reference_target_detection",
             AuthorityLevel.READ_ONLY,
             logging.getLogger("test"),
         )
@@ -545,6 +560,14 @@ _REFERENCE_TARGET_ATTACK_EVIDENCE = {
     "gross_loss_lamports": 100,
 }
 
+_REFERENCE_TARGET_DETECTION_EVIDENCE = {
+    "detector_id": "reference_vault_outflow_monitor",
+    "signal_id": "vault_outflow_signal",
+    "detection_status": "observed",
+    "attack_start_slot": 42,
+    "first_detection_slot": 44,
+}
+
 
 def test_reference_target_attack_uses_fixed_scope_and_reaps(
     monkeypatch: pytest.MonkeyPatch,
@@ -684,6 +707,252 @@ def test_reference_target_attack_maps_failure_and_reaps(
     assert result.status is CapabilityStatus.ERROR
     assert result.diagnostics == {"reason": "attack_transaction_failed"}
     assert process.poll() is not None
+
+
+def test_reference_target_detection_uses_fixed_scope_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_detection",
+        lambda: _REFERENCE_TARGET_DETECTION_EVIDENCE,
+    )
+
+    result = _reference_target_detection_caller().call(
+        "solana.reference_target_detection",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert result.status is CapabilityStatus.OK
+    assert result.data == _REFERENCE_TARGET_DETECTION_EVIDENCE
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize(
+    ("capability_name", "payload"),
+    [
+        ("other", {"target_profile": "surfpool_local", "target_id": "reference_vault"}),
+        (
+            "solana.reference_target_detection",
+            {"target_profile": "other", "target_id": "reference_vault"},
+        ),
+        (
+            "solana.reference_target_detection",
+            {
+                "target_profile": "surfpool_local",
+                "target_id": "reference_vault",
+                "rpc_endpoint": "untrusted",
+            },
+        ),
+    ],
+)
+def test_reference_target_detection_refuses_untrusted_input(
+    capability_name: str,
+    payload: dict[str, str],
+) -> None:
+    result = _reference_target_detection_caller().call(capability_name, payload)
+
+    assert result.status is CapabilityStatus.REFUSED
+
+
+@pytest.mark.parametrize(
+    ("module_id", "case_type", "authority"),
+    [
+        ("other", "reference_target_detection", AuthorityLevel.READ_ONLY),
+        ("beedrill", "other", AuthorityLevel.READ_ONLY),
+        ("beedrill", "reference_target_detection", AuthorityLevel.DRAFT_ONLY),
+    ],
+)
+def test_reference_target_detection_refuses_invalid_scope(
+    module_id: str,
+    case_type: str,
+    authority: AuthorityLevel,
+) -> None:
+    result = _caller(module_id, case_type, authority).call(
+        "solana.reference_target_detection",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "scope_not_allowed"}
+
+
+def test_reference_target_detection_maps_detector_failure_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_detection",
+        lambda: (_ for _ in ()).throw(
+            solana_capability._ReferenceTargetFailure("detector_observation_failed")
+        ),
+    )
+
+    error = _reference_target_detection_caller().call(
+        "solana.reference_target_detection",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert error.status is CapabilityStatus.ERROR
+    assert error.diagnostics == {"reason": "detector_observation_failed"}
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_detection",
+        lambda: (_ for _ in ()).throw(
+            solana_capability._ReferenceTargetTimeout("detector_observation_timeout")
+        ),
+    )
+
+    timeout = _reference_target_detection_caller().call(
+        "solana.reference_target_detection",
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+    )
+
+    assert timeout.status is CapabilityStatus.TIMEOUT
+    assert timeout.diagnostics == {"reason": "detector_observation_timeout"}
+    assert process.poll() is not None
+
+
+def test_reference_target_detection_observes_independently_and_orders_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    observed = iter([False, True])
+    monkeypatch.setattr(
+        solana_capability, "_prepared_reference_target", prepared_target
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_target_operation",
+        lambda *_: (1_000_000, 0, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_reference_vault_outflow_signal",
+        lambda _: next(observed),
+    )
+    slots = iter([42, 44])
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: next(slots))
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_: ((999_900, 0, 0, 0, 1), "attack-signature"),
+    )
+
+    assert (
+        solana_capability._run_reference_target_detection()
+        == _REFERENCE_TARGET_DETECTION_EVIDENCE
+    )
+
+
+def test_reference_target_detection_reports_completed_not_observed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    monkeypatch.setattr(
+        solana_capability, "_prepared_reference_target", prepared_target
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_target_operation",
+        lambda *_: (1_000_000, 0, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        solana_capability, "_reference_vault_outflow_signal", lambda _: False
+    )
+    slots = iter([42, 44])
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: next(slots))
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_: ((999_900, 0, 0, 0, 1), "attack-signature"),
+    )
+
+    assert solana_capability._run_reference_target_detection() == {
+        "detector_id": "reference_vault_outflow_monitor",
+        "signal_id": "vault_outflow_signal",
+        "detection_status": "not_observed",
+        "attack_start_slot": 42,
+    }
+
+
+def test_reference_target_detection_preserves_semantics_for_fresh_replays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    observed = iter([False, True, False, True])
+    slots = iter([42, 44, 52, 54])
+    monkeypatch.setattr(
+        solana_capability, "_prepared_reference_target", prepared_target
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_target_operation",
+        lambda *_: (1_000_000, 0, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_reference_vault_outflow_signal",
+        lambda _: next(observed),
+    )
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: next(slots))
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_: ((999_900, 0, 0, 0, 1), "attack-signature"),
+    )
+
+    first = solana_capability._run_reference_target_detection()
+    second = solana_capability._run_reference_target_detection()
+
+    for evidence in (first, second):
+        assert evidence["detector_id"] == "reference_vault_outflow_monitor"
+        assert evidence["signal_id"] == "vault_outflow_signal"
+        assert evidence["detection_status"] == "observed"
+
+        first_detection_slot = evidence["first_detection_slot"]
+        attack_start_slot = evidence["attack_start_slot"]
+
+        assert isinstance(first_detection_slot, int)
+        assert isinstance(attack_start_slot, int)
+        assert first_detection_slot >= attack_start_slot
 
 
 def test_reference_target_attack_reports_deterministic_economic_outcome(
