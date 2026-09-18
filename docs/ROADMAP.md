@@ -9564,7 +9564,7 @@ BeeAgent безопасно выполняет только фиксирован
 
 ### Итерация 44.2 — Bounded BeeDrill reference-target detection capability
 
-**Статус:** PLANNED
+**Статус:** DONE
 
 #### Goal
 
