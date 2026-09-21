@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.65.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.64.0...beeagent-v0.65.0) (2026-09-21)
+
+
+### Features
+
+* **beedrill:** add bounded reference containment capability ([#261](https://github.com/beesyst/beeagent/issues/261)) ([1e67dcd](https://github.com/beesyst/beeagent/commit/1e67dcd6bf25faa21e666f4437f54b20abe7e883))
+
 ## [0.64.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.63.0...beeagent-v0.64.0) (2026-09-18)
 
 
