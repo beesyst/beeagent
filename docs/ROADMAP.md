@@ -9736,6 +9736,114 @@ git diff --check
 
 BeeAgent can safely execute and evidence the fixed BeeDrill containment experiment in the approved isolated environment while retaining complete ownership of execution, RPC, policy, authority, timeout and cleanup.
 
+### Iteration 44.4 — Bounded BeeDrill oracle-manipulation capability
+
+**Status:** DONE
+
+#### Goal
+
+Add the smallest BeeAgent-owned execution path required by BeeDrill Iteration 10 to execute and evidence one fixed oracle-manipulation security regression in the approved isolated Solana environment.
+
+#### Scope
+
+- reuse the existing BeeDrill-scoped `CapabilityCaller`;
+- add one bounded capability: `solana.reference_oracle_manipulation`;
+- scope it only to `reference_oracle_manipulation_replay`;
+- allow only `surfpool_local` and `reference_oracle_market`;
+- accept only the host-validated `broken` or `fixed` defense condition;
+- resolve the approved BeeDrill package-owned reference target host-side;
+- reuse existing Surfpool startup/readiness, RPC, timeout and cleanup infrastructure;
+- prepare the fixed canonical oracle-market state;
+- execute the fixed oracle-price manipulation;
+- execute the fixed first unsafe borrow;
+- independently observe the fixed oracle-price-deviation detector signal;
+- invoke the fixed borrow-containment control after detection;
+- execute the identical second borrow attempt;
+- prove whether that second borrow succeeded or was rejected from transaction and target state;
+- return bounded oracle, debt, reserve, timing, containment and economic evidence;
+- preserve explicit `ok/refused/timeout/error` outcomes and fresh-state replay.
+
+#### Excluded
+
+- generic oracle/provider capability;
+- live Pyth/Switchboard/network oracle data;
+- module-controlled price, borrow amount or detector rule;
+- arbitrary transaction, instruction, executable, argv, path, RPC endpoint or RPC method;
+- production/mainnet mutation;
+- production credentials;
+- BeeDrill metric or verdict calculation;
+- new execution framework;
+- BeeSDK contract changes;
+- new runtime dependencies unless separately proven necessary.
+
+#### Deliverable
+
+One host-owned bounded path:
+
+```text
+BeeDrill fixed oracle scenario
+→ BeeAgent policy
+→ local Surfpool
+→ reference_oracle_market
+→ fixed price manipulation
+→ fixed unsafe borrow
+→ independent detection
+→ broken/fixed containment
+→ second borrow succeeds/rejects
+→ bounded evidence
+→ cleanup
+```
+
+#### Acceptance criteria
+
+- only the exact BeeDrill module/case/capability/authority scope is accepted;
+- target, attack values, detector rule and execution mechanism are host-controlled;
+- arbitrary execution-shaped or oracle-parameter input is refused before execution;
+- both defense phases start from equivalent canonical target state;
+- real target state proves the oracle price changed from canonical to manipulated value;
+- real target state proves the first unsafe borrow occurred;
+- detection is observed independently from the attack executor's success assertion;
+- broken containment allows the second identical unsafe borrow;
+- fixed containment produces a confirmed rejection of the second identical borrow;
+- debt/reserve evidence proves the economic difference between phases;
+- slot ordering is internally consistent;
+- failure, timeout and cleanup outcomes are explicit;
+- no tested path leaves an orphan managed process;
+- no production/mainnet fallback or production secret is introduced;
+- existing BeeDrill lifecycle/reference-vault capabilities remain compatible.
+
+#### Checks
+
+```text
+targeted capability/runtime tests
+full pytest
+approved and forbidden scope tests
+invalid target/defense/payload refusal
+execution-shaped payload refusal
+canonical-state preparation
+oracle manipulation state evidence
+first-borrow state evidence
+independent detector observation
+broken containment replay
+fixed containment replay
+second-borrow success/rejection proof
+economic evidence consistency
+slot ordering
+preparation/build/deployment/transaction/observation failures
+timeout
+cleanup and no orphan process
+fresh-state replay
+real BeeDrill cross-repository integration smoke
+log/artifact inspection
+SAST
+SCA only if dependency surface changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can safely execute and machine-evidence the fixed BeeDrill oracle-manipulation regression while retaining complete ownership of execution, RPC, policy, authority, target resolution, timeout and cleanup.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
