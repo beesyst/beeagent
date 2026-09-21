@@ -47,6 +47,10 @@ def _reference_target_detection_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_target_detection")
 
 
+def _reference_target_containment_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="reference_target_containment_replay")
+
+
 class _Process:
     def __init__(self, force_cleanup: bool = False) -> None:
         self.exit_code: int | None = None
@@ -97,6 +101,17 @@ def test_caller_is_created_only_for_the_approved_module_case() -> None:
             "session-1",
             "beedrill",
             "reference_target_baseline",
+            AuthorityLevel.READ_ONLY,
+            logging.getLogger("test"),
+        )
+        is not None
+    )
+    assert (
+        create_capability_caller(
+            "run-1",
+            "session-1",
+            "beedrill",
+            "reference_target_containment_replay",
             AuthorityLevel.READ_ONLY,
             logging.getLogger("test"),
         )
@@ -567,6 +582,214 @@ _REFERENCE_TARGET_DETECTION_EVIDENCE = {
     "attack_start_slot": 42,
     "first_detection_slot": 44,
 }
+
+_REFERENCE_TARGET_CONTAINMENT_EVIDENCE = {
+    "target_id": "reference_vault",
+    "initial_state_id": "reference_vault_canonical_v1",
+    "economic_unit": "lamports",
+    "defense_condition": "fixed",
+    "attack_sequence_id": "reference_vault_unsafe_withdraw_twice_v1",
+    "initial_vault_lamports": 1_000_000,
+    "attack_start_slot": 42,
+    "first_attack_signature": "attack-1",
+    "first_attack_vault_lamports": 999_900,
+    "first_attack_unsafe_withdraw_count": 1,
+    "detection_status": "observed",
+    "first_detection_slot": 44,
+    "containment_status": "succeeded",
+    "first_containment_slot": 46,
+    "second_attack_status": "rejected",
+    "final_vault_lamports": 999_900,
+    "final_unsafe_withdraw_count": 1,
+    "residual_loss_lamports": 100,
+}
+
+
+def test_reference_target_containment_uses_fixed_scope_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_containment",
+        lambda condition: {
+            **_REFERENCE_TARGET_CONTAINMENT_EVIDENCE,
+            "defense_condition": condition,
+        },
+    )
+
+    result = _reference_target_containment_caller().call(
+        "solana.reference_target_containment",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_vault",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.OK
+    assert result.data == _REFERENCE_TARGET_CONTAINMENT_EVIDENCE
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"target_profile": "surfpool_local", "target_id": "reference_vault"},
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_vault",
+            "defense_condition": "other",
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_vault",
+            "defense_condition": "fixed",
+            "rpc_url": "untrusted",
+        },
+    ],
+)
+def test_reference_target_containment_refuses_untrusted_input(
+    payload: dict[str, str],
+) -> None:
+    result = _reference_target_containment_caller().call(
+        "solana.reference_target_containment", payload
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+
+
+def test_reference_target_containment_refuses_invalid_scope() -> None:
+    result = _caller(
+        module_id="other", case_type="reference_target_containment_replay"
+    ).call(
+        "solana.reference_target_containment",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_vault",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "scope_not_allowed"}
+
+
+def test_reference_target_containment_maps_timeout_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_target_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_target_containment",
+        lambda _: (_ for _ in ()).throw(
+            solana_capability._ReferenceTargetTimeout("containment_observation_timeout")
+        ),
+    )
+
+    result = _reference_target_containment_caller().call(
+        "solana.reference_target_containment",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_vault",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.TIMEOUT
+    assert result.diagnostics == {"reason": "containment_observation_timeout"}
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize("condition", ["broken", "fixed"])
+def test_reference_target_containment_proves_target_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    condition: str,
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    monkeypatch.setattr(
+        solana_capability, "_prepared_reference_target", prepared_target
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_target_operation",
+        lambda _payer, _state, _program, code, *_args, **_kwargs: (
+            (1_000_000, 0, 0, 0, 0)
+            if code == 0
+            else (999_900, 1, int(condition == "broken"), 0, 1)
+        ),
+    )
+    monkeypatch.setattr(
+        solana_capability, "_reference_vault_outflow_signal", lambda _: True
+    )
+    slots = iter([42, 44, 46])
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: next(slots))
+    calls = iter(
+        [
+            ((999_900, 0, 0, 0, 1), "attack-1"),
+            ((999_800, 1, 1, 0, 2), "attack-2")
+            if condition == "broken"
+            else (None, None),
+        ]
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_and_observe_with_signature",
+        lambda *_args, **_kwargs: next(calls),
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_target_state",
+        lambda _: (
+            (999_800, 1, 1, 0, 2) if condition == "broken" else (999_900, 1, 0, 0, 1)
+        ),
+    )
+
+    evidence = solana_capability._run_reference_target_containment(condition)
+
+    assert evidence["detection_status"] == "observed"
+
+    first_detection_slot = evidence["first_detection_slot"]
+    attack_start_slot = evidence["attack_start_slot"]
+
+    assert isinstance(first_detection_slot, int)
+    assert isinstance(attack_start_slot, int)
+    assert first_detection_slot >= attack_start_slot
+
+    assert evidence["residual_loss_lamports"] == (200 if condition == "broken" else 100)
+    if condition == "broken":
+        assert evidence["containment_status"] == "failed"
+        assert evidence["second_attack_status"] == "succeeded"
+        assert evidence["first_containment_slot"] is None
+    else:
+        assert evidence["containment_status"] == "succeeded"
+        assert evidence["second_attack_status"] == "rejected"
+        assert evidence["first_containment_slot"] == 46
 
 
 def test_reference_target_attack_uses_fixed_scope_and_reaps(
