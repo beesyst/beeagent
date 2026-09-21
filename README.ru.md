@@ -1,963 +1,430 @@
-# BeeAgent — модульная агентная платформа с explainable orchestration
-
-**BeeAgent** — модульная AI-платформа для корпоративных сценариев, в которой core отвечает за orchestration, state, approvals, artifacts, module loading и bounded execution/integration paths.
-
-Проект развивается не как “чат-бот с тулзами”, а как **stateful orchestrator** с явными границами между:
-
-- **core** — runtime, state, logs, artifacts, config, module loading;
-- **modules** — доменная бизнес-логика (`beeagent-rop`, в будущем `beescan`, `merch`);
-- **capabilities** — bounded integration/execution layer (MCP / n8n / внешние systems);
-- **UI / transport** — Telegram и read-only Web Console сейчас, позже Bitrix / другие интерфейсы.
-
-Текущий demo baseline уже существует, но теперь основной вектор развития — **module platform + first real client delivery**.
-
-## Ключевая идея
-
-Правильная схема работы BeeAgent:
-
-`UI / transport → BeeAgent core → module → capability / MCP / n8n → systems`
-
-Где:
-
-- **BeeAgent core** держит runtime state, session/run context, approvals, artifacts и policy;
-- **module** решает конкретный бизнес-кейс;
-- **capability layer** даёт модулю bounded доступ к внешним данным и действиям;
-- **systems** — CRM, email, 1С, workflows и другие внешние системы.
-
-## Что уже есть сейчас
-
-На текущем этапе BeeAgent уже умеет:
-
-- запускаться через единый entrypoint `start.sh`;
-- работать через Telegram transport;
-- запускать demo-cases через `cases/*`;
-- использовать mock/adapters как data boundary;
-- исполнять workflow через LangGraph;
-- сохранять run artifacts в `storage/`;
-- вести logs в `logs/app.log`;
-- запускать BeeUI-backed read-only Operator Web Console через `./start.sh web`;
-- иметь BeeUI-backed auth boundary для Web Console;
-- автоматически синхронизировать `.env` из `.env.example` при старте;
-- автоматически bootstrap'ить internal env secrets при старте;
-- ротировать principal tokens, session secret и Bitrix widget token через CLI;
-- защищать HTML/API routes при `web.auth.enabled=true`;
-- открывать read-only `/rop` console внутри Bitrix24 как Local Application через `bitrix.embedded_app` без отдельного BeeAgent login;
-- использовать BeeUI поверх FastAPI/Jinja2/Tabler как canonical web layer;
-- читать existing artifacts через BeeAgent UI adapter/read-model/artifact allowlist;
-- использовать локальные BeeUI/static assets без CDN и npm runtime;
-- показывать список runs, run overview, module diagnostics и ROP dashboard поверх existing artifacts;
-- ROP dashboard c KPI cards, processing funnel, source health, classification distribution, recommendations, attention events, attachment summary, evidence links, latest-N/thread/AI assist evidence и RU локализацией;
-- отдавать read-only JSON API поверх existing artifacts;
-- сохранять allowlist-based artifact access, bounded previews и sanitization;
-- поддерживать approval / reject в demo-потоке;
-- хранить step timings / basic observability;
-- держать несколько bounded demo/runtime paths (`promo`, `quiz`, `rop`);
-- выдавать explainable recommendations поверх deterministic path;
-- иметь internal module contract v0 для внешних доменных модулей;
-- загружать package-based модули через config-driven registry;
-- передавать модулю runtime context через core execution path;
-- давать модулю core-managed artifact API для module-linked artifacts;
-- иметь capability boundary v0 для bounded external calls;
-- вызывать первый реальный внешний модуль `beeagent-rop` через registry/runtime path;
-- запускать первый ROP operator flow через Telegram command `/run_rop`;
-- писать operator-facing artifact `operator_summary.json`;
-- запускать ROP flow через configurable `json_batch` input source и писать intake/normalized/operator artifacts;
-- запускать ROP flow через configurable `mailbox_readonly` source для controlled read-only mailbox smoke;
-- после source normalization классифицировать каждое ROP event через `beeagent-rop` case `lead_classification`;
-- сохранять batch-level classification artifact `classified_events.json`;
-- писать `mailbox_selection.json` как safe envelope для latest-N/source selection evidence;
-- строить `mail_thread_index.json`;
-- строить `mail_thread_context.json`;
-- передавать bounded `thread_context` в public `beeagent-rop` `lead_classification` path;
-- сохранять в `classified_events.json` optional поля `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action`;
-- выполнять bounded AI assist v0, disabled by default;
-- писать `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
-- применять AI result только через public module case `ai_assist_merge`;
-- сохранять deterministic result при `module_contract_unavailable`, invalid/low-confidence/blocked/provider-failed AI path;
-- выполнять BeeAgent-owned ROP OpenAI adjudicator для eligible ambiguous/conflict, tender и business-impacting `new_lead`/`existing_deal` events;
-- использовать strict Responses API `json_schema` для adjudicator output;
-- валидировать AI output по allowed ROP taxonomy;
-- tolerantly drop unknown `risk_flags`, не инвалидируя valid core decision;
-- безопасно сохранять deterministic результат с explicit diagnostics при provider/parse/validation failure adjudicator path;
-- сохранять class/evidence-aware merge policy: valid + high-confidence + no conflict AI применяется как final; conflict/unresolved/invalid/low-confidence/provider-failure сохраняет deterministic результат (без `manual_review` как normal terminal semantic queue);
-- сохранять safe deterministic `irrelevant/ignore` как `low_confidence_preserve`, если conflict evidence нет;
-- требовать known `ai_reason_code` для нового valid AI decision; missing/unknown reason code — validation diagnostic с сохранением deterministic результата (не `legacy`);
-- писать `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
-- показывать AI/deterministic/final traceability в TSV через stage-dependent AI fields;
-- передавать в `beeagent-rop` case `rop_summary` уже classified events, а не raw normalized events;
-- писать source-level diagnostics artifact `source_diagnostics.json`.
-- запускать ROP source flow через explicit `--source-id` или все enabled sources через `--all-sources`;
-- писать aggregate/per-source diagnostics для multi-source run;
-- сохранять source metadata в normalized/classified/operator/TSV artifacts;
-- показывать partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
-- строить ROP current-state artifacts и интерфейсный current-state index;
-- строить business-facing `rop_dashboard.json`;
-- выполнять read-only Bitrix reconciliation;
-- применять Bitrix match quality gate для weak/ambiguous/unsafe candidates;
-- формировать ROP MVP handoff/readiness pack;
-- использовать bounded email body preview через `rop.email_preview.body_chars_max`;
-- сохранять `body_preview`, `body_preview_chars`, `body_preview_truncated`, `body_preview_source` в `normalized_events.json`;
-- отдавать read-only ROP event detail HTML page `/rop/events/{event_id}?run_id=...`;
-- отдавать read-only JSON API `/api/rop/events/{event_id}?run_id=...`;
-- показывать detail links из ROP Queue;
-- использовать RU label `Подробнее` для detail link;
-- рендерить HTML event detail через BeeUI generic detail renderer, при том что BeeAgent отдаёт safe read-model/page-model.
-
-## Текущий фокус проекта
-
-BeeAgent уже прошёл этап **module platform v0**:
-
-- module contract v0 введён;
-- module registry v0 введён;
-- runtime context v0 введён;
-- artifact API v0 введён;
-- capability boundary v0 введён;
-- `beeagent-rop` подключён как первый реальный package-based модуль через registry/runtime path.
-
-Итерация 17 добавила:
-
-- config-driven ROP source registry в `config/rop/sources.yml` с `rop.sources_path` в `config/settings.yml`;
-- `json_batch` source type с load/validate/normalize flow;
-- `run_rop_batch_case(...)` — BeeAgent-owned batch handoff case без отдельного `run.mode`;
-- артефакты `intake_metadata.json` и `normalized_events.json` per run;
-- sample batch file `storage/mock/rop_batch_sample.json`.
-
-Итерация 18 добавила:
-
-- `mailbox_readonly` source type в canonical ROP source registry;
-- read-only mailbox ingestion через stdlib `imaplib` без destructive mailbox actions;
-- `source_diagnostics.json` для explainable degraded/ok source behavior;
-- safe mailbox normalization в operator-facing artifacts без raw `.eml` и без attachment content.
-
-Итерация 19 добавила:
-
-- per-event classification handoff внутри ROP source flow;
-- вызов `beeagent-rop` case `lead_classification` для каждого normalized event;
-- artifact `classified_events.json`;
-- вызов `beeagent-rop` case `rop_summary` уже по classified events;
-- classification diagnostics в `operator_summary.json`;
-- controlled fallback для per-event classification failure без падения всего batch.
-
-Добавлено:
-
-- ROP CLI entrypoint: `./start.sh rop run/summary/export-review/reconcile-bitrix`;
-- in-memory source overrides через CLI args: `--source-id`, `--items-max`, `--period`, `--run-id`;
-- `rop run` запускает ROP batch pipeline без Telegram и автоматически экспортирует TSV для human review;
-- `rop summary` показывает readable summary для готового run;
-- `rop export-review` остаётся ручным повторным экспортом TSV для уже существующего run без raw `.eml`, raw email bodies и attachment content;
-- backward compatibility: `./start.sh` и `./start.sh telegram` работают как раньше;
-- расширенный `rop_review_table.tsv` для human review;
-- `body_short`, `attachments`, `bot_priority`, `bot_reasoning`;
-- Bitrix/duplicate placeholder columns для будущей сверки;
-- sanitized/bounded TSV export без raw `.eml` и attachment content;
-- BeeUI-backed read-only Operator Web Console через `./start.sh web`;
-- BeeUI embedded app как canonical web layer поверх FastAPI/Jinja2/Tabler;
-- HTML routes `/`, `/health`, `/runs`, `/runs/<run_id>`, `/rop`, `/modules`;
-- Bitrix embedded app routes `POST /bitrix/rop/install` и `POST /bitrix/rop/launch` (UI-8.5);
-- JSON API routes `/api/dashboard`, `/api/runs`, `/api/runs/<run_id>`, `/api/rop/dashboard`, `/api/modules`;
-- browser artifact routes `/runs/<run_id>/artifacts`, `/runs/<run_id>/artifacts/<artifact_id>` и API routes `/api/runs/<run_id>/artifacts`, `/api/runs/<run_id>/artifacts/<artifact_id>`;
-- allowlisted artifact access по `artifact_id` с bounded/redacted preview для HTML/JSON;
-- protection from path traversal and raw `.eml` / `message/rfc822` exposure.
-
-Итерация 24 добавила:
-
-- explicit multi-source ingestion в BeeAgent core без изменений `beeagent-rop`;
-- `./start.sh rop run` запускает все enabled sources, когда их больше одного; `./start.sh rop run --all-sources` сохраняется как явный эквивалент;
-- `selection_mode` для фиксации default / explicit single-source / all-sources режима;
-- `aggregate` + `sources[]` в source/intake artifacts;
-- source traceability в `normalized_events.json`, `classified_events.json` и `rop_review_table.tsv`;
-- partial degradation одного source без падения всего run, если хотя бы один source успешно загрузился.
-
-Итерации 25–29 добавили:
-
-- attachment extraction/preview artifacts без raw content;
-- Bitrix read-only reconciliation artifacts;
-- ROP current-state index;
-- business-facing ROP dashboard read-model;
-- Bitrix match quality gate;
-- MVP handoff/readiness pack.
-
-Итерация 30 добавила:
-
-- latest-N/source selection evidence artifact `mailbox_selection.json`;
-- thread artifacts `mail_thread_index.json` и `mail_thread_context.json`;
-- bounded `thread_context` handoff в `beeagent-rop` `lead_classification`;
-- preservation optional ROP business fields в `classified_events.json`: `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action`;
-- config-driven `rop.ai_assist` contract, disabled by default;
-- fail-fast validation для AI env при `rop.ai_assist.enabled: true` и `dry_run: false`;
-- bounded AI assist artifacts: `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`;
-- public `ai_assist_merge` module boundary для применения AI result;
-- deterministic preservation path при unavailable/invalid merge contract или failed/invalid/blocked AI output.
-
-Итерация 31 добавила:
-
-- config-driven bounded email preview contract `rop.email_preview.body_chars_max`;
-- fail-fast validation для `rop.email_preview.body_chars_max`;
-- поля `body_preview`, `body_preview_chars`, `body_preview_truncated`, `body_preview_source` в `normalized_events.json`;
-- read-only API route `/api/rop/events/{event_id}?run_id=<run_id>`;
-- read-only HTML route `/rop/events/{event_id}?run_id=<run_id>`;
-- BeeUI generic detail renderer для ROP event detail page;
-- BeeAgent-owned `rop_event_detail` read-model/page-model;
-- detail links из ROP Queue;
-- RU локализацию detail link: `Подробнее`;
-- сохранение границ: no raw `.eml`, no attachment content, no mailbox/CRM/Bitrix mutations.
-
-Итерация 32 добавила:
-
-- `./start.sh rop evaluate-review --run-id <run_id>`;
-- `storage/runs/<run_id>/rop_evaluation.json` — classification quality gate;
-- AI provider profiles: openai, deepseek, lmstudio, custom;
-- Bitrix widget API:
-  - `GET /api/bitrix/rop/widget`;
-  - `GET /api/bitrix/rop/widget/events`;
-  - `GET /api/bitrix/rop/widget/events/{event_id}`;
-- конфиг `bitrix.widget`.
-
-Итерация 33 добавила:
-
-- forwarded mailbox normalization polish;
-- `clean_subject`;
-- `transport_labels`;
-- `spam_label_present`;
-- `reply_label_present`;
-- `forwarded_wrapper`;
-- `form_email`;
-- `original_sender`;
-- `original_sender_email`;
-- `original_recipient`;
-- `original_message_date`;
-- `date_source`;
-- `x_email_id`;
-- enriched TSV fields;
-- правило, что transport labels — weak signals, а не business labels.
-
-Итерация 34 добавила:
-
-- BeeAgent-owned ROP OpenAI adjudicator execution path;
-- provider execution через `ai.profiles.openai` / `OPENAI_API_KEY`;
-- strict structured JSON output через Responses API `json_schema`;
-- bounded/sanitized AI request payload;
-- artifacts `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
-- deterministic-vs-AI-vs-final traceability в TSV;
-- safe fallback при missing key/provider failure/invalid JSON/invalid taxonomy;
-- no CRM/Bitrix/mailbox write-back;
-- no private `beeagent-rop` imports.
-
-Итерация 34.1 добавила:
-
-- prompt/schema hardening;
-- tolerant unknown `risk_flags` handling;
-- low-confidence safe-ignore preservation;
-- class/evidence-aware merge policy; `manual_review` не является normal terminal semantic queue (deterministic результат сохраняется с explicit diagnostics);
-- high-confidence safe resolution supplier/newsletter false positives в `irrelevant/ignore`;
-- improved payload completeness для `body_preview` и attachment metadata.
-
-Итерация UI-8 (read-model) добавила:
-
-- allowlist для `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`;
-- новый артефакт `rop_final_decisions.json` — artifact-first read-model финальных решений с computed read-only fallback для missing/malformed/unsafe artifact;
-- секции AI Adjudicator и Final Decision на странице события `/rop/events/{event_id}`;
-- поля `final_case_type`, nullable `final_case_subtype`, `final_queue`, `final_action`, `final_decision_source`, `final_confidence`, `needs_attention`, nullable `attention_reason`, `automation_allowed`, `bitrix_write_allowed` (всегда false);
-- `/api/rop/dashboard` — `ai_adjudicator_summary`, вложенный `final_decisions` и compatibility alias `final_decision_summary`;
-- Event Detail — `final_decision` из того же read-model;
-- Bitrix widget API — bounded `final_decisions` с summary, пересчитанным по возвращённым events;
-- политика финального решения v1 (AI ok / low_confidence_preserve / deterministic_preserved / deterministic / fallback_policy);
-- `bitrix_write_allowed=false` для MVP.
-
-Итерация 35 реализует:
-
-- current-batch duplicate detection через duplicate-aware `beeagent-rop` `lead_classification` contract;
-- deterministic bounded duplicate candidate context из уже загруженных событий текущего ROP batch (по source timestamp ASC + `event_id` tie-break, earliest event = canonical original);
-- additive run-local `event_instance_id` сохраняет processing occurrence при повторяющемся transport `event_id`; Queue/Event Detail используют selector только для artifact/UI lookup, не для module duplicate matching;
-- client-scoped candidates (изоляция между client scopes);
-- self-match исключён; найденный duplicate не становится canonical source для duplicate chain;
-- `payload.duplicate_candidates` в public module call; matching thresholds/reason semantics остаются в `beeagent-rop`;
-- `base_classification` и `duplicate` evidence (candidate/confidence/reason) в `classified_events.json` и `rop_final_decisions.json`;
-- deterministic confident duplicate сохраняется в final decision (`deterministic` source) и не инвалидируется AI adjudicator/legacy AI assist (explicit skip);
-- `duplicate_count` в `operator_summary.json.classification`;
-- duplicate rows доступны в ROP Queue и Classification filter; `needs_review` содержит fallback events;
-- Classification filter автоматически содержит `Duplicate` при наличии duplicate rows;
-- Event Detail показывает bounded duplicate evidence (candidate, confidence, reason) и `base_case_type`;
-- reviewed It20 reason code `duplicate_candidate_confirmed` покрыт reason catalog.
-
-Итерация 36 реализует:
-
-- production ROP mailbox poll обрабатывает несколько enabled read-only mailbox sources независимо;
-- `rop.mailbox_poll.sources_all` (без дублирующего списка source IDs);
-- per-source UIDVALIDITY / last_processed_uid checkpoint: продвижение только после полного успешного flow source, failure одного source не блокирует остальные и не откатывает успешные checkpoints;
-- новый source без checkpoint получает только свой baseline без изменения существующих checkpoints;
-- per-source poll/rebaseline override через `./start.sh rop poll --source-id <id>`;
-- optional business fallback `sources[].routing.email_recipient` в canonical registry (не IMAP username, не Bitrix ID);
-- deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved; несколько адресов на одном evidence level → `ambiguous` без выбора первого; `Cc` только evidence, никогда responsible;
-- BeeAgent-owned read-only Bitrix `user.get` directory lookup (exact normalized active user email, bounded pagination, не per-email API call);
-- новый read-only artifact `storage/runs/<run_id>/rop_recipient_routing.json` с `event_id` + `event_instance_id`, source provenance, recipient/ responsible statuses (resolved/ambiguous/unresolved, matched/not_found/connector_degraded/not_attempted);
-- секция Recipient routing на read-only Event Detail странице;
-- без CRM/mailbox write-back, `automation_allowed=false`, `bitrix_write_allowed=false`, `beeagent-rop` без изменений.
-
-Итерация 37 реализует (controlled Bitrix CRM write-back v0, disabled by default):
-
-- `bitrix.writeback` config, disabled by default; включение требует `bitrix.enabled`, `bitrix.reconciliation.enabled`, валидные customer Lead `stageId` для `new_lead`/`new_lead_assigned`/`irrelevant` и отдельный write credential env, который отличается от read credential и по env name, и по normalized URL; дополнительные `bitrix.writeback.email_attach` (email-activity binding) и `bitrix.writeback.source_id` (Lead `SOURCE_ID`, например `EMAIL` = «Входящее письмо»); `bitrix.writeback.email_completed` (boolean, по умолчанию `true`) задаёт состояние `COMPLETED` создаваемой email-активности — `false` оставляет письмо незавершённым/заметнее в таймлайне;
-- отдельный bounded `BitrixWriteClient` (exact mutation allowlist `crm.item.add`, `crm.activity.add`, `entityTypeId=1`) с отдельным env credential `BITRIX_WRITEBACK_WEBHOOK_URL`; `BitrixReadonlyClient` остаётся строго read-only и использует `crm.activity.list` только для idempotency reconciliation;
-- `irrelevant` включён в read-only reconciliation и delivery planning; `should_rop_see` не является execution gate;
-- authoritative write-back planner: каждый classified event получает outcome `create_lead` / `attach_existing` / `deferred` из final classification + reconciliation + `rop_recipient_routing.json` + server-side policy;
-- canonical durable state `storage/interfaces/rop_writeback_state.json` + per-run read-only projection `storage/runs/<run_id>/rop_writeback_summary.json` (artifact allowlist); after external execution or recovery, every affected original run refreshes its summary from this canonical state;
-- idempotent create через stable cross-run identity `client_id + source_id + (message_id → x_email_id → event_id)` и bounded `ORIGINATOR_ID`/`ORIGIN_ID`; recovery uncertain POST по idempotency lookup перед повторным POST; bounded retry для transport/429/5xx; terminal 400/401/403/API errors не ретраятся;
-- прикрепление письма к созданному или trusted exact thread Lead/Deal через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.email_attach: true`; activity получает target owner и его существующего responsible без reassignment CRM entity, а повторный/uncertain результат сначала сверяется read-only `crm.activity.list` по stable identity;
-- safe existing Deal доступен только через exact sender email/phone → exact Contact/Company → bounded read-only `crm.item.list` (`entityTypeId=2`) relation lookup по официальным `contactId`/`companyId`: один linked Deal = strong/safe, multiple/none/malformed/connector result не становится automatic target, title/subject similarity остаётся unsafe;
-- exact Contact/Company остаётся только identity evidence, а не execution target: после успешно
-  завершённых exact Lead и related-Deal lookup без target reconciliation сохраняет
-  `identity_only_no_target` с `suitable_target_search=completed_no_target`; configured create
-  разрешён только для `new_lead`/`irrelevant`;
-- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering — durable intent → checkpoint → external execution → original per-run projection refresh. Automatic `rop poll` и `rop run` выполняют только records своего just-persisted run; poll без новых писем не запускает write-back. Historical/global pending work выполняется только явным operator `rop writeback execute`; `--existing-only` ограничен exact origin recovery существующих BeeAgent `create_lead` records, не создаёт отсутствующий Lead и не исполняет unrelated historical `attach_existing`. При `bitrix.writeback.enabled: true` failure reconciliation/planning до persistence intent завершает `rop run` explicit failure и блокирует poll checkpoint, иначе не блокирует ingestion;
-- fail closed: unresolved/inactive/ambiguous/degraded responsible, ambiguous/unsafe/duplicate target, unresolved `existing_deal`/`duplicate` → `deferred` без спекулятивного create; exact active routing match с positive `user_id` authorizes Lead creation; для `new_lead` exact matched responsible создаёт Lead в configured `bitrix.writeback.stages.new_lead_assigned` (customer «Лид назначен»), а `responsible.status=not_found` с valid `user_id_fallback` — в existing `bitrix.writeback.stages.new_lead` с fallback user; optional `bitrix.writeback.user_id_fallback` назначает указанного пользователя только при `responsible.status=not_found` и никогда не override exact matched responsible; existing CRM entity никогда не reassign;
-- CLI `./start.sh rop writeback plan --run-id <id>` и `./start.sh rop writeback execute [--run-id <id>] [--dry-run] [--retry-failed] [--existing-only]`; ordinary `execute` остаётся explicit global executor, `--existing-only` выполняет только exact existing Lead recovery без создания отсутствующего Lead; disabled/dry-run/planning = zero writes;
-- `attach_existing` выполняет idempotent email activity binding для безопасно найденного Lead/Deal; activity state и remote activity ID сохраняются в canonical write-back state; live existing-target smoke требуется перед production enablement;
-- без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
-
-Итерация 38 реализует (thread-aware Bitrix email write-back hardening v1):
-
-- customer identity отделён от CRM target authority: sender email/phone, Contact/Company и related historical CRM relation больше не являются automatic execution target — reconciliation никогда не выдаёт `safe_to_use_as_target=true` для identity-only Lead/Deal matches (остаются strong identity/candidate evidence с `needs_manual_review=true`);
-- automatic existing-target attach разрешён только при exact trusted thread evidence: normalized `Message-ID`, `In-Reply-To` (preferred) и bounded `References` резолвятся против canonical `storage/interfaces/rop_writeback_state.json`; все resolved exact referenced ancestors обязаны согласоваться на одном trusted Lead/Deal, иначе `ambiguous_thread_target` deferred с zero mutation; matching scope — same `client_id`, не обязательно same `source_id`;
-- bounded target provenance: confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) — authoritative thread root; thread-resolved attach (`target_provenance=thread_resolved`) распространяет target по цепочке; legacy records без trusted provenance не являются thread authority (fail closed);
-- exact reply прикрепляется к тому же Lead/Deal без нового `crm.item.add`; цепочка `A → B → C` сохраняет target; два независимых треда одного sender могут резолвиться в разные Leads; independent `new_lead` от известного sender может создать новый Lead; `existing_deal`/`duplicate` без safe exact target остаются deferred/manual-review;
-- run-local `thr_*` никогда не используется как durable CRM identity; classifier/AI/subject/`RE:`/`FWD:` markers alone не авторизуют attach; existing target responsible сохраняется (без reassignment); reply в том же batch к ещё не подтверждённому root получает recoverable `pending_thread_root` deferred;
-- bounded body preview: удаление `<!DOCTYPE ...>`/comments/script/style/HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
-- без изменений `beeagent-rop`, без новых dependencies, `pyproject.toml.version` не менялся.
-
-Итерация 40 реализует (secure ROP attachment lifecycle + AI-assisted document understanding v1):
-
-- mailbox normalization сохраняет accepted MIME attachment bytes как opaque blobs в dedicated bounded store `storage/attachments/<run_id>/` до mailbox checkpoint; original filename — только metadata, filesystem identity — generated `att-<sha256[:24]>` blob ids; per-run `attachment_manifest.json` (attachment_id, event identity, filename, content type, size, SHA-256, storage/analysis status, refusal reason) без raw bytes;
-- config-driven storage bounds: `rop.attachments.storage.{enabled,file_max,message_max,files_message_max}` (fail-fast validated); limits are applied during MIME extraction before decoded payload retention; required storage failure блокирует checkpoint; oversized/count/aggregate/blocked (`.eml`/`message/rfc822`) — explicit status; retention/download/Bitrix delivery независимы от AI analysis (`rop.attachments.enabled:false` = zero provider calls);
-- bounded AI document understanding через configured file-capable provider path: `rop.attachments.analysis.{provider,file_capable,chars_max}`; PDF/DOCX передаются через bounded provider upload/reference lifecycle (file upload via the provider Files API, then `input_file` reference by `file_id`, temporary file deleted after the response) и JPEG/PNG через `input_image` data URLs; binary analysis enabled (`file_capable:true`) only after controlled provider smokes prove the configured profile for PDF/DOCX/JPEG/PNG; unsupported/provider failure — explicit degraded без local unsafe parser fallback, document instructions не дают execution authority, valid результат попадает в existing `attachment_text_preview`/extraction contract;
-- authenticated download `GET /rop/attachments/{attachment_id}/download?run_id=...` (existing BeeUI auth/authorization, safe manifest lookup, invalid/traversal fail closed, forced attachment + nosniff + no-store, no inline render); Event Detail показывает filename/type/size/storage/analysis/download;
-- Bitrix physical file delivery: отдельный opt-in switch `bitrix.writeback.file_attach`, файлы доставляются только в уже выбранный trusted/new CRM target email activity (`crm.activity.update` FILES/fileData — единственное расширение write allowlist), отдельный `file_attach_status`/idempotency, retry из durable store без mailbox re-ingestion; uncertain remote file updates fail closed as `reconciliation_required`, so replay cannot duplicate files; `email_attach` backward-compatible;
-- без изменений `beeagent-rop` и `beeui` (generic renderer), без новых dependencies, `pyproject.toml.version` не менялся.
-
-Итерация 41 реализует (canonical local document extraction + ROP Docling migration v1):
-
-- BeeAgent-owned `document.extract` contract: `DocumentExtractionResult` (status, reason_code, engine, bounded text, text_length, is_truncated, content_type, ocr_used, page_count) — product-neutral, без Docling-специфичных типов; Docling `==2.122.0` — единственный canonical document engine v1 (`onnxruntime==1.29.0` — только ONNX inference runtime для local RapidOCR, не второй document engine);
-- untrusted stored blobs обрабатываются через bounded local subprocess worker с таймаутом (`document_extraction_worker`), парсер crash/timeout изолирован от ROP orchestration; входы — только BeeAgent attachment manifest/store, произвольные URL/path и original filename как filesystem identity запрещены, format hint выводится только из allowlisted content type;
-- initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG; JPEG/PNG и scanned PDF — local Docling OCR path; OCR backend явно выбран как RapidOCR (`RapidOcrOptions(backend="onnxruntime")`), а не неявный Docling auto-select; `onnxruntime` — inference runtime RapidOCR; cyrillic/Russian распознавание использует provisioned PP-OCRv5 cyrillic rec assets; `rop.attachments.analysis` provider-конфиг заменён на explicit local `rop.attachments.extraction.{engine,chars_max,pages_max,timeout_seconds,ocr_enabled}` с fail-fast validation;
-- provider Files API / `input_file` / `input_image` / base64 attachment path удалены из runtime; customer attachment content не уходит во внешний document-reading provider; AI adjudicator остаётся text-only semantic layer;
-- local Docling model assets (layout model + RapidOCR cyrillic rec/det/dict) подготавливаются явно через `config/start.py docling-assets-prepare`; runtime offline (`HF_HUB_OFFLINE=1`), без silent model download; missing assets — explicit degraded, без AI file-reading fallback;
-- successful extraction feeding в existing `attachment_extraction.json` / `attachment_text_preview` / preview/status/refusal contract; `rop.attachments.enabled:false` = zero document parsing при сохранении storage/download/Bitrix delivery;
-- без изменений `beeagent-rop` и `beeui`, `pyproject.toml.version` не менялся.
-
-Итерация 42 реализует (responsible-aware Bitrix lead stage routing v1):
-
-- добавлен explicit config key `bitrix.writeback.stages.new_lead_assigned` (customer stage «Лид назначен»); значение подтверждено read-only Bitrix verification: STATUS_ID `2` = «Лид назначен»; `user_id_fallback=167` = активный ROBOT WG (system@welding.kz);
-- planner детерминированно выбирает stage нового Lead по уже подтверждённому responsible outcome: `new_lead + matched` → `stages.new_lead_assigned` + exact matched user; `new_lead + not_found` + valid `user_id_fallback` → existing `stages.new_lead` + fallback user; `irrelevant` → existing configured stage;
-- fail-closed и trusted-target поведение сохранены: ambiguous/degraded/unresolved/not-attempted responsible → `deferred` без create; fallback никогда не override exact matched; trusted `attach_existing` без restage/reassignment существующей CRM entity;
-- executor без изменений — тот же bounded `crm.item.add` (`entityTypeId=1`) с planner-provided `STAGE_ID`/`ASSIGNED_BY_ID`; mutation allowlist не расширялся; new stage key fail-fast при enabled write-back и проходит существующий `crm.status.list` pre-validation;
-- durable state, retry/recovery, checkpoint и idempotency сохранены;
-- без изменений `beeagent-rop` и `beeui`, без новых dependencies, `pyproject.toml.version` не менялся.
-
-BeeAgent consumes `beeagent-rop==0.19.2` из объявленного private sibling `uv` source (`[tool.uv.sources] beeagent-rop = { path = "../beeagent-rop", editable = true }`). Registry/PyPI публикация не является prerequisite текущей private-module dependency model; `uv sync --frozen` проходит, установленный модуль сообщает version 0.19.2. Публикация в registry/PyPI для этой архитектуры не требуется.
-
-Текущий фокус:
-
-1. использовать `config/rop/sources.yml` как source of truth для single-source и multi-source ROP ingestion;
-2. запускать ROP MVP pipeline через CLI (`--source-id` или `--all-sources`), а результат смотреть через Operator Web Console;
-3. использовать `source_diagnostics.json`, `intake_metadata.json`, dashboard/TSV для human review и фиксации ошибок классификации/source degradation;
-4. не превращать mailbox smoke в production listener/stream без отдельной итерации;
-5. сохранить границу: BeeAgent отвечает за source/orchestration/artifacts/UI adapter surface, `beeagent-rop` — за ROP business logic.
-
-## Режимы работы и CLI
-
-Сейчас основной runtime mode:
-
-- **telegram** — Telegram bot / transport layer.
-- **web** — read-only operator web console поверх existing artifacts.
-
-`run.mode` отвечает за то, какой transport/runtime запускается при старте приложения.  
-Он не выбирает доменный модуль и не должен превращаться в список клиентских сценариев.
-
-Режим задаётся в `config/settings.yml`:
-
-```
-run:
-  mode: "telegram"
+# BeeAgent — модульный агентный runtime для bounded AI workflows
+
+**BeeAgent** — модульный stateful runtime для создания explainable AI-систем с явными границами между orchestration, доменной логикой, внешними capabilities и пользовательскими интерфейсами.
+
+BeeAgent не задуман как чат-бот с неограниченным набором tools.
+
+Базовая модель:
+
+```text
+UI / Transport
+      ↓
+BeeAgent Core
+      ↓
+Domain Module
+      ↓
+Bounded Capability
+      ↓
+External System
 ```
 
-### Entrypoint
+Runtime владеет state, policy, authority, artifacts, загрузкой модулей, execution boundaries и observability.
 
-```bash
-# Использует run.mode из settings.yml
-./start.sh
+Доменная бизнес-логика живёт в отдельных модулях.
 
-# Явный Telegram mode
-./start.sh telegram
+## Зачем BeeAgent
 
-# Явный Web mode (read-only dashboard)
-./start.sh web
+В AI-приложениях часто смешиваются в одном месте:
 
-# ROP CLI для batch pipeline
-./start.sh rop run [--source-id SOURCE | --all-sources] [--items-max N] [--period YYYY-MM] [--run-id ID]
-./start.sh rop poll [--rebaseline]
-./start.sh rop summary --run-id ID
-./start.sh rop export-review --run-id ID [--format tsv]
-./start.sh rop evaluate-review --run-id ID
-./start.sh rop evaluate-review --tsv storage/runs/ID/rop_review_table.tsv
-./start.sh rop reconcile-bitrix --run-id ID
+- conversation state;
+- бизнес-правила;
+- tool execution;
+- credentials;
+- внешние API;
+- approvals;
+- UI;
+- persistence;
+- AI decisions.
 
-# ROP MVP handoff/readiness pack (BeeAgent-owned, v0)
-./start.sh rop mvp-pack --run-id ID [--period 7d]
+BeeAgent разделяет эти ответственности.
 
-# Auth rotation CLI
-./start.sh auth rotate <principal-id-or-username>
-./start.sh auth rotate all
-./start.sh auth rotate all --logout-all
-./start.sh auth rotate session
-./start.sh auth rotate bitrix-widget
+Главный архитектурный принцип:
+
+> Domain intent должен быть отделён от execution authority.
+
+Модуль может запросить разрешённую операцию, но не получает автоматически доступ к shell, filesystem, RPC, credentials или внешней системе.
+
+BeeAgent остаётся host и policy boundary.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+    UI[UI / Transport]
+    CORE[BeeAgent Core]
+    MODULE[Domain Module]
+    CAP[Bounded Capability]
+    SYSTEM[External System]
+    ART[Artifacts]
+    AI[AI Provider]
+
+    UI --> CORE
+    CORE --> MODULE
+    MODULE --> CAP
+    CAP --> SYSTEM
+
+    CORE --> ART
+    MODULE --> ART
+
+    CORE --> AI
 ```
 
-### Публичный CLI surface
+### BeeAgent Core
 
-Единый canonical entrypoint — `./start.sh`. Для обычной установки отдельная install-команда не существует:
+Core владеет платформенным поведением:
 
-```bash
-git clone <repo>
-cd beeagent
-./start.sh
-```
+- runtime и session context;
+- run identity;
+- конфигурацией и fail-fast validation;
+- обнаружением и загрузкой модулей;
+- module dispatch;
+- artifact storage API;
+- approvals и policy;
+- capability boundaries;
+- bounded external execution;
+- logging и observability;
+- transport/UI integration;
+- authentication и authorization surfaces;
+- timeout, lifecycle и cleanup behavior.
 
-| Категория            | Команда                                             | Назначение                                                                       |
-| -------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Startup/runtime      | `./start.sh`                                        | Запуск BeeAgent с `run.mode` из `settings.yml`                                   |
-| Startup/runtime      | `./start.sh telegram`                               | Явный Telegram mode                                                              |
-| Startup/runtime      | `./start.sh web`                                    | Явный Web mode (read-only dashboard)                                             |
-| Startup/runtime      | `./start.sh web --host ... --port ... --no-open`    | Web mode с CLI overrides                                                         |
-| Startup/runtime      | `./start.sh routes`                                 | Route listing diagnostic                                                         |
-| Document maintenance | `./start.sh docling-assets-prepare`                 | Manual repair/re-prepare; normal `./start.sh` already ensures required assets.   |
-| Auth                 | `./start.sh auth-init`                              | Manual auth/env bootstrap; normal `./start.sh` performs bootstrap automatically. |
-| Auth                 | `./start.sh auth rotate <principal-id-or-username>` | Rotate principal token                                                           |
-| Auth                 | `./start.sh auth rotate all`                        | Rotate all principal tokens                                                      |
-| Auth                 | `./start.sh auth rotate all --logout-all`           | Rotate all tokens + session secret                                               |
-| Auth                 | `./start.sh auth rotate session`                    | Rotate session secret                                                            |
-| Auth                 | `./start.sh auth rotate bitrix-widget`              | Rotate Bitrix widget token                                                       |
-| ROP                  | `./start.sh rop run ...`                            | Run ROP batch pipeline                                                           |
-| ROP                  | `./start.sh rop poll ...`                           | Poll configured mailbox                                                          |
-| ROP                  | `./start.sh rop summary --run-id ...`               | Display run summary                                                              |
-| ROP                  | `./start.sh rop export-review ...`                  | Export TSV for human review                                                      |
-| ROP                  | `./start.sh rop evaluate-review ...`                | Evaluate classification quality                                                  |
-| ROP                  | `./start.sh rop current ...`                        | Build current-state index                                                        |
-| ROP                  | `./start.sh rop dashboard ...`                      | Build ROP business dashboard                                                     |
-| ROP                  | `./start.sh rop reconcile-bitrix ...`               | Reconcile with Bitrix CRM (read-only)                                            |
-| ROP                  | `./start.sh rop mvp-pack ...`                       | Build ROP MVP handoff/readiness pack                                             |
-| ROP                  | `./start.sh rop writeback plan ...`                 | Build authoritative write-back plan (zero writes)                                |
-| ROP                  | `./start.sh rop writeback execute ...`              | Execute pending write-back per policy                                            |
+### Доменные модули
 
-### Operator Web Console (BeeUI-backed, UI-6/UI-7)
+Модули владеют бизнес- или продуктовыми semantics.
 
-Read-only web console запускается отдельной командой:
+В модуле должны жить:
 
-```bash
-./start.sh web
-```
+- domain models;
+- rules;
+- classification;
+- analysis;
+- recommendations;
+- domain-specific evaluation;
+- domain-specific artifacts.
 
-CLI overrides:
+Модуль не должен становиться вторым runtime.
 
-```bash
-./start.sh web --host 127.0.0.1 --port 8780 --no-open
-```
+Он не должен владеть generic:
 
-Route listing diagnostic:
+- process lifecycle;
+- credential management;
+- storage infrastructure;
+- arbitrary network execution;
+- transport handling;
+- global authentication;
+- host policy.
 
-```bash
-./start.sh routes
-```
+Доменные модули могут быть публичными или приватными.
 
-Web Console запускается через `./start.sh web`.
+Это позволяет оставить сам BeeAgent переиспользуемым framework, а коммерческие или customer-specific продукты хранить в отдельных приватных пакетах.
 
-BeeUI — canonical web layer. BeeAgent в этом пути отвечает за read-only adapter, read-model, layout builders, artifact allowlist, config/env policy, auth bootstrap, route protection и rotation CLI. HTML/rendering/templates/shell, browser artifact pages, login/logout/session/CSRF принадлежат BeeUI. Legacy `src/beeagent_module/web` остаётся frozen и не участвует в новом UI-6/UI-7 rendering path.
+### Capabilities
 
-Доступные HTML маршруты:
-
-- `/` — dashboard (customer-facing KPI + Quick Links + Technical details), поддерживает `?lang=ru`
-- `/health` — health check
-- `/runs` — run history, поддерживает `?lang=ru`
-- `/runs/<run_id>` — run detail, поддерживает `?lang=ru`
-- `/rop` — ROP dashboard, поддерживает `?lang=ru`
-- `/rop/events/<event_id>` — read-only ROP event detail review page, требует `?run_id=<run_id>`, поддерживает `?lang=ru`
-- `/modules` — module diagnostics, поддерживает `?lang=ru`
-
-JSON API маршруты:
-
-- `/api/dashboard`
-- `/api/runs`
-- `/api/runs/<run_id>`
-- `/api/modules`
-- `/api/rop/dashboard` (UI-6 enriched read-only payload)
-- `/api/rop/events/<event_id>` — read-only JSON envelope для ROP event detail, требует `?run_id=<run_id>`
-- `/api/bitrix/rop/widget` — read-only Bitrix widget summary API
-- `/api/bitrix/rop/widget/events` — alias for widget summary
-- `/api/bitrix/rop/widget/events/<event_id>` — read-only Bitrix widget detail API
-
-Browser artifact маршруты:
-
-- `/runs/<run_id>/artifacts` — HTML
-- `/runs/<run_id>/artifacts/<artifact_id>` — HTML
-
-API artifact маршруты:
-
-- `/api/runs/<run_id>/artifacts` — JSON
-- `/api/runs/<run_id>/artifacts/<artifact_id>` — JSON envelope
-
-**Локализация:** интерфейс поддерживает en (по умолчанию) и ru через `?lang=ru`.
-Настройка локалей в `config/beeui.yml` → `app.locale`.
-Невалидный `?lang` безопасно сбрасывается на `en`.
-
-**Дашборд `/`:** показывает customer-facing KPI (Total Runs, Loaded Modules, Latest Run Status, ROP Classified Cases, Needs Review, Degraded Sources), Quick Links и Summary. Raw payload спрятан под "Technical details".
-
-**ROP dashboard (`/rop` и `/api/rop/dashboard`):**
-
-- `/rop` рендерится как BeeUI generic adapter custom page через `BeeAgentUiAdapter.get_page("rop_dashboard", query)`;
-- run selection доступен через `run_id` там, где это поддерживает read-model/API;
-- **Queue tab** (`/rop?tab=queue`) поддерживает server-side GET фильтрацию, generic BeeUI Tabler Datepicker для диапазона `date_from`/`date_to`, multi-select dropdowns, сортировку и пагинацию через query-параметры: `q`, `case_type`, `priority`, `bitrix_status`, `is_fallback`, `queue`, `date_from`, `date_to`, `page`, `page_size`, `sort`, `order`;
-- Все URL в ROP формируются через единый `build_rop_url()` с использованием `urllib.parse.urlencode` для корректного экранирования;
-- `ATTENTION_EVENTS_MAX = 500`: API и UI ограничивают список attention events этим числом;
-- Валидация всех filter/pagination/sort параметров выполняется в adapter-level contract; невалидные значения возвращают ошибку;
-- HTML tabs на `/rop`: Overview, Queue, Sources, Blacklist. Bitrix status доступен через фильтр `bitrix_status` во вкладке Queue.
-- вкладка Queue содержит detail links на `/rop/events/{event_id}?run_id=...`;
-- при `?lang=ru` link label отображается как `Подробнее`.
-- Overview layout: Run Overview = `state_grid`, `width: 8`; Key Metrics = `kpi_grid`, `width: 4`, `columns: 2`; warnings идут после верхнего ряда;
-- Overview использует period dropdown для выбора периода, а не отдельные period buttons;
-- dashboard показывает KPI, processing funnel, source health, classification distribution, deterministic recommendations, attention events (до 500), attachment summary без raw content и evidence links по allowlist;
-- `/api/rop/dashboard` остаётся backward-compatible JSON API и отдаёт enriched payload с UI-6 полями: `latest_selection`, `thread_summary`, `threads`, `ai_assist_summary`, `ai_assist_events`.
-
-Read/dashboard routes Web Console читают existing artifacts из `storage/runs/<run_id>/...` и `storage/interfaces/modules.json`; UI-8.8 Blacklist Add/Update/Delete является отдельным bounded protected POST exception.
-Доступ к артефактам идёт только по allowlisted `artifact_id`, а не по произвольным именам файлов.
-Browser artifact routes возвращают BeeUI HTML, API artifact routes возвращают bounded/redacted JSON.
-Источник правды для bind/runtime настроек остаётся `config/settings.yml` → `web.host`, `web.port`, `web.open_browser`.
-
-### Bitrix24 Local Application embedded console (UI-8.5)
-
-Read-only `/rop` console можно открыть внутри Bitrix24 как **Server-Side Local Application with User Interface** без отдельного BeeAgent login и без credential в URL. Конфиг:
-
-```yaml
-bitrix:
-  embedded_app:
-    enabled: true
-    portal_origin: "https://<your-portal>.bitrix24.ru"
-    default_role: "viewer"
-    request_timeout: 10
-```
-
-Ручная регистрация Local Application в Bitrix24:
-
-| Поле                         | Значение                                     |
-| ---------------------------- | -------------------------------------------- |
-| Name                         | BeeAgent — ROP                               |
-| Handler                      | `https://<beeagent-host>/bitrix/rop/launch`  |
-| Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
-| Uses API only                | false                                        |
-
-Обязательное право приложения: **`user`** (Пользователи) — без него вызов `user.current` при входе отклоняется (`insufficient_scope`). Право добавляется в настройках приложения, после чего приложение нужно переустановить.
-
-Требуется HTTPS deployment. Установка сохраняет one-time portal binding в `storage/interfaces/bitrix_rop_app.json` без OAuth credentials; launch проверяет current Bitrix user через REST и создаёт bounded BeeUI viewer session (`303` на `/rop`). Доступ управляется Bitrix24; BeeAgent не хранит список Bitrix user ID и не сохраняет `AUTH_ID`/`REFRESH_ID`.
-
-В текущем scope не входят:
-
-- web-triggered `rop run`;
-- general operator POST/write actions, кроме explicit protected UI-8.8 Blacklist Add/Update/Delete;
-- config editing;
-- UI-triggered CRM/Bitrix write-back;
-- production listener/stream;
-- full RBAC enforcement.
-
-Security гарантии Web Console:
-
-- нет raw `.eml`;
-- нет raw attachment content;
-- нет provider secrets;
-- нет destructive mailbox actions;
-- нет CRM/Bitrix write-back из UI.
-
-#### Auth
-
-Web Console поддерживает config-driven auth boundary через BeeUI session/role layer. Настройки в `config/settings.yml` → `web.auth`:
-
-```yaml
-web:
-  auth:
-    enabled: false
-    mode: beeui_session
-    session_secret_env: BEEAGENT_WEB_SESSION_SECRET
-    principals:
-      - id: admin_1
-        username: admin1
-        role: admin
-        scopes: ["*"]
-        token_env: BEEAGENT_WEB_ADMIN1_TOKEN
-      - id: admin_2
-        username: admin2
-        role: admin
-        scopes: ["*"]
-        token_env: BEEAGENT_WEB_ADMIN2_TOKEN
-```
-
-Реальные internal secrets живут только в env:
-
-- `BEEAGENT_WEB_SESSION_SECRET` — HMAC secret для session cookie
-- `BEEAGENT_WEB_ADMIN1_TOKEN` — token для входа `admin1`
-- `BEEAGENT_WEB_ADMIN2_TOKEN` — token для входа `admin2`
-- `BITRIX_ROP_WIDGET_TOKEN` — internal Bearer token для BeeAgent read-only Bitrix widget API
-
-Следующие внешние credentials не генерируются автоматически и должны быть заполнены вручную:
-
-- `TELEGRAM_BOT_TOKEN`
-- `CHAT_ID`
-- `OPENAI_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `LMSTUDIO_API_KEY`
-- `CUSTOM_AI_API_KEY`
-- `BITRIX_WEBHOOK_URL`
-- `BITRIX_WRITEBACK_WEBHOOK_URL` (отдельный write credential для `bitrix.writeback`, обязателен только при `bitrix.writeback.enabled: true`)
-- `ROP_MAILBOX_USERNAME`
-- `ROP_MAILBOX_PASSWORD`
-
-`web.auth.enabled: false` (default) сохраняет current dev behavior. При `web.auth.enabled: true`:
-
-- все HTML/API routes (кроме `/health`, `/static/...`, `/auth/...` и Bitrix boundary) требуют аутентификации;
-- вход через BeeUI login page `/auth/login`: введите `username` и `token` (обязательно пара);
-- identity привязывается к exact configured `username + token`;
-- successful session получает canonical configured principal `id`;
-- identity = exact configured `username + token`; authority floor задаёт `role`; resource/capability access определяется `scopes` (`*`, `dashboard`, `rop`, `runs`, `modules`, `rop.sources.write`, `rop.blacklist.write`, `rop.routing.write`, `rop.users.write`, `rop.settings.write`, `rop.crm.write`);
-- authenticated unauthorized → `403`, unauthenticated API → `401`, unauthenticated HTML → redirect на `/auth/login`;
-- ROP-only principal после login попадает на `/rop` и не видит Dashboard/Runs/Modules;
-- `/health` остаётся публичным (sanitized);
-- session управляется BeeUI через подписанную cookie.
-
-`web.auth.enabled=false` допустим для local/dev, но небезопасная external exposure с auth disabled должна считаться rejected/fail-fast по settings policy.
-
-##### Auth bootstrap
-
-- `start.sh` создаёт `.env` из `.env.example`, если `.env` отсутствует;
-- ручной `cp .env.example .env` по-прежнему допустим;
-- `config/start.py` при старте синхронизирует отсутствующие ключи из `.env.example` в `.env`;
-- startup bootstrap в `src/beeagent_module/core/env_sync.py` сохраняет существующие непустые значения и не перезаписывает их;
-- отсутствующие или пустые internal env values (`BEEAGENT_WEB_SESSION_SECRET`, `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN`, `BITRIX_ROP_WIDGET_TOKEN`) генерируются автоматически;
-- реальные значения пишутся только в `.env` / runtime env, не в `settings.yml`;
-- внешние credentials остаются пустыми placeholders, пока оператор не заполнит их вручную;
-- новый `.env` на POSIX получает `0600`; существующий сохраняет заданные администратором режим и группу при sync, bootstrap и rotation;
-- в stdout печатается только masked вывод вида `KEY=<generated>`, реальные значения не печатаются.
-
-##### Token/session rotation
-
-```bash
-./start.sh auth rotate admin1
-./start.sh auth rotate admin_1
-./start.sh auth rotate all
-./start.sh auth rotate all --logout-all
-./start.sh auth rotate session
-./start.sh auth rotate bitrix-widget
-```
-
-- single principal меняет только token этого principal;
-- `all` меняет только tokens всех principals/admins;
-- `all` не меняет `BITRIX_ROP_WIDGET_TOKEN`;
-- `all --logout-all` меняет tokens principals/admins и session secret;
-- `session` меняет только session secret;
-- `bitrix-widget` меняет только `BITRIX_ROP_WIDGET_TOKEN`;
-- после rotation нужен restart web app;
-- session secret value не печатается;
-- widget token value не печатается;
-- при rotation principal token печатается один раз, его нужно сохранить для входа.
-
-##### Roles
-
-- роли `viewer` / `operator` / `admin` валидируются и сохраняются как authority level;
-- resource access определяется только `scopes` каждого principal, role не даёт resource scope;
-- `scopes` обязательны, валидируются fail-fast (включая wildcard-правило `["*"]`);
-- `admin` + `["*"]` — global administrator; ROP operator не является global admin; fine-grained capability не открывает unrelated resources; `viewer` + `["rop"]` остаётся ROP read-only.
-- `rop` — resource scope. `rop.sources.write` и `rop.blacklist.write` разрешают только соответствующие bounded actions; `rop.routing.write`, `rop.users.write`, `rop.settings.write` и `rop.crm.write` не делают ничего, пока конкретный ROP backend action их явно не потребует. Они не дают global user/auth management, web.auth/system settings/secrets или arbitrary Bitrix REST execution.
-
-##### Rollout
-
-При rollout новой auth-модели обязательна invalidation/rotation старых sessions и credentials:
-`./start.sh auth rotate all --logout-all` (session secret) аннулирует старые signed cookies;
-principal token rotation требует повторного входа; каждый principal в `web.auth.principals[]` должен получить явный `scopes`. После изменения role/settings нужно перезапустить BeeAgent Web, invalidировать старую session (`./start.sh auth rotate session` или очистить `beeui_session`) и войти заново: роль сериализована в signed session cookie.
-
-### ROP CLI
-
-Для запуска ROP flow без Telegram можно использовать CLI:
-
-```
-# Ручной controlled latest-N/backfill путь. Он не использует checkpoint.
-./start.sh rop run --source-id hotline_mailbox --items-max 20
-
-# Production one-shot polling: только UID новее persistent checkpoint.
-./start.sh rop poll
-
-# Явное recovery при UIDVALIDITY change или повреждённом checkpoint.
-./start.sh rop poll --rebaseline
-
-# Poll только одного source (в т.ч. per-source rebaseline).
-./start.sh rop poll --source-id hotline_mailbox
-./start.sh rop poll --source-id hotline_mailbox --rebaseline
-
-# Poll всех enabled read-only mailbox sources (overrides rop.mailbox_poll.sources_all).
-./start.sh rop poll --all-sources
-
-# Checkpoint: storage/interfaces/rop_mailbox_checkpoint.json.
-# Первый poll создаёт baseline на текущем highest UID и не обрабатывает историю.
-# Периодичность задаётся внешним systemd timer, не BeeAgent loop.
-# rop.mailbox_poll.sources_all: true включает multi-source mode;
-# каждый source хранит собственный UIDVALIDITY/last_processed_uid checkpoint,
-# новый source получает только свой baseline, failure одного source не блокирует остальные.
-
-# Запустить ROP batch через default enabled source из config/settings.yml.
-# Сейчас это может быть hotline_mailbox, если он включён в config/rop/sources.yml.
-./start.sh rop run --items-max 20 --period 2026-05
-
-# Запустить ROP batch через конкретный source_id.
-./start.sh rop run \
-  --source-id hotline_mailbox \
-  --items-max 20 \
-  --period 2026-05 \
-  --run-id live-review-2026-05-15
-
-# Запуск всех enabled источников за один run
-./start.sh rop run --all-sources --items-max 20 --period 2026-05
-
-# Показать summary по готовому run.
-./start.sh rop summary --run-id live-review-2026-05-15
-
-# Повторно экспортировать TSV для human review по готовому run.
-# Обычно не требуется, потому что rop run уже создаёт rop_review_table.tsv автоматически.
-./start.sh rop export-review --run-id live-review-2026-05-15 --format tsv
-
-# Построить quality gate по reviewed TSV.
-# Команда пишет storage/runs/<run_id>/rop_evaluation.json.
-./start.sh rop evaluate-review --run-id live-review-2026-05-15
-./start.sh rop evaluate-review --tsv storage/runs/live-review-2026-05-15/rop_review_table.tsv
-
-# Построить current-state index для готового run.
-./start.sh rop current --run-id live-review-2026-05-15
-
-# Построить dashboard read-model.
-./start.sh rop dashboard --period 7d
-
-# Выполнить read-only Bitrix reconciliation.
-./start.sh rop reconcile-bitrix --run-id live-review-2026-05-15
-
-# Собрать MVP handoff/readiness pack.
-./start.sh rop mvp-pack --run-id live-review-2026-05-15 [--period 7d]
-
-./start.sh rop writeback plan --run-id live-review-2026-05-15
-
-./start.sh rop writeback execute --run-id live-review-2026-05-15 [--dry-run]
-```
-
-**ROP dashboard (`rop dashboard`):**
-
-`rop dashboard` строит business-facing dashboard read-model с period analytics, chart-ready series, Bitrix evidence и deterministic рекомендациями. Обычный запуск обновляет только affected run в bounded persistent Web projection; совместимый schema-v2 переиспользуется при deployment, а additive UI/read-model fields не требуют rebuild. Полный historical bootstrap является явной maintenance operation; HTTP GET никогда не rebuild/migrate projection.
-
-```bash
-./start.sh rop dashboard --period 7d
-./start.sh rop dashboard --period today
-./start.sh rop dashboard --period all --run-id <run_id>
-./start.sh rop dashboard --period 7d --rebuild-web-projection
-```
-
-Поддерживаемые периоды: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all`.
-
-Артефакт:
-
-- `storage/interfaces/rop_dashboard.json` — dashboard read-model с `business_kpi`, `series`, `queues`, `rop_recommendations`, `evidence_links`.
-
-Dashboard автоматически обновляется после успешного `rop run`, `rop current` и `reconcile-bitrix`.
-
-После `rop run` создаётся:
-
-```
-storage/runs/<run_id>/rop_review_table.tsv
-```
-
-Этот TSV можно открыть или скопировать в Google Sheets для human review.
-
-Для dev-запуска через `rop_batch_sample` нужно вручную включить этот source в `config/rop/sources.yml`.
-
-По умолчанию `rop_batch_sample` может быть выключен, чтобы случайно не заменить live/source smoke path.
-
-Параметры:
-
-- `--source-id` — выбрать источник данных из `config/rop/sources.yml`
-- `--all-sources` — запустить все enabled источники из `config/rop/sources.yml`
-- `--items-max` — override max items для источника
-- `--period` — override period для batch источника
-- `--run-id` — explicit run_id (если не указан, генерируется)
-- `--format` — формат export (пока только `tsv`)
-
-**ROP current-state index (`rop current`):**
-
-`rop current` строит единый read-model artifact для указанного run:
-
-```
-./start.sh rop current --run-id <run_id>
-```
-
-Артефакты:
-
-- `storage/runs/<run_id>/rop_current_state.json` — полный current-state
-- `storage/interfaces/rop_current.json` — current run state
-- `storage/interfaces/rop_latest.json` — lightweight latest summary
-- `storage/interfaces/rop_index.json` — index всех current-state
-
-Current-state — artifact-level projection поверх существующих run artifacts. Он содержит KPI (events, normalized, classified, Bitrix matching, очереди) и автоматически строится после успешного `rop run` и `reconcile-bitrix`.
-
-ROP Queue поддерживает фильтр `bitrix_status` для просмотра matched/lost/ambiguous/degraded/unreconciled событий с письмом и Event Detail, если есть current-state/Bitrix evidence.
-
-CLI overrides применяются только в памяти, не меняют `config/settings.yml`.
-`--source-id` и `--all-sources` взаимоисключающие.
-
-### ROP в Telegram
-
-Если оставить `run.mode: "telegram"`, ROP также доступен как Telegram command:
-
-```
-/run_rop
-```
-
-Результат выводится как readable summary в Telegram.
-
-### Разница: Telegram vs CLI
-
-| Aspect        | Telegram                          | CLI                                                           |
-| ------------- | --------------------------------- | ------------------------------------------------------------- |
-| Transport     | Telegram bot                      | Console                                                       |
-| Approval      | Interactive buttons               | No approval (CLI для MVP)                                     |
-| Ideal for     | Interactive operator              | Batch processing, scripts                                     |
-| Config        | `run.mode: "telegram"`            | CLI args override                                             |
-| Artifacts     | Standard: `operator_summary.json` | Standard: same                                                |
-| Review export | Не основной путь                  | Auto TSV on `rop run`; manual rerun через `rop export-review` |
-
-ROP запускается не отдельным `run.mode`, а как operator action внутри transport:
-
-```
-/run_rop
-```
-
-То есть:
-
-- `telegram` — слой взаимодействия с оператором;
-- `/run_rop` — команда внутри Telegram;
-- `./start.sh rop run` — команда в CLI;
-- `beeagent-rop` — доменный модуль;
-- `run_rop_operator_case(...)` — BeeAgent-owned case wrapper, который вызывает модуль и собирает operator-facing output.
-
-## Что такое модуль у нас
-
-Модуль — это отдельный Python package, который подключается к BeeAgent как локальная зависимость.
+Capability — узкий host-controlled integration или execution surface.
 
 Примеры:
 
-- `beeagent-rop`
-- `beescan` (planned)
-- `beeagent-merch` (planned)
+- внешние API;
+- MCP tools;
+- workflow-системы вроде n8n;
+- локальная обработка документов;
+- isolated blockchain execution;
+- CRM integrations;
+- другие bounded system operations.
 
-BeeAgent core не должен вшивать в себя клиентскую бизнес-логику.
-Она должна жить в модуле.
+Capability — не универсальный escape hatch.
 
-На текущем этапе в core уже введён минимальный internal module contract v0.
+Целевая модель:
 
-Он фиксирует базовые platform-level expectations для доменного модуля:
+```text
+module intent
+    ↓
+host validation
+    ↓
+scoped capability
+    ↓
+approved operation
+    ↓
+bounded evidence/result
+```
 
-- `module_id`
-- `supported_case_types()`
-- `handle(context)`
-- bounded authority semantics:
-  - `read_only`
-  - `draft_only`
-  - `execution_capable`
+Long-running state должен жить в BeeAgent, а не внутри одного внешнего tool call.
 
-Registry v0, runtime context v0, artifact API v0 и capability boundary v0 уже введены в core.
+## Module Contract
 
-На текущем этапе первый реальный модуль `beeagent-rop` уже может:
+BeeAgent загружает package-based доменные модули через config-driven registry.
 
-- загружаться через `modules.registry`;
-- проходить `ModuleContract` compatibility check;
-- вызываться через `execute_module_case(...)`;
-- получать `ModuleContext`;
-- писать module-linked artifacts через `ArtifactAPI`;
-- возвращать canonical `ModuleResult` в BeeAgent runtime.
+Текущая модель модуля намеренно небольшая:
 
-## Что такое capability у нас
+```python
+class ModuleContract(Protocol):
+    @property
+    def module_id(self) -> str: ...
 
-Capability — это bounded integration / execution layer.
+    @property
+    def authority(self) -> AuthorityLevel: ...
 
-Сюда относятся:
+    def supported_case_types(self) -> list[str]: ...
 
-- MCP tools
-- n8n workflows
-- внешние APIs / systems
-- другие подключаемые execution/data surfaces
+    def handle(self, context: ModuleContext) -> ModuleResult: ...
+```
 
-Важно:
+Во время выполнения BeeAgent создаёт context и привязывает его к host-owned run и session.
 
-- доменная логика **не живёт** в MCP/n8n;
-- MCP/n8n — это integration layer;
-- long-running state не должен уезжать в один внешний tool call.
+Концептуально:
 
-## Архитектурные принципы
+```text
+ModuleContext
+├── run_id
+├── session_id
+├── module_id
+├── case_type
+├── authority
+├── payload
+├── artifact_api
+└── capability_caller
+```
 
-### 1. Config is source of truth
+Модуль возвращает bounded `ModuleResult`.
 
-Runtime behavior определяется через `config/settings.yml`.
+BeeAgent остаётся владельцем host execution и persistence.
 
-### 2. Explainability first
+## Authority Model
 
-Значимое решение должно быть объяснимо через:
+BeeAgent использует явные уровни authority:
 
-- config
-- logs
-- artifacts
+```text
+read_only
+draft_only
+execution_capable
+```
 
-### 3. KISS
+Authority самого модуля не равна execution authority хоста.
 
-Минимум абстракций, максимум ясности.
+Например, `read_only` модуль может получить host-scoped capability для одной конкретной isolated operation, не становясь при этом произвольно execution-capable.
 
-### 4. Thin UI
+Сохраняется правило:
 
-UI не должен обходить cases/modules/core.
+```text
+module intent != execution authority
+```
 
-### 5. Module boundary
+## Artifacts и explainability
 
-Клиентская бизнес-логика живёт в модуле, а не в core.
+BeeAgent построен вокруг artifacts.
 
-### 6. Bounded AI
+Runs могут сохранять structured evidence в `storage/`:
 
-AI используется как assistive layer, а не как неограниченный black box.
-BeeAgent может выполнять bounded provider calls и свой strict validation/safe merge для adjudicator evidence.
-Доменная классификация остаётся за `beeagent-rop`.
-Transport labels и AI outputs не считаются direct business truth.
-AI не может выполнять write-back.
-Dangerous или uncertain semantic AI outputs сохраняют deterministic semantic result с bounded diagnostics/attention; новые normal-flow semantic решения не используют `manual_review`. CRM execution uncertainty отдельно остаётся fail-closed `deferred` с zero mutation authority. Historical `manual_review` artifacts остаются readable.
+```text
+storage/
+├── runs/
+├── artifacts/
+├── reports/
+├── interfaces/
+├── sessions/
+└── telemetry/
+```
 
-## Технологический стек
+Artifacts используются для:
 
-- **Python 3.14+**
-- **uv** — управление окружением и зависимостями
-- **src-layout**
-- **PyYAML** — конфиг
-- **python-telegram-bot** — Telegram transport
-- **LangGraph** — orchestration/workflow baseline
-- **BeeUI** — canonical Web Console layer
-- **FastAPI** — runtime foundation для BeeUI-backed Web Console
-- **Uvicorn** — ASGI runtime для Web Console
-- **Jinja2** — template/runtime layer, используемый через BeeUI и legacy frozen web shell
-- **Tabler assets** — локальные UI assets через BeeUI и legacy frozen web shell, без CDN и npm runtime
-- **file-based artifacts** — `storage/`
-- **единый лог** — `logs/app.log`
+- воспроизводимости;
+- debugging;
+- operator review;
+- module outputs;
+- integration evidence;
+- read models;
+- audit-friendly execution traces.
+
+Базовый принцип:
+
+> Важное runtime-поведение должно объясняться через config, logs и artifacts.
+
+Artifacts должны оставаться bounded и не содержать secrets или unrestricted raw external data.
+
+## AI Model
+
+AI — assistive layer, а не authority boundary.
+
+BeeAgent поддерживает configurable AI provider profiles и bounded provider calls, но AI output должен пройти application-specific validation до того, как сможет повлиять на deterministic state или execution.
+
+Целевая модель:
+
+```text
+deterministic evidence
+        +
+bounded AI assistance
+        ↓
+validated result
+        ↓
+policy-controlled action
+```
+
+AI output автоматически не даёт:
+
+- CRM mutation;
+- mailbox mutation;
+- arbitrary tool execution;
+- filesystem access;
+- credential access;
+- authority во внешней системе.
+
+Critical execution authority остаётся host-controlled.
+
+## Интерфейсы и transports
+
+BeeAgent поддерживает несколько surfaces взаимодействия.
+
+### Telegram
+
+Telegram может использоваться как operator transport для интерактивных workflows.
+
+```bash
+./start.sh telegram
+```
+
+### Operator Web Console
+
+BeeAgent включает BeeUI-backed Web Console:
+
+```bash
+./start.sh web
+```
+
+Web layer предоставляет платформенные surfaces:
+
+- dashboard;
+- run history;
+- run details;
+- module diagnostics;
+- bounded artifact views;
+- JSON API;
+- authenticated operator surfaces.
+
+Web access может быть защищён config-driven principals, roles, scopes и signed BeeUI sessions.
+
+Default bind локальный:
+
+```text
+127.0.0.1
+```
+
+При external deployment необходимо использовать authentication boundary и соответствующий deployment hardening.
+
+### CLI
+
+Canonical entrypoint:
+
+```bash
+./start.sh
+```
+
+Основные framework-level команды:
+
+```bash
+./start.sh
+./start.sh telegram
+./start.sh web
+./start.sh web --host 127.0.0.1 --port 8780 --no-open
+./start.sh routes
+./start.sh docling-assets-prepare
+
+./start.sh auth rotate <principal>
+./start.sh auth rotate all
+./start.sh auth rotate all --logout-all
+./start.sh auth rotate session
+```
+
+Отдельные доменные модули могут добавлять workflow-specific CLI commands.
+
+Они не являются core BeeAgent module contract.
+
+## Локальная обработка документов
+
+BeeAgent включает bounded local document-extraction path.
+
+Текущий реализованный engine:
+
+```text
+Docling
++ RapidOCR
++ ONNX Runtime
+```
+
+Поддерживается bounded обработка:
+
+- text;
+- CSV;
+- PDF;
+- DOCX;
+- XLSX;
+- JPEG;
+- PNG.
+
+Document parsing выполняется через bounded local worker с timeout и explicit failure handling.
+
+Содержимое клиентских документов считается untrusted input.
+
+Инструкции внутри документа не дают execution authority.
+
+Если соответствующий extractor включён, model assets подготавливаются заранее, а runtime не выполняет silent model download во время обработки документа.
+
+## Конфигурация
+
+Runtime source of truth:
+
+```text
+config/settings.yml
+```
+
+Secrets живут в environment variables или `.env`, а не в YAML.
+
+Startup path:
+
+- создаёт `.env` из `.env.example`, если его нет;
+- синхронизирует отсутствующие env keys без перезаписи существующих значений;
+- генерирует разрешённые internal secrets там, где это предусмотрено;
+- валидирует required configuration;
+- определяет runtime dependency profile;
+- запускает выбранный runtime.
+
+External credentials никогда не генерируются автоматически.
+
+Типичные примеры:
+
+- AI provider credentials;
+- Telegram credentials;
+- mailbox credentials;
+- CRM credentials;
+- credentials внешних connectors.
+
+## Security Model
+
+BeeAgent по умолчанию считает внешний input недоверенным.
+
+Основные правила:
+
+- secrets должны храниться через environment-backed storage;
+- required security-sensitive config валидируется fail-fast;
+- module intent не равен execution authority;
+- capabilities имеют явный scope;
+- arbitrary caller-selected executable paths не являются capability contract;
+- bounded execution paths не принимают произвольные RPC targets;
+- artifact access строится через allowlist;
+- path traversal должен fail closed;
+- raw secrets не должны попадать в logs или artifacts;
+- external failure должен оставаться explicit failure, а не превращаться в successful evidence;
+- execution-capable paths требуют более строгого review, чем read-only paths;
+- local development defaults не должны незаметно становиться production security defaults.
+
+Подробные правила находятся в [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Структура проекта
 
-```
+```text
 beeagent/
 ├── config/
 │   ├── start.py
-│   ├── beeui.yml
 │   ├── settings.yml
+│   ├── beeui.yml
 │   ├── prompts.yml
 │   └── i18n/
 ├── docs/
@@ -966,20 +433,21 @@ beeagent/
 │   ├── ROADMAP.md
 │   ├── SDLC.md
 │   ├── SECURITY.md
-│   └── SPEC.md
-├── logs/
-│   └── app.log
+│   ├── SPEC.md
+│   └── WEB_UI.md
 ├── src/
 │   └── beeagent_module/
+│       ├── adapters/
+│       ├── agents/
+│       ├── cases/
 │       ├── cli/
 │       ├── core/
-│       ├── cases/
-│       ├── agents/
-│       ├── adapters/
 │       ├── domain/
-│       ├── interfaces/ui/
+│       ├── interfaces/
+│       │   └── ui/
 │       ├── mock/
-│       └── web/        # legacy frozen web shell
+│       ├── ui/
+│       └── web/
 ├── storage/
 ├── tests/
 ├── pyproject.toml
@@ -987,841 +455,172 @@ beeagent/
 └── uv.lock
 ```
 
-## Как это работает сейчас
+Главная архитектурная граница важнее конкретной структуры каталогов:
 
-Базовый runtime-flow остаётся таким:
+```text
+BeeAgent
+  = host runtime + orchestration + authority
 
-1. `start.sh`
-2. `config/start.py`
-3. `core/app.py`
-4. запускается transport (`telegram`)
-5. transport принимает operator command
-6. command вызывает соответствующий `case`
-7. case запускает workflow / module runtime path
-8. результат сохраняется в `storage/`
-9. UI показывает summary / report / operator-facing output
+Domain module
+  = business/product semantics
 
-Для web console текущий путь такой:
+Capability
+  = bounded external execution/integration
 
-1. `start.sh web`;
-2. `config/start.py`;
-3. `beeagent_module.cli.web.run_web`;
-4. `interfaces/ui/app.py`;
-5. embedded BeeUI app;
-6. BeeAgent UI adapter/read-model/artifact allowlist;
-7. existing artifacts из `storage/`;
-8. read-only HTML/API operator view по умолчанию; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception.
-
-Для внешних доменных модулей добавлен module execution path:
-
-1. `config/settings.yml` объявляет модуль в `modules.registry`;
-2. `core/app.py` строит registry и пишет diagnostics artifact;
-3. `ModuleRegistry` загружает package-based модуль;
-4. `execute_module_case(...)` создаёт runtime context;
-5. BeeAgent передаёт модулю `ModuleContext`;
-6. модуль выполняет доменную логику;
-7. модуль пишет свои outputs через `ArtifactAPI`;
-8. BeeAgent пишет canonical `module_result.json`.
-
-Пример текущего первого реального модуля:
-
-- `beeagent-rop`
-
-Для ROP operator flow текущий путь такой:
-
-1. оператор запускает команду `/run_rop` в Telegram;
-2. Telegram handler вызывает `run_rop_operator_case(...)`;
-3. BeeAgent строит module registry из `modules.registry`;
-4. `execute_module_case(...)` вызывает `beeagent-rop`;
-5. модуль возвращает `ModuleResult`;
-6. BeeAgent пишет module-linked artifacts;
-7. operator wrapper пишет `operator_summary.json`;
-8. Telegram возвращает оператору readable `operator_text`.
-
-На текущем этапе есть два ROP input path:
-
-1. `/run_rop` — operator command с explicit demo payload;
-2. `run_rop_batch_case(...)` — controlled source path через `config/rop/sources.yml`, `json_batch` и `mailbox_readonly`.
-
-`run_rop_batch_case(...)` выполняет batch pipeline:
-
-```
-configured source(s)
-→ source_diagnostics.json
-→ intake_metadata.json
-→ mailbox_selection.json
-→ attachment_extraction.json
-→ normalized_events.json с bounded `body_preview_*`
-→ mail_thread_index.json
-→ mail_thread_context.json
-→ beeagent-rop lead_classification per event with bounded thread_context
-→ classified_events.json
-→ rop_ai_assist_requests.json / rop_ai_assist_decisions.json / rop_ai_assist_results.json, если legacy bounded AI assist включён
-→ rop_ai_adjudicator_requests.json / rop_ai_adjudicator_decisions.json / rop_ai_adjudicator_results.json, если ROP AI adjudicator включён
-→ bitrix_reconciliation.json (optional read-only evidence)
-→ rop_current_state.json / interfaces current index
-→ rop_dashboard.json
-→ beeagent-rop rop_summary
-→ operator_summary.json
-→ rop_mvp_pack.json / rop_mvp_report.md
-→ rop_review_table.tsv, если flow запущен через ROP CLI
+BeeUI / transport
+  = interaction layer
 ```
 
-`rop_evaluation.json` создаётся отдельно командой `rop evaluate-review`, если для run уже есть reviewed TSV.
+## Требования
 
-Для multi-source run `source_diagnostics.json` и `intake_metadata.json` содержат aggregate block и `sources[]` с per-source rollup.
+BeeAgent сейчас ориентирован на:
 
-`run_rop_batch_case(...)` не является отдельным `run.mode`: `run.mode` остаётся transport/runtime selector.
-
-В scope уже входят controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation.
-В scope всё ещё не входят production listener/stream и general UI-triggered runtime/CRM/mailbox execution. Controlled server-side Bitrix write-back через `rop run` / `rop poll` существует и включён в tracked production profile; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception, а explicit disabled и dry-run режимы сохраняют zero-write control.
-
-## Запуск
-
-### 1. Подготовить `.env`
-
-```
-cp .env.example .env
+```text
+Python >= 3.14
+uv
 ```
 
-Ручной `cp .env.example .env` остаётся допустимым, но `start.sh` сам создаёт `.env`, если файла нет.
-При старте отсутствующие ключи из `.env.example` дописываются в существующий `.env`, existing values не перезаписываются.
-Internal secrets генерируются автоматически, если отсутствуют или пустые.
+Если `uv` отсутствует, `start.sh` умеет bootstrap'ить его.
 
-Оператору всё равно нужно вручную заполнить реальные значения для внешних credentials:
+Для reproducible development и runtime setup используется locked `uv` environment.
 
-- `TELEGRAM_BOT_TOKEN`
-- `CHAT_ID`
-- `OPENAI_API_KEY` для включённого `ai.profiles.openai`
-- `DEEPSEEK_API_KEY` для включённого `ai.profiles.deepseek`
-- `LMSTUDIO_API_KEY` для включённого `ai.profiles.lmstudio`
-- `CUSTOM_AI_API_KEY` для включённого `ai.profiles.custom`
-- `BITRIX_WEBHOOK_URL`
-- `BITRIX_WRITEBACK_WEBHOOK_URL` при включённом `bitrix.writeback.enabled`
-- `ROP_MAILBOX_USERNAME`
-- `ROP_MAILBOX_PASSWORD`
-- credentials для Telegram / Bitrix / OpenAI и других внешних интеграций.
+## Development Setup
 
-### 2. Запуск
+### Важно: текущая workspace dependency model
 
-`start.sh` делает:
+Текущий `main` пока разрабатывается как часть Bee workspace.
 
-- проверку наличия `uv`;
-- инициализацию `.env` из `.env.example`, если `.env` отсутствует;
-- при каждом normal command определяет locked profile enabled consumer extractor и выполняет `uv sync --frozen` для него; `uv` не меняет уже соответствующее lock environment;
-- при активном Docling идемпотентно проверяет/готовит требуемые Docling/RapidOCR assets;
-- затем запускает приложение через тот же provisioned environment без второго sync.
+В `pyproject.toml` сейчас объявлены sibling editable sources, включая:
 
-Platform detector автоматически выбирает CUDA только при подтверждённой usable NVIDIA environment, иначе безопасно выбирает CPU. Static allowlist содержит реализованный `docling` и reserved `xberg`; Xberg не устанавливается и не исполняется. ROP выбирает engine через `rop.attachments.extraction.engine`; CPU и CUDA Docling profiles выбираются только через `uv.lock` (`docling-cpu`/`docling-cuda`) и их разные PyTorch indexes.
+```text
+../beesdk
+../beedrill
+../beeagent-rop
+```
 
-Обычный запуск приложения:
+Некоторые доменные модули могут быть приватными.
+
+Поэтому текущий репозиторий **пока не является полностью standalone external installation из свежего public clone**.
+
+Это ограничение текущего packaging/dependency boundary, а не архитектурное требование BeeAgent.
+
+Целевая framework-модель предполагает, что доменные модули устанавливаются независимо и при необходимости остаются приватными.
+
+### Разработка внутри Bee workspace
+
+Если необходимые sibling packages доступны:
 
 ```bash
+git clone https://github.com/beesyst/beeagent.git
+cd beeagent
+
 ./start.sh
 ```
 
-Проверки выполняются отдельно, когда приложение не запущено:
+Явный runtime:
+
+```bash
+./start.sh telegram
+```
+
+или:
+
+```bash
+./start.sh web
+```
+
+Тесты:
 
 ```bash
 uv run --frozen pytest -q
 ```
 
-Каждый запуск через `./start.sh ...` проходит общий bootstrap. При активном Docling необходимые Docling/RapidOCR assets проверяются и при отсутствии подготавливаются до запуска запрошенной команды; уже подготовленные assets повторно не скачиваются. Для обычной установки отдельная install-команда не существует. Для явной идемпотентной переподготовки/repair используйте:
+Canonical application entrypoint — `./start.sh`; отдельная install-команда для текущего workspace development flow не требуется.
 
-```bash
-./start.sh docling-assets-prepare
-```
+## Расширение BeeAgent
 
-## Основные команды
+При добавлении нового продукта или customer workflow предпочтительно создавать отдельный domain package, а не добавлять бизнес-правила в BeeAgent core.
 
-Обычный запуск:
-
-```
-bash start.sh
-```
-
-При текущем config:
-
-```
-run:
-  mode: "telegram"
-```
-
-BeeAgent стартует Telegram transport. Если `telegram.enabled: false`, приложение корректно инициализирует registry, пишет diagnostics artifact и не запускает polling.
-
-ROP operator flow доступен двумя путями:
-
-```bash
-# Telegram operator command
-/run_rop
-
-# CLI batch flow без Telegram
-./start.sh rop run --items-max 20 --period 2026-05
-```
-
-Для CLI batch flow после успешного запуска создаётся `rop_review_table.tsv`:
+Типичная интеграция:
 
 ```text
-storage/runs/<run_id>/rop_review_table.tsv
+my-domain-module
+        ↓
+ModuleContract
+        ↓
+BeeAgent runtime
+        ↓
+Artifact API + scoped capabilities
+        ↓
+external systems
 ```
 
-Тесты:
+В BeeAgent core функциональность должна попадать только тогда, когда она действительно platform-level.
 
-```
-uv run pytest -q
-```
+Примеры platform-level behavior:
 
-Локальный smoke operator flow можно выполнять через:
+- runtime context;
+- policy;
+- artifact infrastructure;
+- generic module loading;
+- authorization;
+- capability dispatch;
+- process lifecycle;
+- shared transport behavior.
 
-- `./start.sh rop run`;
-- `./start.sh rop summary --run-id <run_id>`;
-- `./start.sh rop export-review --run-id <run_id> --format tsv`;
-- `./start.sh rop reconcile-bitrix --run-id <run_id>`;
-- `./start.sh auth rotate <principal-id-or-username>`;
-- `./start.sh auth rotate all`;
-- `./start.sh auth rotate all --logout-all`;
-- `./start.sh auth rotate session`;
-- `./start.sh auth rotate bitrix-widget`;
-- тесты;
-- прямой вызов `run_rop_operator_case(...)` только в dev-сценариях.
+Примеры module-level behavior:
 
-Отдельный `run.mode: "rop_operator_v0"` больше не используется.
+- customer classification rules;
+- security scenario semantics;
+- sales logic;
+- domain scoring;
+- domain-specific recommendations;
+- customer-specific workflow decisions.
 
-## Конфигурация
+## Public Core, Private Products
 
-Главный конфиг:
+Архитектура BeeAgent намеренно допускает сочетание open и private компонентов.
 
-- `config/settings.yml`
+Например:
 
-Ключевые блоки на текущем этапе:
+```text
+Public or reusable
+├── BeeAgent runtime
+├── shared SDK/contracts
+└── reusable infrastructure
 
-- `app`
-- `run`
-- `telegram`
-- `logging`
-- `mock`
-- `data`
-- `scheduler`
-- `approval`
-- `promo`
-- `i18n`
-- `quiz`
-- `modules`
-- `rop`
-- `ai`
-
-`run.mode` сейчас выбирает runtime/transport, а не доменный модуль:
-
-```
-run:
-  mode: "telegram"
+Private or product-specific
+├── customer modules
+├── commercial domain logic
+├── customer configuration
+└── proprietary integrations
 ```
 
-Доменные модули подключаются отдельно через `modules.registry`.
-
-Пример:
-
-```
-modules:
-  registry:
-    - id: "beeagent-rop"
-      package: "beeagent_rop"
-      entry: "RopModule"
-      enabled: true
-```
-
-ROP input sources задаются отдельно в canonical registry `config/rop/sources.yml`; `config/settings.yml` хранит только путь к registry и политику polling:
-
-```yaml
-rop:
-  mailbox_poll:
-    enabled: true
-    source_id: hotline_mailbox
-    sources_all: true
-  sources_path: config/rop/sources.yml
-```
-
-Пример controlled batch source:
-
-```
-version: 1
-sources:
-  - source_id: "rop_batch_sample"
-    source_type: "json_batch"
-    source_role: "batch_sample"
-    client_id: "welding"
-    display_name: "ROP Batch Sample"
-    enabled: true
-    authority: "read_only"
-    items_max: 100
-    batch:
-      path: "storage/mock/rop_batch_sample.json"
-      period: "2026-05"
-```
-
-Пример controlled read-only mailbox source:
-
-```
-version: 1
-sources:
-  - source_id: "hotline_mailbox"
-    source_type: "mailbox_readonly"
-    source_role: "technical_aggregator"
-    client_id: "welding"
-    display_name: "Welding Hotline mailbox"
-    enabled: true
-    authority: "read_only"
-    items_max: 20
-    mailbox:
-      host: web01.srv.welding.kz
-      port: 993
-      use_ssl: true
-      folder: INBOX
-      username_env: ROP_MAILBOX_USERNAME
-      password_env: ROP_MAILBOX_PASSWORD
-    routing:
-      email_recipient: hotline@welding.kz
-```
-
-Для `mailbox_readonly` host, folder, port и SSL — non-secret canonical значения в registry. `ROP_MAILBOX_USERNAME` и `ROP_MAILBOX_PASSWORD` — значения `.env` / runtime env, на которые registry ссылается только по имени. Sources Add/Edit/Delete, Enable/Disable и Check требуют capability `operator`/`admin` + `rop` + `rop.sources.write`; global admin с `*` остаётся wildcard-исключением. Visibility username и bounded mutation username/password refs относятся только к этой source-management capability и не дают Dashboard, Runs, Modules, global auth/settings или unrelated Web Console execution authority. Пароль всегда отображается только как `********` или `—`, а Add/Edit пишет лишь эти username/password refs в `.env`. В Edit пароль всегда пустой: пустое поле сохраняет прежний пароль, непустое заменяет его. Значения никогда не попадают в YAML, CSV, API, audit, logs или artifacts. Новые mailbox sources получают детерминированные env refs `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_USERNAME` и `BEEAGENT_ROP_SOURCE_<SOURCE_ID>_PASSWORD`. При старте `load_dotenv(..., override=False)` сохраняет приоритет внешнего process environment.
-`routing.email_recipient` — optional business recipient fallback (не IMAP username и не Bitrix ID), валидируется fail-fast как email.
-
-Production mailbox polling:
-
-```
-rop:
-  mailbox_poll:
-    enabled: true
-    source_id: "hotline_mailbox"
-    sources_all: true
-```
-
-- `source_id` — explicit single-source override;
-- `sources_all: true` — poll каждый enabled read-only `mailbox_readonly` source независимо, с собственным checkpoint;
-- per-source override/rebaseline: `./start.sh rop poll --source-id <id>`.
-
-Обязательный source profile contract для каждого entry в `config/rop/sources.yml`:
-
-- `source_role`
-- `client_id`
-- `display_name`
-
-Эти поля валидируются fail-fast в `core/settings.py` и прокидываются в BeeAgent-owned artifacts как `source_role`, `client_id`, `source_display_name`.
-
-### ROP recipient routing
-
-`storage/runs/<run_id>/rop_recipient_routing.json` фиксирует адресную принадлежность каждого письма:
-
-- deterministic recipient attribution: `original_recipient` → `to` → configured source recipient → unresolved;
-- несколько адресов на одном evidence level → `ambiguous` (без выбора первого);
-- `cc` сохраняется как evidence, но никогда не становится responsible;
-- proposed Bitrix responsible — exact normalized active user email через read-only `user.get` directory (bounded pagination);
-- статусы: recipient `resolved`/`ambiguous`/`unresolved`; responsible `matched`/`not_found`/`ambiguous`/`connector_degraded`/`not_attempted`;
-- каждый item содержит `event_id` + `event_instance_id` + source provenance;
-- Event Detail показывает bounded recipient/responsible evidence без CRM/mailbox write-back.
-- deliberate human reassignment by forwarding cannot be reliably distinguished from ordinary transport forwarding from email headers alone; It36 preserves `original_recipient` precedence, so this edge case may require operator correction.
-- automatic reassignment inference and a responsible override/reassignment workflow are outside It36 and require a separate explicit workflow/policy contract.
-
-### Controlled Bitrix write-back
-
-Sender+subject does not authorize an arbitrary historical CRM target and `sender_subject_match` is thread evidence, not semantic duplicate proof. A confirmed BeeAgent-created/recovered Lead root from canonical write-back state may be reused across runs only for the exact normalized `client_id` + sender + subject key; multiple distinct historical roots fail closed. Same-run `create_lead` siblings still wait for pending root resolution, then record `target_provenance=sender_subject_resolved`; this never reassigns an existing CRM entity. The normal configured `bitrix.writeback.user_id_fallback` is limited to `not_found`; only a genuinely absent legacy/manual routing artifact may use it for missing routing evidence. Present malformed, incomplete or conflicting routing evidence remains fail closed.
-
-### ROP email preview
-
-`rop.email_preview` управляет bounded preview тела письма, которое может попадать в normalized artifacts, API и read-only HTML review page.
-
-```yaml
-rop:
-  email_preview:
-    body_chars_max: 4000
-```
-
-Правила:
-
-- значение валидируется fail-fast;
-- допустимый диапазон: `200..10000`;
-- preview строится для `json_batch` и `mailbox_readonly`;
-- raw `.eml` и attachment content не сохраняются;
-- HTML предпочитает text/plain; character entities декодируются ровно один раз перед bounded preview processing; после decode удаляются `<!DOCTYPE ...>`, comments, script/style и HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) превращаются в читаемые line breaks, plain-text line breaks сохраняются, excessive whitespace bounded; double-encoded markup рекурсивно не декодируется;
-- результат фиксируется в `normalized_events.json`.
-
-### ROP AI assist и OpenAI adjudicator
-
-`ai` — единый source of truth для BeeAgent AI provider/model/prompt config.
-
-Provider profiles и prompts задаются один раз на верхнем уровне:
-
-```yaml
-ai:
-  prompts:
-    path: "config/prompts.yml"
-    store: false
-  profiles:
-    openai:
-      enabled: true
-      provider: openai_responses
-      api_key_env: OPENAI_API_KEY
-      base_url: "https://api.openai.com/v1"
-      model: "gpt-5.4-nano"
-    deepseek:
-      enabled: false
-      provider: openai_compatible
-      api_key_env: DEEPSEEK_API_KEY
-      base_url: "https://api.deepseek.com/v1"
-      model: "deepseek-chat"
-    lmstudio:
-      enabled: false
-      provider: openai_compatible
-      api_key_env: LMSTUDIO_API_KEY
-      base_url: "http://127.0.0.1:1234/v1"
-      model: "local-model"
-    custom:
-      enabled: false
-      provider: openai_compatible
-      api_key_env: CUSTOM_AI_API_KEY
-      base_url: ""
-      model: ""
-```
-
-ROP-specific AI config живёт отдельно под `rop.ai_assist`, но не дублирует provider/prompt settings:
-
-```yaml
-rop:
-  ai_assist:
-    enabled: true
-    events_max: 100
-    request_timeout: 30
-    ai_confidence_min: 0.70
-    dry_run: false
-    adjudicator:
-      enabled: true
-      timeout: 20
-      input_chars_max: 8000
-      confidence_accept_min: 0.70
-      events_max: 100
-      attachment_chars_max: 2000
-      prompt_key: "rop.ai_adjudicator"
-```
-
-Для attachment text действуют три независимых bounded budget в `rop`:
-
-- `rop.attachments.chars_max: 1000` — public/deterministic preview budget, передаваемый в `beeagent-rop`;
-- `rop.ai_assist.adjudicator.attachment_chars_max: 2000` — text-only budget attachment evidence для AI adjudicator;
-- `rop.attachments.extraction.chars_max: 3000` — максимум bounded текста, извлекаемого локальным Docling.
-
-Settings валидируются fail-fast: `0 < rop.attachments.chars_max <= rop.ai_assist.adjudicator.attachment_chars_max <= rop.attachments.extraction.chars_max`.
-
-#### Legacy AI assist
-
-Legacy bounded AI assist контролируется через `rop.ai_assist.enabled` и disabled by default.
-Он пишет `rop_ai_assist_requests.json`, `rop_ai_assist_decisions.json`, `rop_ai_assist_results.json`.
-Применение результата выполняется только через public `beeagent-rop` case `ai_assist_merge`.
-Если public merge contract недоступен или возвращает invalid result, BeeAgent фиксирует degraded status и сохраняет deterministic classification.
-
-#### OpenAI adjudicator
-
-ROP OpenAI adjudicator контролируется через `rop.ai_assist.adjudicator.enabled`.
-Он использует top-level `ai.prompts` и ровно один enabled `ai.profiles.*`.
-Сейчас поддерживается `openai_responses`.
-При active OpenAI profile требуется `OPENAI_API_KEY`.
-Adjudicator использует strict `json_schema`.
-Для eligible ambiguous/conflict или grey-zone событий сохраняется текущая политика. Дополнительно deterministic tender candidate из public module result (`recommended_queue=tender` или `correct_action=review_tender`) всегда AI-eligible независимо от deterministic confidence, и business-impacting deterministic `new_lead`/`existing_deal` больше не exempt от AI verification. Module-returned `duplicate.resolution_status=confirmed` остаётся terminal и AI provider не вызывает; только explicit `possible` проходит bounded duplicate-vs-not-duplicate adjudication. Rejection сохраняет module `base_classification`, а unavailable/invalid/low-confidence AI сохраняет base classification с explicit diagnostic (без `manual_review` terminal queue). Explicit strong `irrelevant`/noise (safe ignore без business evidence) безопасно skip AI.
-
-Allowed `case_type`:
-
-- `new_lead`
-- `existing_deal`
-- `irrelevant`
-
-Allowed `recommended_queue`:
-
-- `sales`
-- `tender`
-- `logistics`
-- `finance`
-- `procurement`
-- `ignore`
-
-Allowed `correct_action`:
-
-- `review_new_lead`
-- `review_tender`
-- `attach_to_deal`
-- `check_bitrix`
-- `ignore`
-
-Unknown `risk_flags` отбрасываются как bounded diagnostics.
-Class/evidence-aware merge policy: valid + high-confidence + acceptable-evidence AI может стать final; semantic unresolved, invalid, missing/unknown `ai_reason_code`, low-confidence или provider failure сохраняют deterministic результат с explicit diagnostics/attention. Новые AI-решения не используют `manual_review` как semantic queue/action. Historical legacy artifacts, содержащие `manual_review`, остаются readable.
-Safe deterministic ignore может быть сохранён как `low_confidence_preserve`.
-Write-back в этом path не выполняется.
-
-`mailbox_readonly` используется для controlled read-only ingestion:
-
-- manual latest-N через `rop run`;
-- one-shot only-new UID processing через `rop poll`;
-- no delete;
-- no archive;
-- no reply;
-- no mark-as-read;
-- no raw `.eml` persistence;
-- BeeAgent transiently получает attachment content из MIME, сохраняет original attachment в bounded opaque store, а local Docling читает только BeeAgent-resolved stored blob; `beeagent-rop` и BeeUI получают лишь bounded safe evidence.
-
-## Артефакты
-
-На текущем этапе BeeAgent пишет runtime artifacts в `storage/`, в частности:
-
-- `storage/runs/<run_id>/...`
-- `storage/runs/<run_id>/module-<module_id>/...`
-- `storage/runs/<run_id>/module-<module_id>/module_result.json`
-- `storage/artifacts/<run_id>/...`
-- `storage/reports/...`
-- `storage/mock/...`
-- `storage/sessions/...`
-- `storage/telemetry/...`
-- `storage/interfaces/modules.json`
-- optional `storage/interfaces/capabilities.json`
-
-Для `beeagent-rop` текущий ROP operator flow пишет:
-
-- `storage/runs/<run_id>/operator_summary.json`
-- `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/<case_type>_result.json`
-
-Для ROP source flow дополнительно пишутся:
-
-- `storage/runs/<run_id>/source_diagnostics.json`
-- `storage/runs/<run_id>/intake_metadata.json`
-- `storage/runs/<run_id>/mailbox_selection.json`
-- `storage/runs/<run_id>/attachment_extraction.json`
-- `storage/runs/<run_id>/normalized_events.json`
-- `storage/runs/<run_id>/mail_thread_index.json`
-- `storage/runs/<run_id>/mail_thread_context.json`
-- `storage/runs/<run_id>/classified_events.json`
-- `storage/runs/<run_id>/rop_ai_assist_requests.json`
-- `storage/runs/<run_id>/rop_ai_assist_decisions.json`
-- `storage/runs/<run_id>/rop_ai_assist_results.json`
-- `storage/runs/<run_id>/rop_ai_adjudicator_requests.json`
-- `storage/runs/<run_id>/rop_ai_adjudicator_decisions.json`
-- `storage/runs/<run_id>/rop_ai_adjudicator_results.json`
-- `storage/runs/<run_id>/rop_evaluation.json`, если выполнена команда `rop evaluate-review`
-- `storage/runs/<run_id>/module-beeagent-rop/rop_summary_result.json`, если выполняется `rop_summary`
-- `storage/runs/<run_id>/rop_review_table.tsv`, если flow запущен через ROP CLI или выполнена команда `rop export-review`
-- `storage/runs/<run_id>/rop_current_state.json`
-- `storage/runs/<run_id>/bitrix_reconciliation.json`
-- `storage/runs/<run_id>/rop_mvp_pack.json`
-- `storage/runs/<run_id>/rop_mvp_report.md`
-- `storage/runs/<run_id>/rop_conversation.json` — BeeAgent-owned conversation relation (exact RFC authority, client/source scope)
-- `storage/runs/<run_id>/rop_final_decisions.json` — artifact-first read-model финальных решений
-- `storage/runs/<run_id>/bitrix_outbound_correlation.json` — read-only outbound Bitrix correlation evidence (exact Message-ID bridge из `SETTINGS.MESSAGE_HEADERS.Message-Id` + legacy locations; trusted-target cross-check по canonical CRM entity identity; outbound activity responsible — diagnostic only)
-
-Интерфейсные ROP artifacts:
-
-- `storage/interfaces/rop_current.json`
-- `storage/interfaces/rop_latest.json`
-- `storage/interfaces/rop_index.json`
-- `storage/interfaces/rop_dashboard.json`
-
-Для multi-source run:
-
-- `source_diagnostics.json` содержит `selection_mode`, `aggregate` и `sources[]`;
-- `intake_metadata.json` содержит aggregate counts и `sources[]`;
-- `normalized_events.json` и `classified_events.json` сохраняют source traceability per event;
-- `operator_summary.json` содержит aggregate source summary и per-source rollup;
-- `rop_review_table.tsv` содержит source-aware columns.
-
-После It31 `normalized_events.json` также содержит bounded preview поля:
-
-- `body_preview`
-- `body_preview_chars`
-- `body_preview_truncated`
-- `body_preview_source`
-
-Эти поля используются для ROP event detail review page и API. Они не должны содержать raw `.eml` или attachment content.
-
-После It33 `normalized_events.json` также содержит forwarded mailbox normalization поля:
-
-- `clean_subject` — тема письма без технических префиксов (`[AUTO-FWD]`, `FWD:`, `FW:`, `RE:`, `*** SPAM ***`)
-- `transport_labels` — список transport-меток (`["auto_fwd", "fwd", "spam", "re"]`), не business labels
-- `spam_label_present` — присутствует ли `*** SPAM ***` в теме
-- `reply_label_present` — присутствует ли `RE:` в теме
-- `forwarded_wrapper` — обнаружен ли forwarded wrapper в теле письма
-- `form_email` — Email из поля `Email:` в forwarded wrapper (контактная форма отправителя)
-- `original_sender` — оригинальный отправитель из поля `Оригинальный отправитель:` или fallback на `form_email`
-- `original_sender_email` — извлечённый email из `original_sender` (через `email.utils.getaddresses`)
-- `original_recipient` — оригинальный получатель из forwarded wrapper
-- `original_message_date` — оригинальная дата из forwarded wrapper
-- `date_source` — источник даты (`original_forwarded_date`, `mailbox_header`, `fallback_order`)
-- `x_email_id` — ID из forwarded wrapper
-
-Эти поля передаются в `beeagent-rop` `lead_classification` payload и используются классификатором как weak transport signals.
-BeeAgent не принимает business-решений на основе transport labels.
-
-`classified_events.json` — BeeAgent-owned batch artifact, который содержит результаты per-event `lead_classification` и используется как input для `rop_summary`.
-После It30 `classified_events.json` также сохраняет optional ROP business fields, если они возвращены модулем или public merge contract:
-
-- `case_subtype`
-- `recommended_queue`
-- `should_rop_see`
-- `correct_action`
-- `thread_context_ref`
-- `ai_assist_status`
-- `ai_assist_used`
-
-`rop_review_table.tsv` — BeeAgent-owned review artifact для ручной сверки с человеком / заказчиком. Он строится из `normalized_events.json` и `classified_events.json`, не содержит raw `.eml` и предназначен для загрузки в Google Sheets или аналогичную таблицу.
-
-**Структура `rop_review_table.tsv` (v1):**
-
-Базовый `rop_review_table.tsv` содержит source/classification/human-review columns. После `rop reconcile-bitrix` TSV может содержать Bitrix evidence columns. Число колонок stage-dependent и не должно считаться фиксированным контрактом.
-
-После It34 TSV также может содержать AI adjudicator trace fields:
-
-- `ai_used`
-- `ai_status`
-- `ai_provider`
-- `ai_model`
-- `ai_confidence`
-- `ai_reason`
-- `ai_risk_flags`
-- `ai_error`
-- `deterministic_case_type`
-- `deterministic_case_subtype`
-- `deterministic_recommended_queue`
-- `deterministic_correct_action`
-- `deterministic_confidence`
-- `deterministic_reason_code`
-
-Возможные `ai_status` stage-dependent и включают:
-
-- `ok`
-- `manual_review_degrade`
-- `low_confidence_preserve`
-- `deterministic_preserved`
-- `duplicate_unresolved`
-- `degraded`
-- `invalid`
-- `low_confidence`
-
-**Base columns:**
-
-| Column                              | Source            | Description                                                                                |
-| ----------------------------------- | ----------------- | ------------------------------------------------------------------------------------------ |
-| `event_id`                          | normalized_events | Уникальный ID события                                                                      |
-| `source_id`                         | intake_metadata   | Источник данных (rop_batch_sample, hotline_mailbox)                                        |
-| `source_type`                       | intake_metadata   | Тип источника (`json_batch`, `mailbox_readonly`)                                           |
-| `source_role`                       | intake_metadata   | Роль источника в клиентском контексте (technical_aggregator, sales_mailbox и т.д.)         |
-| `source_display_name`               | intake_metadata   | Человекочитаемое имя источника для UI/оператора                                            |
-| `client_id`                         | intake_metadata   | Клиент/тенант, к которому привязан источник                                                |
-| `sender`                            | normalized_events | Email отправителя письма                                                                   |
-| `subject`                           | normalized_events | Тема письма (raw-safe display field)                                                       |
-| `clean_subject`                     | normalized_events | Тема письма без технических transport-префиксов                                            |
-| `transport_labels`                  | normalized_events | Список transport-меток через запятую (auto_fwd, fwd, re, spam)                             |
-| `spam_label_present`                | normalized_events | Присутствует ли **_ SPAM _** в теме                                                        |
-| `reply_label_present`               | normalized_events | Присутствует ли RE: в теме                                                                 |
-| `forwarded_wrapper`                 | normalized_events | Обнаружен ли forwarded wrapper в теле письма                                               |
-| `original_sender`                   | normalized_events | Оригинальный отправитель из forwarded wrapper                                              |
-| `original_recipient`                | normalized_events | Оригинальный получатель из forwarded wrapper                                               |
-| `original_message_date`             | normalized_events | Оригинальная дата из forwarded wrapper                                                     |
-| `date_source`                       | normalized_events | Источник даты события (original_forwarded_date, mailbox_header, fallback_order)            |
-| `x_email_id`                        | normalized_events | X-Email-ID из forwarded wrapper                                                            |
-| `body_short`                        | normalized_events | Preview тела письма (≤500 chars, tab/newline-safe)                                         |
-| `attachments`                       | normalized_events | Метаданные вложений (формат: "file1.pdf (application/pdf, 1024); file2.jpg (...)" )        |
-| `bot_case_type`                     | classified_events | Решение бота (new_lead, existing_deal, lead_classification, duplicate_resolution)          |
-| `bot_case_subtype`                  | classified_events | Подтип кейса, если доступен                                                                |
-| `bot_recommended_queue`             | classified_events | Очередь, предложенная ботом                                                                |
-| `bot_should_rop_see`                | classified_events | Bot-level visibility hint для ROP                                                          |
-| `bot_correct_action`                | classified_events | Bot-level suggested correct action                                                         |
-| `bot_reason_code`                   | classified_events | Код причины решения бота                                                                   |
-| `bot_priority`                      | classified_events | Приоритет (high, medium, low)                                                              |
-| `bot_confidence`                    | classified_events | Confidence score (0.0 – 1.0)                                                               |
-| `bot_is_fallback`                   | classified_events | Fallback решение (true/false)                                                              |
-| `bot_reasoning`                     | classified_events | Объяснение решения бота (если доступно)                                                    |
-| `human_case_type`                   | rop_review        | Ручное переопределение case_type (пусто по умолчанию)                                      |
-| `human_case_subtype`                | rop_review        | Ручное переопределение case_subtype                                                        |
-| `human_recommended_queue`           | rop_review        | Очередь, выбранная человеком                                                               |
-| `human_should_rop_see`              | rop_review        | Человек указал, что ROP должен это видеть (yes/no/maybe)                                   |
-| `human_correct_action`              | rop_review        | Правильное действие для quality gate                                                       |
-| `bitrix_status`                     | rop_review        | Статус интеграции с Bitrix (зарезервировано для будущего)                                  |
-| `notes`                             | rop_review        | Заметки оператора                                                                          |
-| `bitrix_lead_id`                    | rop_review        | Bitrix lead ID (зарезервировано для будущего)                                              |
-| `bitrix_deal_id`                    | rop_review        | Bitrix deal ID (зарезервировано для будущего)                                              |
-| `bitrix_responsible`                | rop_review        | Ответственный в Bitrix (зарезервировано для будущего)                                      |
-| `is_duplicate`                      | rop_review        | Это дубликат (true/false)                                                                  |
-| `duplicate_of`                      | rop_review        | ID оригинального события (если дубликат)                                                   |
-| `should_rop_see` / `correct_action` | compatibility     | Legacy human aliases могут встречаться в reviewed TSV и поддерживаются для evaluate-review |
-
-Пустые опциональные поля экспортируются как пустые ячейки (не null). TSV остаётся pasteable в Google Sheets без дополнительной обработки.
-
-После `rop reconcile-bitrix` TSV также содержит:
-
-- `bitrix_match_status`
-- `bitrix_match_quality`
-- `bitrix_confidence`
-- `needs_manual_review`
-- `safe_to_use_as_target`
-
-Важно: per-event `lead_classification_result.json` внутри `module-beeagent-rop/` может перезаписываться существующим module runtime path. Batch-level evidence для классификации находится в `classified_events.json`.
-
-`operator_summary.json` — BeeAgent-level operator artifact.
-`source_diagnostics.json` — BeeAgent-owned source status / degraded diagnostics artifact.
-`intake_metadata.json` и `normalized_events.json` — BeeAgent-owned input/source artifacts.
-`mailbox_selection.json` — BeeAgent-owned safe evidence artifact для latest-N/source selection. Он не содержит raw `.eml`, raw body или attachment content.
-`mail_thread_index.json` — BeeAgent-owned thread index artifact.
-`mail_thread_context.json` — bounded thread context artifact, который может передаваться в public module classification path.
-`rop_ai_assist_*` artifacts — BeeAgent-owned AI assist evidence artifacts. Они фиксируют request preview, decision и result без secret values и без raw payload persistence.
-`rop_ai_adjudicator_requests.json` — sanitized/bounded adjudicator request preview и response format metadata.
-`rop_ai_adjudicator_decisions.json` — provider/model/status и validation diagnostics для adjudicator path.
-`rop_ai_adjudicator_results.json` — deterministic/final comparison, `ai_status`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `merge_reason`, `dropped_risk_flags`.
-`module_result.json` и `<case_type>_result.json` — module-linked artifacts.
-
-Точный текущий контракт смотри в:
-
-- `docs/ARCHITECTURE.md`
-- `docs/ROADMAP.md`
+Таким образом orchestration framework может оставаться переиспользуемым, не заставляя публиковать коммерческую доменную логику.
+
+## Принципы разработки
+
+BeeAgent следует небольшому набору архитектурных правил:
+
+1. **KISS** — абстракции добавляются только когда их требует реальное поведение.
+2. **Config is source of truth** — required runtime behavior должен быть explicit.
+3. **Explainability first** — важное поведение должно объясняться через config, logs и artifacts.
+4. **Thin UI** — UI не должен обходить runtime/module boundaries.
+5. **Module boundary** — бизнес-логика принадлежит domain modules.
+6. **Bounded capabilities** — external execution должен быть узким и host-controlled.
+7. **Bounded AI** — AI помогает принимать решения, но не получает unrestricted authority.
+8. **Fail closed** — отсутствие или противоречивость critical evidence не должны превращаться в success.
 
 ## Документация
 
-Основные документы проекта:
+Подробная документация находится в [`docs/`](docs/):
 
-- `docs/ROADMAP.md` — этапы и итерации
-- `docs/ARCHITECTURE.md` — архитектурные границы core/module/capability/UI
-- `docs/SDLC.md` — процесс разработки и уровни изменений
-- `docs/SECURITY.md` — secure development rules
-- `docs/DEV_GUIDE.md` — запуск, проверки, dev flow
-- `docs/SPEC.md` — текущая прикладная спецификация
-- `docs/WEB_UI.md` — implemented Web Console contract
-- `docs/product/ui_roadmap.md` — UI roadmap / Web Console direction
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — ownership и system boundaries;
+- [`docs/SPEC.md`](docs/SPEC.md) — текущие platform contracts;
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — stages и iterations;
+- [`docs/DEV_GUIDE.md`](docs/DEV_GUIDE.md) — development и runtime workflows;
+- [`docs/SDLC.md`](docs/SDLC.md) — lightweight development process;
+- [`docs/SECURITY.md`](docs/SECURITY.md) — security engineering rules;
+- [`docs/WEB_UI.md`](docs/WEB_UI.md) — contract Operator Web Console.
 
-## Важно про безопасность
-
-- секреты хранятся в env, а не в репозитории;
-- auth secrets должны жить только в env / `.env`, а не в `config/settings.yml`;
-- `.env` синхронизируется из `.env.example` без перезаписи существующих значений;
-- internal secrets генерируются только в `.env` / runtime env;
-- новый `.env` на POSIX получает `0600`; существующий сохраняет заданные администратором режим и группу при sync, bootstrap и rotation;
-- session secret никогда не печатается;
-- новые обязательные ключи должны валидироваться fail-fast;
-- transport / module / capability boundaries нельзя размывать ad hoc;
-- file parsing, external connectors и execution paths требуют более внимательной проверки;
-- логи и artifacts не должны утекать в sensitive data;
-- v0 должен оставаться read-only;
-- default bind host — `127.0.0.1`;
-- `web.auth.enabled=false` допустим только для local/dev;
-- external deployment всё ещё требует отдельной deployment hardening итерации;
-- artifact routes должны оставаться whitelist-based;
-- path traversal должен блокироваться;
-- raw `.eml`, attachment content и secret-like payload не должны рендериться в HTML или JSON artifact output;
-- body preview должен быть bounded через `rop.email_preview.body_chars_max`;
-- event detail routes должны оставаться read-only;
-- `/rop/events/{event_id}` не должен запускать module/capability/mailbox/CRM actions;
-- Bitrix widget API должен оставаться read-only и artifact-backed;
-- `BITRIX_ROP_WIDGET_TOKEN` — это internal BeeAgent API auth, а не Bitrix webhook credential;
-- widget token должен жить только в env; имя env берётся из `bitrix.widget.token_env`;
-- widget token можно ротировать через `./start.sh auth rotate bitrix-widget`;
-- widget API не должен вызывать Bitrix REST и не должен выполнять CRM/Bitrix/mailbox write-back;
-- external credentials никогда не генерируются автоматически;
-- `rop.ai_assist` disabled by default;
-- AI env values не пишутся в logs/artifacts;
-- при `enabled: true` и `dry_run: false` env валидируются fail-fast;
-- OpenAI adjudicator отправляет только bounded/sanitized payload;
-- strict schema используется для adjudicator output;
-- local validation остаётся обязательной;
-- unknown `risk_flags` bounded и отбрасываются, если не распознаны;
-- AI artifacts не должны содержать raw `.eml`, full HTML, base64, attachment content, webhook URLs, tokens, mailbox passwords или provider keys;
-- AI output не должен напрямую выполнять CRM/mailbox/Bitrix actions;
-- AI output не может триггерить CRM/Bitrix/mailbox actions;
-- write-back/action instructions from AI output must be rejected or preserved as non-executed evidence;
-- deterministic-preserved/`low_confidence_preserve` — safety route, а не write-back action; `manual_review` не используется как normal terminal semantic queue;
-
-## Статус проекта
-
-BeeAgent уже вышел из состояния “только демо”.
-
-Текущий статус:
-
-- **demo skeleton** — DONE;
-- **reusable orchestration core** — DONE;
-- **module platform v0** — DONE;
-- **first real client module integration** — DONE;
-- **first client/operator flow** — DONE;
-- **controlled batch MVP path** — DONE;
-- **live read-only mailbox smoke** — DONE;
-- **ROP live batch classification handoff** — DONE;
-- **ROP CLI and review export** — DONE;
-- **Enriched ROP review TSV** — DONE;
-- **ROP multi-source ingestion artifacts** — DONE;
-- **Operator Web Console v0 with ROP dashboard** — DONE;
-- **BeeUI-backed Web Console foundation** — DONE;
-- **BeeUI-backed auth boundary** — DONE;
-- **Web Console auth bootstrap** — DONE;
-- **Auth token/session rotation CLI** — DONE;
-- **Rich ROP dashboard parity + operator intelligence v1** — DONE;
-- **ROP attachment extraction artifacts** — DONE;
-- **ROP Bitrix read-only reconciliation artifacts** — DONE;
-- **ROP current-state index** — DONE;
-- **ROP dashboard read-model** — DONE;
-- **ROP Bitrix match quality gate** — DONE;
-- **ROP latest-N/source selection evidence** — DONE;
-- **ROP thread artifacts and bounded thread context** — DONE;
-- **ROP bounded AI assist execution v0** — DONE;
-- **ROP public AI merge boundary** — DONE;
-- **ROP OpenAI adjudicator execution path** — DONE;
-- **ROP AI adjudicator strict schema contract** — DONE;
-- **ROP AI adjudicator safe merge/degrade policy** — DONE;
-- **ROP AI adjudicator payload/artifact safety** — DONE;
-- **ROP Review Workbench event details** — DONE;
-- **ROP review quality gate** — DONE;
-- **ROP Bitrix widget API** — DONE;
-- **ROP MVP handoff/readiness pack** — DONE.
-
-Первый реальный модуль:
-
-- `beeagent-rop`
-
-Текущий практический результат:
-
-- `beeagent-rop` загружается через registry;
-- BeeAgent может вызвать `beeagent-rop` через `execute_module_case(...)`;
-- Telegram command `/run_rop` запускает первый ROP operator flow;
-- `run_rop_batch_case(...)` запускает ROP source flow через configurable canonical source registry;
-- `run_rop_batch_case(...)` поддерживает default multi-source, explicit single-source и all enabled sources mode;
-- `./start.sh rop run` запускает multi-source ingestion при нескольких enabled sources; `--all-sources` остаётся явным эквивалентом;
-- `mailbox_readonly` получает последние N писем из configured mailbox source в read-only режиме;
-- BeeAgent пишет `source_diagnostics.json`, `intake_metadata.json`, `mailbox_selection.json`, `normalized_events.json`, `mail_thread_index.json`, `mail_thread_context.json`, `classified_events.json`, `operator_summary.json` и `rop_review_table.tsv` при CLI run/export;
-- BeeAgent пишет `attachment_extraction.json`, `rop_current_state.json`, `bitrix_reconciliation.json`, `rop_mvp_pack.json` и `rop_mvp_report.md` в рамках ROP pipeline;
-- BeeAgent может выполнять `evaluate-review` по reviewed TSV и пишет `rop_evaluation.json`;
-- ROP Queue ведёт на read-only event detail page `/rop/events/{event_id}?run_id=...`;
-- BeeAgent отдаёт JSON detail через `/api/rop/events/{event_id}?run_id=...`;
-- event detail HTML рендерится через BeeUI generic detail renderer;
-- event detail использует bounded `body_preview_*`, classification, thread, AI, Bitrix, attachments metadata и evidence links;
-- raw `.eml`, raw attachment content и secret-like payload не рендерятся;
-- BeeAgent передаёт bounded artifact-derived context через public `beeagent-rop` `ThreadContext` adapter; artifact shape и public module payload намеренно различаются;
-- BeeAgent пишет AI assist evidence artifacts;
-- AI assist disabled by default и не делает write-back;
-- AI result применяется только через public `ai_assist_merge`; при unavailable contract deterministic result сохраняется;
-- OpenAI adjudicator может быть включён для eligible grey-zone events и deterministic tender candidates независимо от confidence;
-- OpenAI adjudicator пишет `rop_ai_adjudicator_*` artifacts;
-- unsafe provider/parse/validation failures сохраняют deterministic semantic результат с explicit diagnostics; новые решения не используют `manual_review` как normal terminal semantic queue;
-- low-confidence/conflicting uncertain adjudicator результаты сохраняют bounded deterministic семантику с diagnostics/attention (`final_queue=unresolved`, `final_action=no_action`, `needs_attention=true`), а не направляются в human semantic queue;
-- CRM execution uncertainty отдельно остаётся fail-closed `deferred` с zero mutation authority;
-- safe ignore может сохраняться, а safe supplier/newsletter false positives могут резолвиться в ignore;
-- write-back в adjudicator path не добавляется;
-- multi-source runs сохраняют aggregate/per-source diagnostics и source traceability;
-- partial degraded source виден в artifacts и не скрывается aggregate метриками;
-- linkage `run → intake/normalized artifacts → operator_summary → module outputs` виден в artifacts;
-- BeeAgent может строить Bitrix reconciliation artifact без CRM write-back;
-- Bitrix match quality gate не считает weak/unsafe matches безопасными target;
-- BeeAgent отдаёт protected read-only Bitrix widget API;
-- It32 delivery/readiness layer находится в BeeAgent, а `beeagent-rop` остаётся владельцем domain classification / `ai_assist_merge` boundary;
-- MVP pack собирает handoff/readiness artifacts для operator/customer review;
-- live mailbox ingestion не делает destructive mailbox actions и не сохраняет raw `.eml`;
-- controlled read-only mailbox ingestion, attachment metadata/extraction artifacts, local Docling document extraction (включая local RapidOCR для image/scanned PDF) и Bitrix read-only reconciliation уже входят в scope;
-- production listener/stream и general UI-triggered runtime/CRM/mailbox execution всё ещё не входят в scope; controlled server-side Bitrix write-back через `rop run` / `rop poll` существует и включён в tracked production profile; UI-8.8 Blacklist Add/Update/Delete — explicit bounded protected POST exception, а explicit disabled и dry-run режимы сохраняют zero-write control.
-- `./start.sh web` запускает BeeUI-backed read-only Operator Web Console;
-- `./start.sh web` может работать с auth boundary при `web.auth.enabled=true`;
-- web console показывает runs, run overview, module diagnostics и ROP dashboard;
-- protected routes требуют BeeUI session;
-- ROP dashboard показывает latest/selected run summary, classification counts, priority/case type distributions and source status summary where artifacts are available;
-- web console отдаёт read-only `/api/*` поверх existing artifacts;
-- web console использует BeeUI поверх FastAPI/Jinja2/локальных Tabler assets;
-- web console читает existing artifacts и не запускает mailbox/CRM/module/capability actions.
-- `./start.sh auth rotate ...` управляет token/session rotation.
+Для implementation details источником правды являются эти документы, а не README.
