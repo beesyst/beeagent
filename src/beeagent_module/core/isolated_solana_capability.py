@@ -32,11 +32,13 @@ _CAPABILITY_NAME = "solana.isolated_lifecycle"
 _REFERENCE_TARGET_CAPABILITY_NAME = "solana.reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CAPABILITY_NAME = "solana.reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CAPABILITY_NAME = "solana.reference_target_detection"
+_REFERENCE_TARGET_CONTAINMENT_CAPABILITY_NAME = "solana.reference_target_containment"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CASE_TYPE = "reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CASE_TYPE = "reference_target_detection"
+_REFERENCE_TARGET_CONTAINMENT_CASE_TYPE = "reference_target_containment_replay"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
@@ -104,6 +106,8 @@ class ScopedSolanaLifecycleCaller:
             return self._call_reference_target_attack(capability_name, payload)
         if self.case_type == _REFERENCE_TARGET_DETECTION_CASE_TYPE:
             return self._call_reference_target_detection(capability_name, payload)
+        if self.case_type == _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE:
+            return self._call_reference_target_containment(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -167,6 +171,7 @@ class ScopedSolanaLifecycleCaller:
                 _REFERENCE_TARGET_CASE_TYPE,
                 _REFERENCE_TARGET_ATTACK_CASE_TYPE,
                 _REFERENCE_TARGET_DETECTION_CASE_TYPE,
+                _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
             }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
@@ -351,6 +356,69 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_reference_target_containment(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _REFERENCE_TARGET_CONTAINMENT_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_reference_target_containment_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        if not _reference_target_resource_is_valid():
+            return self._error(capability_name, "target_resource_unavailable")
+
+        executable = shutil.which("surfpool")
+        if executable is None:
+            return self._error(capability_name, "executable_unavailable")
+
+        process: subprocess.Popen[bytes] | None = None
+        result: CapabilityResult
+        try:
+            process = _start_reference_target_surfpool(executable)
+            readiness = _wait_for_readiness(process)
+            if readiness != "ready":
+                if readiness == "timeout":
+                    result = self._timeout(capability_name, "readiness_timeout")
+                else:
+                    result = self._error(capability_name, readiness)
+            else:
+                evidence = _run_reference_target_containment(
+                    payload["defense_condition"]
+                )
+                result = CapabilityResult(
+                    capability_name=capability_name,
+                    status=CapabilityStatus.OK,
+                    authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+                    summary="Reference target containment completed",
+                    data=evidence,
+                )
+        except _ReferenceTargetTimeout as exc:
+            result = self._timeout(capability_name, str(exc))
+        except _ReferenceTargetFailure as exc:
+            result = self._error(capability_name, str(exc))
+        except TimeoutError:
+            result = self._timeout(capability_name, "transaction_confirmation_timeout")
+        except OSError:
+            result = self._error(capability_name, "prepare_failed")
+        except ValueError:
+            result = self._error(capability_name, "containment_observation_failed")
+        except Exception:
+            result = self._error(capability_name, "runtime_error")
+        finally:
+            if process is not None:
+                cleanup = _reap_process(process)
+                if cleanup != "ok":
+                    self.logger.warning(
+                        "reference target containment cleanup failed: module_id=%s "
+                        "run_id=%s reason=%s",
+                        self.module_id,
+                        self.run_id,
+                        cleanup,
+                    )
+                    result = self._error(capability_name, f"cleanup_{cleanup}")
+        return result
+
     def _refused(self, capability_name: str, reason: str) -> CapabilityResult:
         return CapabilityResult(
             capability_name=capability_name,
@@ -392,6 +460,7 @@ def create_capability_caller(
         _REFERENCE_TARGET_CASE_TYPE,
         _REFERENCE_TARGET_ATTACK_CASE_TYPE,
         _REFERENCE_TARGET_DETECTION_CASE_TYPE,
+        _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -451,6 +520,18 @@ def _is_allowed_reference_target_payload(payload: Mapping[str, Any]) -> bool:
         and set(payload) == {"target_profile", "target_id"}
         and payload.get("target_profile") == _TARGET_PROFILE
         and payload.get("target_id") == _REFERENCE_TARGET_ID
+    )
+
+
+def _is_allowed_reference_target_containment_payload(
+    payload: Mapping[str, Any],
+) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and set(payload) == {"target_profile", "target_id", "defense_condition"}
+        and payload.get("target_profile") == _TARGET_PROFILE
+        and payload.get("target_id") == _REFERENCE_TARGET_ID
+        and payload.get("defense_condition") in {"broken", "fixed"}
     )
 
 
@@ -761,6 +842,129 @@ def _run_reference_target_detection() -> dict[str, str | int]:
     return evidence
 
 
+def _run_reference_target_containment(
+    defense_condition: object,
+) -> dict[str, str | int | None]:
+    if not isinstance(defense_condition, str) or defense_condition not in {
+        "broken",
+        "fixed",
+    }:
+        raise _ReferenceTargetFailure("invalid_defense_condition")
+    with _prepared_reference_target() as target:
+        initial = _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "initialization_failed",
+        )
+        if initial != (1_000_000, 0, 0, 0, 0):
+            raise _ReferenceTargetFailure("canonical_state_inconsistent")
+        try:
+            attack_start_slot = _read_slot()
+            first_attack, first_signature = _invoke_and_observe_with_signature(
+                target.payer,
+                target.state,
+                target.program,
+                2,
+            )
+            detected = _reference_vault_outflow_signal(target.state)
+            first_detection_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("attack_or_detection_failed") from exc
+        if (
+            first_attack is None
+            or first_attack != (999_900, 0, 0, 0, 1)
+            or first_signature is None
+            or not detected
+            or first_detection_slot < attack_start_slot
+        ):
+            raise _ReferenceTargetFailure("attack_or_detection_evidence_inconsistent")
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            3,
+            "control_invocation_failed",
+        )
+        _run_target_operation(
+            target.payer,
+            target.state,
+            target.program,
+            5 if defense_condition == "broken" else 6,
+            "control_invocation_failed",
+        )
+        try:
+            control_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("containment_observation_timeout") from exc
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("containment_observation_failed") from exc
+        if control_slot < first_detection_slot:
+            raise _ReferenceTargetFailure("containment_timing_inconsistent")
+        try:
+            second_attack, second_signature = _invoke_and_observe_with_signature(
+                target.payer,
+                target.state,
+                target.program,
+                2,
+                expect_failure=defense_condition == "fixed",
+            )
+            final = _target_state(target.state)
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("second_attack_observation_failed") from exc
+    if defense_condition == "broken":
+        if (
+            second_attack != (999_800, 1, 1, 0, 2)
+            or second_signature is None
+            or final != second_attack
+        ):
+            raise _ReferenceTargetFailure("failed_containment_evidence_inconsistent")
+        containment_status = "failed"
+        containment_slot: int | None = None
+        second_attack_status = "succeeded"
+    else:
+        if (
+            second_attack is not None
+            or second_signature is not None
+            or final != (999_900, 1, 0, 0, 1)
+        ):
+            raise _ReferenceTargetFailure(
+                "successful_containment_evidence_inconsistent"
+            )
+        containment_status = "succeeded"
+        containment_slot = control_slot
+        second_attack_status = "rejected"
+    return {
+        "target_id": _REFERENCE_TARGET_ID,
+        "initial_state_id": "reference_vault_canonical_v1",
+        "economic_unit": "lamports",
+        "defense_condition": defense_condition,
+        "attack_sequence_id": "reference_vault_unsafe_withdraw_twice_v1",
+        "initial_vault_lamports": initial[0],
+        "attack_start_slot": attack_start_slot,
+        "first_attack_signature": first_signature,
+        "first_attack_vault_lamports": first_attack[0],
+        "first_attack_unsafe_withdraw_count": first_attack[4],
+        "detection_status": "observed",
+        "first_detection_slot": first_detection_slot,
+        "containment_status": containment_status,
+        "first_containment_slot": containment_slot,
+        "second_attack_status": second_attack_status,
+        "final_vault_lamports": final[0],
+        "final_unsafe_withdraw_count": final[4],
+        "residual_loss_lamports": initial[0] - final[0],
+    }
+
+
 def _reference_vault_outflow_signal(state: Keypair) -> bool:
     data = _read_target_state(state)
     return int.from_bytes(data[14:18], "little") > 0
@@ -891,16 +1095,17 @@ def _invoke_and_observe_with_signature(
         raise
     if expect_failure:
         raise ValueError("breaker did not refuse unsafe instruction")
+    return _target_state(state), signature
+
+
+def _target_state(state: Keypair) -> TargetState:
     data = _read_target_state(state)
     return (
-        (
-            int.from_bytes(data[2:10], "little"),
-            data[0],
-            data[1],
-            int.from_bytes(data[10:14], "little"),
-            int.from_bytes(data[14:18], "little"),
-        ),
-        signature,
+        int.from_bytes(data[2:10], "little"),
+        data[0],
+        data[1],
+        int.from_bytes(data[10:14], "little"),
+        int.from_bytes(data[14:18], "little"),
     )
 
 

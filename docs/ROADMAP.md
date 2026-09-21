@@ -9648,6 +9648,94 @@ git diff --check
 
 BeeAgent can independently observe the fixed BeeDrill reference attack and return bounded detection evidence while retaining complete ownership of execution, RPC, policy, authority, timing bounds and cleanup.
 
+### Итерация 44.3 — Bounded BeeDrill reference-target containment capability
+
+**Статус:** DONE
+
+#### Goal
+
+Add the smallest BeeAgent-owned execution path required by BeeDrill Iteration 9 to exercise broken and fixed containment conditions for the existing `reference_vault` attack and return bounded machine-verifiable containment and economic evidence.
+
+#### Scope
+
+- reuse the existing BeeDrill-scoped `CapabilityCaller`;
+- add one bounded capability: `solana.reference_target_containment`;
+- scope it only to the BeeDrill `reference_target_containment_replay` case;
+- reuse the fixed `surfpool_local` target, reference-target preparation, unsafe-withdraw operation, reference detector, RPC boundary, timeout and cleanup;
+- accept only the fixed target identity plus a bounded host-validated defense condition: `broken` or `fixed`;
+- execute the same fixed two-attempt unsafe-withdraw sequence for both conditions;
+- observe the detector after the first attack;
+- invoke the existing breaker/control path after detection;
+- verify whether the second identical unsafe operation succeeds or is rejected;
+- return bounded state, slot, containment-status and economic evidence;
+- keep refusal, timeout and runtime error distinct from completed failed containment;
+- preserve fresh-state repeatability.
+
+#### Excluded
+
+- generic containment framework;
+- arbitrary instruction, transaction or command submission;
+- caller-selected executable, argv, filesystem path, RPC endpoint or RPC method;
+- caller-controlled Solana instruction code;
+- production/mainnet mutation;
+- production credentials;
+- BeeDrill metrics or verdict computation;
+- generic incident-response automation;
+- BeeSDK contract changes;
+- new runtime dependencies unless separately proven necessary.
+
+#### Deliverable
+
+One host-owned bounded capability that can machine-evidence both ineffective and effective containment for the fixed reference attack without transferring execution authority to BeeDrill.
+
+#### Acceptance criteria
+
+- only the exact BeeDrill module/case/capability/authority scope is accepted;
+- only `surfpool_local`, `reference_vault` and the bounded `broken`/`fixed` defense condition are accepted;
+- both phases begin from the canonical reference-target economic state;
+- the same fixed attack operation is used before and after the defensive correction;
+- detection is machine-observed rather than inferred from attack success;
+- broken containment allows the subsequent identical unsafe operation and produces higher residual loss;
+- fixed containment causes the subsequent identical unsafe operation to be rejected and preserves more capital;
+- containment failure/success is derived from target effect and bounded state evidence;
+- slot ordering is internally consistent;
+- malformed or execution-shaped input is refused before execution;
+- timeout and cleanup remain bounded;
+- no tested path leaves an orphan managed process;
+- no production/mainnet fallback or production secret is introduced;
+- existing lifecycle, baseline, attack and detection capabilities remain compatible.
+
+#### Checks
+
+```text
+targeted capability/runtime tests
+full pytest
+approved module/case/capability
+wrong module/case/capability refusal
+invalid defense condition refusal
+execution-shaped payload refusal
+broken containment run
+fixed containment run
+detection-before-containment evidence
+second-attack allowed/rejected evidence
+economic-state comparison
+slot ordering
+preparation/transaction/observation failures
+timeout
+cleanup
+no orphan process
+fresh-state replay
+real BeeDrill cross-repository integration smoke
+log/artifact inspection
+SAST
+SCA only if dependency surface changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can safely execute and evidence the fixed BeeDrill containment experiment in the approved isolated environment while retaining complete ownership of execution, RPC, policy, authority, timeout and cleanup.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
