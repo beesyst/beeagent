@@ -51,6 +51,10 @@ def _reference_target_containment_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_target_containment_replay")
 
 
+def _reference_oracle_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="reference_oracle_manipulation_replay")
+
+
 class _Process:
     def __init__(self, force_cleanup: bool = False) -> None:
         self.exit_code: int | None = None
@@ -1444,3 +1448,415 @@ def test_reference_target_phase_failure_is_explicit(
     assert result.status is status
     assert result.diagnostics == {"reason": reason}
     assert process.poll() is not None
+
+
+_REFERENCE_ORACLE_EVIDENCE = {
+    "target_id": "reference_oracle_market",
+    "initial_state_id": "reference_oracle_market_canonical_v1",
+    "economic_unit": "micro_usdc",
+    "defense_condition": "fixed",
+    "attack_sequence_id": "reference_oracle_manipulation_borrow_twice_v1",
+    "canonical_oracle_price_micro_usd": 1_000_000,
+    "manipulated_oracle_price_micro_usd": 2_000_000,
+    "collateral_units": 100,
+    "ltv_bps": 5_000,
+    "canonical_debt_limit_micro_usdc": 50_000_000,
+    "initial_debt_micro_usdc": 50_000_000,
+    "initial_reserve_micro_usdc": 100_000_000,
+    "attack_start_slot": 42,
+    "oracle_manipulation_signature": "oracle-signature",
+    "first_borrow_signature": "borrow-signature",
+    "first_borrow_debt_micro_usdc": 75_000_000,
+    "first_borrow_reserve_micro_usdc": 75_000_000,
+    "detector_id": "reference_oracle_deviation_monitor",
+    "signal_id": "oracle_price_deviation_signal",
+    "detection_status": "observed",
+    "first_detection_slot": 44,
+    "containment_status": "succeeded",
+    "first_containment_slot": 46,
+    "containment_state": "borrowing_blocked",
+    "second_borrow_status": "rejected",
+    "final_debt_micro_usdc": 75_000_000,
+    "final_reserve_micro_usdc": 75_000_000,
+    "residual_loss_micro_usdc": 25_000_000,
+}
+
+
+def test_reference_oracle_caller_is_created_only_for_approved_case() -> None:
+    assert (
+        create_capability_caller(
+            "run-1",
+            "session-1",
+            "beedrill",
+            "reference_oracle_manipulation_replay",
+            AuthorityLevel.READ_ONLY,
+            logging.getLogger("test"),
+        )
+        is not None
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "target_profile": "other",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "other",
+            "defense_condition": "fixed",
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "other",
+        },
+        {"target_profile": "surfpool_local", "target_id": "reference_oracle_market"},
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+            "price": 2_000_000,
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+            "borrow": 25_000_000,
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+            "rpc_method": "untrusted",
+        },
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+            "argv": "untrusted",
+        },
+    ],
+)
+def test_reference_oracle_caller_refuses_untrusted_intent(
+    payload: dict[str, object],
+) -> None:
+    result = _reference_oracle_caller().call(
+        "solana.reference_oracle_manipulation", payload
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+
+
+@pytest.mark.parametrize(
+    ("module_id", "case_type", "authority"),
+    [
+        ("other", "reference_oracle_manipulation_replay", AuthorityLevel.READ_ONLY),
+        ("beedrill", "other", AuthorityLevel.READ_ONLY),
+        ("beedrill", "reference_oracle_manipulation_replay", AuthorityLevel.DRAFT_ONLY),
+    ],
+)
+def test_reference_oracle_caller_refuses_invalid_scope(
+    module_id: str, case_type: str, authority: AuthorityLevel
+) -> None:
+    result = _caller(module_id, case_type, authority).call(
+        "solana.reference_oracle_manipulation",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "scope_not_allowed"}
+
+
+def test_reference_oracle_resource_is_the_fixed_package_target() -> None:
+    assert solana_capability._reference_oracle_resource_is_valid()
+
+
+def test_reference_oracle_caller_rejects_missing_package_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        solana_capability, "_reference_oracle_resource_is_valid", lambda: False
+    )
+
+    result = _reference_oracle_caller().call(
+        "solana.reference_oracle_manipulation",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "target_resource_unavailable"}
+
+
+def test_reference_oracle_caller_returns_bounded_evidence_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_oracle_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_oracle_manipulation",
+        lambda condition: {
+            **_REFERENCE_ORACLE_EVIDENCE,
+            "defense_condition": condition,
+        },
+    )
+
+    result = _reference_oracle_caller().call(
+        "solana.reference_oracle_manipulation",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.OK
+    assert result.data == _REFERENCE_ORACLE_EVIDENCE
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize("condition", ["broken", "fixed"])
+def test_reference_oracle_replay_proves_target_effect(
+    monkeypatch: pytest.MonkeyPatch, condition: str
+) -> None:
+    @contextmanager
+    def prepared_target():
+        yield solana_capability._PreparedReferenceTarget(
+            Keypair(), Keypair(), Keypair()
+        )
+
+    monkeypatch.setattr(
+        solana_capability, "_prepared_reference_oracle_market", prepared_target
+    )
+    events: list[str | int] = []
+    control_codes: list[int] = []
+
+    def run_operation(_payer, _state, _program, code, *_):
+        events.append(code)
+        control_codes.append(code)
+        return (
+            (False, 1_000_000, 50_000_000, 100_000_000)
+            if code == 0
+            else (False, 2_000_000, 75_000_000, 75_000_000)
+            if code == 4
+            else (True, 2_000_000, 75_000_000, 75_000_000)
+        )
+
+    monkeypatch.setattr(
+        solana_capability, "_run_reference_oracle_operation", run_operation
+    )
+    calls = iter(
+        [
+            ((False, 2_000_000, 50_000_000, 100_000_000), "oracle-signature"),
+            ((False, 2_000_000, 75_000_000, 75_000_000), "borrow-signature"),
+            ((False, 2_000_000, 100_000_000, 50_000_000), "second-borrow")
+            if condition == "broken"
+            else (None, None),
+        ]
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_invoke_reference_oracle_with_signature",
+        lambda *_args, **_kwargs: next(calls),
+    )
+    monkeypatch.setattr(
+        solana_capability,
+        "_reference_oracle_deviation_signal",
+        lambda _: events.append("detection") or True,
+    )
+    slots = iter([42, 44, 46])
+    monkeypatch.setattr(solana_capability, "_read_slot", lambda: next(slots))
+    monkeypatch.setattr(
+        solana_capability,
+        "_reference_oracle_state",
+        lambda _: (
+            (False, 2_000_000, 100_000_000, 50_000_000)
+            if condition == "broken"
+            else (True, 2_000_000, 75_000_000, 75_000_000)
+        ),
+    )
+
+    evidence = solana_capability._run_reference_oracle_manipulation(condition)
+
+    attack_start_slot = evidence["attack_start_slot"]
+    first_detection_slot = evidence["first_detection_slot"]
+
+    assert isinstance(attack_start_slot, int)
+    assert isinstance(first_detection_slot, int)
+    assert attack_start_slot <= first_detection_slot
+
+    assert control_codes == [0, 4 if condition == "broken" else 3]
+    assert events == [0, "detection", 4 if condition == "broken" else 3]
+    assert evidence["first_borrow_debt_micro_usdc"] == 75_000_000
+    assert evidence["first_borrow_reserve_micro_usdc"] == 75_000_000
+    if condition == "broken":
+        assert evidence["containment_status"] == "failed"
+        assert evidence["second_borrow_status"] == "succeeded"
+        assert evidence["first_containment_slot"] is None
+        assert evidence["final_debt_micro_usdc"] == 100_000_000
+        assert evidence["final_reserve_micro_usdc"] == 50_000_000
+    else:
+        assert evidence["containment_status"] == "succeeded"
+        assert evidence["second_borrow_status"] == "rejected"
+        assert evidence["first_containment_slot"] == 46
+        assert evidence["final_debt_micro_usdc"] == 75_000_000
+        assert evidence["final_reserve_micro_usdc"] == 75_000_000
+
+
+def test_reference_oracle_only_accepts_confirmed_target_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payer, state, program = Keypair(), Keypair(), Keypair()
+    monkeypatch.setattr(
+        solana_capability,
+        "_send_transaction",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            solana_capability._RpcRequestFailure({"unavailable": "network"})
+        ),
+    )
+
+    with pytest.raises(solana_capability._RpcRequestFailure):
+        solana_capability._invoke_reference_oracle_with_signature(
+            payer, state, program, 2, expect_failure=True
+        )
+
+    monkeypatch.setattr(
+        solana_capability,
+        "_send_transaction",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            solana_capability._TargetInstructionRejected("target rejection")
+        ),
+    )
+    assert solana_capability._invoke_reference_oracle_with_signature(
+        payer, state, program, 2, expect_failure=True
+    ) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("exception", "status", "reason"),
+    [
+        (
+            solana_capability._ReferenceTargetFailure("preparation_failed"),
+            CapabilityStatus.ERROR,
+            "preparation_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetFailure("build_failed"),
+            CapabilityStatus.ERROR,
+            "build_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetFailure("deployment_failed"),
+            CapabilityStatus.ERROR,
+            "deployment_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetFailure(
+                "state_account_preparation_failed"
+            ),
+            CapabilityStatus.ERROR,
+            "state_account_preparation_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetFailure("attack_or_detection_failed"),
+            CapabilityStatus.ERROR,
+            "attack_or_detection_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetFailure(
+                "second_borrow_observation_failed"
+            ),
+            CapabilityStatus.ERROR,
+            "second_borrow_observation_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetTimeout("deployment_timeout"),
+            CapabilityStatus.TIMEOUT,
+            "deployment_timeout",
+        ),
+    ],
+)
+def test_reference_oracle_phase_failures_are_explicit_and_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+    exception: Exception,
+    status: CapabilityStatus,
+    reason: str,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(
+        solana_capability, "_reference_oracle_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_oracle_manipulation",
+        lambda _: (_ for _ in ()).throw(exception),
+    )
+
+    result = _reference_oracle_caller().call(
+        "solana.reference_oracle_manipulation",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is status
+    assert result.diagnostics == {"reason": reason}
+    assert process.poll() is not None
+
+
+def test_reference_oracle_forced_cleanup_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process(force_cleanup=True)
+    monkeypatch.setattr(
+        solana_capability, "_reference_oracle_resource_is_valid", lambda: True
+    )
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_reference_oracle_manipulation",
+        lambda _: _REFERENCE_ORACLE_EVIDENCE,
+    )
+
+    result = _reference_oracle_caller().call(
+        "solana.reference_oracle_manipulation",
+        {
+            "target_profile": "surfpool_local",
+            "target_id": "reference_oracle_market",
+            "defense_condition": "fixed",
+        },
+    )
+
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "cleanup_forced"}
+    assert process.killed

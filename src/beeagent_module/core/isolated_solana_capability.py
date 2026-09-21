@@ -33,15 +33,18 @@ _REFERENCE_TARGET_CAPABILITY_NAME = "solana.reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CAPABILITY_NAME = "solana.reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CAPABILITY_NAME = "solana.reference_target_detection"
 _REFERENCE_TARGET_CONTAINMENT_CAPABILITY_NAME = "solana.reference_target_containment"
+_REFERENCE_ORACLE_CAPABILITY_NAME = "solana.reference_oracle_manipulation"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
 _REFERENCE_TARGET_ATTACK_CASE_TYPE = "reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CASE_TYPE = "reference_target_detection"
 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE = "reference_target_containment_replay"
+_REFERENCE_ORACLE_CASE_TYPE = "reference_oracle_manipulation_replay"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
+_REFERENCE_ORACLE_TARGET_ID = "reference_oracle_market"
 _RPC_HOST = "127.0.0.1"
 _RPC_PORT = 8899
 _STARTUP_TIMEOUT_SECONDS = 12.0
@@ -108,6 +111,8 @@ class ScopedSolanaLifecycleCaller:
             return self._call_reference_target_detection(capability_name, payload)
         if self.case_type == _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE:
             return self._call_reference_target_containment(capability_name, payload)
+        if self.case_type == _REFERENCE_ORACLE_CASE_TYPE:
+            return self._call_reference_oracle_manipulation(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -172,6 +177,7 @@ class ScopedSolanaLifecycleCaller:
                 _REFERENCE_TARGET_ATTACK_CASE_TYPE,
                 _REFERENCE_TARGET_DETECTION_CASE_TYPE,
                 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
+                _REFERENCE_ORACLE_CASE_TYPE,
             }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
@@ -419,6 +425,68 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_reference_oracle_manipulation(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _REFERENCE_ORACLE_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_reference_oracle_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        if not _reference_oracle_resource_is_valid():
+            return self._error(capability_name, "target_resource_unavailable")
+
+        executable = shutil.which("surfpool")
+        if executable is None:
+            return self._error(capability_name, "executable_unavailable")
+
+        process: subprocess.Popen[bytes] | None = None
+        result: CapabilityResult
+        try:
+            process = _start_reference_target_surfpool(executable)
+            readiness = _wait_for_readiness(process)
+            if readiness != "ready":
+                if readiness == "timeout":
+                    result = self._timeout(capability_name, "readiness_timeout")
+                else:
+                    result = self._error(capability_name, readiness)
+            else:
+                evidence = _run_reference_oracle_manipulation(
+                    payload["defense_condition"]
+                )
+                result = CapabilityResult(
+                    capability_name=capability_name,
+                    status=CapabilityStatus.OK,
+                    authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+                    summary="Reference oracle manipulation replay completed",
+                    data=evidence,
+                )
+        except _ReferenceTargetTimeout as exc:
+            result = self._timeout(capability_name, str(exc))
+        except _ReferenceTargetFailure as exc:
+            result = self._error(capability_name, str(exc))
+        except TimeoutError:
+            result = self._timeout(capability_name, "transaction_confirmation_timeout")
+        except OSError:
+            result = self._error(capability_name, "prepare_failed")
+        except ValueError:
+            result = self._error(capability_name, "oracle_observation_failed")
+        except Exception:
+            result = self._error(capability_name, "runtime_error")
+        finally:
+            if process is not None:
+                cleanup = _reap_process(process)
+                if cleanup != "ok":
+                    self.logger.warning(
+                        "reference oracle cleanup failed: module_id=%s run_id=%s reason=%s",
+                        self.module_id,
+                        self.run_id,
+                        cleanup,
+                    )
+                    result = self._error(capability_name, f"cleanup_{cleanup}")
+        return result
+
     def _refused(self, capability_name: str, reason: str) -> CapabilityResult:
         return CapabilityResult(
             capability_name=capability_name,
@@ -461,6 +529,7 @@ def create_capability_caller(
         _REFERENCE_TARGET_ATTACK_CASE_TYPE,
         _REFERENCE_TARGET_DETECTION_CASE_TYPE,
         _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
+        _REFERENCE_ORACLE_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -535,6 +604,16 @@ def _is_allowed_reference_target_containment_payload(
     )
 
 
+def _is_allowed_reference_oracle_payload(payload: Mapping[str, Any]) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and set(payload) == {"target_profile", "target_id", "defense_condition"}
+        and payload.get("target_profile") == _TARGET_PROFILE
+        and payload.get("target_id") == _REFERENCE_ORACLE_TARGET_ID
+        and payload.get("defense_condition") in {"broken", "fixed"}
+    )
+
+
 def _reference_target_resource_is_valid() -> bool:
     try:
         resource_root = importlib.resources.files("beedrill").joinpath(
@@ -568,6 +647,45 @@ def _reference_target_resource_is_valid() -> bool:
                 "detector_signal": "vault_outflow_signal",
                 "breaker": "available",
                 "containment_configurations": ["valid", "broken"],
+            },
+        }
+    )
+
+
+def _reference_oracle_resource_is_valid() -> bool:
+    try:
+        resource_root = importlib.resources.files("beedrill").joinpath(
+            "reference_target"
+        )
+        resource = resource_root.joinpath("reference_oracle_market.json")
+        parsed = json.loads(resource.read_text(encoding="utf-8"))
+        source_root = resource_root.joinpath("oracle_market")
+        cargo_toml = source_root.joinpath("Cargo.toml").read_text(encoding="utf-8")
+        source = source_root.joinpath("src/lib.rs").read_text(encoding="utf-8")
+    except (
+        ImportError,
+        FileNotFoundError,
+        IsADirectoryError,
+        json.JSONDecodeError,
+        ModuleNotFoundError,
+    ):
+        return False
+    return (
+        'name = "beedrill-reference-oracle-market"' in cargo_toml
+        and bool(source.strip())
+        and parsed
+        == {
+            "resource_id": "beedrill.reference_oracle_market.v1",
+            "target_id": _REFERENCE_ORACLE_TARGET_ID,
+            "canonical_initial_state": {
+                "canonical_debt_limit_micro_usdc": 50_000_000,
+                "borrow_increment_micro_usdc": 25_000_000,
+                "canonical_oracle_price_micro_usd": 1_000_000,
+                "collateral_units": 100,
+                "initial_debt_micro_usdc": 50_000_000,
+                "initial_reserve_micro_usdc": 100_000_000,
+                "ltv_bps": 5_000,
+                "manipulated_oracle_price_micro_usd": 2_000_000,
             },
         }
     )
@@ -632,6 +750,76 @@ def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
             )
             try:
                 _create_state(payer, state, program_keypair)
+            except TimeoutError as exc:
+                raise _ReferenceTargetTimeout(
+                    "transaction_confirmation_timeout"
+                ) from exc
+            except (OSError, ValueError) as exc:
+                raise _ReferenceTargetFailure(
+                    "state_account_preparation_failed"
+                ) from exc
+            yield _PreparedReferenceTarget(payer, state, program_keypair)
+
+
+@contextmanager
+def _prepared_reference_oracle_market() -> Iterator[_PreparedReferenceTarget]:
+    build_tool = shutil.which("cargo-build-sbf")
+    solana = shutil.which("solana")
+    if build_tool is None or solana is None:
+        raise _ReferenceTargetFailure("preparation_failed")
+    resource_root = importlib.resources.files("beedrill").joinpath("reference_target")
+    with importlib.resources.as_file(resource_root) as source_root:
+        with tempfile.TemporaryDirectory(prefix="beeagent-reference-oracle-") as temp:
+            temporary = Path(temp)
+            output = temporary / "deploy"
+            _run_target_command(
+                [
+                    build_tool,
+                    "--manifest-path",
+                    str(source_root / "oracle_market" / "Cargo.toml"),
+                    "--sbf-out-dir",
+                    str(output),
+                ],
+                "build",
+                {**os.environ, "CARGO_TARGET_DIR": str(temporary / "cargo-target")},
+            )
+            program = output / "beedrill_reference_oracle_market.so"
+            if not program.is_file():
+                raise _ReferenceTargetFailure("build_failed")
+            payer = Keypair()
+            program_keypair = Keypair()
+            state = Keypair()
+            payer_path = temporary / "payer.json"
+            program_path = temporary / "program.json"
+            payer_path.write_text(json.dumps(list(bytes(payer))), encoding="utf-8")
+            program_path.write_text(
+                json.dumps(list(bytes(program_keypair))), encoding="utf-8"
+            )
+            try:
+                _rpc_request_airdrop(str(payer.pubkey()))
+            except TimeoutError as exc:
+                raise _ReferenceTargetTimeout(
+                    "transaction_confirmation_timeout"
+                ) from exc
+            except (OSError, ValueError) as exc:
+                raise _ReferenceTargetFailure("preparation_failed") from exc
+            _run_target_command(
+                [
+                    solana,
+                    "program",
+                    "deploy",
+                    "--url",
+                    "http://127.0.0.1:8899",
+                    "--keypair",
+                    str(payer_path),
+                    "--program-id",
+                    str(program_path),
+                    str(program),
+                ],
+                "deployment",
+            )
+            try:
+                _create_state(payer, state, program_keypair, space=25)
             except TimeoutError as exc:
                 raise _ReferenceTargetTimeout(
                     "transaction_confirmation_timeout"
@@ -965,6 +1153,212 @@ def _run_reference_target_containment(
     }
 
 
+def _run_reference_oracle_manipulation(
+    defense_condition: object,
+) -> dict[str, str | int | None]:
+    if not isinstance(defense_condition, str) or defense_condition not in {
+        "broken",
+        "fixed",
+    }:
+        raise _ReferenceTargetFailure("invalid_defense_condition")
+    with _prepared_reference_oracle_market() as target:
+        initial = _run_reference_oracle_operation(
+            target.payer,
+            target.state,
+            target.program,
+            0,
+            "initialization_failed",
+        )
+        if initial != (False, 1_000_000, 50_000_000, 100_000_000):
+            raise _ReferenceTargetFailure("canonical_state_inconsistent")
+        try:
+            attack_start_slot = _read_slot()
+            manipulated, manipulation_signature = (
+                _invoke_reference_oracle_with_signature(
+                    target.payer, target.state, target.program, 1
+                )
+            )
+            first_borrow, first_borrow_signature = (
+                _invoke_reference_oracle_with_signature(
+                    target.payer, target.state, target.program, 2
+                )
+            )
+            detected = _reference_oracle_deviation_signal(target.state)
+            first_detection_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("attack_or_detection_failed") from exc
+        if (
+            manipulated is None
+            or first_borrow is None
+            or manipulated != (False, 2_000_000, 50_000_000, 100_000_000)
+            or not manipulation_signature
+            or first_borrow != (False, 2_000_000, 75_000_000, 75_000_000)
+            or not first_borrow_signature
+            or not detected
+            or first_detection_slot < attack_start_slot
+        ):
+            raise _ReferenceTargetFailure("attack_or_detection_evidence_inconsistent")
+        containment_state = _run_reference_oracle_operation(
+            target.payer,
+            target.state,
+            target.program,
+            4 if defense_condition == "broken" else 3,
+            "containment_invocation_failed",
+        )
+        try:
+            observed_containment_slot = _read_slot()
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("containment_observation_timeout") from exc
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("containment_observation_failed") from exc
+        if observed_containment_slot < first_detection_slot:
+            raise _ReferenceTargetFailure("containment_timing_inconsistent")
+        containment_slot = (
+            None if defense_condition == "broken" else observed_containment_slot
+        )
+        try:
+            second_borrow, _ = _invoke_reference_oracle_with_signature(
+                target.payer,
+                target.state,
+                target.program,
+                2,
+                expect_failure=defense_condition == "fixed",
+            )
+            final = _reference_oracle_state(target.state)
+        except TimeoutError as exc:
+            raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+        except _ReferenceTargetFailure:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _ReferenceTargetFailure("second_borrow_observation_failed") from exc
+    if defense_condition == "broken":
+        if (
+            containment_state != (False, 2_000_000, 75_000_000, 75_000_000)
+            or second_borrow != (False, 2_000_000, 100_000_000, 50_000_000)
+            or final != second_borrow
+        ):
+            raise _ReferenceTargetFailure("failed_containment_evidence_inconsistent")
+        containment_status = "failed"
+        containment_state = "borrowing_open"
+        second_borrow_status = "succeeded"
+    else:
+        if (
+            containment_state != (True, 2_000_000, 75_000_000, 75_000_000)
+            or second_borrow is not None
+            or final
+            != (
+                True,
+                2_000_000,
+                75_000_000,
+                75_000_000,
+            )
+        ):
+            raise _ReferenceTargetFailure(
+                "successful_containment_evidence_inconsistent"
+            )
+        containment_status = "succeeded"
+        containment_state = "borrowing_blocked"
+        second_borrow_status = "rejected"
+    return {
+        "target_id": _REFERENCE_ORACLE_TARGET_ID,
+        "initial_state_id": "reference_oracle_market_canonical_v1",
+        "economic_unit": "micro_usdc",
+        "defense_condition": defense_condition,
+        "attack_sequence_id": "reference_oracle_manipulation_borrow_twice_v1",
+        "canonical_oracle_price_micro_usd": initial[1],
+        "manipulated_oracle_price_micro_usd": manipulated[1],
+        "collateral_units": 100,
+        "ltv_bps": 5_000,
+        "canonical_debt_limit_micro_usdc": 50_000_000,
+        "initial_debt_micro_usdc": initial[2],
+        "initial_reserve_micro_usdc": initial[3],
+        "attack_start_slot": attack_start_slot,
+        "oracle_manipulation_signature": manipulation_signature,
+        "first_borrow_signature": first_borrow_signature,
+        "first_borrow_debt_micro_usdc": first_borrow[2],
+        "first_borrow_reserve_micro_usdc": first_borrow[3],
+        "detector_id": "reference_oracle_deviation_monitor",
+        "signal_id": "oracle_price_deviation_signal",
+        "detection_status": "observed",
+        "first_detection_slot": first_detection_slot,
+        "containment_status": containment_status,
+        "first_containment_slot": containment_slot,
+        "containment_state": containment_state,
+        "second_borrow_status": second_borrow_status,
+        "final_debt_micro_usdc": final[2],
+        "final_reserve_micro_usdc": final[3],
+        "residual_loss_micro_usdc": max(0, final[2] - 50_000_000),
+    }
+
+
+def _run_reference_oracle_operation(
+    payer: Keypair,
+    state: Keypair,
+    program: Keypair,
+    code: int,
+    failure_reason: str,
+) -> tuple[bool, int, int, int]:
+    try:
+        observed, _ = _invoke_reference_oracle_with_signature(
+            payer, state, program, code
+        )
+        if observed is None:
+            raise ValueError("reference oracle instruction was unexpectedly rejected")
+        return observed
+    except TimeoutError as exc:
+        raise _ReferenceTargetTimeout("transaction_confirmation_timeout") from exc
+    except _ReferenceTargetFailure:
+        raise
+    except (OSError, ValueError) as exc:
+        raise _ReferenceTargetFailure(failure_reason) from exc
+
+
+def _invoke_reference_oracle_with_signature(
+    payer: Keypair,
+    state: Keypair,
+    program: Keypair,
+    code: int,
+    expect_failure: bool = False,
+) -> tuple[tuple[bool, int, int, int] | None, str | None]:
+    instruction = Instruction(
+        program.pubkey(), bytes([code]), [AccountMeta(state.pubkey(), False, True)]
+    )
+    try:
+        signature = _send_transaction(
+            payer,
+            [payer],
+            instruction,
+            allow_target_instruction_rejection=expect_failure,
+        )
+    except _TargetInstructionRejected:
+        if expect_failure:
+            return None, None
+        raise
+    if expect_failure:
+        raise ValueError("containment did not reject the second borrow")
+    return _reference_oracle_state(state), signature
+
+
+def _reference_oracle_deviation_signal(state: Keypair) -> bool:
+    return _reference_oracle_state(state)[1] == 2_000_000
+
+
+def _reference_oracle_state(state: Keypair) -> tuple[bool, int, int, int]:
+    data = _read_target_state(state, expected_size=25)
+    if data[0] not in {0, 1}:
+        raise _ReferenceTargetFailure("state_observation_failed")
+    return (
+        bool(data[0]),
+        int.from_bytes(data[1:9], "little"),
+        int.from_bytes(data[9:17], "little"),
+        int.from_bytes(data[17:25], "little"),
+    )
+
+
 def _reference_vault_outflow_signal(state: Keypair) -> bool:
     data = _read_target_state(state)
     return int.from_bytes(data[14:18], "little") > 0
@@ -1039,8 +1433,10 @@ def _rpc_request_airdrop(address: str) -> None:
     _confirm_transaction(_rpc_call("requestAirdrop", [address, 10_000_000_000]))
 
 
-def _create_state(payer: Keypair, state: Keypair, program: Keypair) -> None:
-    lamports = _rpc_call("getMinimumBalanceForRentExemption", [18])
+def _create_state(
+    payer: Keypair, state: Keypair, program: Keypair, *, space: int = 18
+) -> None:
+    lamports = _rpc_call("getMinimumBalanceForRentExemption", [space])
     if not isinstance(lamports, int) or lamports < 1:
         raise ValueError("fixed local rent exemption value is invalid")
     instruction = create_account(
@@ -1048,7 +1444,7 @@ def _create_state(payer: Keypair, state: Keypair, program: Keypair) -> None:
             from_pubkey=payer.pubkey(),
             to_pubkey=state.pubkey(),
             lamports=lamports,
-            space=18,
+            space=space,
             owner=program.pubkey(),
         )
     )
@@ -1109,7 +1505,7 @@ def _target_state(state: Keypair) -> TargetState:
     )
 
 
-def _read_target_state(state: Keypair) -> bytes:
+def _read_target_state(state: Keypair, *, expected_size: int = 18) -> bytes:
     try:
         result = _rpc_call(
             "getAccountInfo", [str(state.pubkey()), {"encoding": "base64"}]
@@ -1129,7 +1525,7 @@ def _read_target_state(state: Keypair) -> bytes:
         data = base64.b64decode(encoded_data[0], validate=True)
     except (binascii.Error, TypeError, ValueError) as exc:
         raise _ReferenceTargetFailure("state_observation_failed") from exc
-    if len(data) != 18:
+    if len(data) != expected_size:
         raise _ReferenceTargetFailure("state_observation_failed")
     return data
 
