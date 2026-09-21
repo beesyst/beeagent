@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.66.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.65.0...beeagent-v0.66.0) (2026-09-21)
+
+
+### Features
+
+* add bounded oracle manipulation capability ([#264](https://github.com/beesyst/beeagent/issues/264)) ([d9dafa4](https://github.com/beesyst/beeagent/commit/d9dafa4bdfb1980139a629dd65111e15ee51337e))
+
 ## [0.65.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.64.0...beeagent-v0.65.0) (2026-09-21)
 
 
