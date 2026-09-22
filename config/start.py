@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 import sys
@@ -28,7 +29,15 @@ from beeagent_module.core.document_extractors import (
 )
 from beeagent_module.core.env_sync import ensure_bootstrap_env, sync_env_with_example
 from beeagent_module.core.log import get_logger, setup_logging
-from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_project_root
+from beeagent_module.core.module_registry import build_registry
+from beeagent_module.core.module_runtime import execute_module_case
+from beeagent_module.core.paths import (
+    ensure_dirs,
+    get_app_log_path,
+    get_project_root,
+    get_storage_dir,
+)
+from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 from beeagent_module.core.settings import load_settings
 
 _BASE_PROFILE = "base"
@@ -37,6 +46,16 @@ _DOCLING_PROFILES = {
     "cuda": "docling-cuda",
 }
 _ALLOWED_PROFILES = frozenset({_BASE_PROFILE, "docling-cpu", "docling-cuda"})
+_BEEDRILL_SCENARIOS = {
+    "reference_target_containment_replay": {
+        "target_profile": "surfpool_local",
+        "target_id": "reference_vault",
+    },
+    "reference_oracle_manipulation_replay": {
+        "target_profile": "surfpool_local",
+        "target_id": "reference_oracle_market",
+    },
+}
 
 
 def bootstrap_runtime() -> None:
@@ -187,6 +206,9 @@ def main() -> None:
         _handle_rop_cli(args[1:], settings=settings, logger=logger)
         return
 
+    if args and args[0] == "beedrill":
+        sys.exit(_handle_beedrill_cli(args[1:], settings=settings, logger=logger))
+
     if args and args[0] == "docling-assets-prepare":
         from beeagent_module.core.document_extraction import prepare_docling_assets
 
@@ -197,7 +219,7 @@ def main() -> None:
 
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, auth, auth-init, docling-assets-prepare",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, beedrill, auth, auth-init, docling-assets-prepare",
         file=sys.stderr,
     )
     sys.exit(2)
@@ -267,6 +289,77 @@ def _handle_rop_cli(
         logger.error("ROP CLI unexpected error: %s", exc, exc_info=True)
         print(f"Unexpected error: {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+def _handle_beedrill_cli(
+    cli_args: list[str],
+    settings: dict,
+    logger: logging.Logger,
+) -> int:
+    if (
+        len(cli_args) != 3
+        or cli_args[0] != "run"
+        or cli_args[1] != "--scenario"
+        or cli_args[2] not in _BEEDRILL_SCENARIOS
+    ):
+        print(
+            "Usage: start.py beedrill run --scenario "
+            "{reference_target_containment_replay|reference_oracle_manipulation_replay}",
+            file=sys.stderr,
+        )
+        return 2
+    scenario_id = cli_args[2]
+    run_id = generate_run_id()
+    try:
+        registry = build_registry(settings, logger)
+        result = execute_module_case(
+            registry=registry,
+            module_id="beedrill",
+            case_type=scenario_id,
+            payload=_BEEDRILL_SCENARIOS[scenario_id],
+            storage_dir=get_storage_dir(),
+            logger=logger,
+            run_id=run_id,
+            session_id=generate_session_id(),
+        )
+    except Exception as exc:
+        logger.error("BeeDrill regression execution failed: %s", exc)
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "scenario_id": scenario_id,
+                    "execution_status": "error",
+                    "security_verdict": None,
+                    "artifact_refs": [],
+                },
+                sort_keys=True,
+            )
+        )
+        return 3
+    execution_status = result.status
+    security_verdict = (
+        result.data.get("security_verdict") if execution_status == "ok" else None
+    )
+    artifact_dir = f"runs/{run_id}/module-beedrill"
+    summary = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "scenario_id": scenario_id,
+        "execution_status": execution_status,
+        "security_verdict": security_verdict,
+        "artifact_refs": [
+            f"{artifact_dir}/module_result.json",
+            f"{artifact_dir}/{scenario_id}.json",
+        ],
+    }
+    print(json.dumps(summary, sort_keys=True))
+    if security_verdict == "pass":
+        return 0
+    if security_verdict == "fail":
+        return 1
+    return 3
 
 
 if __name__ == "__main__":

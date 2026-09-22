@@ -91,6 +91,10 @@ Per-source semantics:
 
 When Bitrix reconciliation is enabled, the poll persists durable ROP write-back intent (`storage/interfaces/rop_writeback_state.json` via `build_writeback_plan`) before the source checkpoint advances. With `bitrix.writeback.enabled: true` plan persistence failure blocks checkpoint advancement; otherwise it is logged without blocking ingestion. The required ordering is durable intent → checkpoint → external execution → original per-run projection refresh. Automatic external execution is scoped strictly to the just-created poll run; a poll with no new messages does not execute legacy or historical write-back records. `rop writeback plan/execute` remains the explicit operator recovery path.
 
+## BeeDrill bounded regression runs
+
+The host exposes only the approved BeeDrill reference scenarios: `./start.sh beedrill run --scenario reference_target_containment_replay` and `./start.sh beedrill run --scenario reference_oracle_manipulation_replay`. The command invokes the registered `beedrill` module through the normal module runtime, then copies its `security_verdict` into a JSON summary. It does not interpret or calculate that verdict. Exit status is `0` for `pass`, `1` for a completed `fail`, `2` for invalid command input, and `3` for incomplete, refused, timeout, or error results. The canonical module result and scenario artifact remain under the generated run's existing artifact directory.
+
 ## Controlled Bitrix write-back (Iteration 37)
 
 The tracked production profile enables write-back (`bitrix.writeback.enabled: true`). Enabled write-back requires a dedicated env credential and configured customer Lead `stageId` values for `new_lead`, `new_lead_assigned` and `irrelevant` (all required fail-fast when enabled). Setting `bitrix.writeback.enabled: false` or using dry-run preserves the explicit zero-write control.

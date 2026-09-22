@@ -9844,6 +9844,103 @@ git diff --check
 
 BeeAgent can safely execute and machine-evidence the fixed BeeDrill oracle-manipulation regression while retaining complete ownership of execution, RPC, policy, authority, target resolution, timeout and cleanup.
 
+### Iteration 44.5 — BeeDrill regression outcome and CI runner host support
+
+**Status:** PLANNED
+
+#### Goal
+
+Provide the minimal host-side behavior required by BeeDrill Iteration 11 so completed security-control regressions are returned as observable evidence rather than execution errors, and expose the approved BeeDrill scenarios through a bounded CI-friendly host command.
+
+#### Scope
+
+Included:
+
+- reuse of the existing BeeDrill-scoped `CapabilityCaller`, module registry, `execute_module_case(...)`, ArtifactAPI and isolated Solana runtime;
+- change reference-vault and oracle containment execution to observe the actual second-operation outcome;
+- distinguish confirmed target rejection, confirmed operation success and infrastructure/runtime failure;
+- preserve the fixed target, attack, detector and defense-condition inputs;
+- return bounded internally consistent evidence for either observed containment outcome;
+- add a BeeDrill CLI namespace through the canonical BeeAgent entrypoint;
+- allow only the two approved Iteration 11 regression scenarios;
+- map each scenario to its fixed case type and payload host-side;
+- expose stable machine-readable run metadata and artifact references;
+- provide deterministic process exit behavior from BeeDrill-provided security verdicts;
+- preserve fresh-state Surfpool lifecycle, timeout and cleanup.
+
+#### Excluded
+
+- BeeAgent security verdict calculation;
+- arbitrary module/case/capability/payload execution;
+- generic module-runner CLI;
+- caller-selected target, RPC endpoint, instruction, transaction, executable, argv or path;
+- new Solana execution framework;
+- third BeeDrill scenario;
+- mainnet or production mutation;
+- production credentials;
+- BeeSDK contract changes;
+- new runtime dependencies.
+
+#### Deliverable
+
+One bounded host path:
+
+```text
+./start.sh beedrill run --scenario <approved-scenario>
+→ existing BeeAgent module runtime
+→ BeeDrill
+→ scoped Solana capability
+→ actual target outcome evidence
+→ BeeDrill security verdict
+→ host artifacts
+→ machine-readable summary
+→ stable exit code
+```
+
+#### Acceptance criteria
+
+- successful and rejected second operations are both observable completed target outcomes;
+- confirmed target rejection is never confused with RPC/runtime failure;
+- a target operation that unexpectedly succeeds under the fixed condition is returned as valid bounded evidence rather than host ERROR;
+- timeout, RPC failure, build/deployment failure and cleanup failure remain explicit non-security failures;
+- only the approved BeeDrill module, scenario cases and fixed payloads are executable through the CLI;
+- CLI input cannot provide arbitrary execution-shaped values;
+- CLI reuses `execute_module_case(...)` rather than adding a second module runtime;
+- BeeAgent does not derive or override BeeDrill security verdicts;
+- PASS, FAIL, CLI misuse and infrastructure/incomplete outcomes have stable distinct exit behavior;
+- module and scenario artifacts remain under the existing host-owned run artifact boundary;
+- repeated invocations start from fresh/equivalent isolated state;
+- no production/mainnet fallback is introduced;
+- existing BeeDrill lifecycle/baseline/attack/detection behavior and ROP behavior remain compatible.
+
+#### Checks
+
+```text
+targeted isolated-Solana capability tests
+actual second-operation success observation
+actual confirmed target-rejection observation
+unexpected fixed-control failure returned as evidence
+RPC/network failure not treated as target rejection
+timeout and cleanup regressions
+approved CLI scenario selection
+unknown/forbidden scenario refusal
+execution-shaped CLI/input refusal
+exit-code mapping
+machine-readable summary
+module-result and scenario-artifact inspection
+fresh-state repeatability
+real BeeDrill/BeeAgent integration smoke
+full pytest
+compile/import checks as applicable
+SAST
+SCA only if dependency surface unexpectedly changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can host the BeeDrill regression command without owning security verdict semantics: it executes only approved isolated operations, reports their actual observable outcomes, preserves explicit runtime failures, and exposes enough stable run metadata for BeeDrill security PASS/FAIL to control CI.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

@@ -1100,7 +1100,7 @@ def _run_reference_target_containment(
                 target.state,
                 target.program,
                 2,
-                expect_failure=defense_condition == "fixed",
+                expect_failure=True,
             )
             final = _target_state(target.state)
         except TimeoutError as exc:
@@ -1109,7 +1109,7 @@ def _run_reference_target_containment(
             raise
         except (OSError, ValueError) as exc:
             raise _ReferenceTargetFailure("second_attack_observation_failed") from exc
-    if defense_condition == "broken":
+    if second_attack is not None:
         if (
             second_attack != (999_800, 1, 1, 0, 2)
             or second_signature is None
@@ -1117,14 +1117,10 @@ def _run_reference_target_containment(
         ):
             raise _ReferenceTargetFailure("failed_containment_evidence_inconsistent")
         containment_status = "failed"
-        containment_slot: int | None = None
+        containment_slot = None
         second_attack_status = "succeeded"
     else:
-        if (
-            second_attack is not None
-            or second_signature is not None
-            or final != (999_900, 1, 0, 0, 1)
-        ):
+        if second_signature is not None or final != (999_900, 1, 0, 0, 1):
             raise _ReferenceTargetFailure(
                 "successful_containment_evidence_inconsistent"
             )
@@ -1217,16 +1213,13 @@ def _run_reference_oracle_manipulation(
             raise _ReferenceTargetFailure("containment_observation_failed") from exc
         if observed_containment_slot < first_detection_slot:
             raise _ReferenceTargetFailure("containment_timing_inconsistent")
-        containment_slot = (
-            None if defense_condition == "broken" else observed_containment_slot
-        )
         try:
             second_borrow, _ = _invoke_reference_oracle_with_signature(
                 target.payer,
                 target.state,
                 target.program,
                 2,
-                expect_failure=defense_condition == "fixed",
+                expect_failure=True,
             )
             final = _reference_oracle_state(target.state)
         except TimeoutError as exc:
@@ -1235,7 +1228,7 @@ def _run_reference_oracle_manipulation(
             raise
         except (OSError, ValueError) as exc:
             raise _ReferenceTargetFailure("second_borrow_observation_failed") from exc
-    if defense_condition == "broken":
+    if second_borrow is not None:
         if (
             containment_state != (False, 2_000_000, 75_000_000, 75_000_000)
             or second_borrow != (False, 2_000_000, 100_000_000, 50_000_000)
@@ -1243,24 +1236,21 @@ def _run_reference_oracle_manipulation(
         ):
             raise _ReferenceTargetFailure("failed_containment_evidence_inconsistent")
         containment_status = "failed"
+        containment_slot = None
         containment_state = "borrowing_open"
         second_borrow_status = "succeeded"
     else:
-        if (
-            containment_state != (True, 2_000_000, 75_000_000, 75_000_000)
-            or second_borrow is not None
-            or final
-            != (
-                True,
-                2_000_000,
-                75_000_000,
-                75_000_000,
-            )
+        if containment_state != (True, 2_000_000, 75_000_000, 75_000_000) or final != (
+            True,
+            2_000_000,
+            75_000_000,
+            75_000_000,
         ):
             raise _ReferenceTargetFailure(
                 "successful_containment_evidence_inconsistent"
             )
         containment_status = "succeeded"
+        containment_slot = observed_containment_slot
         containment_state = "borrowing_blocked"
         second_borrow_status = "rejected"
     return {
@@ -1338,8 +1328,6 @@ def _invoke_reference_oracle_with_signature(
         if expect_failure:
             return None, None
         raise
-    if expect_failure:
-        raise ValueError("containment did not reject the second borrow")
     return _reference_oracle_state(state), signature
 
 
@@ -1489,8 +1477,6 @@ def _invoke_and_observe_with_signature(
         if expect_failure:
             return None, None
         raise
-    if expect_failure:
-        raise ValueError("breaker did not refuse unsafe instruction")
     return _target_state(state), signature
 
 
