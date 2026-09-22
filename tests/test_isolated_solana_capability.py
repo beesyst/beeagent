@@ -1341,6 +1341,20 @@ def test_target_breaker_requires_a_confirmed_transaction_failure(
     assert observed is None
 
 
+def test_target_breaker_records_a_confirmed_unexpected_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_state = (999_900, 0, 0, 0, 1)
+    monkeypatch.setattr(
+        solana_capability, "_send_transaction", lambda *_args, **_kwargs: "signature"
+    )
+    monkeypatch.setattr(solana_capability, "_target_state", lambda _: expected_state)
+
+    assert solana_capability._invoke_and_observe_with_signature(
+        Keypair(), Keypair(), Keypair(), 2, expect_failure=True
+    ) == (expected_state, "signature")
+
+
 def test_target_breaker_does_not_accept_a_generic_rpc_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1749,6 +1763,22 @@ def test_reference_oracle_only_accepts_confirmed_target_rejection(
     assert solana_capability._invoke_reference_oracle_with_signature(
         payer, state, program, 2, expect_failure=True
     ) == (None, None)
+
+
+def test_reference_oracle_records_a_confirmed_unexpected_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_state = (True, 2_000_000, 75_000_000, 75_000_000)
+    monkeypatch.setattr(
+        solana_capability, "_send_transaction", lambda *_args, **_kwargs: "signature"
+    )
+    monkeypatch.setattr(
+        solana_capability, "_reference_oracle_state", lambda _: expected_state
+    )
+
+    assert solana_capability._invoke_reference_oracle_with_signature(
+        Keypair(), Keypair(), Keypair(), 2, expect_failure=True
+    ) == (expected_state, "signature")
 
 
 @pytest.mark.parametrize(

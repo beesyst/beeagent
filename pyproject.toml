@@ -11,7 +11,7 @@ dependencies = [
     "langgraph==1.2.11",
     "pydantic==2.13.4",
     "beeagent-rop==0.19.8",
-    "beedrill==0.10.0",
+    "beedrill==0.11.0",
     "beesdk==0.2.0",
     "jinja2==3.1.6",
     "fastapi==0.141.1",

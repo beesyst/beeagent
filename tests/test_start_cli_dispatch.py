@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from beesdk.modules import AuthorityLevel, ModuleResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -108,6 +111,145 @@ def test_main_unknown_command_exits_with_code_2(monkeypatch) -> None:
         assert False, "SystemExit expected"
     except SystemExit as exc:
         assert exc.code == 2
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_exit"),
+    [
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {"security_verdict": "pass"},
+            ),
+            0,
+        ),
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {"security_verdict": "fail"},
+            ),
+            1,
+        ),
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "timeout",
+                "timed out",
+            ),
+            3,
+        ),
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "refused",
+                "refused",
+            ),
+            3,
+        ),
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "error",
+                "failed",
+            ),
+            3,
+        ),
+        (
+            ModuleResult(
+                "beedrill",
+                "reference_target_containment_replay",
+                AuthorityLevel.READ_ONLY,
+                "incomplete",
+                "incomplete",
+            ),
+            3,
+        ),
+    ],
+)
+def test_beedrill_cli_copies_module_verdict_to_summary(
+    monkeypatch, capsys, result: ModuleResult, expected_exit: int
+) -> None:
+    monkeypatch.setattr(start_module, "generate_run_id", lambda: "run-1")
+    monkeypatch.setattr(start_module, "generate_session_id", lambda: "session-1")
+    monkeypatch.setattr(start_module, "build_registry", lambda *_: object())
+    monkeypatch.setattr(start_module, "get_storage_dir", lambda: Path("storage"))
+    monkeypatch.setattr(start_module, "execute_module_case", lambda **_: result)
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["run", "--scenario", "reference_target_containment_replay"],
+        {"modules": {"registry": []}},
+        logging.getLogger("test"),
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert exit_code == expected_exit
+    assert summary["execution_status"] == result.status
+    assert summary["security_verdict"] == result.data.get("security_verdict")
+    assert summary["artifact_refs"] == [
+        "runs/run-1/module-beedrill/module_result.json",
+        "runs/run-1/module-beedrill/reference_target_containment_replay.json",
+    ]
+
+
+def test_beedrill_cli_refuses_unknown_scenario(capsys) -> None:
+    exit_code = start_module._handle_beedrill_cli(
+        ["run", "--scenario", "unknown"],
+        {"modules": {"registry": []}},
+        logging.getLogger("test"),
+    )
+
+    assert exit_code == 2
+    assert "Usage:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure_stage", ["registry", "runtime"])
+def test_beedrill_cli_emits_json_for_infrastructure_failure(
+    monkeypatch, capsys, failure_stage: str
+) -> None:
+    monkeypatch.setattr(start_module, "generate_run_id", lambda: "run-1")
+    if failure_stage == "registry":
+        monkeypatch.setattr(
+            start_module,
+            "build_registry",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
+        )
+    else:
+        monkeypatch.setattr(start_module, "build_registry", lambda *_: object())
+        monkeypatch.setattr(
+            start_module,
+            "execute_module_case",
+            lambda **_: (_ for _ in ()).throw(RuntimeError("runtime unavailable")),
+        )
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["run", "--scenario", "reference_target_containment_replay"],
+        {"modules": {"registry": []}},
+        logging.getLogger("test"),
+    )
+
+    assert exit_code == 3
+    assert json.loads(capsys.readouterr().out) == {
+        "schema_version": 1,
+        "run_id": "run-1",
+        "scenario_id": "reference_target_containment_replay",
+        "execution_status": "error",
+        "security_verdict": None,
+        "artifact_refs": [],
+    }
 
 
 def test_main_auth_runs_bootstrap_before_cli_exit(monkeypatch) -> None:
