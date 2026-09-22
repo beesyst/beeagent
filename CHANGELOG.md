@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.66.0...beeagent-v0.67.0) (2026-09-22)
+
+
+### Features
+
+* add BeeDrill regression runner host support ([#267](https://github.com/beesyst/beeagent/issues/267)) ([daeae1e](https://github.com/beesyst/beeagent/commit/daeae1ebc694fdaa6ac462d78609a10f876788bc))
+
 ## [0.66.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.65.0...beeagent-v0.66.0) (2026-09-21)
 
 
