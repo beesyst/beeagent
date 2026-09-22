@@ -9846,7 +9846,7 @@ BeeAgent can safely execute and machine-evidence the fixed BeeDrill oracle-manip
 
 ### Iteration 44.5 — BeeDrill regression outcome and CI runner host support
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 

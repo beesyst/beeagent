@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.66.0"
+version = "0.67.0"
 source = { editable = "." }
 dependencies = [
     { name = "beeagent-rop" },
@@ -181,7 +181,7 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "beedrill"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "../beedrill" }
 dependencies = [
     { name = "beesdk" },
