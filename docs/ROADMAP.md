@@ -9941,6 +9941,77 @@ git diff --check
 
 BeeAgent can host the BeeDrill regression command without owning security verdict semantics: it executes only approved isolated operations, reports their actual observable outcomes, preserves explicit runtime failures, and exposes enough stable run metadata for BeeDrill security PASS/FAIL to control CI.
 
+### Iteration 44.6 — BeeDrill isolated-execution environment hardening
+
+**Status:** DONE
+
+#### Goal
+
+Close the demonstrated BeeAgent-owned environment-isolation gap in the existing BeeDrill Solana execution path without changing its capability contract or execution scope.
+
+#### Scope
+
+Included:
+
+- replace full host-environment inheritance for BeeDrill Surfpool execution with a bounded child environment;
+- stop forwarding the complete `os.environ` to reference-target build commands;
+- provide only the environment values proven necessary for the existing Surfpool/Solana toolchain;
+- preserve host-owned absolute executable resolution and existing fixed argv;
+- verify that unrelated and secret-like environment variables are unavailable to BeeDrill child processes;
+- preserve current local RPC, target allowlists, timeouts, cleanup and result semantics;
+- verify existing cleanup behavior under failure without redesigning process management unless a real descendant-process failure is reproduced.
+
+#### Excluded
+
+- new capability names;
+- new RPC endpoints;
+- generic subprocess API;
+- generic sandbox framework;
+- BeeDrill domain/evidence/verdict changes;
+- BeeSDK changes;
+- production credentials;
+- production/mainnet execution;
+- new runtime dependencies.
+
+#### Deliverable
+
+The existing BeeDrill isolated-Solana execution path runs with a bounded child-process environment rather than inheriting unrelated BeeAgent host secrets.
+
+#### Acceptance criteria
+
+- Surfpool does not inherit the complete BeeAgent environment;
+- build/deployment subprocesses do not receive the complete `os.environ`;
+- injected sentinel secrets and unrelated environment values are absent from captured child environments;
+- the minimal required toolchain environment is explicitly tested;
+- both approved BeeDrill scenarios continue to run against the fixed local Surfpool target;
+- existing fixed RPC and target allowlists remain unchanged;
+- timeout and forced-cleanup semantics remain unchanged;
+- no production key or unrelated credential is required or propagated;
+- no secret appears in logs or artifacts;
+- BeeDrill remains `READ_ONLY`;
+- no shared BeeSDK contract changes;
+- no dependency or lockfile changes beyond the approved `beedrill==0.11.1` alignment.
+
+#### Checks
+
+```text
+targeted subprocess-environment tests
+sentinel-secret exclusion tests
+existing target/RPC refusal tests
+existing timeout and cleanup regressions
+full pytest
+compile/import checks as applicable
+both real BeeDrill CLI scenario smokes
+log and artifact inspection
+SAST
+SCA only if dependency surface unexpectedly changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent continues to provide the same bounded BeeDrill execution capabilities while child processes receive only the environment necessary for the approved isolated Solana workflow and unrelated host secrets remain outside that execution boundary.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
