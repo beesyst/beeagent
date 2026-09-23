@@ -5,6 +5,7 @@ import signal
 import subprocess
 from base64 import b64encode
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from beesdk.capabilities import CapabilityStatus
@@ -84,6 +85,118 @@ class _Process:
             raise subprocess.TimeoutExpired("surfpool", timeout)
         self.exit_code = 0
         return self.exit_code
+
+
+def test_isolated_solana_child_environment_is_allowlisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", "/tool-home")
+    monkeypatch.setenv("PATH", "/tool-path")
+    monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
+    monkeypatch.setenv("UNRELATED_SERVICE_TOKEN", "unrelated-value")
+
+    environment = solana_capability._isolated_solana_environment(Path("/cargo-target"))
+
+    assert environment == {
+        "HOME": "/tool-home",
+        "PATH": "/tool-home/.cargo/bin:/usr/bin:/bin",
+        "CARGO_TARGET_DIR": "/cargo-target",
+    }
+
+
+@pytest.mark.parametrize(
+    "starter",
+    [
+        solana_capability._start_offline_surfpool,
+        solana_capability._start_reference_target_surfpool,
+    ],
+)
+def test_surfpool_starters_receive_the_bounded_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    starter: object,
+) -> None:
+    monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
+    captured: dict[str, object] = {}
+
+    def fake_popen(*_args: object, **kwargs: object) -> _Process:
+        captured.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(solana_capability.subprocess, "Popen", fake_popen)
+
+    assert callable(starter)
+    starter("/host/surfpool")
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert set(environment) == {"HOME", "PATH"}
+    assert "BEEDRILL_TEST_SENTINEL_SECRET" not in environment
+    assert "UNRELATED_SERVICE_TOKEN" not in environment
+
+
+@pytest.mark.parametrize(
+    ("preparer", "program_name"),
+    [
+        ("_prepared_reference_target", "beedrill_reference_vault.so"),
+        ("_prepared_reference_oracle_market", "beedrill_reference_oracle_market.so"),
+    ],
+)
+def test_reference_target_builds_receive_bounded_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    preparer: str,
+    program_name: str,
+) -> None:
+    monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
+    calls: list[tuple[list[str], str, dict[str, str] | None]] = []
+
+    def run_target_command(
+        command: list[str], phase: str, environment: dict[str, str] | None = None
+    ) -> None:
+        calls.append((command, phase, environment))
+        if phase == "build":
+            output = Path(command[command.index("--sbf-out-dir") + 1])
+            output.mkdir()
+            (output / program_name).touch()
+
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda tool: f"/{tool}")
+    monkeypatch.setattr(solana_capability, "_run_target_command", run_target_command)
+    monkeypatch.setattr(solana_capability, "_rpc_request_airdrop", lambda _: None)
+    monkeypatch.setattr(
+        solana_capability, "_create_state", lambda *_args, **_kwargs: None
+    )
+
+    with getattr(solana_capability, preparer)():
+        pass
+
+    build_command, build_phase, build_environment = calls[0]
+    assert build_phase == "build"
+    assert build_command[0] == "/cargo-build-sbf"
+    assert build_environment is not None
+    assert set(build_environment) == {"HOME", "PATH", "CARGO_TARGET_DIR"}
+    assert "BEEDRILL_TEST_SENTINEL_SECRET" not in build_environment
+    assert "UNRELATED_SERVICE_TOKEN" not in build_environment
+
+
+def test_deployment_uses_the_bounded_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
+    captured: dict[str, object] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(solana_capability.subprocess, "run", fake_run)
+
+    solana_capability._run_target_command(
+        ["/solana", "program", "deploy"], "deployment"
+    )
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert set(environment) == {"HOME", "PATH"}
+    assert "BEEDRILL_TEST_SENTINEL_SECRET" not in environment
+    assert "UNRELATED_SERVICE_TOKEN" not in environment
 
 
 def test_caller_is_created_only_for_the_approved_module_case() -> None:

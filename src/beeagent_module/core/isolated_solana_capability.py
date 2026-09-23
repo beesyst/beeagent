@@ -563,6 +563,7 @@ def _start_offline_surfpool(executable: str) -> subprocess.Popen[bytes]:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=_isolated_solana_environment(),
     )
 
 
@@ -580,6 +581,7 @@ def _start_reference_target_surfpool(executable: str) -> subprocess.Popen[bytes]
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=_isolated_solana_environment(),
     )
 
 
@@ -711,7 +713,7 @@ def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
                     str(output),
                 ],
                 "build",
-                {**os.environ, "CARGO_TARGET_DIR": str(temporary / "cargo-target")},
+                _isolated_solana_environment(temporary / "cargo-target"),
             )
             program = output / "beedrill_reference_vault.so"
             if not program.is_file():
@@ -781,7 +783,7 @@ def _prepared_reference_oracle_market() -> Iterator[_PreparedReferenceTarget]:
                     str(output),
                 ],
                 "build",
-                {**os.environ, "CARGO_TARGET_DIR": str(temporary / "cargo-target")},
+                _isolated_solana_environment(temporary / "cargo-target"),
             )
             program = output / "beedrill_reference_oracle_market.so"
             if not program.is_file():
@@ -1352,6 +1354,19 @@ def _reference_vault_outflow_signal(state: Keypair) -> bool:
     return int.from_bytes(data[14:18], "little") > 0
 
 
+def _isolated_solana_environment(
+    cargo_target_dir: Path | None = None,
+) -> dict[str, str]:
+    home = Path(os.environ["HOME"])
+    environment = {
+        "HOME": str(home),
+        "PATH": os.pathsep.join((str(home / ".cargo" / "bin"), "/usr/bin", "/bin")),
+    }
+    if cargo_target_dir is not None:
+        environment["CARGO_TARGET_DIR"] = str(cargo_target_dir)
+    return environment
+
+
 def _run_target_command(
     command: list[str], phase: str, environment: dict[str, str] | None = None
 ) -> None:
@@ -1362,7 +1377,7 @@ def _run_target_command(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
-            env=environment,
+            env=environment or _isolated_solana_environment(),
             timeout=(
                 _BUILD_TIMEOUT_SECONDS
                 if phase == "build"
