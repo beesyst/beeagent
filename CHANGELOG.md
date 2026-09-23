@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.67.0...beeagent-v0.67.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* bound BeeDrill isolated execution environment ([#270](https://github.com/beesyst/beeagent/issues/270)) ([8b54ac0](https://github.com/beesyst/beeagent/commit/8b54ac080dc67e165773d33b75113948a5f907f2))
+
 ## [0.67.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.66.0...beeagent-v0.67.0) (2026-09-22)
 
 
