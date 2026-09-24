@@ -10012,6 +10012,95 @@ git diff --check
 
 BeeAgent continues to provide the same bounded BeeDrill execution capabilities while child processes receive only the environment necessary for the approved isolated Solana workflow and unrelated host secrets remain outside that execution boundary.
 
+### Iteration 44.7 — Bounded BeeDrill SPL Token containment capability
+
+**Status:** DONE
+
+#### Goal
+
+Provide the smallest BeeAgent-owned execution path required by BeeDrill Iteration 13 to validate one real external Solana security-control surface using the canonical SPL Token program in the approved isolated environment.
+
+#### Scope
+
+Included:
+
+- one BeeDrill-scoped capability: `solana.spl_token_freeze_containment`;
+- exact scope to `spl_token_freeze_containment_replay`;
+- fixed `surfpool_local` execution target;
+- host-pinned SPL Token program identity;
+- reproducible ephemeral token state created entirely inside the isolated environment;
+- one fixed two-transfer attack sequence;
+- host-observed detection evidence after the first transfer;
+- broken containment where the freeze control is not activated;
+- fixed containment using the SPL Token account-freeze control;
+- machine verification of the frozen state and second-transfer outcome;
+- integer token-balance economic evidence;
+- existing bounded environment, RPC, timeout and cleanup behavior;
+- bounded evidence returned through the existing `CapabilityResult` contract;
+- CI-friendly execution through the existing BeeDrill host command once the coordinated BeeDrill case is available.
+
+#### Excluded
+
+- generic SPL Token adapter or token framework;
+- arbitrary Solana program selection;
+- arbitrary instructions, transactions, executable paths or RPC endpoints;
+- arbitrary mint/account/private-key input;
+- external code download or runtime package installation;
+- full DeFi protocol integration;
+- mainnet or production mutation;
+- production credentials;
+- BeeDrill evidence, metric or verdict logic;
+- BeeSDK changes;
+- new runtime dependencies unless a separate demonstrated blocker is approved.
+
+#### Deliverable
+
+One bounded external-target capability that demonstrates a real SPL Token containment control in isolated Surfpool and returns machine-verifiable attack, detection, containment and economic evidence without transferring execution authority to BeeDrill.
+
+#### Acceptance criteria
+
+- only the exact BeeDrill module/case/capability/authority scope is accepted;
+- scenario payload cannot choose the executable, program id, RPC endpoint, path, account keys or transaction instructions;
+- the expected SPL Token program identity is resolved and verified host-side;
+- both phases begin from equivalent fresh isolated state;
+- the first fixed transfer succeeds in both phases and produces observable economic loss;
+- detection is based on observed local program/account state rather than a hard-coded success flag;
+- broken containment leaves the account transferable and the identical second transfer succeeds;
+- fixed containment applies the real account-freeze control, confirms frozen state and the identical second transfer is rejected by the target program;
+- evidence contains bounded slots, transaction identifiers, account/control state and integer balance deltas sufficient for BeeDrill evaluation;
+- unavailable or inconsistent external target state fails closed;
+- timeout and cleanup remain bounded;
+- unrelated host environment values and secrets remain unavailable to child execution;
+- existing BeeDrill reference regressions remain compatible;
+- no production/mainnet endpoint, credential or private key is used;
+- dependency and lockfile surfaces remain unchanged unless a separately approved blocker proves otherwise.
+
+#### Checks
+
+```text
+exact capability/case/payload allowlist tests
+execution-shaped and unexpected-field refusal tests
+host-pinned external-program identity tests
+broken SPL Token replay
+fixed SPL Token freeze replay
+second-transfer accepted/rejected proof
+balance/state/slot evidence checks
+target-unavailable fail-closed test
+timeout and cleanup regressions
+bounded child-environment / sentinel-secret regression
+existing BeeDrill scenario regressions
+real BeeDrill/BeeAgent/Surfpool integration smoke
+full pytest
+log and artifact inspection
+SAST
+SCA only if dependency surface changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent can execute and evidence one real external SPL Token containment experiment for BeeDrill inside the approved isolated Solana boundary, while retaining ownership of program selection, transactions, RPC, authority, credentials, process lifecycle, timeout and cleanup; no generic protocol execution surface or BeeSDK change is introduced.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

@@ -16,13 +16,14 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 from beesdk.capabilities import CapabilityResult, CapabilityStatus
 from beesdk.modules import AuthorityLevel as SDKAuthorityLevel
 from solders.hash import Hash
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 from solders.system_program import CreateAccountParams, create_account
 from solders.transaction import Transaction
 
@@ -34,6 +35,7 @@ _REFERENCE_TARGET_ATTACK_CAPABILITY_NAME = "solana.reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CAPABILITY_NAME = "solana.reference_target_detection"
 _REFERENCE_TARGET_CONTAINMENT_CAPABILITY_NAME = "solana.reference_target_containment"
 _REFERENCE_ORACLE_CAPABILITY_NAME = "solana.reference_oracle_manipulation"
+_SPL_TOKEN_FREEZE_CAPABILITY_NAME = "solana.spl_token_freeze_containment"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
@@ -41,10 +43,15 @@ _REFERENCE_TARGET_ATTACK_CASE_TYPE = "reference_target_attack"
 _REFERENCE_TARGET_DETECTION_CASE_TYPE = "reference_target_detection"
 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE = "reference_target_containment_replay"
 _REFERENCE_ORACLE_CASE_TYPE = "reference_oracle_manipulation_replay"
+_SPL_TOKEN_FREEZE_CASE_TYPE = "spl_token_freeze_containment_replay"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
 _REFERENCE_ORACLE_TARGET_ID = "reference_oracle_market"
+_SPL_TOKEN_FREEZE_TARGET_ID = "spl_token_freeze_containment"
+_SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_SPL_TOKEN_PROGRAM = Pubkey.from_string(_SPL_TOKEN_PROGRAM_ID)
+_RENT_SYSVAR = Pubkey.from_string("SysvarRent111111111111111111111111111111111")
 _RPC_HOST = "127.0.0.1"
 _RPC_PORT = 8899
 _STARTUP_TIMEOUT_SECONDS = 12.0
@@ -113,6 +120,8 @@ class ScopedSolanaLifecycleCaller:
             return self._call_reference_target_containment(capability_name, payload)
         if self.case_type == _REFERENCE_ORACLE_CASE_TYPE:
             return self._call_reference_oracle_manipulation(capability_name, payload)
+        if self.case_type == _SPL_TOKEN_FREEZE_CASE_TYPE:
+            return self._call_spl_token_freeze_containment(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -178,6 +187,7 @@ class ScopedSolanaLifecycleCaller:
                 _REFERENCE_TARGET_DETECTION_CASE_TYPE,
                 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
                 _REFERENCE_ORACLE_CASE_TYPE,
+                _SPL_TOKEN_FREEZE_CASE_TYPE,
             }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
@@ -425,6 +435,65 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_spl_token_freeze_containment(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _SPL_TOKEN_FREEZE_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_spl_token_freeze_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        executable = shutil.which("surfpool")
+        if executable is None:
+            return self._error(capability_name, "executable_unavailable")
+        process: subprocess.Popen[bytes] | None = None
+        result: CapabilityResult
+        try:
+            process = _start_offline_surfpool(executable)
+            readiness = _wait_for_readiness(process)
+            if readiness != "ready":
+                result = (
+                    self._timeout(capability_name, "readiness_timeout")
+                    if readiness == "timeout"
+                    else self._error(capability_name, readiness)
+                )
+            else:
+                _rpc_health()
+                evidence = _run_spl_token_freeze_containment(
+                    payload["defense_condition"]
+                )
+                result = CapabilityResult(
+                    capability_name=capability_name,
+                    status=CapabilityStatus.OK,
+                    authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+                    summary="SPL Token freeze containment replay completed",
+                    data=evidence,
+                )
+        except _ReferenceTargetTimeout as exc:
+            result = self._timeout(capability_name, str(exc))
+        except _ReferenceTargetFailure as exc:
+            result = self._error(capability_name, str(exc))
+        except TimeoutError:
+            result = self._timeout(capability_name, "transaction_confirmation_timeout")
+        except OSError, ValueError:
+            result = self._error(capability_name, "spl_token_observation_failed")
+        except Exception:
+            result = self._error(capability_name, "runtime_error")
+        finally:
+            if process is not None:
+                cleanup = _reap_process(process)
+                if cleanup != "ok":
+                    self.logger.warning(
+                        "SPL Token containment cleanup failed: "
+                        "module_id=%s run_id=%s reason=%s",
+                        self.module_id,
+                        self.run_id,
+                        cleanup,
+                    )
+                    result = self._error(capability_name, f"cleanup_{cleanup}")
+        return result
+
     def _call_reference_oracle_manipulation(
         self,
         capability_name: str,
@@ -530,6 +599,7 @@ def create_capability_caller(
         _REFERENCE_TARGET_DETECTION_CASE_TYPE,
         _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
         _REFERENCE_ORACLE_CASE_TYPE,
+        _SPL_TOKEN_FREEZE_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -602,6 +672,16 @@ def _is_allowed_reference_target_containment_payload(
         and set(payload) == {"target_profile", "target_id", "defense_condition"}
         and payload.get("target_profile") == _TARGET_PROFILE
         and payload.get("target_id") == _REFERENCE_TARGET_ID
+        and payload.get("defense_condition") in {"broken", "fixed"}
+    )
+
+
+def _is_allowed_spl_token_freeze_payload(payload: Mapping[str, Any]) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and set(payload) == {"target_profile", "target_id", "defense_condition"}
+        and payload.get("target_profile") == _TARGET_PROFILE
+        and payload.get("target_id") == _SPL_TOKEN_FREEZE_TARGET_ID
         and payload.get("defense_condition") in {"broken", "fixed"}
     )
 
@@ -831,6 +911,207 @@ def _prepared_reference_oracle_market() -> Iterator[_PreparedReferenceTarget]:
                     "state_account_preparation_failed"
                 ) from exc
             yield _PreparedReferenceTarget(payer, state, program_keypair)
+
+
+def _run_spl_token_freeze_containment(
+    defense_condition: object,
+) -> dict[str, str | int | None]:
+    if defense_condition not in {"broken", "fixed"}:
+        raise _ReferenceTargetFailure("invalid_defense_condition")
+    condition = cast(Literal["broken", "fixed"], defense_condition)
+    payer = Keypair()
+    mint = Keypair()
+    source = Keypair()
+    target = Keypair()
+    _rpc_request_airdrop(str(payer.pubkey()))
+    _create_owned_account(payer, mint, _SPL_TOKEN_PROGRAM, 82)
+    _send_transaction(
+        payer,
+        [payer],
+        Instruction(
+            _SPL_TOKEN_PROGRAM,
+            bytes([0, 0]) + bytes(payer.pubkey()) + bytes([1]) + bytes(payer.pubkey()),
+            [
+                AccountMeta(mint.pubkey(), False, True),
+                AccountMeta(_RENT_SYSVAR, False, False),
+            ],
+        ),
+    )
+    for account in (source, target):
+        _create_owned_account(payer, account, _SPL_TOKEN_PROGRAM, 165)
+        _send_transaction(
+            payer,
+            [payer],
+            Instruction(
+                _SPL_TOKEN_PROGRAM,
+                bytes([1]),
+                [
+                    AccountMeta(account.pubkey(), False, True),
+                    AccountMeta(mint.pubkey(), False, False),
+                    AccountMeta(payer.pubkey(), False, False),
+                    AccountMeta(_RENT_SYSVAR, False, False),
+                ],
+            ),
+        )
+    _send_transaction(
+        payer,
+        [payer],
+        Instruction(
+            _SPL_TOKEN_PROGRAM,
+            bytes([7]) + (1_000_000).to_bytes(8, "little"),
+            [
+                AccountMeta(mint.pubkey(), False, True),
+                AccountMeta(source.pubkey(), False, True),
+                AccountMeta(payer.pubkey(), True, False),
+            ],
+        ),
+    )
+    initial_source, initial_target, state = _spl_token_balances(source, target)
+    if initial_source != 1_000_000 or initial_target != 0 or state != 1:
+        raise _ReferenceTargetFailure("canonical_state_inconsistent")
+    attack_start_slot = _read_slot()
+    first_signature = _send_spl_transfer(payer, source, target)
+    first_source, first_target, state = _spl_token_balances(source, target)
+    first_detection_slot = _read_slot()
+    if (
+        first_source != 900_000
+        or first_target != 100_000
+        or state != 1
+        or first_detection_slot < attack_start_slot
+    ):
+        raise _ReferenceTargetFailure("attack_or_detection_evidence_inconsistent")
+    containment_slot: int | None = None
+    if condition == "fixed":
+        _send_transaction(
+            payer,
+            [payer],
+            Instruction(
+                _SPL_TOKEN_PROGRAM,
+                bytes([10]),
+                [
+                    AccountMeta(target.pubkey(), False, True),
+                    AccountMeta(mint.pubkey(), False, False),
+                    AccountMeta(payer.pubkey(), True, False),
+                ],
+            ),
+        )
+        containment_slot = _read_slot()
+    try:
+        _send_spl_transfer(payer, source, target, expect_failure=condition == "fixed")
+        rejected = False
+    except _TargetInstructionRejected:
+        rejected = True
+    final_source, final_target, final_state = _spl_token_balances(source, target)
+    if condition == "broken":
+        if (
+            rejected
+            or final_state != 1
+            or final_source != 800_000
+            or final_target != 200_000
+        ):
+            raise _ReferenceTargetFailure("broken_containment_inconsistent")
+        containment_status, account_state, second_status = (
+            "failed",
+            "initialized",
+            "succeeded",
+        )
+    else:
+        if (
+            not rejected
+            or containment_slot is None
+            or containment_slot < first_detection_slot
+            or final_state != 2
+            or final_source != 900_000
+            or final_target != 100_000
+        ):
+            raise _ReferenceTargetFailure("fixed_containment_inconsistent")
+        containment_status, account_state, second_status = (
+            "succeeded",
+            "frozen",
+            "rejected",
+        )
+    return {
+        "target_id": _SPL_TOKEN_FREEZE_TARGET_ID,
+        "initial_state_id": "spl_token_freeze_containment_canonical_v1",
+        "economic_unit": "base_units",
+        "program_id": _SPL_TOKEN_PROGRAM_ID,
+        "defense_condition": condition,
+        "attack_sequence_id": "spl_token_transfer_twice_v1",
+        "initial_source_balance_units": initial_source,
+        "initial_target_balance_units": initial_target,
+        "attack_start_slot": attack_start_slot,
+        "first_transfer_signature": first_signature,
+        "first_transfer_source_balance_units": first_source,
+        "first_transfer_target_balance_units": first_target,
+        "detector_id": "spl_token_target_balance_monitor",
+        "signal_id": "spl_token_target_balance_signal",
+        "detection_status": "observed",
+        "first_detection_slot": first_detection_slot,
+        "containment_status": containment_status,
+        "first_containment_slot": containment_slot,
+        "target_account_state": account_state,
+        "second_transfer_status": second_status,
+        "final_source_balance_units": final_source,
+        "final_target_balance_units": final_target,
+        "residual_loss_units": final_target,
+    }
+
+
+def _create_owned_account(
+    payer: Keypair, account: Keypair, owner: Pubkey, space: int
+) -> None:
+    lamports = _rpc_call("getMinimumBalanceForRentExemption", [space])
+    if isinstance(lamports, bool) or not isinstance(lamports, int) or lamports < 1:
+        raise _ReferenceTargetFailure("rent_exemption_invalid")
+    _send_transaction(
+        payer,
+        [payer, account],
+        create_account(
+            CreateAccountParams(
+                from_pubkey=payer.pubkey(),
+                to_pubkey=account.pubkey(),
+                lamports=lamports,
+                space=space,
+                owner=owner,
+            )
+        ),
+    )
+
+
+def _send_spl_transfer(
+    payer: Keypair, source: Keypair, target: Keypair, expect_failure: bool = False
+) -> str:
+    try:
+        return _send_transaction(
+            payer,
+            [payer],
+            Instruction(
+                _SPL_TOKEN_PROGRAM,
+                bytes([3]) + (100_000).to_bytes(8, "little"),
+                [
+                    AccountMeta(source.pubkey(), False, True),
+                    AccountMeta(target.pubkey(), False, True),
+                    AccountMeta(payer.pubkey(), True, False),
+                ],
+            ),
+            allow_target_instruction_rejection=expect_failure,
+        )
+    except _TargetInstructionRejected:
+        if expect_failure:
+            raise
+        raise _ReferenceTargetFailure("first_transfer_rejected")
+
+
+def _spl_token_balances(source: Keypair, target: Keypair) -> tuple[int, int, int]:
+    source_data = _read_target_state(source, expected_size=165)
+    target_data = _read_target_state(target, expected_size=165)
+    if source_data[:32] != bytes(target_data[:32]) or target_data[108] not in {1, 2}:
+        raise _ReferenceTargetFailure("token_state_observation_failed")
+    return (
+        int.from_bytes(source_data[64:72], "little"),
+        int.from_bytes(target_data[64:72], "little"),
+        target_data[108],
+    )
 
 
 def _run_reference_target_baseline() -> dict[str, str | int]:

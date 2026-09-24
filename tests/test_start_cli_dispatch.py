@@ -205,6 +205,42 @@ def test_beedrill_cli_copies_module_verdict_to_summary(
     ]
 
 
+def test_beedrill_cli_registers_spl_token_replay(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+    result = ModuleResult(
+        "beedrill",
+        "spl_token_freeze_containment_replay",
+        AuthorityLevel.READ_ONLY,
+        "ok",
+        "completed",
+        {"security_verdict": "pass"},
+    )
+    monkeypatch.setattr(start_module, "generate_run_id", lambda: "run-1")
+    monkeypatch.setattr(start_module, "generate_session_id", lambda: "session-1")
+    monkeypatch.setattr(start_module, "build_registry", lambda *_: object())
+    monkeypatch.setattr(start_module, "get_storage_dir", lambda: Path("storage"))
+
+    def execute(**kwargs: object) -> ModuleResult:
+        captured.update(kwargs)
+        return result
+
+    monkeypatch.setattr(start_module, "execute_module_case", execute)
+    assert (
+        start_module._handle_beedrill_cli(
+            ["run", "--scenario", "spl_token_freeze_containment_replay"],
+            {"modules": {"registry": []}},
+            logging.getLogger("test"),
+        )
+        == 0
+    )
+    assert captured["case_type"] == "spl_token_freeze_containment_replay"
+    assert captured["payload"] == {
+        "target_profile": "surfpool_local",
+        "target_id": "spl_token_freeze_containment",
+    }
+    assert json.loads(capsys.readouterr().out)["security_verdict"] == "pass"
+
+
 def test_beedrill_cli_refuses_unknown_scenario(capsys) -> None:
     exit_code = start_module._handle_beedrill_cli(
         ["run", "--scenario", "unknown"],

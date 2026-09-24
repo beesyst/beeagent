@@ -2003,3 +2003,359 @@ def test_reference_oracle_forced_cleanup_is_explicit(
     assert result.status is CapabilityStatus.ERROR
     assert result.diagnostics == {"reason": "cleanup_forced"}
     assert process.killed
+
+
+_SPL_TOKEN_FREEZE_PAYLOAD = {
+    "target_profile": "surfpool_local",
+    "target_id": "spl_token_freeze_containment",
+}
+
+
+def _spl_token_freeze_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="spl_token_freeze_containment_replay")
+
+
+def _spl_token_freeze_evidence(condition: str) -> dict[str, str | int | None]:
+    broken = condition == "broken"
+    return {
+        "target_id": "spl_token_freeze_containment",
+        "initial_state_id": "spl_token_freeze_containment_canonical_v1",
+        "economic_unit": "base_units",
+        "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "defense_condition": condition,
+        "attack_sequence_id": "spl_token_transfer_twice_v1",
+        "initial_source_balance_units": 1_000_000,
+        "initial_target_balance_units": 0,
+        "attack_start_slot": 42,
+        "first_transfer_signature": "transfer-1",
+        "first_transfer_source_balance_units": 900_000,
+        "first_transfer_target_balance_units": 100_000,
+        "detector_id": "spl_token_target_balance_monitor",
+        "signal_id": "spl_token_target_balance_signal",
+        "detection_status": "observed",
+        "first_detection_slot": 44,
+        "containment_status": "failed" if broken else "succeeded",
+        "first_containment_slot": None if broken else 46,
+        "target_account_state": "initialized" if broken else "frozen",
+        "second_transfer_status": "succeeded" if broken else "rejected",
+        "final_source_balance_units": 800_000 if broken else 900_000,
+        "final_target_balance_units": 200_000 if broken else 100_000,
+        "residual_loss_units": 200_000 if broken else 100_000,
+    }
+
+
+def test_spl_token_caller_is_created_only_for_approved_case() -> None:
+    assert (
+        create_capability_caller(
+            "run-1",
+            "session-1",
+            "beedrill",
+            "spl_token_freeze_containment_replay",
+            AuthorityLevel.READ_ONLY,
+            logging.getLogger("test"),
+        )
+        is not None
+    )
+
+
+@pytest.mark.parametrize(
+    ("module_id", "case_type", "authority"),
+    [
+        ("other", "spl_token_freeze_containment_replay", AuthorityLevel.READ_ONLY),
+        ("beedrill", "other", AuthorityLevel.READ_ONLY),
+        ("beedrill", "spl_token_freeze_containment_replay", AuthorityLevel.DRAFT_ONLY),
+    ],
+)
+def test_spl_token_caller_refuses_invalid_scope(
+    module_id: str, case_type: str, authority: AuthorityLevel
+) -> None:
+    result = _caller(module_id, case_type, authority).call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "scope_not_allowed"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _SPL_TOKEN_FREEZE_PAYLOAD,
+        {
+            **_SPL_TOKEN_FREEZE_PAYLOAD,
+            "defense_condition": "fixed",
+            "program_id": "untrusted",
+        },
+        {
+            **_SPL_TOKEN_FREEZE_PAYLOAD,
+            "defense_condition": "fixed",
+            "rpc_url": "untrusted",
+        },
+        {
+            **_SPL_TOKEN_FREEZE_PAYLOAD,
+            "defense_condition": "fixed",
+            "executable": "untrusted",
+        },
+    ],
+)
+def test_spl_token_caller_refuses_untrusted_payload(payload: dict[str, str]) -> None:
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment", payload
+    )
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "invalid_payload"}
+
+
+def test_spl_token_caller_refuses_wrong_capability() -> None:
+    result = _spl_token_freeze_caller().call(
+        "solana.other", {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"}
+    )
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "unknown_capability"}
+
+
+def test_spl_token_caller_returns_bounded_evidence_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process()
+    evidence = _spl_token_freeze_evidence("fixed")
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(solana_capability, "_rpc_health", lambda: None)
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_spl_token_freeze_containment",
+        lambda condition: {**evidence, "defense_condition": condition},
+    )
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is CapabilityStatus.OK
+    assert result.data == evidence
+    assert process.poll() is not None
+
+
+@pytest.mark.parametrize("condition", ["broken", "fixed"])
+def test_spl_token_replay_proves_transfer_detector_and_containment(
+    monkeypatch: pytest.MonkeyPatch, condition: str
+) -> None:
+    balances = iter(
+        [
+            (1_000_000, 0, 1),
+            (900_000, 100_000, 1),
+            (800_000, 200_000, 1) if condition == "broken" else (900_000, 100_000, 2),
+        ]
+    )
+    transfer_calls: list[bool] = []
+    monkeypatch.setattr(solana_capability, "_rpc_request_airdrop", lambda _: None)
+    monkeypatch.setattr(solana_capability, "_create_owned_account", lambda *_: None)
+    monkeypatch.setattr(
+        solana_capability, "_send_transaction", lambda *_a, **_kw: "signature"
+    )
+    monkeypatch.setattr(
+        solana_capability, "_spl_token_balances", lambda *_: next(balances)
+    )
+    monkeypatch.setattr(
+        solana_capability, "_read_slot", lambda: 42 + len(transfer_calls)
+    )
+
+    def send_transfer(*_args: object, expect_failure: bool = False) -> str:
+        transfer_calls.append(expect_failure)
+        if expect_failure:
+            raise solana_capability._TargetInstructionRejected("target rejection")
+        return f"transfer-{len(transfer_calls)}"
+
+    monkeypatch.setattr(solana_capability, "_send_spl_transfer", send_transfer)
+    evidence = solana_capability._run_spl_token_freeze_containment(condition)
+    assert evidence["first_transfer_signature"] == "transfer-1"
+    assert evidence["first_transfer_target_balance_units"] == 100_000
+    assert evidence["detection_status"] == "observed"
+    attack_start_slot = evidence["attack_start_slot"]
+    first_detection_slot = evidence["first_detection_slot"]
+    assert isinstance(attack_start_slot, int)
+    assert isinstance(first_detection_slot, int)
+    assert first_detection_slot >= attack_start_slot
+    if condition == "broken":
+        assert transfer_calls == [False, False]
+        assert evidence["target_account_state"] == "initialized"
+        assert evidence["second_transfer_status"] == "succeeded"
+        assert evidence["residual_loss_units"] == 200_000
+    else:
+        assert transfer_calls == [False, True]
+        assert evidence["target_account_state"] == "frozen"
+        assert evidence["second_transfer_status"] == "rejected"
+        assert evidence["residual_loss_units"] == 100_000
+
+
+def test_spl_token_detector_reads_token_account_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mint = bytes(Keypair().pubkey())
+    source = bytearray(165)
+    target = bytearray(165)
+    source[:32] = mint
+    target[:32] = mint
+    source[64:72] = (900_000).to_bytes(8, "little")
+    target[64:72] = (100_000).to_bytes(8, "little")
+    target[108] = 1
+    accounts = iter([bytes(source), bytes(target)])
+    monkeypatch.setattr(
+        solana_capability, "_read_target_state", lambda *_a, **_kw: next(accounts)
+    )
+    assert solana_capability._spl_token_balances(Keypair(), Keypair()) == (
+        900_000,
+        100_000,
+        1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("exception", "status", "reason"),
+    [
+        (
+            solana_capability._ReferenceTargetFailure("target_failed"),
+            CapabilityStatus.ERROR,
+            "target_failed",
+        ),
+        (
+            solana_capability._ReferenceTargetTimeout("target_timeout"),
+            CapabilityStatus.TIMEOUT,
+            "target_timeout",
+        ),
+    ],
+)
+def test_spl_token_caller_maps_target_failure_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    exception: Exception,
+    status: CapabilityStatus,
+    reason: str,
+) -> None:
+    process = _Process()
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(solana_capability, "_rpc_health", lambda: None)
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_spl_token_freeze_containment",
+        lambda _: (_ for _ in ()).throw(exception),
+    )
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is status
+    assert result.diagnostics == {"reason": reason}
+    assert process.poll() is not None
+
+
+def test_spl_token_caller_rejects_unavailable_surfpool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: None)
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "executable_unavailable"}
+
+
+def test_spl_token_only_accepts_instruction_error_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payer = Keypair()
+    instruction = solana_capability.Instruction(
+        solana_capability._SPL_TOKEN_PROGRAM, bytes([3]), []
+    )
+
+    def rpc_instruction_error(method: str, _params: list[object]) -> object:
+        if method == "getLatestBlockhash":
+            return {"value": {"blockhash": "11111111111111111111111111111111"}}
+        raise solana_capability._RpcRequestFailure(
+            {"data": {"err": {"InstructionError": [0, "AccountFrozen"]}}}
+        )
+
+    monkeypatch.setattr(solana_capability, "_rpc_call", rpc_instruction_error)
+    with pytest.raises(solana_capability._TargetInstructionRejected):
+        solana_capability._send_transaction(
+            payer, [payer], instruction, allow_target_instruction_rejection=True
+        )
+
+    def rpc_network_error(method: str, _params: list[object]) -> object:
+        if method == "getLatestBlockhash":
+            return {"value": {"blockhash": "11111111111111111111111111111111"}}
+        raise solana_capability._RpcRequestFailure({"unavailable": "network"})
+
+    monkeypatch.setattr(solana_capability, "_rpc_call", rpc_network_error)
+    with pytest.raises(solana_capability._RpcRequestFailure):
+        solana_capability._send_transaction(
+            payer, [payer], instruction, allow_target_instruction_rejection=True
+        )
+
+
+def test_spl_token_cleanup_failure_is_bounded_and_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    process = _Process(force_cleanup=True)
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
+    )
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(solana_capability, "_rpc_health", lambda: None)
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_spl_token_freeze_containment",
+        lambda _: _spl_token_freeze_evidence("fixed"),
+    )
+    caplog.set_level(logging.WARNING, logger="test_isolated_solana_capability")
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "cleanup_forced"}
+    assert process.killed
+    assert (
+        "SPL Token containment cleanup failed: module_id=beedrill run_id=run-1 reason=forced"
+        in caplog.messages
+    )
+
+
+def test_spl_token_execution_child_environment_excludes_sentinel_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    process = _Process()
+    monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+
+    def fake_popen(*_args: object, **kwargs: object) -> _Process:
+        captured.update(kwargs)
+        return process
+
+    monkeypatch.setattr(solana_capability.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(solana_capability, "_wait_for_readiness", lambda _: "ready")
+    monkeypatch.setattr(solana_capability, "_rpc_health", lambda: None)
+    monkeypatch.setattr(
+        solana_capability,
+        "_run_spl_token_freeze_containment",
+        lambda _: _spl_token_freeze_evidence("fixed"),
+    )
+    result = _spl_token_freeze_caller().call(
+        "solana.spl_token_freeze_containment",
+        {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
+    )
+    assert result.status is CapabilityStatus.OK
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert set(environment) == {"HOME", "PATH"}
+    assert "BEEDRILL_TEST_SENTINEL_SECRET" not in environment
