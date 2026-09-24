@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.68.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.67.1...beeagent-v0.68.0) (2026-09-24)
+
+
+### Features
+
+* add bounded SPL Token freeze containment capability ([#273](https://github.com/beesyst/beeagent/issues/273)) ([b291c8c](https://github.com/beesyst/beeagent/commit/b291c8cb2304d2925eb45fe535725daf6207122c))
+
 ## [0.67.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.67.0...beeagent-v0.67.1) (2026-09-23)
 
 
