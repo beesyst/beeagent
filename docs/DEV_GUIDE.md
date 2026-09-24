@@ -93,7 +93,13 @@ When Bitrix reconciliation is enabled, the poll persists durable ROP write-back 
 
 ## BeeDrill bounded regression runs
 
-The host exposes only the approved BeeDrill reference scenarios: `./start.sh beedrill run --scenario reference_target_containment_replay` and `./start.sh beedrill run --scenario reference_oracle_manipulation_replay`. The command invokes the registered `beedrill` module through the normal module runtime, then copies its `security_verdict` into a JSON summary. It does not interpret or calculate that verdict. Exit status is `0` for `pass`, `1` for a completed `fail`, `2` for invalid command input, and `3` for incomplete, refused, timeout, or error results. The canonical module result and scenario artifact remain under the generated run's existing artifact directory.
+The host exposes three approved BeeDrill scenarios:
+
+- `./start.sh beedrill run --scenario reference_target_containment_replay`
+- `./start.sh beedrill run --scenario reference_oracle_manipulation_replay`
+- `./start.sh beedrill run --scenario spl_token_freeze_containment_replay`
+
+The SPL scenario executes the fixed canonical SPL Token experiment inside the approved offline Surfpool boundary. BeeAgent owns runtime, program selection, RPC, transactions, ephemeral keys, timeouts, and cleanup; it only reports the BeeDrill-produced `security_verdict`. The command invokes the registered `beedrill` module through the normal module runtime, then copies its `security_verdict` into a JSON summary. It does not interpret or calculate that verdict. Exit status is `0` for `pass`, `1` for a completed `fail`, `2` for invalid command input, and `3` for incomplete, refused, timeout, or error results. The canonical module result and scenario artifact remain under the generated run's existing artifact directory.
 
 ## Controlled Bitrix write-back (Iteration 37)
 

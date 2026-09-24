@@ -55,6 +55,10 @@ _BEEDRILL_SCENARIOS = {
         "target_profile": "surfpool_local",
         "target_id": "reference_oracle_market",
     },
+    "spl_token_freeze_containment_replay": {
+        "target_profile": "surfpool_local",
+        "target_id": "spl_token_freeze_containment",
+    },
 }
 
 
@@ -304,7 +308,7 @@ def _handle_beedrill_cli(
     ):
         print(
             "Usage: start.py beedrill run --scenario "
-            "{reference_target_containment_replay|reference_oracle_manipulation_replay}",
+            "{reference_target_containment_replay|reference_oracle_manipulation_replay|spl_token_freeze_containment_replay}",
             file=sys.stderr,
         )
         return 2
