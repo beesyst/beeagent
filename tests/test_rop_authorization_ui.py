@@ -1306,6 +1306,7 @@ def test_auth_settings_accepts_future_safe_scope(
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
     settings = load_settings(get_project_root() / "config" / "settings.yml")
     settings["web"]["auth"]["principals"][1]["scopes"] = ["beescan"]
@@ -1377,6 +1378,7 @@ def test_auth_settings_accepts_wildcard_only(
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
     settings = load_settings(get_project_root() / "config" / "settings.yml")
     validate_settings(settings)
@@ -1393,6 +1395,7 @@ def test_auth_settings_accepts_multiple_scopes(
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
     settings = load_settings(get_project_root() / "config" / "settings.yml")
     settings["web"]["auth"]["principals"][1]["scopes"] = ["rop", "runs"]

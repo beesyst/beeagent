@@ -1,5 +1,11 @@
 # DEV_GUIDE — разработка модуля, тесты, интеграция с BeeAgent
 
+ROP AI adjudication uses the single enabled `ai.profiles` entry and supports
+`openai_responses` or `openai_compatible`. OpenRouter stays disabled until its
+environment-backed key is supplied. Bitrix blacklist-stage rollout requires an
+enabled `bitrix.blacklist_trigger`, configured stage/custom-field identifiers,
+and its dedicated environment-backed trigger secret.
+
 ## Purpose
 
 Этот документ описывает:

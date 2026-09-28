@@ -2718,7 +2718,7 @@ class TestConfig:
                 _settings(ai_assist_enabled=True, adjudicator_enabled=True)
             )
 
-    def test_openai_compatible_provider_rejected_for_enabled_adjudicator(self) -> None:
+    def test_openai_compatible_provider_is_valid_for_enabled_adjudicator(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
 
         profiles = {
@@ -2733,14 +2733,13 @@ class TestConfig:
             }
         }
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True):
-            with pytest.raises(RuntimeError, match="expected openai_responses"):
-                _validate_rop_ai_adjudicator_settings(
-                    _settings(
-                        ai_assist_enabled=True,
-                        adjudicator_enabled=True,
-                        profiles=profiles,
-                    )
+            _validate_rop_ai_adjudicator_settings(
+                _settings(
+                    ai_assist_enabled=True,
+                    adjudicator_enabled=True,
+                    profiles=profiles,
                 )
+            )
 
     def test_exactly_one_enabled_profile_required(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings

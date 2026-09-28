@@ -1630,7 +1630,6 @@ def build_rop_event_detail_page_model(
 
     back_href = build_rop_url(
         tab="queue",
-        run_id=run_id,
         period=period,
         lang=lang,
         page=page,

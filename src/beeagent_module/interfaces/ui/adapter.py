@@ -99,8 +99,8 @@ def _product_version() -> str:
 
 def _blacklist_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: payload.get(key, "User" if key == "role" else "")
-        for key in ("name", "title", "email", "role")
+        key: payload.get(key, "")
+        for key in ("name", "title", "email", "reason")
     }
 
 
@@ -115,7 +115,7 @@ def _validate_blacklist_payload(action_id: str, payload: dict[str, Any]) -> None
     expected = (
         {"email"}
         if action_id in {"rop_sender_blacklist_add", "rop_sender_blacklist_remove"}
-        else {"name", "title", "email", "role"}
+        else {"name", "title", "email", "reason"}
     )
     if action_id == "rop_sender_blacklist_update":
         expected = {"original_email", *expected}
@@ -123,7 +123,7 @@ def _validate_blacklist_payload(action_id: str, payload: dict[str, Any]) -> None
         set(payload) != expected
         and not (
             action_id == "rop_sender_blacklist_add"
-            and set(payload) == {"name", "title", "email", "role"}
+            and set(payload) == {"name", "title", "email", "reason"}
         )
     ):
         raise SenderBlacklistError("Action payload is invalid")
@@ -135,7 +135,7 @@ def _validate_blacklist_payload(action_id: str, payload: dict[str, Any]) -> None
 def _blacklist_fields(
     locale: str, entry: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
-    entry = entry or {"name": "", "title": "", "email": "", "role": "User"}
+    entry = entry or {"name": "", "title": "", "email": "", "reason": ""}
     return [
         {
             "name": "name",
@@ -162,12 +162,12 @@ def _blacklist_fields(
             "value": entry["email"],
         },
         {
-            "name": "role",
+            "name": "reason",
             "type": "text",
-            "label": t("Role", locale),
+            "label": t("Reason", locale),
             "required": False,
             "max_length": 64,
-            "value": entry["role"],
+            "value": entry["reason"],
         },
     ]
 
@@ -1407,7 +1407,7 @@ class BeeAgentUiAdapter:
                             "name": {"label": entry["name"]},
                             "title": {"label": entry["title"]},
                             "email": {"label": entry["email"]},
-                            "role": {"label": entry["role"]},
+                            "reason": {"label": entry["reason"]},
                             "actions": [
                                 {
                                     "action_id": "rop_sender_blacklist_update",
@@ -1494,8 +1494,8 @@ class BeeAgentUiAdapter:
                                             "cell": "text",
                                         },
                                         {
-                                            "key": "role",
-                                            "label": t("Role", locale),
+                                            "key": "reason",
+                                            "label": t("Reason", locale),
                                             "cell": "text",
                                         },
                                         {

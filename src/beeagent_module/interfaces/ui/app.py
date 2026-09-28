@@ -7,7 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, quote
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode
 
 from beeui_module.adapters.envelopes import (
     AdapterErrorResult,
@@ -31,6 +31,7 @@ from beeagent_module.core.attachment_store import (
 from beeagent_module.core.authorization import (
     EXTERNAL_PRINCIPAL_SCOPES,
     SCOPE_ROP_SOURCES_WRITE,
+    SCOPE_ROP_BLACKLIST_WRITE,
     SCOPE_WILDCARD,
     has_rop_capability_authority,
     home_path,
@@ -44,6 +45,10 @@ from beeagent_module.core.rop_final_decision import (
 from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
     load_sender_blacklist_entries,
+)
+from beeagent_module.core.rop_bitrix_blacklist import (
+    process_bitrix_lead_update_event,
+    process_blacklist_stage_trigger,
 )
 from beeagent_module.core.rop_sources import RopSourcesError, load_rop_sources
 from beeagent_module.interfaces.ui.adapter import (
@@ -447,6 +452,8 @@ _PUBLIC_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/static/"),
     re.compile(r"^/auth/"),
     re.compile(r"^/api/bitrix/rop/widget(?:/|$)"),
+    re.compile(r"^/api/bitrix/rop/blacklist-stage$"),
+    re.compile(r"^/api/bitrix/rop/events(?:/[A-Za-z0-9_-]{1,128})?$"),
     re.compile(r"^/bitrix/rop/install$"),
     re.compile(r"^/bitrix/rop/launch$"),
 ]
@@ -499,7 +506,13 @@ def _request_scopes(request: Request) -> frozenset[str] | None:
     session = service.verify_session(request.cookies.get(service.cookie_name()))
     if session is None:
         return frozenset()
-    return _principal_scopes(settings, session.user_id)
+    scopes = _principal_scopes(settings, session.user_id)
+    if (
+        is_bitrix_principal_user_id(session.user_id)
+        and session.role.value == "operator"
+    ):
+        return scopes | frozenset({SCOPE_ROP_BLACKLIST_WRITE})
+    return scopes
 
 
 def _rop_projection_run_ids(storage_dir: Path | None) -> frozenset[str]:
@@ -516,6 +529,18 @@ def _rop_projection_entry_valid(storage_dir: Path | None, run_id: str) -> bool:
         return False
     manifest = rop_web_projection_v2_manifest(storage_dir)
     return manifest is not None and run_id in manifest.get("run_ids", [])
+
+
+def _historical_rop_run_valid(storage_dir: Path | None, run_id: str) -> bool:
+    if storage_dir is None:
+        return False
+    path = storage_dir / "runs" / run_id / "classified_events.json"
+    try:
+        import json
+
+        return isinstance(json.loads(path.read_text(encoding="utf-8")), list)
+    except (OSError, ValueError):
+        return False
 
 
 def _artifact_path_run_id(path: str) -> str | None:
@@ -628,6 +653,11 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
         )
         settings = getattr(request.app.state, "beeagent_settings", {}) or {}
         scopes = _principal_scopes(settings, session.user_id)
+        if (
+            is_bitrix_principal_user_id(session.user_id)
+            and session.role.value == "operator"
+        ):
+            scopes = scopes | frozenset({SCOPE_ROP_BLACKLIST_WRITE})
         if source_management_route and not has_rop_capability_authority(
             session.role.value, scopes, SCOPE_ROP_SOURCES_WRITE
         ):
@@ -652,9 +682,28 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
                 except Exception:
                     requested_run_id = None
             if requested_run_id is not None:
+                historical_access = path.startswith("/rop/events/") or (
+                    "/runs/" in path and "/artifacts/" in path
+                )
+                if (
+                    path == "/rop"
+                    and _historical_rop_run_valid(storage_dir, requested_run_id)
+                    and not _rop_projection_entry_valid(storage_dir, requested_run_id)
+                ):
+                    query = [
+                        (key, value)
+                        for key, value in request.query_params.multi_items()
+                        if key != "run_id"
+                    ]
+                    target = "/rop" + ("?" + urlencode(query) if query else "")
+                    return RedirectResponse(target, status_code=303)
                 rop_run_ids = (
                     frozenset({requested_run_id})
                     if _rop_projection_entry_valid(storage_dir, requested_run_id)
+                    or (
+                        historical_access
+                        and _historical_rop_run_valid(storage_dir, requested_run_id)
+                    )
                     else frozenset()
                 )
             else:
@@ -674,8 +723,6 @@ def _register_auth_middleware(app: FastAPI, logger: logging.Logger) -> None:
         if wants_html and path == "/":
             landing = home_path(scopes)
             if landing and landing != "/":
-                from starlette.responses import RedirectResponse
-
                 return RedirectResponse(url=landing, status_code=303)
         return _forbidden_response()
 
@@ -833,6 +880,109 @@ def _register_custom_routes(
     adapter: BeeAgentUiAdapter,
     logger: logging.Logger,
 ) -> None:
+    @app.post("/api/bitrix/rop/blacklist-stage", include_in_schema=False)
+    async def bitrix_blacklist_stage(request: Request) -> JSONResponse:
+        try:
+            payload = await request.json()
+        except Exception:
+            return _error_json(
+                "invalid_request", "Invalid callback payload", status_code=400
+            )
+        if not isinstance(payload, dict) or set(payload) != {"lead_id"}:
+            return _error_json(
+                "invalid_request", "Invalid callback payload", status_code=400
+            )
+        outcome, changed = process_blacklist_stage_trigger(
+            app.state.beeagent_storage_dir,
+            app.state.beeagent_settings,
+            payload["lead_id"],
+            request.headers.get("X-BeeAgent-Bitrix-Trigger"),
+        )
+        if outcome == "unauthorized":
+            return _error_json(
+                "unauthorized", "Callback authentication failed", status_code=401
+            )
+        if outcome != "ok":
+            return _error_json(
+                "callback_rejected", "Callback was rejected", status_code=400
+            )
+        return _ok_json({"changed": changed})
+
+    @app.post("/api/bitrix/rop/events", include_in_schema=False)
+    @app.post("/api/bitrix/rop/events/{callback_secret}", include_in_schema=False)
+    async def bitrix_rop_event(
+        request: Request, callback_secret: str | None = None
+    ) -> JSONResponse:
+        content_type = request.headers.get("content-type", "").split(";", 1)[0]
+        try:
+            if content_type == "application/x-www-form-urlencoded":
+                values = parse_qs(
+                    (await request.body()).decode("utf-8"),
+                    keep_blank_values=True,
+                    strict_parsing=False,
+                    max_num_fields=100,
+                )
+                document_type = values.get("document_id[1]", [""])[0]
+                document_id = values.get("document_id[2]", [""])[0]
+                if document_type == "CCrmDocumentLead":
+                    match = re.fullmatch(r"(?:LEAD_)?([1-9][0-9]*)", document_id)
+                    document_lead_id = match.group(1) if match else ""
+                else:
+                    document_lead_id = ""
+                payload = {
+                    "event": values.get("event", [""])[0],
+                    "data": {
+                        "FIELDS": {
+                            "ID": values.get("data[FIELDS][ID]", [""])[0]
+                            or document_lead_id
+                        }
+                    },
+                    "auth": {
+                        "application_token": values.get("auth[application_token]", [""])[0],
+                        "domain": values.get("auth[domain]", [""])[0],
+                    },
+                }
+            else:
+                payload = await request.json()
+        except Exception:
+            return _error_json("invalid_event", "Invalid Bitrix event", status_code=400)
+        auth = payload.get("auth") if isinstance(payload, dict) else None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        fields = data.get("FIELDS") if isinstance(data, dict) else None
+        lead_id = (
+            fields.get("ID")
+            if isinstance(fields, dict) and fields.get("ID")
+            else None
+        )
+        if callback_secret:
+            outcome, changed = process_blacklist_stage_trigger(
+                app.state.beeagent_storage_dir,
+                app.state.beeagent_settings,
+                lead_id,
+                callback_secret,
+            )
+        elif isinstance(auth, dict) and auth.get("application_token"):
+            outcome, changed = process_bitrix_lead_update_event(
+                app.state.beeagent_storage_dir, app.state.beeagent_settings, payload
+            )
+        else:
+            outcome, changed = process_blacklist_stage_trigger(
+                app.state.beeagent_storage_dir,
+                app.state.beeagent_settings,
+                lead_id,
+                None,
+            )
+        logger.info(
+            "Bitrix ROP blacklist callback processed: outcome=%s changed=%s",
+            outcome,
+            changed,
+        )
+        if outcome == "unauthorized":
+            return _error_json("unauthorized", "Bitrix event authentication failed", status_code=401)
+        if outcome != "ok":
+            return _error_json("event_rejected", "Bitrix event was rejected", status_code=400)
+        return _ok_json({"changed": changed})
+
     @app.get("/health", response_class=JSONResponse, include_in_schema=False)
     async def health() -> JSONResponse:
         return JSONResponse(
@@ -862,12 +1012,12 @@ def _register_custom_routes(
             return _error_json("state_malformed", str(exc), status_code=400)
         output = io.StringIO(newline="")
         writer = csv.writer(output)
-        writer.writerow(["Name", "Title", "Email", "Role"])
+        writer.writerow(["Name", "Title", "Email", "Reason"])
         for entry in entries:
             if query and query not in entry["email"]:
                 continue
             writer.writerow(
-                [_csv_cell(entry[key]) for key in ("name", "title", "email", "role")]
+                [_csv_cell(entry[key]) for key in ("name", "title", "email", "reason")]
             )
         return Response(
             output.getvalue(),

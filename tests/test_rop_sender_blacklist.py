@@ -47,11 +47,11 @@ def test_sender_blacklist_v2_preserves_metadata_and_legacy_state(tmp_path: Path)
     path = tmp_path / "interfaces" / "rop_sender_blacklist.json"
     path.parent.mkdir()
     path.write_text('{"emails":["Legacy <legacy@example.com>"]}', encoding="utf-8")
-    assert load_sender_blacklist_entries(tmp_path) == [{"name": "", "title": "", "email": "legacy@example.com", "role": "User"}]
-    entry, changed = add_sender_blacklist_entry(tmp_path, {"name": "<b>Alice</b>", "title": "Owner", "email": "alice@example.com", "role": "Admin"})
+    assert load_sender_blacklist_entries(tmp_path) == [{"name": "", "title": "", "email": "legacy@example.com", "reason": ""}]
+    entry, changed = add_sender_blacklist_entry(tmp_path, {"name": "<b>Alice</b>", "title": "Owner", "email": "alice@example.com", "reason": "Customer request"})
     assert changed and entry["email"] == "alice@example.com"
-    updated, changed = update_sender_blacklist_entry(tmp_path, "alice@example.com", {"name": "Alice", "title": "Owner", "email": "alice@example.com", "role": "User"})
-    assert changed and updated["role"] == "User"
+    updated, changed = update_sender_blacklist_entry(tmp_path, "alice@example.com", {"name": "Alice", "title": "Owner", "email": "alice@example.com", "reason": "Customer request"})
+    assert changed and updated["reason"] == "Customer request"
     stored = json.loads(path.read_text(encoding="utf-8"))
     assert stored["version"] == 2
     assert load_sender_blacklist(tmp_path) == ["alice@example.com", "legacy@example.com"]
@@ -92,6 +92,83 @@ def test_sender_blacklist_audit_excludes_raw_email(tmp_path: Path) -> None:
     record = json.loads(text)
     assert "alice@example.com" not in text
     assert record["email_sha256"]
+
+
+def test_bitrix_blacklist_trigger_rereads_and_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beeagent_module.core.rop_bitrix_blacklist import process_blacklist_stage_trigger
+
+    class Client:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def item_list(self, *_args: object, **_kwargs: object) -> dict:
+            return {"result": {"items": [{"id": 42, "stageId": "BLACKLIST", "name": "Alice", "lastName": "Example", "post": "Buyer", "email": [{"VALUE": "Alice <ALICE@example.com>"}], "UF_REASON": "Spam sender"}]}}
+
+    monkeypatch.setenv("TRIGGER_SECRET", "test-secret")
+    monkeypatch.setenv("BITRIX_WEBHOOK", "https://example.test/rest")
+    monkeypatch.setattr("beeagent_module.core.rop_bitrix_blacklist.BitrixReadonlyClient", Client)
+    settings = {"bitrix": {"webhook_env": "BITRIX_WEBHOOK", "timeout": 1, "page_size": 1, "pages_max": 1, "blacklist_trigger": {"enabled": True, "secret_env": "TRIGGER_SECRET", "stage_id": "BLACKLIST", "classification_field": "UF_REASON"}}}
+    assert process_blacklist_stage_trigger(tmp_path, settings, "42", "test-secret") == ("ok", True)
+    assert process_blacklist_stage_trigger(tmp_path, settings, "42", "test-secret") == ("ok", False)
+    assert load_sender_blacklist(tmp_path) == ["alice@example.com"]
+    assert load_sender_blacklist_entries(tmp_path) == [{"name": "Example Alice", "title": "Buyer", "email": "alice@example.com", "reason": "Spam sender"}]
+
+
+def test_bitrix_blacklist_trigger_allows_empty_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beeagent_module.core.rop_bitrix_blacklist import process_blacklist_stage_trigger
+
+    class Client:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def item_list(self, *_args: object, **_kwargs: object) -> dict:
+            return {"result": {"items": [{"id": 42, "stageId": "BLACKLIST", "name": "Alice", "email": "alice@example.com", "UF_REASON": None}]}}
+
+    monkeypatch.setenv("TRIGGER_SECRET", "test-secret")
+    monkeypatch.setenv("BITRIX_WEBHOOK", "https://example.test/rest")
+    monkeypatch.setattr("beeagent_module.core.rop_bitrix_blacklist.BitrixReadonlyClient", Client)
+    settings = {"bitrix": {"webhook_env": "BITRIX_WEBHOOK", "timeout": 1, "page_size": 1, "pages_max": 1, "blacklist_trigger": {"enabled": True, "secret_env": "TRIGGER_SECRET", "stage_id": "BLACKLIST", "classification_field": "UF_REASON"}}}
+    assert process_blacklist_stage_trigger(tmp_path, settings, "42", "test-secret") == ("ok", True)
+    assert load_sender_blacklist_entries(tmp_path)[0]["reason"] == ""
+
+
+def test_bitrix_blacklist_trigger_rejects_bad_auth_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beeagent_module.core.rop_bitrix_blacklist import process_blacklist_stage_trigger
+
+    monkeypatch.setenv("TRIGGER_SECRET", "test-secret")
+    settings = {"bitrix": {"blacklist_trigger": {"enabled": True, "secret_env": "TRIGGER_SECRET"}}}
+    assert process_blacklist_stage_trigger(tmp_path, settings, "42", "wrong") == ("unauthorized", False)
+    assert load_sender_blacklist(tmp_path) == []
+
+
+def test_bitrix_lead_update_event_uses_application_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beeagent_module.core.rop_bitrix_blacklist import (
+        process_bitrix_lead_update_event,
+    )
+
+    class Client:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def item_list(self, *_args: object, **_kwargs: object) -> dict:
+            return {"result": [{"id": 42, "stageId": "BLACKLIST", "email": "alice@example.com", "UF_REASON": "Spam sender"}]}
+
+    monkeypatch.setenv("EVENT_TOKEN", "event-token")
+    monkeypatch.setenv("BITRIX_WEBHOOK", "https://example.test/rest")
+    monkeypatch.setattr("beeagent_module.core.rop_bitrix_blacklist.BitrixReadonlyClient", Client)
+    settings = {"bitrix": {"webhook_env": "BITRIX_WEBHOOK", "embedded_app": {"portal_origin": "https://example.test"}, "blacklist_trigger": {"enabled": True, "event_application_token_env": "EVENT_TOKEN", "stage_id": "BLACKLIST", "classification_field": "UF_REASON"}}}
+    event = {"event": "ONCRMLEADUPDATE", "data": {"FIELDS": {"ID": "42"}}, "auth": {"application_token": "event-token", "domain": "example.test"}}
+    assert process_bitrix_lead_update_event(tmp_path, settings, event) == ("ok", True)
+    event["auth"]["application_token"] = "wrong"
+    assert process_bitrix_lead_update_event(tmp_path, settings, event) == ("unauthorized", False)
 
 
 def test_admin_can_manage_sender_blacklist_with_wildcard_scope(tmp_path: Path) -> None:

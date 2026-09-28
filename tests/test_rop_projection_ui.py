@@ -651,7 +651,8 @@ def test_rop_auth_explicit_old_run_id_outside_bounded_catalog_fails_closed(
     html = client.get(f"/rop?run_id={old_run_id}", follow_redirects=False)
     api = client.get(f"/api/rop/dashboard?run_id={old_run_id}")
 
-    assert html.status_code == 403
+    assert html.status_code == 303
+    assert html.headers["location"] == "/rop"
     assert api.status_code == 403
 
 
