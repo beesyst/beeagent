@@ -32,6 +32,7 @@ from beeagent_module.cases.rop_dashboard import (
     validate_pagination_params,
 )
 from beeagent_module.core.authorization import (
+    EXTERNAL_PRINCIPAL_SCOPES,
     SCOPE_ROP_BLACKLIST_WRITE,
     SCOPE_ROP_SOURCES_WRITE,
     has_rop_capability_authority,
@@ -83,6 +84,8 @@ from beeagent_module.interfaces.ui.read_model import (
     build_runs_list,
     normalize_rop_recommendation_hrefs,
 )
+from beeagent_module.interfaces.ui.bitrix_embed import is_bitrix_principal_user_id
+
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
@@ -98,10 +101,7 @@ def _product_version() -> str:
 
 
 def _blacklist_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: payload.get(key, "")
-        for key in ("name", "title", "email", "reason")
-    }
+    return {key: payload.get(key, "") for key in ("name", "title", "email", "reason")}
 
 
 def _blacklist_audit_email(payload: dict[str, Any]) -> str | None:
@@ -130,6 +130,31 @@ def _validate_blacklist_payload(action_id: str, payload: dict[str, Any]) -> None
     normalize_sender_email(payload.get("email"))
     if action_id == "rop_sender_blacklist_update":
         normalize_sender_email(payload.get("original_email"))
+
+
+def _actor_scopes(settings: dict[str, Any], actor_id: Any, role: str) -> list[str]:
+    principals = settings.get("web", {}).get("auth", {}).get("principals", [])
+    scopes = next(
+        (
+            item.get("scopes", [])
+            for item in principals
+            if isinstance(item, dict) and item.get("id") == actor_id
+        ),
+        None,
+    )
+    if not isinstance(scopes, list):
+        scopes = (
+            list(EXTERNAL_PRINCIPAL_SCOPES)
+            if (isinstance(actor_id, str) and is_bitrix_principal_user_id(actor_id))
+            else []
+        )
+    if (
+        isinstance(actor_id, str)
+        and is_bitrix_principal_user_id(actor_id)
+        and role == "operator"
+    ):
+        return [*scopes, SCOPE_ROP_BLACKLIST_WRITE]
+    return scopes
 
 
 def _blacklist_fields(
@@ -166,7 +191,7 @@ def _blacklist_fields(
             "type": "text",
             "label": t("Reason", locale),
             "required": False,
-            "max_length": 64,
+            "max_length": 128,
             "value": entry["reason"],
         },
     ]
@@ -806,15 +831,7 @@ class BeeAgentUiAdapter:
             return error_result(
                 "permission_denied", "ROP operator or admin role is required"
             )
-        principals = self._settings.get("web", {}).get("auth", {}).get("principals", [])
-        scopes = next(
-            (
-                item.get("scopes", [])
-                for item in principals
-                if isinstance(item, dict) and item.get("id") == actor_id
-            ),
-            [],
-        )
+        scopes = _actor_scopes(self._settings, actor_id, str(actor.get("role") or ""))
         if not isinstance(scopes, list) or not has_rop_capability_authority(
             str(actor.get("role") or ""), scopes, SCOPE_ROP_BLACKLIST_WRITE
         ):
@@ -872,21 +889,12 @@ class BeeAgentUiAdapter:
             if isinstance(payload.get("source_id"), str)
             else None
         )
-        principals = self._settings.get("web", {}).get("auth", {}).get("principals", [])
-        scopes = next(
-            (
-                item.get("scopes", [])
-                for item in principals
-                if isinstance(item, dict) and item.get("id") == actor_id
-            ),
-            [],
-        )
+        role = str(actor.get("role") or "") if isinstance(actor, dict) else ""
+        scopes = _actor_scopes(self._settings, actor_id, role)
         if (
             not isinstance(actor, dict)
             or not isinstance(scopes, list)
-            or not has_rop_capability_authority(
-                str(actor.get("role") or ""), scopes, SCOPE_ROP_SOURCES_WRITE
-            )
+            or not has_rop_capability_authority(role, scopes, SCOPE_ROP_SOURCES_WRITE)
         ):
             write_rop_sources_audit(
                 self._storage_dir,

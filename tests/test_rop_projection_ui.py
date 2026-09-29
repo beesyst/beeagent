@@ -767,6 +767,35 @@ def test_rop_available_runs_bounded_and_total_runs_scalar(tmp_path: Path) -> Non
     assert payload["kpis"]["total_runs"] == ROP_WEB_PROJECTION_RUNS_MAX + 10
 
 
+def test_rop_viewer_can_access_historical_rop_evidence_outside_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beeagent_module.cases.rop_dashboard import ROP_WEB_PROJECTION_RUNS_MAX
+    from beeagent_module.cases.rop_dashboard import rop_web_projection_index
+
+    _set_scoped_auth_env_for_test(monkeypatch)
+    storage_dir = _make_storage(tmp_path)
+    _write_many_rop_runs(storage_dir, ROP_WEB_PROJECTION_RUNS_MAX + 10)
+    _write_rop_web_projection(storage_dir)
+    index = rop_web_projection_index(storage_dir)
+    assert index is not None
+    assert "run-hist-000" not in index["run_ids"]
+    client = _scoped_auth_client(storage_dir)
+    login = client.post(
+        "/auth/login",
+        data={"user_id": "ropviewer", "token": "ropviewer-test-token"},
+        follow_redirects=False,
+    )
+
+    assert login.status_code in (302, 200)
+    assert client.get("/rop/events/evt-1?run_id=run-hist-000").status_code == 200
+    assert (
+        client.get("/runs/run-hist-000/artifacts/classified_events_json").status_code
+        == 200
+    )
+    assert client.get("/runs", follow_redirects=False).status_code == 403
+
+
 def test_rop_projection_index_has_bounded_catalog_and_scalar_total(
     tmp_path: Path,
 ) -> None:

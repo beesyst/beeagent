@@ -861,20 +861,26 @@ def _validate_bitrix_settings(settings: dict) -> None:
         raise RuntimeError("Invalid type for bitrix.enabled, expected bool")
     trigger_cfg = bitrix_cfg.get("blacklist_trigger")
     if trigger_cfg is not None:
-        if not isinstance(trigger_cfg, dict) or not isinstance(trigger_cfg.get("enabled"), bool):
+        if not isinstance(trigger_cfg, dict) or not isinstance(
+            trigger_cfg.get("enabled"), bool
+        ):
             raise RuntimeError("Invalid bitrix.blacklist_trigger config")
         for key in (
             "secret_env",
-            "event_application_token_env",
+            "event_app_token_env",
             "stage_id",
             "classification_field",
         ):
             value = trigger_cfg.get(key)
-            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > 128
+            ):
                 raise RuntimeError(f"Invalid or missing bitrix.blacklist_trigger.{key}")
         if trigger_cfg["enabled"] and not (
             os.getenv(trigger_cfg["secret_env"], "").strip()
-            or os.getenv(trigger_cfg["event_application_token_env"], "").strip()
+            or os.getenv(trigger_cfg["event_app_token_env"], "").strip()
         ):
             raise RuntimeError(
                 "Missing required trigger secret or Bitrix event token when "

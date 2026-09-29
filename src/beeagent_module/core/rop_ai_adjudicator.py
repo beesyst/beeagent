@@ -1368,6 +1368,8 @@ def call_openai_responses_api(
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 500,
             "response_format": {"type": "json_object"},
         }
 
@@ -1396,7 +1398,9 @@ def call_openai_responses_api(
                 return None
             message = choices[0].get("message")
             content_text = message.get("content") if isinstance(message, dict) else None
-            return content_text if isinstance(content_text, str) and content_text else None
+            return (
+                content_text if isinstance(content_text, str) and content_text else None
+            )
         output_list = response_data.get("output", [])
         if not output_list:
             logger.warning("ai_adjudicator: no output in Responses API response")

@@ -194,7 +194,7 @@ bitrix:
   blacklist_trigger:
     enabled: true
     secret_env: BITRIX_ROP_BLACKLIST_TRIGGER_SECRET
-    event_application_token_env: BITRIX_ROP_EVENT_APPLICATION_TOKEN
+    event_app_token_env: BITRIX_ROP_EVENT_APP_TOKEN
     stage_id: "UC_T8EGR7"
     classification_field: ufCrm_1790592597
   embedded_app:

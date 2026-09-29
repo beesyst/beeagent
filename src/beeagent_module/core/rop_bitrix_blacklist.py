@@ -41,7 +41,11 @@ def process_blacklist_stage_trigger(
         or not hmac.compare_digest(secret, supplied_secret)
     ):
         return "unauthorized", False
-    if not isinstance(lead_id, str) or not lead_id.isdigit() or not 0 < int(lead_id) <= 2_147_483_647:
+    if (
+        not isinstance(lead_id, str)
+        or not lead_id.isdigit()
+        or not 0 < int(lead_id) <= 2_147_483_647
+    ):
         return "invalid_lead", False
     bitrix = settings.get("bitrix", {})
     try:
@@ -61,7 +65,11 @@ def process_blacklist_stage_trigger(
         result = response.get("result")
         if isinstance(result, dict):
             result = result.get("items")
-        if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict):
+        if (
+            not isinstance(result, list)
+            or len(result) != 1
+            or not isinstance(result[0], dict)
+        ):
             return "lead_unavailable", False
         lead = result[0]
         if str(lead.get("id", lead.get("ID", ""))) != lead_id:
@@ -69,15 +77,18 @@ def process_blacklist_stage_trigger(
         if str(lead.get("stageId", lead.get("STATUS_ID", ""))) != cfg["stage_id"]:
             return "wrong_stage", False
         reason = lead.get(field)
-        if reason is None or reason == "":
-            reason = ""
-        elif not isinstance(reason, str) or len(reason.strip()) > 128:
+        if (
+            not isinstance(reason, str)
+            or not reason.strip()
+            or len(reason.strip()) > 128
+        ):
             return "invalid_classification", False
-        else:
-            reason = reason.strip()
+        reason = reason.strip()
         email_value = lead.get("email", lead.get("EMAIL"))
         if isinstance(email_value, list):
-            values = [item.get("VALUE") for item in email_value if isinstance(item, dict)]
+            values = [
+                item.get("VALUE") for item in email_value if isinstance(item, dict)
+            ]
             if len(values) != 1:
                 return "invalid_sender", False
             email_value = values[0]
@@ -115,9 +126,22 @@ def process_blacklist_stage_trigger(
                 "reason": current["reason"] or entry["reason"],
             }
             _, changed = update_sender_blacklist_entry(storage_dir, email, entry)
-    except (KeyError, TypeError, ValueError, SenderBlacklistError, RuntimeError):
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        SenderBlacklistError,
+        RuntimeError,
+    ):
         return "connector_error", False
-    write_sender_blacklist_audit(storage_dir, action_id="bitrix_blacklist_stage", actor_id="bitrix", outcome="changed" if changed else "unchanged", email=email)
+    write_sender_blacklist_audit(
+        storage_dir,
+        action_id="bitrix_blacklist_stage",
+        actor_id="bitrix",
+        outcome="changed" if changed else "unchanged",
+        email=email,
+    )
     return "ok", changed
 
 
@@ -137,7 +161,7 @@ def process_bitrix_lead_update_event(
     if not isinstance(fields, dict) or not isinstance(auth, dict):
         return "invalid_event", False
     token = auth.get("application_token")
-    expected = os.getenv(str(cfg.get("event_application_token_env", "")), "")
+    expected = os.getenv(str(cfg.get("event_app_token_env", "")), "")
     domain = auth.get("domain")
     portal = settings.get("bitrix", {}).get("embedded_app", {}).get("portal_origin", "")
     expected_domain = urlparse(str(portal)).hostname

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import os
 import re
@@ -57,6 +58,8 @@ from beeagent_module.interfaces.ui.adapter import (
 )
 from beeagent_module.interfaces.ui.bitrix_embed import (
     EMBEDDED_SESSION_AGE_MAX_SECONDS,
+    MAX_FORM_BODY_BYTES,
+    MAX_FORM_FIELDS,
     is_bitrix_principal_user_id,
     is_valid_https_origin,
 )
@@ -452,7 +455,6 @@ _PUBLIC_PATHS: list[re.Pattern[str]] = [
     re.compile(r"^/static/"),
     re.compile(r"^/auth/"),
     re.compile(r"^/api/bitrix/rop/widget(?:/|$)"),
-    re.compile(r"^/api/bitrix/rop/blacklist-stage$"),
     re.compile(r"^/api/bitrix/rop/events(?:/[A-Za-z0-9_-]{1,128})?$"),
     re.compile(r"^/bitrix/rop/install$"),
     re.compile(r"^/bitrix/rop/launch$"),
@@ -539,7 +541,7 @@ def _historical_rop_run_valid(storage_dir: Path | None, run_id: str) -> bool:
         import json
 
         return isinstance(json.loads(path.read_text(encoding="utf-8")), list)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
 
 
@@ -875,39 +877,20 @@ def _content_disposition_header(filename: str) -> str:
 _MAX_DOWNLOAD_FILENAME = 180
 
 
+async def _read_bounded_bitrix_callback_body(request: Request) -> bytes:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_FORM_BODY_BYTES:
+            raise ValueError("Bitrix callback payload is too large")
+    return bytes(body)
+
+
 def _register_custom_routes(
     app: FastAPI,
     adapter: BeeAgentUiAdapter,
     logger: logging.Logger,
 ) -> None:
-    @app.post("/api/bitrix/rop/blacklist-stage", include_in_schema=False)
-    async def bitrix_blacklist_stage(request: Request) -> JSONResponse:
-        try:
-            payload = await request.json()
-        except Exception:
-            return _error_json(
-                "invalid_request", "Invalid callback payload", status_code=400
-            )
-        if not isinstance(payload, dict) or set(payload) != {"lead_id"}:
-            return _error_json(
-                "invalid_request", "Invalid callback payload", status_code=400
-            )
-        outcome, changed = process_blacklist_stage_trigger(
-            app.state.beeagent_storage_dir,
-            app.state.beeagent_settings,
-            payload["lead_id"],
-            request.headers.get("X-BeeAgent-Bitrix-Trigger"),
-        )
-        if outcome == "unauthorized":
-            return _error_json(
-                "unauthorized", "Callback authentication failed", status_code=401
-            )
-        if outcome != "ok":
-            return _error_json(
-                "callback_rejected", "Callback was rejected", status_code=400
-            )
-        return _ok_json({"changed": changed})
-
     @app.post("/api/bitrix/rop/events", include_in_schema=False)
     @app.post("/api/bitrix/rop/events/{callback_secret}", include_in_schema=False)
     async def bitrix_rop_event(
@@ -915,12 +898,13 @@ def _register_custom_routes(
     ) -> JSONResponse:
         content_type = request.headers.get("content-type", "").split(";", 1)[0]
         try:
+            body = await _read_bounded_bitrix_callback_body(request)
             if content_type == "application/x-www-form-urlencoded":
                 values = parse_qs(
-                    (await request.body()).decode("utf-8"),
+                    body.decode("utf-8"),
                     keep_blank_values=True,
                     strict_parsing=False,
-                    max_num_fields=100,
+                    max_num_fields=MAX_FORM_FIELDS,
                 )
                 document_type = values.get("document_id[1]", [""])[0]
                 document_id = values.get("document_id[2]", [""])[0]
@@ -938,21 +922,21 @@ def _register_custom_routes(
                         }
                     },
                     "auth": {
-                        "application_token": values.get("auth[application_token]", [""])[0],
+                        "application_token": values.get(
+                            "auth[application_token]", [""]
+                        )[0],
                         "domain": values.get("auth[domain]", [""])[0],
                     },
                 }
             else:
-                payload = await request.json()
+                payload = json.loads(body)
         except Exception:
             return _error_json("invalid_event", "Invalid Bitrix event", status_code=400)
         auth = payload.get("auth") if isinstance(payload, dict) else None
         data = payload.get("data") if isinstance(payload, dict) else None
         fields = data.get("FIELDS") if isinstance(data, dict) else None
         lead_id = (
-            fields.get("ID")
-            if isinstance(fields, dict) and fields.get("ID")
-            else None
+            fields.get("ID") if isinstance(fields, dict) and fields.get("ID") else None
         )
         if callback_secret:
             outcome, changed = process_blacklist_stage_trigger(
@@ -978,9 +962,13 @@ def _register_custom_routes(
             changed,
         )
         if outcome == "unauthorized":
-            return _error_json("unauthorized", "Bitrix event authentication failed", status_code=401)
+            return _error_json(
+                "unauthorized", "Bitrix event authentication failed", status_code=401
+            )
         if outcome != "ok":
-            return _error_json("event_rejected", "Bitrix event was rejected", status_code=400)
+            return _error_json(
+                "event_rejected", "Bitrix event was rejected", status_code=400
+            )
         return _ok_json({"changed": changed})
 
     @app.get("/health", response_class=JSONResponse, include_in_schema=False)

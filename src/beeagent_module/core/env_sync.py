@@ -54,6 +54,7 @@ def ensure_bootstrap_env(
     session_secret_env = bootstrap_cfg.get("session_secret_env")
     principals = bootstrap_cfg.get("principals")
     widget_token_env = bootstrap_cfg.get("widget_token_env")
+    blacklist_trigger_secret_env = bootstrap_cfg.get("blacklist_trigger_secret_env")
 
     if not isinstance(principals, list):
         raise RuntimeError("Invalid type for web.auth.principals, expected list")
@@ -67,6 +68,7 @@ def ensure_bootstrap_env(
             session_secret_env,
             *principal_envs,
             widget_token_env,
+            blacklist_trigger_secret_env,
         ]
     )
     if not all_env_names:
@@ -209,10 +211,14 @@ def _read_internal_secret_bootstrap_config(settings_path: Path) -> dict[str, Any
 
     bitrix_cfg = data.get("bitrix", {})
     widget_cfg: dict[str, Any] = {}
+    blacklist_trigger_cfg: dict[str, Any] = {}
     if isinstance(bitrix_cfg, dict):
         raw_widget_cfg = bitrix_cfg.get("widget", {})
         if isinstance(raw_widget_cfg, dict):
             widget_cfg = raw_widget_cfg
+        raw_blacklist_trigger_cfg = bitrix_cfg.get("blacklist_trigger", {})
+        if isinstance(raw_blacklist_trigger_cfg, dict):
+            blacklist_trigger_cfg = raw_blacklist_trigger_cfg
 
     auth_enabled = auth_cfg.get("enabled") is True
     session_secret_env = auth_cfg.get("session_secret_env") if auth_enabled else None
@@ -228,10 +234,18 @@ def _read_internal_secret_bootstrap_config(settings_path: Path) -> dict[str, Any
     else:
         widget_token_env = ""
 
+    blacklist_trigger_secret_env = ""
+    if blacklist_trigger_cfg.get("enabled") is True:
+        value = blacklist_trigger_cfg.get("secret_env")
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("Invalid or missing bitrix.blacklist_trigger.secret_env")
+        blacklist_trigger_secret_env = value.strip()
+
     return {
         "session_secret_env": session_secret_env,
         "principals": principals,
         "widget_token_env": widget_token_env,
+        "blacklist_trigger_secret_env": blacklist_trigger_secret_env,
     }
 
 
