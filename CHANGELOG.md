@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.68.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.0...beeagent-v0.68.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **rop:** secure Bitrix blacklist trigger and historical access ([#276](https://github.com/beesyst/beeagent/issues/276)) ([84fab42](https://github.com/beesyst/beeagent/commit/84fab42541418b9b85f617dce994421721bf5d1d))
+
 ## [0.68.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.67.1...beeagent-v0.68.0) (2026-09-24)
 
 
