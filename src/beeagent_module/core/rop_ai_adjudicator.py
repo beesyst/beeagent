@@ -22,7 +22,7 @@ from beeagent_module.core.settings import (
     get_rop_ai_adjudicator_runtime_state,
 )
 
-_SUPPORTED_AI_PROVIDERS = frozenset({"openai_responses"})
+_SUPPORTED_AI_PROVIDERS = frozenset({"openai_responses", "openai_compatible"})
 _DATA_BASE64_RE = re.compile(
     r"data:[^;\s]+;base64,[A-Za-z0-9+/=\s]{20,}",
     re.IGNORECASE,
@@ -1360,9 +1360,18 @@ def call_openai_responses_api(
         logger.warning("ai_adjudicator: API key is empty")
         return None
 
-    api_url = base_url.rstrip("/") + "/responses"
-
-    payload = _build_openai_responses_payload(prompt=prompt, model=model)
+    if provider == "openai_responses":
+        api_url = base_url.rstrip("/") + "/responses"
+        payload = _build_openai_responses_payload(prompt=prompt, model=model)
+    else:
+        api_url = base_url.rstrip("/") + "/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 500,
+            "response_format": {"type": "json_object"},
+        }
 
     try:
         req = request.Request(
@@ -1378,6 +1387,20 @@ def call_openai_responses_api(
             raw = resp.read().decode("utf-8")
         response_data = json.loads(raw)
 
+        if provider == "openai_compatible":
+            choices = response_data.get("choices")
+            if (
+                not isinstance(choices, list)
+                or not choices
+                or not isinstance(choices[0], dict)
+            ):
+                logger.warning("ai_adjudicator: no choices in compatible response")
+                return None
+            message = choices[0].get("message")
+            content_text = message.get("content") if isinstance(message, dict) else None
+            return (
+                content_text if isinstance(content_text, str) and content_text else None
+            )
         output_list = response_data.get("output", [])
         if not output_list:
             logger.warning("ai_adjudicator: no output in Responses API response")

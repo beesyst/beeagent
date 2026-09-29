@@ -95,6 +95,8 @@ Safe practice:
 - never dump full env or request headers blindly;
 - never serialize raw secrets into JSON/JSONL.
 
+Server-to-server callbacks must use a dedicated env-backed secret, accept only bounded identifiers, and re-read authoritative external state before any mutation. When a constrained external robot cannot send a request header, a bounded URL path segment is permitted; query parameters are not.
+
 ### 3. Logs must be useful but safe
 
 Logs should be:

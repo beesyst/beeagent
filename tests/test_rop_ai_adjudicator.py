@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from unittest.mock import patch
+from urllib.request import Request
 
 import pytest
 
@@ -2718,7 +2719,7 @@ class TestConfig:
                 _settings(ai_assist_enabled=True, adjudicator_enabled=True)
             )
 
-    def test_openai_compatible_provider_rejected_for_enabled_adjudicator(self) -> None:
+    def test_openai_compatible_provider_is_valid_for_enabled_adjudicator(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
 
         profiles = {
@@ -2733,14 +2734,13 @@ class TestConfig:
             }
         }
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True):
-            with pytest.raises(RuntimeError, match="expected openai_responses"):
-                _validate_rop_ai_adjudicator_settings(
-                    _settings(
-                        ai_assist_enabled=True,
-                        adjudicator_enabled=True,
-                        profiles=profiles,
-                    )
+            _validate_rop_ai_adjudicator_settings(
+                _settings(
+                    ai_assist_enabled=True,
+                    adjudicator_enabled=True,
+                    profiles=profiles,
                 )
+            )
 
     def test_exactly_one_enabled_profile_required(self) -> None:
         from beeagent_module.core.settings import _validate_rop_ai_adjudicator_settings
@@ -2772,3 +2772,101 @@ class TestConfig:
                     profiles=profiles,
                 )
             )
+
+
+def test_openai_compatible_transport_merges_valid_output_and_degrades_failures() -> (
+    None
+):
+    captured: dict[str, object] = {}
+    response_content = json.dumps(
+        {
+            "case_type": "new_lead",
+            "case_subtype": "tender",
+            "recommended_queue": "tender",
+            "should_rop_see": True,
+            "correct_action": "review_tender",
+            "confidence": 0.85,
+            "reason": "Clear RFQ content",
+            "risk_flags": [],
+            "reason_code": "customer_request_detected",
+            "evidence_codes": ["low_signal"],
+            "duplicate_decision": None,
+        }
+    )
+
+    class Response:
+        def __init__(self, body: bytes) -> None:
+            self._body = body
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request_obj: object, timeout: int) -> Response:
+        captured["request"] = request_obj
+        captured["timeout"] = timeout
+        return Response(
+            json.dumps(
+                {"choices": [{"message": {"content": response_content}}]}
+            ).encode("utf-8")
+        )
+
+    profile = _minimal_profile_cfg(
+        provider="openai_compatible",
+        api_key_env="COMPATIBLE_API_KEY",
+        base_url="https://compatible.example/v1",
+        model="compatible-model",
+    )
+    with (
+        patch.dict(os.environ, {"COMPATIBLE_API_KEY": "test-key"}, clear=True),
+        patch("beeagent_module.core.rop_ai_adjudicator.request.urlopen", fake_urlopen),
+    ):
+        result = run_adjudicator_for_event(
+            event=_sample_eligible_event(),
+            adj_cfg=_minimal_adj_cfg(),
+            profile_cfg=profile,
+            prompts_cfg=_minimal_prompts_cfg(),
+            logger=_null_logger(),
+        )
+
+    request_obj = captured["request"]
+    assert isinstance(request_obj, Request)
+
+    request_data = request_obj.data
+    assert isinstance(request_data, bytes)
+
+    payload = json.loads(request_data.decode("utf-8"))
+    assert request_obj.full_url == "https://compatible.example/v1/chat/completions"
+    assert captured["timeout"] == 20
+    assert payload["model"] == "compatible-model"
+    assert payload["messages"] and payload["messages"][0]["role"] == "user"
+    assert payload["max_tokens"] == 500
+    assert payload["response_format"] == {"type": "json_object"}
+    assert result["decision"]["status"] == "ok"
+    assert result["result"]["final_case_type"] == "new_lead"
+
+    with (
+        patch.dict(os.environ, {"COMPATIBLE_API_KEY": "test-key"}, clear=True),
+        patch(
+            "beeagent_module.core.rop_ai_adjudicator.request.urlopen",
+            lambda *_args, **_kwargs: Response(b'{"choices": []}'),
+        ),
+    ):
+        failed = run_adjudicator_for_event(
+            event=_sample_eligible_event(),
+            adj_cfg=_minimal_adj_cfg(),
+            profile_cfg=profile,
+            prompts_cfg=_minimal_prompts_cfg(),
+            logger=_null_logger(),
+        )
+
+    assert failed["decision"]["status"] == "degraded"
+    assert (
+        failed["result"]["final_case_type"]
+        == failed["result"]["deterministic_case_type"]
+    )

@@ -474,3 +474,56 @@ def test_generated_values_are_not_written_to_logs_or_storage(
     for value in generated.values():
         assert value not in logs_text
         assert value not in storage_text
+
+
+def test_blacklist_trigger_secret_bootstraps_without_external_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    settings_path = config_dir / "settings.yml"
+    settings_path.write_text(
+        yaml.safe_dump(
+            {
+                "bitrix": {
+                    "blacklist_trigger": {
+                        "enabled": True,
+                        "secret_env": "BITRIX_ROP_BLACKLIST_TRIGGER_SECRET",
+                        "event_app_token_env": "BITRIX_ROP_EVENT_APP_TOKEN",
+                        "stage_id": "BLACKLIST",
+                        "classification_field": "UF_REASON",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "OPENROUTER_API_KEY=\nBITRIX_ROP_EVENT_APP_TOKEN=\n"
+        "BITRIX_ROP_BLACKLIST_TRIGGER_SECRET=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", raising=False)
+
+    generated = ensure_bootstrap_env(tmp_path, settings_path, env_path, quiet=True)
+
+    secret = generated["BITRIX_ROP_BLACKLIST_TRIGGER_SECRET"]
+    env_values = _env_map(env_path)
+
+    assert secret
+    assert env_values["BITRIX_ROP_BLACKLIST_TRIGGER_SECRET"] == secret
+    assert env_values["OPENROUTER_API_KEY"] == ""
+    assert env_values["BITRIX_ROP_EVENT_APP_TOKEN"] == ""
+    assert "OPENROUTER_API_KEY" not in generated
+    assert "BITRIX_ROP_EVENT_APP_TOKEN" not in generated
+
+    generated_again = ensure_bootstrap_env(
+        tmp_path,
+        settings_path,
+        env_path,
+        quiet=True,
+    )
+
+    assert generated_again == {}
+    assert _env_map(env_path)["BITRIX_ROP_BLACKLIST_TRIGGER_SECRET"] == secret

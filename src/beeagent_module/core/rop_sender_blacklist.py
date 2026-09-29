@@ -14,7 +14,7 @@ from typing import Any
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,63}$")
 _STATE_NAME = "rop_sender_blacklist.json"
 _MAX_ENTRIES = 1000
-_ENTRY_LIMITS = {"name": 128, "title": 128, "role": 64}
+_ENTRY_LIMITS = {"name": 128, "title": 128, "reason": 128}
 
 
 class SenderBlacklistError(ValueError):
@@ -43,9 +43,9 @@ def _text(value: Any, key: str, default: str = "") -> str:
 
 
 def normalize_sender_blacklist_entry(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict) or set(value) != {"name", "title", "email", "role"}:
+    if not isinstance(value, dict) or set(value) - {"name", "title", "email", "role", "reason"} or not {"name", "title", "email"} <= set(value):
         raise SenderBlacklistError("Sender blacklist entry is invalid")
-    return {"name": _text(value["name"], "name"), "title": _text(value["title"], "title"), "email": normalize_sender_email(value["email"]), "role": _text(value["role"], "role", "User")}
+    return {"name": _text(value["name"], "name"), "title": _text(value["title"], "title"), "email": normalize_sender_email(value["email"]), "reason": _text(value.get("reason", ""), "reason")}
 
 
 def _path(storage_dir: Path) -> Path:
@@ -66,7 +66,7 @@ def load_sender_blacklist_entries(storage_dir: Path) -> list[dict[str, str]]:
         emails = payload["emails"]
         if not isinstance(emails, list) or len(emails) > _MAX_ENTRIES:
             raise SenderBlacklistError("Sender blacklist state is malformed")
-        entries: Any = [{"name": "", "title": "", "email": email, "role": "User"} for email in emails]
+        entries: Any = [{"name": "", "title": "", "email": email, "reason": ""} for email in emails]
     elif set(payload) == {"version", "entries"} and payload.get("version") == 2:
         entries = payload["entries"]
         if not isinstance(entries, list) or len(entries) > _MAX_ENTRIES:
@@ -148,7 +148,7 @@ def remove_sender_blacklist_email(storage_dir: Path, value: Any) -> tuple[str, b
 
 
 def add_sender_blacklist_email(storage_dir: Path, value: Any) -> tuple[str, bool]:
-    entry, changed = add_sender_blacklist_entry(storage_dir, {"name": "", "title": "", "email": value, "role": "User"})
+    entry, changed = add_sender_blacklist_entry(storage_dir, {"name": "", "title": "", "email": value, "reason": ""})
     return entry["email"], changed
 
 

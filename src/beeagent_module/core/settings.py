@@ -859,6 +859,33 @@ def _validate_bitrix_settings(settings: dict) -> None:
 
     if not isinstance(bitrix_cfg.get("enabled"), bool):
         raise RuntimeError("Invalid type for bitrix.enabled, expected bool")
+    trigger_cfg = bitrix_cfg.get("blacklist_trigger")
+    if trigger_cfg is not None:
+        if not isinstance(trigger_cfg, dict) or not isinstance(
+            trigger_cfg.get("enabled"), bool
+        ):
+            raise RuntimeError("Invalid bitrix.blacklist_trigger config")
+        for key in (
+            "secret_env",
+            "event_app_token_env",
+            "stage_id",
+            "classification_field",
+        ):
+            value = trigger_cfg.get(key)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > 128
+            ):
+                raise RuntimeError(f"Invalid or missing bitrix.blacklist_trigger.{key}")
+        if trigger_cfg["enabled"] and not (
+            os.getenv(trigger_cfg["secret_env"], "").strip()
+            or os.getenv(trigger_cfg["event_app_token_env"], "").strip()
+        ):
+            raise RuntimeError(
+                "Missing required trigger secret or Bitrix event token when "
+                "bitrix.blacklist_trigger.enabled=true"
+            )
 
     webhook_env = bitrix_cfg.get("webhook_env")
     if not isinstance(webhook_env, str) or not webhook_env.strip():
@@ -1248,9 +1275,9 @@ def _validate_rop_ai_adjudicator_settings(settings: dict) -> None:
             reason="rop.ai_assist.adjudicator.enabled=true",
             require_api_key=True,
         )
-        if profile_cfg.get("provider") != "openai_responses":
+        if profile_cfg.get("provider") not in _SUPPORTED_AI_PROVIDERS:
             raise RuntimeError(
-                "Invalid ai.profiles config for rop.ai_assist.adjudicator.enabled=true, expected openai_responses"
+                "Invalid ai.profiles config for rop.ai_assist.adjudicator.enabled=true"
             )
 
 

@@ -191,6 +191,12 @@ bitrix:
     token_env: BITRIX_ROP_WIDGET_TOKEN
     default_period: "7d"
     max_items: 50
+  blacklist_trigger:
+    enabled: true
+    secret_env: BITRIX_ROP_BLACKLIST_TRIGGER_SECRET
+    event_app_token_env: BITRIX_ROP_EVENT_APP_TOKEN
+    stage_id: "UC_T8EGR7"
+    classification_field: ufCrm_1790592597
   embedded_app:
     enabled: true
     portal_origin: "https://my.welding.kz"
@@ -220,6 +226,12 @@ ai:
       api_key_env: LMSTUDIO_API_KEY
       base_url: "http://127.0.0.1:1234/v1"
       model: "local-model"
+    openrouter:
+      enabled: false
+      provider: openai_compatible
+      api_key_env: OPENROUTER_API_KEY
+      base_url: "https://openrouter.ai/api/v1"
+      model: "openai/gpt-5-mini"
     custom:
       enabled: false
       provider: openai_compatible
