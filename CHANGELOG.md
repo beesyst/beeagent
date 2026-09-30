@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.68.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.1...beeagent-v0.68.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **modules:** make domain dependencies config-driven ([#278](https://github.com/beesyst/beeagent/issues/278)) ([28524fd](https://github.com/beesyst/beeagent/commit/28524fd1e8277c5d6acac9fd70456648d3d9926b))
+
 ## [0.68.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.0...beeagent-v0.68.1) (2026-09-29)
 
 
