@@ -145,6 +145,13 @@ uv sync
 
 > После изменения зависимостей коммить и `pyproject.toml`, и `uv.lock`.
 
+
+### Optional module profiles
+
+Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop` и `beedrill`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
+
+`./start.sh` запускает обычный `uv sync --frozen`, читает settings и затем синхронизирует extras всех enabled module entries и выбранный Docling CPU/CUDA profile. Disabled entries не добавляют dependencies. Normal sync сохраняет pytest в environment. Production ROP layout всегда включает sibling `beesdk/`, подготовленный из approved BeeSDK source; `beedrill/` не требуется при disabled BeeDrill entry.
+
 ### Базовые команды
 
 | Что сделать                    | Команда              |

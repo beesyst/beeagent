@@ -67,6 +67,23 @@ def _base_env(monkeypatch) -> None:
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
 
 
+@pytest.mark.parametrize("install_extra", ["", "rop_extra", "ROP", 1])
+def test_module_install_extra_fails_fast(monkeypatch, install_extra) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["modules"]["registry"][0]["install_extra"] = install_extra
+    with pytest.raises(RuntimeError, match="install_extra"):
+        validate_settings(changed)
+
+
+def test_module_install_extra_remains_optional(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    changed["modules"]["registry"][0].pop("install_extra")
+    validate_settings(changed)
+
 @pytest.mark.parametrize(
     "mutate",
     [

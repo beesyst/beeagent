@@ -88,11 +88,13 @@ modules:
       package: "beeagent_rop"
       entry: "RopModule"
       enabled: true
+      install_extra: "rop"
 
     - id: "beedrill"
       package: "beedrill.module"
       entry: "BeeDrillModule"
-      enabled: true
+      enabled: false
+      install_extra: "beedrill"
 
 rop:
   mailbox_poll:

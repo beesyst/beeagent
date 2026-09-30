@@ -100,8 +100,6 @@ name = "beeagent"
 version = "0.68.1"
 source = { editable = "." }
 dependencies = [
-    { name = "beeagent-rop" },
-    { name = "beedrill" },
     { name = "beesdk" },
     { name = "beeui" },
     { name = "fastapi" },
@@ -116,6 +114,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+beedrill = [
+    { name = "beedrill" },
+]
 docling-cpu = [
     { name = "docling" },
     { name = "onnxruntime" },
@@ -130,6 +131,9 @@ docling-cuda = [
     { name = "torch", version = "2.13.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" } },
     { name = "torchvision", version = "0.28.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" } },
 ]
+rop = [
+    { name = "beeagent-rop" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -139,8 +143,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beeagent-rop", editable = "../beeagent-rop" },
-    { name = "beedrill", editable = "../beedrill" },
+    { name = "beeagent-rop", marker = "extra == 'rop'", editable = "../beeagent-rop" },
+    { name = "beedrill", marker = "extra == 'beedrill'", editable = "../beedrill" },
     { name = "beesdk", editable = "../beesdk" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
@@ -161,7 +165,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'docling-cuda'", specifier = "==0.28.0", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "beeagent", extra = "docling-cuda" } },
     { name = "uvicorn", specifier = "==0.52.1" },
 ]
-provides-extras = ["docling-cpu", "docling-cuda"]
+provides-extras = ["rop", "beedrill", "docling-cpu", "docling-cuda"]
 
 [package.metadata.requires-dev]
 dev = [

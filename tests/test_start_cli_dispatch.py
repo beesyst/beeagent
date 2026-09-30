@@ -390,6 +390,9 @@ def test_main_docling_assets_prepare_command_runs_once(monkeypatch) -> None:
 
 def _rop_settings(monkeypatch) -> dict[str, Any]:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "test-trigger")
+    monkeypatch.setenv("BITRIX_WEBHOOK_URL", "https://read.example.test")
+    monkeypatch.setenv("BITRIX_WRITEBACK_WEBHOOK_URL", "https://write.example.test")
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "session-secret")
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
@@ -414,37 +417,44 @@ def test_bootstrap_command_dispatches_runtime_bootstrap(monkeypatch) -> None:
     assert called.get("bootstrap") is True
 
 
-def test_resolve_profile_disabled_attachments_uses_base(monkeypatch) -> None:
+def test_resolve_extras_disabled_attachments_uses_enabled_module(monkeypatch) -> None:
     settings = _rop_settings(monkeypatch)
     settings["rop"]["attachments"]["enabled"] = False
-    assert start_module._resolve_runtime_profile(settings) == "base"
+    assert start_module._resolve_runtime_extras(settings) == ["rop"]
 
 
-def test_resolve_profile_docling_cpu(monkeypatch) -> None:
+def test_resolve_extras_docling_cpu(monkeypatch) -> None:
     settings = _rop_settings(monkeypatch)
     monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cpu")
-    assert start_module._resolve_runtime_profile(settings) == "docling-cpu"
+    assert start_module._resolve_runtime_extras(settings) == ["docling-cpu", "rop"]
 
 
-def test_resolve_profile_docling_cuda(monkeypatch) -> None:
+def test_resolve_extras_docling_cuda(monkeypatch) -> None:
     settings = _rop_settings(monkeypatch)
     monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cuda")
-    assert start_module._resolve_runtime_profile(settings) == "docling-cuda"
+    assert start_module._resolve_runtime_extras(settings) == ["docling-cuda", "rop"]
 
 
-def test_resolve_profile_unimplemented_engine_fails_fast(monkeypatch) -> None:
+def test_resolve_extras_excludes_disabled_module(monkeypatch) -> None:
+    settings = _rop_settings(monkeypatch)
+    settings["modules"]["registry"][1]["enabled"] = True
+    settings["modules"]["registry"][0]["enabled"] = False
+    assert start_module._resolve_runtime_extras(settings) == ["beedrill"]
+
+
+def test_resolve_extras_unimplemented_engine_fails_fast(monkeypatch) -> None:
     settings = _rop_settings(monkeypatch)
     settings["rop"]["attachments"]["extraction"]["engine"] = "xberg"
     with pytest.raises(RuntimeError, match="not implemented"):
-        start_module._resolve_runtime_profile(settings)
+        start_module._resolve_runtime_extras(settings)
 
 
-def test_sync_profile_rejects_arbitrary_extra(monkeypatch) -> None:
-    with pytest.raises(RuntimeError, match="Invalid runtime dependency profile"):
-        start_module._sync_runtime_profile("not-an-extra", Path("."))
+def test_sync_extras_rejects_unsafe_extra(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="Invalid runtime dependency extra"):
+        start_module._sync_runtime_extras(["not an extra"], Path("."))
 
 
-def test_sync_profile_base_uses_frozen_sync(monkeypatch) -> None:
+def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
     calls: list[Any] = []
 
     class _Completed:
@@ -456,27 +466,21 @@ def test_sync_profile_base_uses_frozen_sync(monkeypatch) -> None:
         "run",
         lambda argv, **kwargs: calls.append(argv) or _Completed(),
     )
-    start_module._sync_runtime_profile("base", Path("."))
-    assert calls == [["uv", "sync", "--frozen"]]
+    start_module._sync_runtime_extras(["rop", "docling-cpu", "rop"], Path("."))
+    assert calls == [
+        [
+            "uv",
+            "sync",
+            "--frozen",
+            "--extra",
+            "docling-cpu",
+            "--extra",
+            "rop",
+        ]
+    ]
 
 
-def test_sync_profile_docling_cpu_uses_extra(monkeypatch) -> None:
-    calls: list[Any] = []
-
-    class _Completed:
-        returncode = 0
-        stderr = ""
-
-    monkeypatch.setattr(
-        start_module.subprocess,
-        "run",
-        lambda argv, **kwargs: calls.append(argv) or _Completed(),
-    )
-    start_module._sync_runtime_profile("docling-cpu", Path("."))
-    assert calls == [["uv", "sync", "--frozen", "--extra", "docling-cpu"]]
-
-
-def test_sync_profile_failure_raises(monkeypatch) -> None:
+def test_sync_extras_failure_raises(monkeypatch) -> None:
     class _Completed:
         returncode = 1
         stderr = "boom"
@@ -485,7 +489,7 @@ def test_sync_profile_failure_raises(monkeypatch) -> None:
         start_module.subprocess, "run", lambda argv, **kwargs: _Completed()
     )
     with pytest.raises(RuntimeError, match="Failed to sync"):
-        start_module._sync_runtime_profile("base", Path("."))
+        start_module._sync_runtime_extras(["rop"], Path("."))
 
 
 def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> None:
@@ -504,8 +508,8 @@ def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> No
     monkeypatch.setattr(start_module, "detect_accelerator", lambda: "cpu")
     monkeypatch.setattr(
         start_module,
-        "_sync_runtime_profile",
-        lambda profile, root: calls.append(profile),
+        "_sync_runtime_extras",
+        lambda extras, root: calls.extend(extras),
     )
     monkeypatch.setattr(
         "beeagent_module.core.document_extraction.prepare_docling_assets",
@@ -514,7 +518,7 @@ def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> No
 
     start_module.bootstrap_runtime()
 
-    assert calls == ["docling-cpu", "prepare_assets"]
+    assert calls == ["docling-cpu", "rop", "prepare_assets"]
 
 
 def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
@@ -534,7 +538,7 @@ def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
     monkeypatch.setattr(start_module, "load_settings", _disabled_settings)
     monkeypatch.setattr(
         start_module,
-        "_sync_runtime_profile",
+        "_sync_runtime_extras",
         lambda *args, **kwargs: calls.append("sync"),
     )
     monkeypatch.setattr(

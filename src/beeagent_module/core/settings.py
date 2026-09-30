@@ -90,6 +90,7 @@ _HTTPS_ORIGIN_RE = re.compile(
 _ALLOWED_EMBEDDED_ROLES: frozenset[str] = frozenset({"viewer", "operator", "admin"})
 _EMBEDDED_REQUEST_TIMEOUT_MIN = 1
 _EMBEDDED_REQUEST_TIMEOUT_MAX = 60
+_INSTALL_EXTRA_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
 
 def is_valid_https_origin(value: str) -> bool:
@@ -256,6 +257,16 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
             raise RuntimeError(
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
+        if "install_extra" in item:
+            install_extra = item["install_extra"]
+            if (
+                not isinstance(install_extra, str)
+                or not _INSTALL_EXTRA_RE.fullmatch(install_extra)
+            ):
+                raise RuntimeError(
+                    f"Invalid modules.registry[{idx}].install_extra, "
+                    "expected non-empty safe extra name"
+                )
 
     _validate_ai_prompts_settings(settings)
     _validate_ai_profiles_settings(settings)

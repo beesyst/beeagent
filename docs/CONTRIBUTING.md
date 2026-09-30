@@ -157,20 +157,20 @@ git push
 
 ### Production Deploy
 
-Каждый deploy создаёт новый независимый release:
+Каждый deploy создаёт новый release:
 
-```
+```text
 /opt/beeagent/
 ├── current -> /opt/beeagent/releases/<active-release>
 └── releases/
     ├── <previous-release>/
     │   ├── beeagent/
-    │   │   ├── .env
+    │   │   ├── .env -> /var/lib/beeagent/shared/.env
     │   │   └── storage -> /var/lib/beeagent/storage
     │   └── beeagent-rop/
     └── <new-release>/
         ├── beeagent/
-        │   ├── .env
+        │   ├── .env -> /var/lib/beeagent/shared/.env
         │   ├── storage -> /var/lib/beeagent/storage
         │   └── config/settings.yml
         └── beeagent-rop/
@@ -178,138 +178,337 @@ git push
 
 Постоянные production-данные хранятся отдельно от release:
 
-```
+```text
 /var/lib/beeagent/
+├── shared/
+│   └── .env
 └── storage/
 ```
 
 `systemd` и VS Code используют стабильные пути:
 
-```
+```text
 /opt/beeagent/current/beeagent
 /opt/beeagent/current/beeagent-rop
 ```
 
 Поэтому при переключении release конфигурацию VS Code и systemd менять не нужно.
 
-**Создание нового release**
+#### Первичная настройка persistent state
+
+Выполняется **один раз на сервере**.
+
+Проверить:
+
+```bash
+sudo test -f /var/lib/beeagent/shared/.env && echo "shared env: OK" || echo "shared env: MISSING"
+sudo test -d /var/lib/beeagent/storage && echo "storage: OK" || echo "storage: MISSING"
+```
+
+Создать persistent-каталоги:
+
+```bash
+sudo install -d -o bee -g beeagent -m 2770 /var/lib/beeagent/shared
+sudo install -d -o beeagent -g beeagent -m 2770 /var/lib/beeagent/storage
+```
+
+Если это **уже работающий сервер** и `/var/lib/beeagent/shared/.env` ещё отсутствует, скопировать текущий production `.env`:
+
+```bash
+sudo install -o bee -g beeagent -m 0660 /opt/beeagent/current/beeagent/.env /var/lib/beeagent/shared/.env
+```
+
+После этого один раз перевести текущий active release на persistent `.env`:
+
+```bash
+sudo systemctl stop beeagent-web
+cd /opt/beeagent/current/beeagent
+sudo rm -f .env
+sudo ln -s /var/lib/beeagent/shared/.env .env
+sudo systemctl start beeagent-web
+```
+
+Проверить:
+
+```bash
+readlink -f /opt/beeagent/current/beeagent/.env
+```
+
+Ожидается:
+
+```text
+/var/lib/beeagent/shared/.env
+```
+
+Проверить возможность atomic write от пользователя `beeagent`:
+
+```bash
+sudo -u beeagent -H sh -c 'TEST=/var/lib/beeagent/shared/.write-test-$$; : > "$TEST" || exit 1; rm -f "$TEST"; echo "shared env writable: OK"'
+```
+
+Проверить сервис:
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS https://rop.welding.kz/health
+```
+
+Если это **новый сервер без `/opt/beeagent/current`**, создать пустой persistent `.env`:
+
+```bash
+sudo install -o bee -g beeagent -m 0660 /dev/null /var/lib/beeagent/shared/.env
+```
+
+Production-specific значения затем настраиваются в:
+
+```text
+/var/lib/beeagent/shared/.env
+```
+
+После первичной настройки `.env` между releases больше не копируется.
+
+#### Создание нового release
 
 На VPS:
 
-```
+```bash
 cd /opt/beeagent/releases
 readlink -f /opt/beeagent/current
-REL=20260828-010
+REL=20260930-016
 sudo install -d -o bee -g beeagent -m 0750 "$REL"
 ```
 
-**Получить обновленный BeeAgent из GitHub**
+Использовать новый уникальный `REL` для каждого deploy.
 
-```
+#### Получить обновленный BeeAgent из GitHub
+
+```bash
 git clone git@github-beeagent-prod:beesyst/beeagent.git "$REL/beeagent"
 grep '^version = ' "$REL/beeagent/pyproject.toml"
 ```
 
-**Подготовить beeagent-rop**
+#### Получить обновленный BeeSDK из GitHub
 
-Если `beeagent-rop` изменялся:
-
+```bash
+git clone git@github.com:beesyst/beesdk.git "$REL/beeagent"
+grep '^version = ' "$REL/beesdk/pyproject.toml"
 ```
+
+#### Получить обновленный beeagent-rop из GitHub
+
+```bash
 git clone git@github-beeagent-rop-prod:beesyst/beeagent-rop.git "$REL/beeagent-rop"
+grep '^version = ' "$REL/beeagent-rop/pyproject.toml"
 ```
 
-Если не изменялся:
+#### Подключить persistent state
 
-```
-cp -a /opt/beeagent/current/beeagent-rop "$REL/beeagent-rop"
-```
+Перейти в новый BeeAgent:
 
-**Установить зависимости и проверить release**
-
-```
+```bash
 cd "/opt/beeagent/releases/$REL/beeagent"
 ```
 
-**Скопировать production `.env` из текущего release**
+Перед продолжением убедиться, что persistent state существует:
 
-```
-sudo install -o bee -g beeagent -m 0660 /opt/beeagent/current/beeagent/.env .env
+```bash
+test -f /var/lib/beeagent/shared/.env || exit 1
+test -d /var/lib/beeagent/storage || exit 1
 ```
 
-**Подключить persistent storage**
+Подключить production `.env`:
 
+```bash
+rm -f .env
+ln -s /var/lib/beeagent/shared/.env .env
 ```
+
+Подключить persistent storage:
+
+```bash
 rm -rf storage
 ln -s /var/lib/beeagent/storage storage
 ```
 
-**Подготовить logs**
+Проверить:
 
+```bash
+test "$(readlink -f .env)" = "/var/lib/beeagent/shared/.env" && test "$(readlink -f storage)" = "/var/lib/beeagent/storage" && echo "persistent state: OK" || exit 1
 ```
+
+#### Подготовить logs
+
+```bash
 sudo chown -R beeagent:beeagent logs
 sudo chmod 2770 logs
 sudo install -o beeagent -g beeagent -m 0660 /dev/null logs/app.log
 ```
 
-**Подготовить environment**
+#### Подготовить environment
 
-```
+```bash
 ./start.sh
 uv run --frozen --no-sync pytest -q
 ```
 
-**Активировать новый release**
+Если тесты не проходят — release не активировать.
 
-```
+#### Активировать новый release
+
+```bash
 sudo ln -sfn "/opt/beeagent/releases/$REL" /opt/beeagent/current
 readlink -f /opt/beeagent/current
 ```
 
-**Перезапустить BeeAgent**
+#### Перезапустить BeeAgent
 
-```
+```bash
 sudo systemctl restart beeagent-web
 sudo systemctl status beeagent-web --no-pager
 ```
 
-**Проверить**
+#### Проверить
 
-```
+```bash
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://rop.welding.kz/health
 ```
 
-Перейти в:
+Проверить persistent state через активный release:
 
-```
+```bash
 cd /opt/beeagent/current/beeagent
+test "$(readlink -f .env)" = "/var/lib/beeagent/shared/.env" && test "$(readlink -f storage)" = "/var/lib/beeagent/storage" && echo "persistent state: OK" || exit 1
 ```
 
-В VS Code лучше сделать 'Developer: Reload Window'
+В VS Code Remote SSH после переключения release рекомендуется:
 
-**Rollback**
-
-Если новый release не работает, вернуть предыдущий:
-
-```
-sudo ln -sfn /opt/beeagent/releases/20260806-001 /opt/beeagent/current
-sudo systemctl restart beeagent-web
-curl -fsS https://rop.welding.kz/health
+```text
+Developer: Reload Window
 ```
 
-**Очистка старых releases**
+#### ROP Web projection
 
-Посмотреть:
+Обычный deploy **не требует** rebuild ROP Web projection.
 
+ROP runtime state и Web projection находятся в persistent storage:
+
+```text
+/var/lib/beeagent/storage
 ```
+
+и сохраняются между releases.
+
+Если после deploy `/rop` не открывается корректно, сначала открыть страницу без старого `run_id`, например:
+
+```text
+/rop?period=7d
+```
+
+Если проблема остаётся, выполнить обычное обновление projection:
+
+```bash
+cd /opt/beeagent/current/beeagent
+./start.sh rop dashboard --period 7d
+```
+
+Если команда явно сообщает:
+
+```text
+ROP Web projection refresh skipped: explicit dashboard regeneration is required
+```
+
+только тогда выполнить полный rebuild:
+
+```bash
+./start.sh rop dashboard --period 7d --rebuild-web-projection
+```
+
+Full rebuild может быть долгим и не является частью обычного deploy.
+
+Если rebuild сообщает:
+
+```text
+history preparation complete runs=0 anchors=0
+```
+
+проверить persistent storage:
+
+```bash
+readlink -f storage
+```
+
+Ожидается:
+
+```text
+/var/lib/beeagent/storage
+```
+
+#### Rollback
+
+Посмотреть текущий и доступные releases:
+
+```bash
 readlink -f /opt/beeagent/current
 ls -lah /opt/beeagent/releases
 ```
 
-Удалить:
+Перед rollback убедиться, что предыдущий release использует persistent `.env`:
 
+```bash
+readlink -f /opt/beeagent/releases/<previous-release>/beeagent/.env
 ```
-sudo rm -rf /opt/beeagent/releases/20260812-007
+
+Ожидается:
+
+```text
+/var/lib/beeagent/shared/.env
+```
+
+Переключить `current`:
+
+```bash
+sudo ln -sfn /opt/beeagent/releases/<previous-release> /opt/beeagent/current
+```
+
+Перезапустить:
+
+```bash
+sudo systemctl restart beeagent-web
+```
+
+Проверить:
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS https://rop.welding.kz/health
+```
+
+Rollback меняет только release. Persistent `.env` и `storage` остаются теми же.
+
+#### Очистка старых releases
+
+Проверить текущий release:
+
+```bash
+readlink -f /opt/beeagent/current
+```
+
+Посмотреть releases:
+
+```bash
+ls -lah /opt/beeagent/releases
+```
+
+Удалять только старые releases, которые точно не являются `current` и больше не нужны для rollback:
+
+```bash
+sudo rm -rf /opt/beeagent/releases/<old-release>
+```
+
+Проверить:
+
+```bash
 ls -lah /opt/beeagent/releases
 ```
 
