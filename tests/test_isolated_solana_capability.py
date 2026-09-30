@@ -97,9 +97,7 @@ def _use_reference_target_resources(
     (resource_root / "oracle_market" / "Cargo.toml").write_text(
         '[package]\nname = "beedrill-reference-oracle-market"\n', encoding="utf-8"
     )
-    (oracle_source / "lib.rs").write_text(
-        "pub fn process() {}\n", encoding="utf-8"
-    )
+    (oracle_source / "lib.rs").write_text("pub fn process() {}\n", encoding="utf-8")
     monkeypatch.setattr(
         solana_capability.importlib.resources, "files", lambda _: package_root
     )
@@ -2413,3 +2411,47 @@ def test_spl_token_execution_child_environment_excludes_sentinel_secret(
     assert isinstance(environment, dict)
     assert set(environment) == {"HOME", "PATH"}
     assert "BEEDRILL_TEST_SENTINEL_SECRET" not in environment
+
+
+def test_spl_token_fixed_rejected_control_returns_failed_containment_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    balances = iter(
+        [
+            (1_000_000, 0, 1),
+            (900_000, 100_000, 1),
+            (800_000, 200_000, 1),
+        ]
+    )
+    transaction_count = 0
+
+    monkeypatch.setattr(solana_capability, "_rpc_request_airdrop", lambda _: None)
+    monkeypatch.setattr(solana_capability, "_create_owned_account", lambda *_: None)
+    monkeypatch.setattr(
+        solana_capability, "_spl_token_balances", lambda *_: next(balances)
+    )
+    monkeypatch.setattr(solana_capability, "_read_slot", iter([10, 11]).__next__)
+
+    def send_transaction(*_args: object, **kwargs: object) -> str:
+        nonlocal transaction_count
+        transaction_count += 1
+        if transaction_count == 5:
+            assert kwargs["allow_target_instruction_rejection"] is True
+            raise solana_capability._TargetInstructionRejected("control rejected")
+        return "signature"
+
+    monkeypatch.setattr(solana_capability, "_send_transaction", send_transaction)
+    monkeypatch.setattr(
+        solana_capability,
+        "_send_spl_transfer",
+        lambda *_args, **_kwargs: "transfer-signature",
+    )
+
+    evidence = solana_capability._run_spl_token_freeze_containment("fixed")
+
+    assert evidence["defense_condition"] == "fixed"
+    assert evidence["containment_status"] == "failed"
+    assert evidence["first_containment_slot"] is None
+    assert evidence["target_account_state"] == "initialized"
+    assert evidence["second_transfer_status"] == "succeeded"
+    assert evidence["residual_loss_units"] == 200_000

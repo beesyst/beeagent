@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from beeagent_module.cli.auth import ensure_auth_env, handle_auth_cli
 from beeagent_module.core.accelerator import detect_accelerator
+from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -30,7 +31,8 @@ from beeagent_module.core.document_extractors import (
 )
 from beeagent_module.core.env_sync import ensure_bootstrap_env, sync_env_with_example
 from beeagent_module.core.log import get_logger, setup_logging
-from beeagent_module.core.module_registry import build_registry
+from beeagent_module.core.module_contract import AuthorityLevel
+from beeagent_module.core.module_registry import ModuleRegistry, build_registry
 from beeagent_module.core.module_runtime import execute_module_case
 from beeagent_module.core.paths import (
     ensure_dirs,
@@ -38,7 +40,11 @@ from beeagent_module.core.paths import (
     get_project_root,
     get_storage_dir,
 )
-from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
+from beeagent_module.core.runtime_context import (
+    RuntimeContext,
+    generate_run_id,
+    generate_session_id,
+)
 from beeagent_module.core.settings import load_settings
 
 _DOCLING_PROFILES = {
@@ -309,11 +315,147 @@ def _handle_rop_cli(
         sys.exit(1)
 
 
+def _beedrill_error_record(run_id: str, scenario_id: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "scenario_id": scenario_id,
+        "execution_status": "error",
+        "security_verdict": None,
+        "artifact_refs": [],
+    }
+
+
+def _execute_beedrill_scenario(
+    registry: ModuleRegistry,
+    scenario_id: str,
+    logger: logging.Logger,
+    run_id: str | None = None,
+) -> dict[str, object]:
+    scenario_run_id = run_id or generate_run_id()
+    try:
+        result = execute_module_case(
+            registry=registry,
+            module_id="beedrill",
+            case_type=scenario_id,
+            payload=_BEEDRILL_SCENARIOS[scenario_id],
+            storage_dir=get_storage_dir(),
+            logger=logger,
+            run_id=scenario_run_id,
+            session_id=generate_session_id(),
+        )
+    except Exception as exc:
+        logger.error("BeeDrill regression execution failed: %s", exc)
+        return _beedrill_error_record(scenario_run_id, scenario_id)
+    execution_status = result.status
+    security_verdict = (
+        result.data.get("security_verdict") if execution_status == "ok" else None
+    )
+    artifact_dir = f"runs/{scenario_run_id}/module-beedrill"
+    return {
+        "schema_version": 1,
+        "run_id": scenario_run_id,
+        "scenario_id": scenario_id,
+        "execution_status": execution_status,
+        "security_verdict": security_verdict,
+        "artifact_refs": [
+            f"{artifact_dir}/module_result.json",
+            f"{artifact_dir}/{scenario_id}.json",
+        ],
+    }
+
+
+def _beedrill_suite_record(record: dict[str, object]) -> dict[str, object]:
+    security_verdict = record["security_verdict"]
+    if security_verdict != "pass" and security_verdict != "fail":
+        security_verdict = None
+    return {
+        "scenario_id": record["scenario_id"],
+        "run_id": record["run_id"],
+        "execution_status": record["execution_status"],
+        "security_verdict": security_verdict,
+        "artifact_refs": record["artifact_refs"],
+    }
+
+
+def _beedrill_suite_status(record: dict[str, object]) -> str:
+    if record["execution_status"] == "ok" and record["security_verdict"] == "pass":
+        return "passed"
+    if record["execution_status"] == "ok" and record["security_verdict"] == "fail":
+        return "failed"
+    return "incomplete"
+
+
+def _handle_beedrill_check(settings: dict, logger: logging.Logger) -> int:
+    suite_run_id = generate_run_id("beedrill-suite")
+    suite_session_id = generate_session_id("beedrill-suite")
+    try:
+        registry = build_registry(settings, logger)
+    except Exception as exc:
+        logger.error("BeeDrill regression suite setup failed: %s", exc)
+        records = [
+            _beedrill_suite_record(
+                _beedrill_error_record(generate_run_id(), scenario_id)
+            )
+            for scenario_id in _BEEDRILL_SCENARIOS
+        ]
+    else:
+        records = [
+            _beedrill_suite_record(
+                _execute_beedrill_scenario(registry, scenario_id, logger)
+            )
+            for scenario_id in _BEEDRILL_SCENARIOS
+        ]
+
+    statuses = [_beedrill_suite_status(record) for record in records]
+    passed = statuses.count("passed")
+    failed = statuses.count("failed")
+    incomplete = statuses.count("incomplete")
+    suite_status = "incomplete" if incomplete else "fail" if failed else "pass"
+    summary = {
+        "schema_version": 1,
+        "suite_status": suite_status,
+        "passed": passed,
+        "failed": failed,
+        "incomplete": incomplete,
+        "scenarios": records,
+    }
+    artifact_status = suite_status
+    try:
+        artifact_api = ArtifactAPI(
+            context=RuntimeContext(
+                run_id=suite_run_id,
+                session_id=suite_session_id,
+                case_type="beedrill_check",
+                module_id="beeagent",
+                authority=AuthorityLevel.READ_ONLY,
+            ),
+            storage_dir=get_storage_dir(),
+            logger=logger,
+        )
+        artifact_api.write_json("beedrill_security_regression.json", summary)
+    except OSError as exc:
+        logger.error("BeeDrill regression suite artifact persistence failed: %s", exc)
+        artifact_status = "incomplete"
+
+    print("BeeDrill Security Regression")
+    for record, status in zip(records, statuses, strict=True):
+        print(f"{status.upper()}: {record['scenario_id']}")
+    print(f"Scenarios: passed={passed} failed={failed} incomplete={incomplete}")
+    print(f"Suite status: {artifact_status.upper()}")
+    return {"pass": 0, "fail": 1, "incomplete": 3}[artifact_status]
+
+
 def _handle_beedrill_cli(
     cli_args: list[str],
     settings: dict,
     logger: logging.Logger,
 ) -> int:
+    if cli_args and cli_args[0] == "check":
+        if cli_args != ["check"]:
+            print("Usage: start.py beedrill check", file=sys.stderr)
+            return 2
+        return _handle_beedrill_check(settings, logger)
     if (
         len(cli_args) != 3
         or cli_args[0] != "run"
@@ -330,52 +472,15 @@ def _handle_beedrill_cli(
     run_id = generate_run_id()
     try:
         registry = build_registry(settings, logger)
-        result = execute_module_case(
-            registry=registry,
-            module_id="beedrill",
-            case_type=scenario_id,
-            payload=_BEEDRILL_SCENARIOS[scenario_id],
-            storage_dir=get_storage_dir(),
-            logger=logger,
-            run_id=run_id,
-            session_id=generate_session_id(),
-        )
     except Exception as exc:
         logger.error("BeeDrill regression execution failed: %s", exc)
-        print(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "run_id": run_id,
-                    "scenario_id": scenario_id,
-                    "execution_status": "error",
-                    "security_verdict": None,
-                    "artifact_refs": [],
-                },
-                sort_keys=True,
-            )
-        )
-        return 3
-    execution_status = result.status
-    security_verdict = (
-        result.data.get("security_verdict") if execution_status == "ok" else None
-    )
-    artifact_dir = f"runs/{run_id}/module-beedrill"
-    summary = {
-        "schema_version": 1,
-        "run_id": run_id,
-        "scenario_id": scenario_id,
-        "execution_status": execution_status,
-        "security_verdict": security_verdict,
-        "artifact_refs": [
-            f"{artifact_dir}/module_result.json",
-            f"{artifact_dir}/{scenario_id}.json",
-        ],
-    }
+        summary = _beedrill_error_record(run_id, scenario_id)
+    else:
+        summary = _execute_beedrill_scenario(registry, scenario_id, logger, run_id)
     print(json.dumps(summary, sort_keys=True))
-    if security_verdict == "pass":
+    if summary["security_verdict"] == "pass":
         return 0
-    if security_verdict == "fail":
+    if summary["security_verdict"] == "fail":
         return 1
     return 3
 

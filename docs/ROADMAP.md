@@ -10101,6 +10101,87 @@ git diff --check
 
 BeeAgent can execute and evidence one real external SPL Token containment experiment for BeeDrill inside the approved isolated Solana boundary, while retaining ownership of program selection, transactions, RPC, authority, credentials, process lifecycle, timeout and cleanup; no generic protocol execution surface or BeeSDK change is introduced.
 
+### Iteration 44.8 — Aggregate BeeDrill regression suite host gate
+
+**Status:** DONE
+
+#### Goal
+
+Add the minimal BeeAgent-owned orchestration required for BeeDrill Iteration 15 to execute all approved security regressions through one CI-friendly command.
+
+#### Scope
+
+- add `./start.sh beedrill check`;
+- reuse the existing BeeDrill scenario allowlist and per-scenario module runtime;
+- preserve individual `beedrill run --scenario ...`;
+- execute all approved scenarios in fixed deterministic order;
+- allocate independent run/session identity per scenario;
+- preserve fresh isolated execution through existing capabilities;
+- aggregate host execution status and BeeDrill-provided security verdicts;
+- persist one bounded suite summary through the existing host artifact lifecycle;
+- emit concise human-readable terminal output;
+- implement stable suite exit-code precedence;
+- document a minimal CI/PR-gate example.
+
+#### Excluded
+
+- BeeAgent security verdict calculation;
+- new Solana capability;
+- arbitrary scenario discovery;
+- arbitrary module/capability/payload execution;
+- new RPC or process authority;
+- new dependency;
+- BeeSDK change;
+- AI;
+- Web UI;
+- hosted CI infrastructure.
+
+#### Deliverable
+
+One host command executes the fixed BeeDrill regression suite and returns deterministic aggregate status, artifact references and CI exit behavior.
+
+#### Acceptance criteria
+
+- the existing allowlist is the only source for executable BeeDrill regression cases;
+- `supported_case_types()` is not used as dynamic suite discovery;
+- every scenario uses `execute_module_case(...)`;
+- existing individual command output and exit semantics remain compatible;
+- aggregate status never overrides or recalculates a BeeDrill security verdict;
+- runtime non-success remains distinct from completed security FAIL;
+- incomplete/runtime outcomes take exit-code precedence over completed FAIL;
+- all safely runnable scenarios are attempted even after an earlier independent failure;
+- aggregate artifact references canonical individual run artifacts;
+- no raw evidence duplication or arbitrary path input is introduced;
+- CI relies on process status rather than parsing terminal prose;
+- no execution, RPC, credential or authority boundary is widened.
+
+#### Checks
+
+```text
+CLI validation
+existing individual run regression
+fixed scenario order
+all PASS
+one/multiple FAIL
+refused / timeout / runtime error
+mixed FAIL + incomplete
+stable counts/status/schema
+stable exit mapping
+suite artifact references
+fresh run/session identities
+full pytest
+real three-scenario integration smoke
+CI gate smoke
+log/artifact inspection
+SAST
+SCA only if dependencies change
+git diff --check
+```
+
+#### DoD
+
+BeeAgent provides one bounded aggregate BeeDrill regression gate without introducing a second runtime, security-verdict logic, new execution authority or new shared contracts.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

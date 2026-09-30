@@ -982,53 +982,56 @@ def _run_spl_token_freeze_containment(
         raise _ReferenceTargetFailure("attack_or_detection_evidence_inconsistent")
     containment_slot: int | None = None
     if condition == "fixed":
-        _send_transaction(
-            payer,
-            [payer],
-            Instruction(
-                _SPL_TOKEN_PROGRAM,
-                bytes([10]),
-                [
-                    AccountMeta(target.pubkey(), False, True),
-                    AccountMeta(mint.pubkey(), False, False),
-                    AccountMeta(payer.pubkey(), True, False),
-                ],
-            ),
-        )
-        containment_slot = _read_slot()
+        try:
+            _send_transaction(
+                payer,
+                [payer],
+                Instruction(
+                    _SPL_TOKEN_PROGRAM,
+                    bytes([10]),
+                    [
+                        AccountMeta(target.pubkey(), False, True),
+                        AccountMeta(mint.pubkey(), False, False),
+                        AccountMeta(payer.pubkey(), True, False),
+                    ],
+                ),
+                allow_target_instruction_rejection=True,
+            )
+        except _TargetInstructionRejected:
+            pass
+        else:
+            containment_slot = _read_slot()
     try:
         _send_spl_transfer(payer, source, target, expect_failure=condition == "fixed")
         rejected = False
     except _TargetInstructionRejected:
         rejected = True
     final_source, final_target, final_state = _spl_token_balances(source, target)
-    if condition == "broken":
+    if rejected:
         if (
-            rejected
-            or final_state != 1
-            or final_source != 800_000
-            or final_target != 200_000
-        ):
-            raise _ReferenceTargetFailure("broken_containment_inconsistent")
-        containment_status, account_state, second_status = (
-            "failed",
-            "initialized",
-            "succeeded",
-        )
-    else:
-        if (
-            not rejected
+            condition != "fixed"
             or containment_slot is None
             or containment_slot < first_detection_slot
             or final_state != 2
             or final_source != 900_000
             or final_target != 100_000
         ):
-            raise _ReferenceTargetFailure("fixed_containment_inconsistent")
+            raise _ReferenceTargetFailure(
+                "successful_containment_evidence_inconsistent"
+            )
         containment_status, account_state, second_status = (
             "succeeded",
             "frozen",
             "rejected",
+        )
+    else:
+        if final_state != 1 or final_source != 800_000 or final_target != 200_000:
+            raise _ReferenceTargetFailure("failed_containment_evidence_inconsistent")
+        containment_status, containment_slot, account_state, second_status = (
+            "failed",
+            None,
+            "initialized",
+            "succeeded",
         )
     return {
         "target_id": _SPL_TOKEN_FREEZE_TARGET_ID,
