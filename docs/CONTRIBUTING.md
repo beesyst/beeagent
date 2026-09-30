@@ -290,7 +290,7 @@ grep '^version = ' "$REL/beeagent/pyproject.toml"
 #### Получить обновленный BeeSDK из GitHub
 
 ```bash
-git clone git@github.com:beesyst/beesdk.git "$REL/beeagent"
+git clone https://github.com/beesyst/beesdk.git "$REL/beesdk"
 grep '^version = ' "$REL/beesdk/pyproject.toml"
 ```
 
@@ -309,13 +309,6 @@ grep '^version = ' "$REL/beeagent-rop/pyproject.toml"
 cd "/opt/beeagent/releases/$REL/beeagent"
 ```
 
-Перед продолжением убедиться, что persistent state существует:
-
-```bash
-test -f /var/lib/beeagent/shared/.env || exit 1
-test -d /var/lib/beeagent/storage || exit 1
-```
-
 Подключить production `.env`:
 
 ```bash
@@ -328,12 +321,6 @@ ln -s /var/lib/beeagent/shared/.env .env
 ```bash
 rm -rf storage
 ln -s /var/lib/beeagent/storage storage
-```
-
-Проверить:
-
-```bash
-test "$(readlink -f .env)" = "/var/lib/beeagent/shared/.env" && test "$(readlink -f storage)" = "/var/lib/beeagent/storage" && echo "persistent state: OK" || exit 1
 ```
 
 #### Подготовить logs
@@ -385,63 +372,6 @@ test "$(readlink -f .env)" = "/var/lib/beeagent/shared/.env" && test "$(readlink
 
 ```text
 Developer: Reload Window
-```
-
-#### ROP Web projection
-
-Обычный deploy **не требует** rebuild ROP Web projection.
-
-ROP runtime state и Web projection находятся в persistent storage:
-
-```text
-/var/lib/beeagent/storage
-```
-
-и сохраняются между releases.
-
-Если после deploy `/rop` не открывается корректно, сначала открыть страницу без старого `run_id`, например:
-
-```text
-/rop?period=7d
-```
-
-Если проблема остаётся, выполнить обычное обновление projection:
-
-```bash
-cd /opt/beeagent/current/beeagent
-./start.sh rop dashboard --period 7d
-```
-
-Если команда явно сообщает:
-
-```text
-ROP Web projection refresh skipped: explicit dashboard regeneration is required
-```
-
-только тогда выполнить полный rebuild:
-
-```bash
-./start.sh rop dashboard --period 7d --rebuild-web-projection
-```
-
-Full rebuild может быть долгим и не является частью обычного deploy.
-
-Если rebuild сообщает:
-
-```text
-history preparation complete runs=0 anchors=0
-```
-
-проверить persistent storage:
-
-```bash
-readlink -f storage
-```
-
-Ожидается:
-
-```text
-/var/lib/beeagent/storage
 ```
 
 #### Rollback
@@ -503,13 +433,70 @@ ls -lah /opt/beeagent/releases
 Удалять только старые releases, которые точно не являются `current` и больше не нужны для rollback:
 
 ```bash
-sudo rm -rf /opt/beeagent/releases/<old-release>
+sudo rm -rf /opt/beeagent/releases/20260904-013
 ```
 
 Проверить:
 
 ```bash
 ls -lah /opt/beeagent/releases
+```
+
+#### ROP Web projection
+
+Обычный deploy **не требует** rebuild ROP Web projection.
+
+ROP runtime state и Web projection находятся в persistent storage:
+
+```text
+/var/lib/beeagent/storage
+```
+
+и сохраняются между releases.
+
+Если после deploy `/rop` не открывается корректно, сначала открыть страницу без старого `run_id`, например:
+
+```text
+/rop?period=7d
+```
+
+Если проблема остаётся, выполнить обычное обновление projection:
+
+```bash
+cd /opt/beeagent/current/beeagent
+./start.sh rop dashboard --period 7d
+```
+
+Если команда явно сообщает:
+
+```text
+ROP Web projection refresh skipped: explicit dashboard regeneration is required
+```
+
+только тогда выполнить полный rebuild:
+
+```bash
+./start.sh rop dashboard --period 7d --rebuild-web-projection
+```
+
+Full rebuild может быть долгим и не является частью обычного deploy.
+
+Если rebuild сообщает:
+
+```text
+history preparation complete runs=0 anchors=0
+```
+
+проверить persistent storage:
+
+```bash
+readlink -f storage
+```
+
+Ожидается:
+
+```text
+/var/lib/beeagent/storage
 ```
 
 ### Проверка PR соразработчика
