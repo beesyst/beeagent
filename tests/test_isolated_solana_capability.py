@@ -56,6 +56,55 @@ def _reference_oracle_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_oracle_manipulation_replay")
 
 
+def _use_reference_target_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package_root = tmp_path / "beedrill"
+    resource_root = package_root / "reference_target"
+    vault_source = resource_root / "src"
+    oracle_source = resource_root / "oracle_market" / "src"
+    vault_source.mkdir(parents=True)
+    oracle_source.mkdir(parents=True)
+    (resource_root / "reference_vault.json").write_text(
+        (
+            '{"resource_id":"beedrill.reference_vault.v1",'
+            '"target_id":"reference_vault","canonical_initial_state":{'
+            '"initial_state_id":"reference_vault_canonical_v1",'
+            '"economic_unit":"lamports","vault_lamports":1000000,'
+            '"normal_operation":"deposit","unsafe_condition":"unchecked_withdraw",'
+            '"detector_signal":"vault_outflow_signal","breaker":"available",'
+            '"containment_configurations":["valid","broken"]}}'
+        ),
+        encoding="utf-8",
+    )
+    (resource_root / "Cargo.toml").write_text(
+        '[package]\nname = "beedrill-reference-vault"\n', encoding="utf-8"
+    )
+    (vault_source / "lib.rs").write_text("pub fn process() {}\n", encoding="utf-8")
+    (resource_root / "reference_oracle_market.json").write_text(
+        (
+            '{"resource_id":"beedrill.reference_oracle_market.v1",'
+            '"target_id":"reference_oracle_market","canonical_initial_state":{'
+            '"canonical_debt_limit_micro_usdc":50000000,'
+            '"borrow_increment_micro_usdc":25000000,'
+            '"canonical_oracle_price_micro_usd":1000000,"collateral_units":100,'
+            '"initial_debt_micro_usdc":50000000,'
+            '"initial_reserve_micro_usdc":100000000,"ltv_bps":5000,'
+            '"manipulated_oracle_price_micro_usd":2000000}}'
+        ),
+        encoding="utf-8",
+    )
+    (resource_root / "oracle_market" / "Cargo.toml").write_text(
+        '[package]\nname = "beedrill-reference-oracle-market"\n', encoding="utf-8"
+    )
+    (oracle_source / "lib.rs").write_text(
+        "pub fn process() {}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        solana_capability.importlib.resources, "files", lambda _: package_root
+    )
+
+
 class _Process:
     def __init__(self, force_cleanup: bool = False) -> None:
         self.exit_code: int | None = None
@@ -143,9 +192,11 @@ def test_surfpool_starters_receive_the_bounded_environment(
 )
 def test_reference_target_builds_receive_bounded_environment(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     preparer: str,
     program_name: str,
 ) -> None:
+    _use_reference_target_resources(monkeypatch, tmp_path)
     monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
     calls: list[tuple[list[str], str, dict[str, str] | None]] = []
 
@@ -1702,7 +1753,10 @@ def test_reference_oracle_caller_refuses_invalid_scope(
     assert result.diagnostics == {"reason": "scope_not_allowed"}
 
 
-def test_reference_oracle_resource_is_the_fixed_package_target() -> None:
+def test_reference_oracle_resource_is_the_fixed_package_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _use_reference_target_resources(monkeypatch, tmp_path)
     assert solana_capability._reference_oracle_resource_is_valid()
 
 

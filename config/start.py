@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -40,12 +41,11 @@ from beeagent_module.core.paths import (
 from beeagent_module.core.runtime_context import generate_run_id, generate_session_id
 from beeagent_module.core.settings import load_settings
 
-_BASE_PROFILE = "base"
 _DOCLING_PROFILES = {
     "cpu": "docling-cpu",
     "cuda": "docling-cuda",
 }
-_ALLOWED_PROFILES = frozenset({_BASE_PROFILE, "docling-cpu", "docling-cuda"})
+_EXTRA_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 _BEEDRILL_SCENARIOS = {
     "reference_target_containment_replay": {
         "target_profile": "surfpool_local",
@@ -78,34 +78,46 @@ def bootstrap_runtime() -> None:
     load_dotenv(dotenv_path=env_path, override=False)
 
     settings = load_settings(settings_path)
-    profile = _resolve_runtime_profile(settings)
-    _sync_runtime_profile(profile, project_root)
-    if profile != _BASE_PROFILE:
+    extras = _resolve_runtime_extras(settings)
+    _sync_runtime_extras(extras, project_root)
+    if any(extra in _DOCLING_PROFILES.values() for extra in extras):
         from beeagent_module.core.document_extraction import prepare_docling_assets
 
         prepare_docling_assets()
 
 
-def _resolve_runtime_profile(settings: dict) -> str:
-    attachments = settings["rop"]["attachments"]
-    if attachments["enabled"] is not True:
-        return _BASE_PROFILE
-    extraction = attachments["extraction"]
-    engine = str(extraction["engine"]).strip()
-    validate_selected_extractor(engine)
-    if engine == DOCLING_EXTRACTOR:
-        return _DOCLING_PROFILES[detect_accelerator()]
-    raise RuntimeError(
-        f"No locked dependency profile for document extractor '{engine}'"
+def _resolve_runtime_extras(settings: dict) -> list[str]:
+    extras = {
+        item["install_extra"]
+        for item in settings["modules"]["registry"]
+        if item["enabled"] is True and "install_extra" in item
+    }
+    rop_enabled = any(
+        item["id"] == "beeagent-rop" and item["enabled"] is True
+        for item in settings["modules"]["registry"]
     )
+    attachments = settings["rop"]["attachments"]
+    if rop_enabled and attachments["enabled"] is True:
+        extraction = attachments["extraction"]
+        engine = str(extraction["engine"]).strip()
+        validate_selected_extractor(engine)
+        if engine != DOCLING_EXTRACTOR:
+            raise RuntimeError(
+                f"No locked dependency profile for document extractor '{engine}'"
+            )
+        extras.add(_DOCLING_PROFILES[detect_accelerator()])
+    return sorted(extras)
 
 
-def _sync_runtime_profile(profile: str, project_root: Path) -> None:
-    if profile not in _ALLOWED_PROFILES:
-        raise RuntimeError(f"Invalid runtime dependency profile '{profile}'")
+def _sync_runtime_extras(extras: list[str], project_root: Path) -> None:
+    if any(
+        not isinstance(extra, str) or not _EXTRA_NAME_RE.fullmatch(extra)
+        for extra in extras
+    ):
+        raise RuntimeError("Invalid runtime dependency extra")
     argv = ["uv", "sync", "--frozen"]
-    if profile != _BASE_PROFILE:
-        argv.extend(["--extra", profile])
+    for extra in sorted(set(extras)):
+        argv.extend(["--extra", extra])
     completed = subprocess.run(
         argv,
         cwd=str(project_root),
@@ -114,8 +126,10 @@ def _sync_runtime_profile(profile: str, project_root: Path) -> None:
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            f"Failed to sync runtime dependency profile '{profile}': "
-            f"{completed.stderr.strip()}"
+            "Failed to sync runtime dependency extras: "
+            + ", ".join(sorted(set(extras)))
+            + ": "
+            + completed.stderr.strip()
         )
 
 

@@ -486,25 +486,19 @@ uv
 
 ## Development Setup
 
-### Важно: текущая workspace dependency model
+### Optional module profiles
 
-Текущий `main` пока разрабатывается как часть Bee workspace.
+BeeAgent core всегда устанавливает BeeSDK, но не устанавливает domain modules. Module installation profiles живут в `pyproject.toml`, а runtime выбирает их только по enabled entries в `modules.registry`:
 
-В `pyproject.toml` сейчас объявлены sibling editable sources, включая:
+- `rop` устанавливает `beeagent-rop`;
+- `beedrill` устанавливает BeeDrill;
+- disabled module не требует своего sibling package.
 
-```text
-../beesdk
-../beedrill
-../beeagent-rop
-```
+BeeSDK всегда устанавливается как `beesdk==0.2.0` из sibling editable source `../beesdk`.
 
-Некоторые доменные модули могут быть приватными.
+Для ROP production release нужен sibling layout `beeagent/`, `beesdk/` и `beeagent-rop/`. Перед `./start.sh` подготовь sibling `beesdk/` из approved BeeSDK source. При disabled BeeDrill entry `beedrill/` не включается. `./start.sh` устанавливает base dependencies и BeeSDK, читает settings, выполняет locked sync для enabled module extras и выбранного Docling profile, затем запускает BeeAgent.
 
-Поэтому текущий репозиторий **пока не является полностью standalone external installation из свежего public clone**.
-
-Это ограничение текущего packaging/dependency boundary, а не архитектурное требование BeeAgent.
-
-Целевая framework-модель предполагает, что доменные модули устанавливаются независимо и при необходимости остаются приватными.
+Для local development sibling `beesdk/` требуется всегда; sibling source выбранного enabled domain-module profile требуется дополнительно.
 
 ### Разработка внутри Bee workspace
 
@@ -532,7 +526,7 @@ cd beeagent
 Тесты:
 
 ```bash
-uv run --frozen pytest -q
+uv run --frozen --no-sync pytest -q
 ```
 
 Canonical application entrypoint — `./start.sh`; отдельная install-команда для текущего workspace development flow не требуется.
