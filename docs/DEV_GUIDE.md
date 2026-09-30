@@ -105,6 +105,20 @@ The host exposes three approved BeeDrill scenarios:
 
 The SPL scenario executes the fixed canonical SPL Token experiment inside the approved offline Surfpool boundary. BeeAgent owns runtime, program selection, RPC, transactions, ephemeral keys, timeouts, and cleanup; it only reports the BeeDrill-produced `security_verdict`. The command invokes the registered `beedrill` module through the normal module runtime, then copies its `security_verdict` into a JSON summary. It does not interpret or calculate that verdict. Exit status is `0` for `pass`, `1` for a completed `fail`, `2` for invalid command input, and `3` for incomplete, refused, timeout, or error results. The canonical module result and scenario artifact remain under the generated run's existing artifact directory.
 
+Use `./start.sh beedrill check` to execute all three scenarios in the fixed approved order. BeeDrill is disabled by default, so explicitly enable it in `config/settings.yml` before this command:
+
+```yaml
+- id: "beedrill"
+  enabled: true
+```
+
+The normal `./start.sh` bootstrap then selects the existing optional BeeDrill extra. The aggregate command creates separate run and session IDs for each scenario and writes a bounded host suite summary under `storage/runs/`; it stores references only, never raw evaluator evidence. Its suite exit status is `0` for a complete PASS, `1` for a completed security FAIL without incompleteness, `2` for an invalid check invocation, and `3` for incomplete/runtime failure, including missing or unknown verdicts. CI should use the process exit status directly:
+
+```yaml
+- name: BeeDrill security regression
+  run: ./start.sh beedrill check
+```
+
 ## Controlled Bitrix write-back (Iteration 37)
 
 The tracked production profile enables write-back (`bitrix.writeback.enabled: true`). Enabled write-back requires a dedicated env credential and configured customer Lead `stageId` values for `new_lead`, `new_lead_assigned` and `irrelevant` (all required fail-fast when enabled). Setting `bitrix.writeback.enabled: false` or using dry-run preserves the explicit zero-write control.
@@ -144,7 +158,6 @@ uv sync
 Правило проекта:
 
 > После изменения зависимостей коммить и `pyproject.toml`, и `uv.lock`.
-
 
 ### Optional module profiles
 

@@ -549,3 +549,368 @@ def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
     start_module.bootstrap_runtime()
 
     assert calls == ["sync"]
+
+
+def _beedrill_result(
+    scenario_id: str,
+    *,
+    status: str = "ok",
+    security_verdict: object = "pass",
+) -> ModuleResult:
+    data = {"security_verdict": security_verdict} if status == "ok" else {}
+    return ModuleResult(
+        "beedrill",
+        scenario_id,
+        AuthorityLevel.READ_ONLY,
+        status,
+        status,
+        data,
+    )
+
+
+def _configure_beedrill_check(
+    monkeypatch,
+    tmp_path: Path,
+    outcomes: list[ModuleResult | Exception],
+) -> list[dict[str, object]]:
+    calls: list[dict[str, object]] = []
+    run_ids = iter(["beedrill-suite-1", "run-1", "run-2", "run-3"])
+    session_ids = iter(
+        ["beedrill-suite-session-1", "session-1", "session-2", "session-3"]
+    )
+    queued_outcomes = iter(outcomes)
+
+    monkeypatch.setattr(start_module, "generate_run_id", lambda *args: next(run_ids))
+    monkeypatch.setattr(
+        start_module, "generate_session_id", lambda *args: next(session_ids)
+    )
+    monkeypatch.setattr(start_module, "build_registry", lambda *_: object())
+    monkeypatch.setattr(start_module, "get_storage_dir", lambda: tmp_path)
+
+    def execute(**kwargs: object) -> ModuleResult:
+        calls.append(kwargs)
+        outcome = next(queued_outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(start_module, "execute_module_case", execute)
+    return calls
+
+
+def test_beedrill_check_rejects_extra_or_invalid_arguments(capsys) -> None:
+    for cli_args in (["check", "extra"], ["check", "--scenario", "unknown"]):
+        assert (
+            start_module._handle_beedrill_cli(
+                cli_args,
+                {"modules": {"registry": []}},
+                logging.getLogger("test"),
+            )
+            == 2
+        )
+    assert capsys.readouterr().err.count("Usage: start.py beedrill check") == 2
+
+
+def test_beedrill_check_runs_ordered_scenarios_and_writes_bounded_artifact(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    calls = _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            ModuleResult(
+                "beedrill",
+                scenario_ids[0],
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {
+                    "security_verdict": "pass",
+                    "evidence": {"transaction": "must-not-appear"},
+                },
+            ),
+            _beedrill_result(scenario_ids[1]),
+            _beedrill_result(scenario_ids[2]),
+        ],
+    )
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+    )
+
+    artifact_path = (
+        tmp_path
+        / "runs"
+        / "beedrill-suite-1"
+        / "module-beeagent"
+        / "beedrill_security_regression.json"
+    )
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert [call["case_type"] for call in calls] == scenario_ids
+    assert [call["run_id"] for call in calls] == ["run-1", "run-2", "run-3"]
+    assert [call["session_id"] for call in calls] == [
+        "session-1",
+        "session-2",
+        "session-3",
+    ]
+    assert summary == {
+        "schema_version": 1,
+        "suite_status": "pass",
+        "passed": 3,
+        "failed": 0,
+        "incomplete": 0,
+        "scenarios": [
+            {
+                "scenario_id": scenario_id,
+                "run_id": f"run-{index}",
+                "execution_status": "ok",
+                "security_verdict": "pass",
+                "artifact_refs": [
+                    f"runs/run-{index}/module-beedrill/module_result.json",
+                    f"runs/run-{index}/module-beedrill/{scenario_id}.json",
+                ],
+            }
+            for index, scenario_id in enumerate(scenario_ids, start=1)
+        ],
+    }
+    output = capsys.readouterr().out
+    assert "BeeDrill Security Regression" in output
+    assert "Suite status: PASS" in output
+    artifact_text = artifact_path.read_text(encoding="utf-8")
+    assert "evidence" not in artifact_text
+    assert "must-not-appear" not in artifact_text
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_exit", "expected_counts", "expected_status"),
+    [
+        (
+            [
+                _beedrill_result("reference_target_containment_replay"),
+                _beedrill_result("reference_oracle_manipulation_replay"),
+                _beedrill_result("spl_token_freeze_containment_replay"),
+            ],
+            0,
+            (3, 0, 0),
+            "pass",
+        ),
+        (
+            [
+                _beedrill_result(
+                    "reference_target_containment_replay", security_verdict="fail"
+                ),
+                _beedrill_result(
+                    "reference_oracle_manipulation_replay", security_verdict="fail"
+                ),
+                _beedrill_result("spl_token_freeze_containment_replay"),
+            ],
+            1,
+            (1, 2, 0),
+            "fail",
+        ),
+        (
+            [
+                _beedrill_result(
+                    "reference_target_containment_replay", status="refused"
+                ),
+                _beedrill_result(
+                    "reference_oracle_manipulation_replay", status="timeout"
+                ),
+                _beedrill_result("spl_token_freeze_containment_replay", status="error"),
+            ],
+            3,
+            (0, 0, 3),
+            "incomplete",
+        ),
+        (
+            [
+                _beedrill_result(
+                    "reference_target_containment_replay", security_verdict=None
+                ),
+                _beedrill_result(
+                    "reference_oracle_manipulation_replay", security_verdict="unknown"
+                ),
+                _beedrill_result(
+                    "spl_token_freeze_containment_replay", security_verdict="fail"
+                ),
+            ],
+            3,
+            (0, 1, 2),
+            "incomplete",
+        ),
+    ],
+)
+def test_beedrill_check_classifies_verdicts_with_incomplete_precedence(
+    monkeypatch,
+    tmp_path: Path,
+    outcomes: list[ModuleResult | Exception],
+    expected_exit: int,
+    expected_counts: tuple[int, int, int],
+    expected_status: str,
+) -> None:
+    _configure_beedrill_check(monkeypatch, tmp_path, outcomes)
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+    )
+
+    summary = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "beedrill-suite-1"
+            / "module-beeagent"
+            / "beedrill_security_regression.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert exit_code == expected_exit
+    assert (
+        summary["passed"],
+        summary["failed"],
+        summary["incomplete"],
+    ) == expected_counts
+    assert summary["suite_status"] == expected_status
+
+
+def test_beedrill_check_continues_after_execution_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    calls = _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            RuntimeError("unavailable"),
+            _beedrill_result(scenario_ids[1], security_verdict="fail"),
+            _beedrill_result(scenario_ids[2]),
+        ],
+    )
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+        )
+        == 3
+    )
+    assert [call["case_type"] for call in calls] == scenario_ids
+
+
+def test_beedrill_check_disabled_registry_is_incomplete_without_execution(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[object] = []
+    run_ids = iter(["beedrill-suite-1", "run-1", "run-2", "run-3"])
+    monkeypatch.setattr(start_module, "generate_run_id", lambda *args: next(run_ids))
+    monkeypatch.setattr(
+        start_module, "generate_session_id", lambda *args: "unused-session"
+    )
+    monkeypatch.setattr(
+        start_module,
+        "build_registry",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("BeeDrill is disabled")),
+    )
+    monkeypatch.setattr(
+        start_module, "execute_module_case", lambda **_: calls.append(1)
+    )
+    monkeypatch.setattr(start_module, "get_storage_dir", lambda: tmp_path)
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+        )
+        == 3
+    )
+    assert calls == []
+    summary = json.loads(
+        (
+            tmp_path
+            / "runs"
+            / "beedrill-suite-1"
+            / "module-beeagent"
+            / "beedrill_security_regression.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert summary["suite_status"] == "incomplete"
+    assert summary["incomplete"] == 3
+
+
+def test_beedrill_check_continues_after_completed_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    calls = _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            _beedrill_result(scenario_ids[0], security_verdict="fail"),
+            _beedrill_result(scenario_ids[1]),
+            _beedrill_result(scenario_ids[2]),
+        ],
+    )
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+        )
+        == 1
+    )
+    assert [call["case_type"] for call in calls] == scenario_ids
+
+
+def test_beedrill_check_missing_verdict_is_incomplete(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            ModuleResult(
+                "beedrill",
+                scenario_ids[0],
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {},
+            ),
+            _beedrill_result(scenario_ids[1]),
+            _beedrill_result(scenario_ids[2]),
+        ],
+    )
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+        )
+        == 3
+    )
+
+
+@pytest.mark.parametrize("security_verdict", ["pass", "fail"])
+def test_beedrill_check_artifact_oserror_is_incomplete(
+    monkeypatch, tmp_path: Path, capsys, security_verdict: str
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            _beedrill_result(scenario_id, security_verdict=security_verdict)
+            for scenario_id in scenario_ids
+        ],
+    )
+    monkeypatch.setattr(
+        start_module,
+        "ArtifactAPI",
+        lambda **_: (_ for _ in ()).throw(OSError("storage unavailable")),
+    )
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"], {"modules": {"registry": []}}, logging.getLogger("test")
+        )
+        == 3
+    )
+    assert "Suite status: INCOMPLETE" in capsys.readouterr().out
