@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.69.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.2...beeagent-v0.69.0) (2026-09-30)
+
+
+### Features
+
+* **beedrill:** add aggregate security regression gate ([#281](https://github.com/beesyst/beeagent/issues/281)) ([77f0234](https://github.com/beesyst/beeagent/commit/77f0234e1e3297b8a93549800387417d6fb78473))
+
 ## [0.68.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.1...beeagent-v0.68.2) (2026-09-30)
 
 
