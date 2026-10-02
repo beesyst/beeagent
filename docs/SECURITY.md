@@ -1,5 +1,9 @@
 # SECURITY — beeagent
 
+## BeeDrill AI-assist boundary
+
+BeeDrill AI assistance is optional downstream egress controlled by `beedrill.ai_assist`. BeeAgent sends only bounded `explanation_facts`, stores no credentials in its AI artifact, and treats provider failures and output validation failures as non-authoritative: deterministic BeeDrill truth, exit semantics, capabilities, and Solana authority remain unchanged.
+
 ## Purpose
 
 This document defines the practical security rules for `beeagent`.

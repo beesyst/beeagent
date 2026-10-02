@@ -1,5 +1,9 @@
 # DEV_GUIDE — разработка модуля, тесты, интеграция с BeeAgent
 
+## BeeDrill AI assist
+
+`./start.sh beedrill check` remains the only BeeDrill regression command. `beedrill.ai_assist.enabled` defaults to `false`; when enabled, BeeAgent finalizes `beedrill_security_regression.json` first, then may write the optional bounded `beedrill_ai_assist.json`. AI receives only BeeDrill `explanation_facts`; it cannot alter verdicts, exit status, or execution authority.
+
 ROP AI adjudication uses the single enabled `ai.profiles` entry and supports
 `openai_responses` or `openai_compatible`. OpenRouter stays disabled until its
 environment-backed key is supplied. Bitrix blacklist trigger uses enabled `bitrix.blacklist_trigger`, configured stage/custom-field identifiers, an internally bootstrapped dedicated trigger secret, and an operator-supplied external event application token when that callback authentication mode is used.

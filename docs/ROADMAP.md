@@ -10182,6 +10182,161 @@ git diff --check
 
 BeeAgent provides one bounded aggregate BeeDrill regression gate without introducing a second runtime, security-verdict logic, new execution authority or new shared contracts.
 
+### Iteration 44.9 — BeeDrill evidence-grounded AI assist host integration
+
+**Status:** PLANNED
+
+#### Goal
+
+Add the minimal BeeAgent-owned AI host path required by BeeDrill Iteration 16 while keeping `./start.sh beedrill check` as the single operator command and keeping deterministic BeeDrill results independent of AI.
+
+#### Scope
+
+- add BeeAgent configuration:
+
+```yaml
+beedrill:
+  ai_assist:
+    enabled: false
+    timeout: 20
+    input_chars_max: 6000
+    output_chars_max: 4000
+    prompt_key: "beedrill.result_explanation"
+```
+
+- validate the new configuration through the normal BeeAgent settings path;
+- preserve:
+
+```text
+./start.sh beedrill check
+```
+
+as the only BeeDrill suite command needed for this feature;
+
+- do not introduce `check --ai`;
+- when `beedrill.ai_assist.enabled=false`, perform zero AI provider calls;
+- when enabled, run optional AI assistance only after the deterministic BeeDrill suite result and canonical deterministic suite artifact exist;
+- do not invoke AI when the aggregate suite is `INCOMPLETE`;
+- consume only BeeDrill-provided bounded `explanation_facts`;
+- do not parse scenario-specific BeeDrill artifacts to infer detector, containment, metric or verdict semantics;
+- reuse existing BeeAgent `ai.profiles` and `ai.prompts`;
+- preserve BeeAgent ownership of provider, model, credentials, timeout and egress;
+- reuse or minimally extract domain-neutral provider transport where needed rather than coupling BeeDrill to ROP adjudication semantics;
+- preserve existing ROP AI behavior and schemas;
+- perform at most one provider call for one completed BeeDrill suite;
+- use a BeeDrill-specific strict structured output schema;
+- keep AI analysis structurally separate from deterministic suite truth;
+- persist one bounded host-owned AI artifact, for example:
+
+```text
+beedrill_ai_assist.json
+```
+
+- record source suite/scenario provenance plus provider/model identity without credentials;
+- provider/config/response failures affect AI-assist status only and never rewrite deterministic BeeDrill PASS/FAIL or process exit semantics;
+- align the BeeAgent optional BeeDrill package pin to the actual released BeeDrill version after the BeeDrill implementation is released.
+
+#### Excluded
+
+- BeeAgent-generated security verdicts;
+- recalculation of BeeDrill metrics;
+- interpretation of raw scenario evidence;
+- AI calls for incomplete results;
+- `--ai` / `--no-ai` CLI overrides;
+- fallback provider selection;
+- arbitrary AI tool/capability access;
+- Solana execution initiated by AI;
+- new scenario execution capability;
+- generic AI-agent framework;
+- new BeeSDK contract;
+- Web UI;
+- production/mainnet mutation.
+
+#### Deliverable
+
+The same command:
+
+```text
+./start.sh beedrill check
+```
+
+behaves according to BeeAgent configuration:
+
+```text
+beedrill.ai_assist.enabled=false
+→ deterministic suite only
+→ zero AI calls
+
+beedrill.ai_assist.enabled=true
+→ deterministic suite
+→ deterministic artifact/result finalized
+→ optional evidence-grounded AI assistance
+→ deterministic exit status preserved
+```
+
+#### Acceptance criteria
+
+- default configuration disables BeeDrill AI assistance;
+- disabled configuration produces zero AI provider calls;
+- enabled configuration plus completed suite performs at most one AI request;
+- enabled configuration plus incomplete suite performs zero AI requests;
+- deterministic suite execution does not require an AI provider;
+- deterministic suite artifact is created independently from AI output;
+- deterministic exit semantics remain `0=PASS`, `1=completed security FAIL`, `2=invalid invocation`, `3=INCOMPLETE/runtime failure`;
+- AI failure cannot turn PASS into FAIL, FAIL into PASS or a completed result into INCOMPLETE;
+- BeeAgent consumes only BeeDrill `explanation_facts`;
+- no scenario-specific BeeDrill evaluation logic is duplicated in BeeAgent;
+- provider/model are selected from existing BeeAgent AI profiles;
+- prompt is selected through the existing BeeAgent prompt configuration;
+- no API key or credential appears in requests artifacts/logs beyond what is required for provider transport;
+- request and response sizes are bounded;
+- structured response is validated before persistence/use;
+- AI output does not contain an authoritative security-verdict field;
+- FAIL output may contain remediation hypotheses;
+- PASS output may contain a concise explanation of validated controls;
+- remediation is explicitly marked unverified until deterministic replay;
+- provider/model identity and deterministic-run provenance are recorded;
+- ROP AI behavior remains regression-compatible;
+- no BeeSDK change is introduced;
+- no new third-party runtime dependency is introduced unless separately approved.
+
+#### Checks
+
+```text
+settings validation
+AI disabled / zero-call regression
+AI enabled / completed-suite path
+AI enabled / incomplete-suite zero-call path
+existing beedrill check regression
+all PASS
+completed FAIL
+runtime incomplete
+same deterministic exit with AI on/off
+bounded request
+secret sentinel
+prompt-injection-shaped facts
+valid structured response
+invalid schema
+provider timeout
+provider error/refusal
+oversized response
+artifact provenance
+artifact write failure after deterministic result
+ROP AI regression
+BeeAgent targeted tests
+BeeAgent full pytest
+real deterministic BeeDrill suite smoke
+controlled AI-provider smoke
+log/artifact inspection
+SAST
+SCA if BeeDrill dependency pin changes
+git diff --check
+```
+
+#### DoD
+
+BeeAgent provides optional configuration-driven BeeDrill AI explanation through the existing host command without becoming a BeeDrill verdict authority, without exposing raw BeeDrill evidence to provider-specific code, without changing deterministic suite behavior and without introducing a second operator command.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

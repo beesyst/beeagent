@@ -73,6 +73,14 @@ quiz:
 modules:
   registry: []
 
+beedrill:
+  ai_assist:
+    enabled: false
+    timeout: 20
+    input_chars_max: 6000
+    output_chars_max: 4000
+    prompt_key: "beedrill.result_explanation"
+
 rop:
   mailbox_poll:
     enabled: false
