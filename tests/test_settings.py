@@ -84,6 +84,27 @@ def test_module_install_extra_remains_optional(monkeypatch) -> None:
     changed["modules"]["registry"][0].pop("install_extra")
     validate_settings(changed)
 
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data["beedrill"].pop("ai_assist"),
+        lambda data: data["beedrill"].update(ai_assist=[]),
+        lambda data: data["beedrill"]["ai_assist"].update(enabled="true"),
+        lambda data: data["beedrill"]["ai_assist"].update(timeout=0),
+        lambda data: data["beedrill"]["ai_assist"].update(input_chars_max=20_001),
+        lambda data: data["beedrill"]["ai_assist"].update(prompt_key=""),
+    ],
+)
+def test_beedrill_ai_assist_settings_fail_fast(monkeypatch, mutate) -> None:
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config" / "settings.yml")
+    changed = deepcopy(settings)
+    mutate(changed)
+    with pytest.raises(RuntimeError, match="beedrill"):
+        validate_settings(changed)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

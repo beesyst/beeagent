@@ -10,6 +10,7 @@ from urllib import request
 
 import yaml
 
+from beeagent_module.core.ai_transport import call_structured_ai
 from beeagent_module.core.paths import get_project_root
 from beeagent_module.core.rop_reason_contract import (
     AI_EVIDENCE_CODES,
@@ -22,7 +23,6 @@ from beeagent_module.core.settings import (
     get_rop_ai_adjudicator_runtime_state,
 )
 
-_SUPPORTED_AI_PROVIDERS = frozenset({"openai_responses", "openai_compatible"})
 _DATA_BASE64_RE = re.compile(
     r"data:[^;\s]+;base64,[A-Za-z0-9+/=\s]{20,}",
     re.IGNORECASE,
@@ -1352,80 +1352,20 @@ def call_openai_responses_api(
     timeout_seconds: int,
     logger: logging.Logger,
 ) -> str | None:
-    if provider not in _SUPPORTED_AI_PROVIDERS:
-        logger.warning("ai_adjudicator: unsupported provider=%s", provider)
-        return None
-
-    if not api_key.strip():
-        logger.warning("ai_adjudicator: API key is empty")
-        return None
-
-    if provider == "openai_responses":
-        api_url = base_url.rstrip("/") + "/responses"
-        payload = _build_openai_responses_payload(prompt=prompt, model=model)
-    else:
-        api_url = base_url.rstrip("/") + "/chat/completions"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 500,
-            "response_format": {"type": "json_object"},
-        }
-
-    try:
-        req = request.Request(
-            api_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
-        with request.urlopen(req, timeout=timeout_seconds) as resp:
-            raw = resp.read().decode("utf-8")
-        response_data = json.loads(raw)
-
-        if provider == "openai_compatible":
-            choices = response_data.get("choices")
-            if (
-                not isinstance(choices, list)
-                or not choices
-                or not isinstance(choices[0], dict)
-            ):
-                logger.warning("ai_adjudicator: no choices in compatible response")
-                return None
-            message = choices[0].get("message")
-            content_text = message.get("content") if isinstance(message, dict) else None
-            return (
-                content_text if isinstance(content_text, str) and content_text else None
-            )
-        output_list = response_data.get("output", [])
-        if not output_list:
-            logger.warning("ai_adjudicator: no output in Responses API response")
-            return None
-
-        content_text = ""
-        for item in output_list:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("content", "")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "output_text":
-                        content_text += part.get("text", "")
-            elif isinstance(content, str):
-                content_text += content
-
-        if not content_text:
-            logger.warning("ai_adjudicator: empty content in Responses API response")
-            return None
-
-        return content_text
-    except Exception as exc:
-        logger.warning("ai_adjudicator: provider call failed: %s", exc)
-        return None
+    return call_structured_ai(
+        prompt=prompt,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        max_output_tokens=500,
+        temperature=0.1,
+        responses_text_format=_build_openai_response_format(),
+        output_chars_max=None,
+        logger=logger,
+        urlopen=request.urlopen,
+    )
 
 
 def _deterministic_value(event: dict[str, Any], key: str, default: Any) -> Any:
@@ -1438,16 +1378,6 @@ def _build_openai_response_format() -> dict[str, Any]:
         "name": "rop_ai_adjudicator_decision",
         "strict": True,
         "schema": _ROP_AI_ADJUDICATOR_RESPONSE_SCHEMA,
-    }
-
-
-def _build_openai_responses_payload(*, prompt: str, model: str) -> dict[str, Any]:
-    return {
-        "model": model,
-        "input": prompt,
-        "temperature": 0.1,
-        "max_output_tokens": 500,
-        "text": {"format": _build_openai_response_format()},
     }
 
 

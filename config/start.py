@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from beeagent_module.cli.auth import ensure_auth_env, handle_auth_cli
 from beeagent_module.core.accelerator import detect_accelerator
 from beeagent_module.core.artifact_api import ArtifactAPI
+from beeagent_module.core.beedrill_ai_assist import run_beedrill_ai_assist
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -351,6 +352,9 @@ def _execute_beedrill_scenario(
     security_verdict = (
         result.data.get("security_verdict") if execution_status == "ok" else None
     )
+    explanation_facts = (
+        result.data.get("explanation_facts") if execution_status == "ok" else None
+    )
     artifact_dir = f"runs/{scenario_run_id}/module-beedrill"
     return {
         "schema_version": 1,
@@ -358,6 +362,7 @@ def _execute_beedrill_scenario(
         "scenario_id": scenario_id,
         "execution_status": execution_status,
         "security_verdict": security_verdict,
+        "explanation_facts": explanation_facts,
         "artifact_refs": [
             f"{artifact_dir}/module_result.json",
             f"{artifact_dir}/{scenario_id}.json",
@@ -375,6 +380,7 @@ def _beedrill_suite_record(record: dict[str, object]) -> dict[str, object]:
         "execution_status": record["execution_status"],
         "security_verdict": security_verdict,
         "artifact_refs": record["artifact_refs"],
+        "explanation_facts": record.get("explanation_facts"),
     }
 
 
@@ -418,9 +424,13 @@ def _handle_beedrill_check(settings: dict, logger: logging.Logger) -> int:
         "passed": passed,
         "failed": failed,
         "incomplete": incomplete,
-        "scenarios": records,
+        "scenarios": [
+            {key: value for key, value in record.items() if key != "explanation_facts"}
+            for record in records
+        ],
     }
     artifact_status = suite_status
+    artifact_api: ArtifactAPI | None = None
     try:
         artifact_api = ArtifactAPI(
             context=RuntimeContext(
@@ -437,6 +447,23 @@ def _handle_beedrill_check(settings: dict, logger: logging.Logger) -> int:
     except OSError as exc:
         logger.error("BeeDrill regression suite artifact persistence failed: %s", exc)
         artifact_status = "incomplete"
+
+    ai_assist = settings.get("beedrill", {}).get("ai_assist", {})
+    if (
+        artifact_status != "incomplete"
+        and artifact_api is not None
+        and ai_assist.get("enabled") is True
+    ):
+        try:
+            ai_artifact = run_beedrill_ai_assist(
+                settings=settings,
+                records=records,
+                suite_run_id=suite_run_id,
+                logger=logger,
+            )
+            artifact_api.write_json("beedrill_ai_assist.json", ai_artifact)
+        except (KeyError, OSError, RuntimeError, ValueError) as exc:
+            logger.warning("BeeDrill AI assist artifact was not persisted: %s", exc)
 
     print("BeeDrill Security Regression")
     for record, status in zip(records, statuses, strict=True):

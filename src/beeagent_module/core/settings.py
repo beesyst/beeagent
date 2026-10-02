@@ -259,9 +259,8 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
             )
         if "install_extra" in item:
             install_extra = item["install_extra"]
-            if (
-                not isinstance(install_extra, str)
-                or not _INSTALL_EXTRA_RE.fullmatch(install_extra)
+            if not isinstance(install_extra, str) or not _INSTALL_EXTRA_RE.fullmatch(
+                install_extra
             ):
                 raise RuntimeError(
                     f"Invalid modules.registry[{idx}].install_extra, "
@@ -273,6 +272,7 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
     _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
     _validate_rop_ai_adjudicator_settings(settings)
+    _validate_beedrill_ai_assist_settings(settings)
 
     mailbox_poll = _get_nested_value(settings, ("rop", "mailbox_poll"))
     if not isinstance(mailbox_poll, dict):
@@ -720,6 +720,25 @@ def _require_one_enabled_ai_profile(
             )
 
     return profile_cfg
+
+
+def _validate_beedrill_ai_assist_settings(settings: dict) -> None:
+    cfg = _get_nested_value(settings, ("beedrill", "ai_assist"))
+    if not isinstance(cfg, dict):
+        raise RuntimeError("Invalid or missing beedrill.ai_assist, expected mapping")
+    if not isinstance(cfg.get("enabled"), bool):
+        raise RuntimeError("Invalid type for beedrill.ai_assist.enabled, expected bool")
+    for key in ("timeout", "input_chars_max", "output_chars_max"):
+        value = cfg.get(key)
+        if not isinstance(value, int) or value <= 0:
+            raise RuntimeError(f"Invalid beedrill.ai_assist.{key}, expected int > 0")
+    if cfg["input_chars_max"] > 20_000 or cfg["output_chars_max"] > 8_000:
+        raise RuntimeError("beedrill.ai_assist character limits exceed hard cap")
+    prompt_key = cfg.get("prompt_key")
+    if not isinstance(prompt_key, str) or not prompt_key.strip():
+        raise RuntimeError(
+            "Invalid or missing beedrill.ai_assist.prompt_key, expected non-empty string"
+        )
 
 
 def _validate_rop_ai_assist_settings(settings: dict) -> None:

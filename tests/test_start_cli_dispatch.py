@@ -914,3 +914,177 @@ def test_beedrill_check_artifact_oserror_is_incomplete(
         == 3
     )
     assert "Suite status: INCOMPLETE" in capsys.readouterr().out
+
+
+def test_beedrill_check_ai_assist_runs_once_after_deterministic_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    facts = {"schema_version": 1, "scenario_id": "scenario"}
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            ModuleResult(
+                "beedrill",
+                scenario_id,
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {"security_verdict": "pass", "explanation_facts": facts},
+            )
+            for scenario_id in scenario_ids
+        ],
+    )
+    calls: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(
+        start_module,
+        "run_beedrill_ai_assist",
+        lambda **kwargs: calls.append(kwargs["records"]) or {"status": "ok"},
+    )
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["check"],
+        {"modules": {"registry": []}, "beedrill": {"ai_assist": {"enabled": True}}},
+        logging.getLogger("test"),
+    )
+
+    artifact_dir = tmp_path / "runs" / "beedrill-suite-1" / "module-beeagent"
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert (artifact_dir / "beedrill_security_regression.json").exists()
+    assert json.loads((artifact_dir / "beedrill_ai_assist.json").read_text()) == {
+        "status": "ok"
+    }
+
+
+@pytest.mark.parametrize(("ai_enabled", "expected_calls"), [(False, 0), (True, 1)])
+def test_beedrill_check_completed_failure_keeps_exit_with_ai_enabled(
+    monkeypatch, tmp_path: Path, ai_enabled: bool, expected_calls: int
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            ModuleResult(
+                "beedrill",
+                scenario_id,
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {
+                    "security_verdict": "fail" if index == 0 else "pass",
+                    "explanation_facts": {
+                        "schema_version": 1,
+                        "scenario_id": scenario_id,
+                    },
+                },
+            )
+            for index, scenario_id in enumerate(scenario_ids)
+        ],
+    )
+    calls: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(
+        start_module,
+        "run_beedrill_ai_assist",
+        lambda **kwargs: calls.append(kwargs["records"]) or {"status": "ok"},
+    )
+
+    exit_code = start_module._handle_beedrill_cli(
+        ["check"],
+        {
+            "modules": {"registry": []},
+            "beedrill": {"ai_assist": {"enabled": ai_enabled}},
+        },
+        logging.getLogger("test"),
+    )
+
+    artifact_dir = tmp_path / "runs" / "beedrill-suite-1" / "module-beeagent"
+    summary = json.loads(
+        (artifact_dir / "beedrill_security_regression.json").read_text()
+    )
+    assert exit_code == 1
+    assert summary["suite_status"] == "fail"
+    assert len(calls) == expected_calls
+    if ai_enabled:
+        assert json.loads((artifact_dir / "beedrill_ai_assist.json").read_text()) == {
+            "status": "ok"
+        }
+
+
+def test_beedrill_check_ai_assist_skips_incomplete_suite(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            _beedrill_result(scenario_ids[0], status="error"),
+            _beedrill_result(scenario_ids[1]),
+            _beedrill_result(scenario_ids[2]),
+        ],
+    )
+    monkeypatch.setattr(
+        start_module,
+        "run_beedrill_ai_assist",
+        lambda **_: (_ for _ in ()).throw(AssertionError("AI must not run")),
+    )
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"],
+            {"modules": {"registry": []}, "beedrill": {"ai_assist": {"enabled": True}}},
+            logging.getLogger("test"),
+        )
+        == 3
+    )
+
+
+def test_beedrill_check_ai_artifact_failure_preserves_exit_code(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scenario_ids = list(start_module._BEEDRILL_SCENARIOS)
+    _configure_beedrill_check(
+        monkeypatch,
+        tmp_path,
+        [
+            ModuleResult(
+                "beedrill",
+                scenario_id,
+                AuthorityLevel.READ_ONLY,
+                "ok",
+                "completed",
+                {
+                    "security_verdict": "pass",
+                    "explanation_facts": {"schema_version": 1},
+                },
+            )
+            for scenario_id in scenario_ids
+        ],
+    )
+    monkeypatch.setattr(
+        start_module,
+        "run_beedrill_ai_assist",
+        lambda **_: {"status": "ok"},
+    )
+
+    class _ArtifactAPI:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def write_json(self, filename: str, data: object) -> None:
+            if filename == "beedrill_ai_assist.json":
+                raise OSError("storage unavailable")
+
+    monkeypatch.setattr(start_module, "ArtifactAPI", _ArtifactAPI)
+
+    assert (
+        start_module._handle_beedrill_cli(
+            ["check"],
+            {"modules": {"registry": []}, "beedrill": {"ai_assist": {"enabled": True}}},
+            logging.getLogger("test"),
+        )
+        == 0
+    )
