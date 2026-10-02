@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.69.0...beeagent-v0.70.0) (2026-10-02)
+
+
+### Features
+
+* **beedrill:** add configurable AI explanation host path ([#284](https://github.com/beesyst/beeagent/issues/284)) ([ac6bff9](https://github.com/beesyst/beeagent/commit/ac6bff9800b9b81192e920026553f2eef0ffae33))
+
 ## [0.69.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.68.2...beeagent-v0.69.0) (2026-09-30)
 
 
