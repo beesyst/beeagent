@@ -1,6 +1,6 @@
 # BeeAgent implementation and test prompt preparation
 
-Используй только Bee Dev MCP.
+Используй только BeeMCP.
 
 Прочитай:
 
@@ -63,6 +63,6 @@
 - учитывать только task-specific ограничения;
 - не дублировать постоянные repository rules;
 - запрещать commit, push, PR и merge;
-- не требовать Bee Dev MCP, MCP Mode или read-only behavior от Copilot и Codex.
+- не требовать BeeMCP, MCP Mode или read-only behavior от Copilot и Codex.
 
 Верни только два готовых executor-prompts без дополнительного анализа.

@@ -87,13 +87,13 @@ modules:
     - id: "beeagent-rop"
       package: "beeagent_rop"
       entry: "RopModule"
-      enabled: true
+      enabled: false
       install_extra: "rop"
 
     - id: "beedrill"
       package: "beedrill.module"
       entry: "BeeDrillModule"
-      enabled: false
+      enabled: true
       install_extra: "beedrill"
 
 beedrill:

@@ -1,20 +1,20 @@
 # BeeAgent planning
 
-Используй только Bee Dev MCP.
+Используй только BeeMCP.
 
 Прочитай:
 
-* `AGENTS.md`
-* `.agents/skills/beeagent-plan-iteration/SKILL.md`
+- `AGENTS.md`
+- `.agents/skills/beeagent-plan-iteration/SKILL.md`
 
 ## Основной проект
 
-* Project: `beeagent`
-* Worktree: `<MAIN_WORKTREE>`
-* Expected branch: `main`
-* Base branch: `main`
-* Mode: `<MODE>`
-* Roadmap context: `<ROADMAP_CONTEXT>`
+- Project: `beeagent`
+- Worktree: `<MAIN_WORKTREE>`
+- Expected branch: `main`
+- Base branch: `main`
+- Mode: `<MODE>`
+- Roadmap context: `<ROADMAP_CONTEXT>`
 
 ## Предлагаемая задача
 

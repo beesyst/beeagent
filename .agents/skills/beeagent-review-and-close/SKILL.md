@@ -234,7 +234,7 @@ Follow the instruction and evidence precedence defined in `AGENTS.md`.
 
 The implementation report is supporting evidence, not the source of truth.
 
-Bee Dev MCP cannot execute tests.
+BeeMCP cannot execute tests.
 
 When the approved Issue has no dependency change, do not inspect, regenerate, modify or separately validate `uv.lock`. When it explicitly requires a dependency change, inspect only the necessary minimal registry lock diff. Never request, evaluate or treat `uv lock --check` or any dedicated lockfile validation as merge evidence, and do not treat unrelated lock noise as an independent finding.
 
@@ -415,7 +415,7 @@ Do not prepare a final PR body while blockers remain.
 
 ## Consolidated correction prompt
 
-The correction prompt is an executor prompt for Copilot or Codex, not a continuation of the Bee Dev MCP review.
+The correction prompt is an executor prompt for Copilot or Codex, not a continuation of the BeeMCP review.
 
 Select and name the executor:
 
@@ -426,7 +426,7 @@ The prompt must authorize the executor to modify files and run repository checks
 
 Do not copy reviewer-only restrictions into the correction prompt, including:
 
-- `Use only Bee Dev MCP`;
+- `Use only BeeMCP`;
 - read-only mode;
 - MCP target identifiers;
 - review mode.
