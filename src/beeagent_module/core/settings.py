@@ -11,7 +11,7 @@ from beeagent_module.core.rop_sources import (
     load_rop_sources,
 )
 
-REQUIRED_KEYS = (
+GLOBAL_REQUIRED_KEYS = (
     ("app", "name"),
     ("app", "env"),
     ("run", "mode"),
@@ -42,6 +42,23 @@ REQUIRED_KEYS = (
     ("quiz", "enabled"),
     ("quiz", "path"),
     ("modules", "registry"),
+    ("web", "auth", "enabled"),
+    ("web", "auth", "mode"),
+    ("web", "auth", "session_secret_env"),
+    ("web", "auth", "principals"),
+    ("ai", "prompts", "path"),
+    ("ai", "prompts", "store"),
+    ("ai", "profiles"),
+    ("bitrix", "widget", "enabled"),
+    ("bitrix", "widget", "token_env"),
+    ("bitrix", "widget", "default_period"),
+    ("bitrix", "widget", "max_items"),
+    ("bitrix", "embedded_app", "enabled"),
+    ("bitrix", "embedded_app", "portal_origin"),
+    ("bitrix", "embedded_app", "default_role"),
+    ("bitrix", "embedded_app", "request_timeout"),
+)
+ROP_REQUIRED_KEYS = (
     ("rop", "attachments", "enabled"),
     ("rop", "attachments", "chars_max"),
     ("rop", "attachments", "size_max"),
@@ -61,21 +78,6 @@ REQUIRED_KEYS = (
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
     ("rop", "dashboard", "leaderboard", "plan_lead"),
-    ("web", "auth", "enabled"),
-    ("web", "auth", "mode"),
-    ("web", "auth", "session_secret_env"),
-    ("web", "auth", "principals"),
-    ("ai", "prompts", "path"),
-    ("ai", "prompts", "store"),
-    ("ai", "profiles"),
-    ("bitrix", "widget", "enabled"),
-    ("bitrix", "widget", "token_env"),
-    ("bitrix", "widget", "default_period"),
-    ("bitrix", "widget", "max_items"),
-    ("bitrix", "embedded_app", "enabled"),
-    ("bitrix", "embedded_app", "portal_origin"),
-    ("bitrix", "embedded_app", "default_role"),
-    ("bitrix", "embedded_app", "request_timeout"),
 )
 _SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
     {"openai_responses", "openai_compatible"}
@@ -114,10 +116,9 @@ def load_settings(settings_path: Path) -> dict:
 
 
 def validate_settings(settings: dict, project_root: Path | None = None) -> None:
-    apply_runtime_settings_overrides(settings)
     missing_keys: list[str] = []
 
-    for key_path in REQUIRED_KEYS:
+    for key_path in GLOBAL_REQUIRED_KEYS:
         value = _get_nested_value(settings, key_path)
         if value is None:
             missing_keys.append(".".join(key_path))
@@ -267,12 +268,55 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
                     "expected non-empty safe extra name"
                 )
 
+    rop_enabled = _is_module_enabled(settings, "beeagent-rop")
+    beedrill_enabled = _is_module_enabled(settings, "beedrill")
+    if rop_enabled:
+        _validate_required_keys(settings, ROP_REQUIRED_KEYS)
+
     _validate_ai_prompts_settings(settings)
     _validate_ai_profiles_settings(settings)
+    if beedrill_enabled:
+        _validate_beedrill_ai_assist_settings(settings)
+    _validate_bitrix_settings(settings, require_writeback_credentials=rop_enabled)
+    _validate_bitrix_widget_settings(settings)
+    _validate_bitrix_embedded_app_settings(settings)
+
+    if rop_enabled:
+        _validate_rop_settings(settings, project_root)
+
+    _validate_web_auth_settings(settings)
+
+
+def _validate_required_keys(
+    settings: dict, required_keys: tuple[tuple[str, ...], ...]
+) -> None:
+    missing_keys = [
+        ".".join(key_path)
+        for key_path in required_keys
+        if _get_nested_value(settings, key_path) is None
+    ]
+    if missing_keys:
+        missing_text = ", ".join(missing_keys)
+        raise RuntimeError(f"Missing required settings keys: {missing_text}")
+
+
+def _is_module_enabled(settings: dict, module_id: str) -> bool:
+    registry = _get_nested_value(settings, ("modules", "registry"))
+    if not isinstance(registry, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("id") == module_id
+        and item.get("enabled") is True
+        for item in registry
+    )
+
+
+def _validate_rop_settings(settings: dict, project_root: Path | None) -> None:
+    apply_runtime_settings_overrides(settings)
     _validate_rop_email_preview_settings(settings)
     _validate_rop_ai_assist_settings(settings)
     _validate_rop_ai_adjudicator_settings(settings)
-    _validate_beedrill_ai_assist_settings(settings)
 
     mailbox_poll = _get_nested_value(settings, ("rop", "mailbox_poll"))
     if not isinstance(mailbox_poll, dict):
@@ -414,12 +458,6 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
 
     _validate_rop_dashboard_settings(settings)
 
-    _validate_bitrix_settings(settings)
-    _validate_bitrix_widget_settings(settings)
-    _validate_bitrix_embedded_app_settings(settings)
-
-    _validate_web_auth_settings(settings)
-
 
 def _is_single_plain_email(value: str) -> bool:
     if value != value.strip() or any(ch.isspace() for ch in value):
@@ -431,11 +469,19 @@ def _is_single_plain_email(value: str) -> bool:
 
 
 def apply_runtime_settings_overrides(settings: dict) -> dict:
-    _apply_rop_ai_adjudicator_env_override(settings)
+    if _is_module_enabled(settings, "beeagent-rop"):
+        _apply_rop_ai_adjudicator_env_override(settings)
     return settings
 
 
 def get_rop_ai_adjudicator_runtime_state(settings: dict) -> dict[str, bool]:
+    if not _is_module_enabled(settings, "beeagent-rop"):
+        return {
+            "enabled": False,
+            "env_override_present": False,
+            "yaml_enabled": False,
+        }
+
     apply_runtime_settings_overrides(settings)
     adj_cfg = _get_nested_value(settings, ("rop", "ai_assist", "adjudicator"))
     if not isinstance(adj_cfg, dict):
@@ -867,7 +913,9 @@ def _validate_rop_dashboard_settings(settings: dict) -> None:
         )
 
 
-def _validate_bitrix_settings(settings: dict) -> None:
+def _validate_bitrix_settings(
+    settings: dict, *, require_writeback_credentials: bool
+) -> None:
     bitrix_cfg = _get_nested_value(settings, ("bitrix",))
     if bitrix_cfg is None:
         return
@@ -908,7 +956,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
                 or len(value.strip()) > 128
             ):
                 raise RuntimeError(f"Invalid or missing bitrix.blacklist_trigger.{key}")
-        if trigger_cfg["enabled"] and not (
+        if require_writeback_credentials and trigger_cfg["enabled"] and not (
             os.getenv(trigger_cfg["secret_env"], "").strip()
             or os.getenv(trigger_cfg["event_app_token_env"], "").strip()
         ):
@@ -1122,7 +1170,7 @@ def _validate_bitrix_settings(settings: dict) -> None:
                         "expected non-empty string when "
                         "bitrix.writeback.enabled=true"
                     )
-            if not os.environ.get(writeback_env):
+            if require_writeback_credentials and not os.environ.get(writeback_env):
                 raise RuntimeError(
                     f"Missing required env var '{writeback_env}' for "
                     "bitrix.writeback.webhook_env when bitrix.writeback.enabled=true"
