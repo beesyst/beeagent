@@ -669,11 +669,9 @@ git pull --ff-only
 
 ## Коммиты
 
-Формат:
-<type>(<scope>)!: <кратко что сделано>
+Формат: <type>(<scope>)!: <кратко что сделано>
 
-scope — опционально (например: api, parser, docs, ci).
-! — признак ломающего изменения (MAJOR).
+scope — опционально (например: api, parser, docs, ci). ! — признак ломающего изменения (MAJOR).
 
 Таблица типов (KISS):
 
@@ -701,18 +699,12 @@ MAJOR (ломающие изменения):
 - `docs(roadmap): update stage 3 module platform`
 - `test(core): add artifact api smoke coverage`
 
-MINOR:
-feat(api): добавить эндпоинт поиска
+MINOR: feat(api): добавить эндпоинт поиска
 
-PATCH:
-fix(parser): не падать на пустом вводе
+PATCH: fix(parser): не падать на пустом вводе
 
-NO VERSION:
-docs: обновить README
-chore: добавить базовые шаблоны
-refactor(parser): упростить разбор без изменения поведения
+NO VERSION: docs: обновить README chore: добавить базовые шаблоны refactor(parser): упростить разбор без изменения поведения
 
-MAJOR (breaking):
-feat!: сменить формат конфигурации
+MAJOR (breaking): feat!: сменить формат конфигурации
 
 BREAKING CHANGE: ключи settings.yml переименованы; обновите конфиг

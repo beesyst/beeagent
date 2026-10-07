@@ -488,8 +488,7 @@ The project uses a locked `uv` environment for reproducible development and runt
 
 ### Release-backed BeeDrill use
 
-The tracked configuration enables BeeDrill. A normal user or judge needs only
-BeeAgent and the required local Solana toolchain:
+The tracked configuration enables BeeDrill. A normal user or judge needs only BeeAgent and the required local Solana toolchain:
 
 ```bash
 git clone https://github.com/beesyst/beeagent.git
@@ -497,16 +496,11 @@ cd beeagent
 ./start.sh beedrill check
 ```
 
-The normal bootstrap resolves the pinned BeeSDK and BeeDrill release revisions
-from `uv.lock`; it does not require sibling `beesdk` or `beedrill` repositories,
-a separate BeeDrill installer, or a manual `uv` command. BeeDrill's deterministic
-suite does not require an AI provider.
+The normal bootstrap resolves the pinned BeeSDK and BeeDrill release revisions from `uv.lock`; it does not require sibling `beesdk` or `beedrill` repositories, a separate BeeDrill installer, or a manual `uv` command. BeeDrill's deterministic suite does not require an AI provider.
 
 ### Coordinated Bee workspace development
 
-Maintainers changing source across repositories may use local sibling checkouts.
-The optional `beeagent-rop` profile remains a local editable development source
-when it is enabled. Normal release-backed BeeDrill use does not enable it.
+Maintainers changing source across repositories may use local sibling checkouts. The optional `beeagent-rop` profile remains a local editable development source when it is enabled. Normal release-backed BeeDrill use does not enable it.
 
 With the required development siblings available, use the standard commands:
 

@@ -494,21 +494,11 @@ BeeAgent core всегда устанавливает BeeSDK, но не уста
 - `beedrill` устанавливает BeeDrill;
 - disabled module не требует своего sibling package.
 
-BeeSDK устанавливается как закреплённый `beesdk==0.2.0` из release-backed
-immutable source. При enabled BeeDrill `./start.sh` также разрешает закреплённый
-release BeeDrill через существующий optional extra. Нормальному пользователю или
-judge не нужны sibling `beesdk/` и `beedrill/`, отдельная команда установки или
-ручной `uv`.
+BeeSDK устанавливается как закреплённый `beesdk==0.2.0` из release-backed immutable source. При enabled BeeDrill `./start.sh` также разрешает закреплённый release BeeDrill через существующий optional extra. Нормальному пользователю или judge не нужны sibling `beesdk/` и `beedrill/`, отдельная команда установки или ручной `uv`.
 
-`./start.sh` устанавливает base dependencies и BeeSDK, читает settings,
-выполняет locked sync для enabled module extras и выбранного Docling profile,
-затем запускает BeeAgent. Текущий tracked profile включает BeeDrill; его
-deterministic suite не требует AI provider.
+`./start.sh` устанавливает base dependencies и BeeSDK, читает settings, выполняет locked sync для enabled module extras и выбранного Docling profile, затем запускает BeeAgent. Текущий tracked profile включает BeeDrill; его deterministic suite не требует AI provider.
 
-Для coordinated local development maintainer может использовать sibling
-checkouts. `beeagent-rop` остаётся local editable development source только когда
-этот optional profile включён; normal release-backed BeeDrill flow его не
-включает.
+Для coordinated local development maintainer может использовать sibling checkouts. `beeagent-rop` остаётся local editable development source только когда этот optional profile включён; normal release-backed BeeDrill flow его не включает.
 
 ### Coordinated development внутри Bee workspace
 

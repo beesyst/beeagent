@@ -106,37 +106,13 @@
 - использовать BeeAgent artifact/runtime contracts
 - не ломать authority boundary
 
-For BeeDrill's `isolated_solana_smoke`, BeeAgent injects a caller bound to the
-host-generated run, session, module, case and read-only module authority. The
-caller accepts only `solana.isolated_lifecycle` with the fixed
-`surfpool_local` intent, then owns the offline Surfpool process, fixed local
-read-only RPC check and cleanup. The returned capability evidence reports the
-host-applied execution-capable authority without changing the module authority.
+For BeeDrill's `isolated_solana_smoke`, BeeAgent injects a caller bound to the host-generated run, session, module, case and read-only module authority. The caller accepts only `solana.isolated_lifecycle` with the fixed `surfpool_local` intent, then owns the offline Surfpool process, fixed local read-only RPC check and cleanup. The returned capability evidence reports the host-applied execution-capable authority without changing the module authority.
 
-For BeeDrill's `reference_target_baseline`, the same host-bound caller accepts
-only `solana.reference_target_baseline` with the fixed `surfpool_local` and
-`reference_vault` payload. BeeAgent resolves the public BeeDrill package
-resource itself and returns only bounded canonical economic/control evidence.
+For BeeDrill's `reference_target_baseline`, the same host-bound caller accepts only `solana.reference_target_baseline` with the fixed `surfpool_local` and `reference_vault` payload. BeeAgent resolves the public BeeDrill package resource itself and returns only bounded canonical economic/control evidence.
 
-For BeeDrill's `reference_target_attack`, the same caller accepts only
-`solana.reference_target_attack` with that exact fixed payload and only from the
-read-only BeeDrill attack case. BeeAgent owns the offline Surfpool lifecycle,
-target preparation and fixed attack transaction. On success it returns exact
-target and initial-state identities, a bounded transaction signature, a local
-slot reference, fixed before/after lamport balances, unsafe-withdraw transition
-counts and integer gross loss. It returns explicit refusal, timeout or error
-otherwise; it never accepts module-supplied RPC, executable, path, raw
-transaction or credential fields.
+For BeeDrill's `reference_target_attack`, the same caller accepts only `solana.reference_target_attack` with that exact fixed payload and only from the read-only BeeDrill attack case. BeeAgent owns the offline Surfpool lifecycle, target preparation and fixed attack transaction. On success it returns exact target and initial-state identities, a bounded transaction signature, a local slot reference, fixed before/after lamport balances, unsafe-withdraw transition counts and integer gross loss. It returns explicit refusal, timeout or error otherwise; it never accepts module-supplied RPC, executable, path, raw transaction or credential fields.
 
-For BeeDrill's `reference_target_detection`, the same caller accepts only
-`solana.reference_target_detection` with the fixed `surfpool_local` and
-`reference_vault` payload from the read-only detection case. BeeAgent installs
-the fixed `reference_vault_outflow_monitor` before the attack, independently
-observes `vault_outflow_signal` through the fixed local RPC state read, and
-returns only detector identity, signal identity, observation status,
-attack-start slot, and (when observed) first-detection slot. A completed
-monitoring window without the signal is `not_observed`; runtime and timeout
-outcomes remain capability errors rather than no-alert evidence.
+For BeeDrill's `reference_target_detection`, the same caller accepts only `solana.reference_target_detection` with the fixed `surfpool_local` and `reference_vault` payload from the read-only detection case. BeeAgent installs the fixed `reference_vault_outflow_monitor` before the attack, independently observes `vault_outflow_signal` through the fixed local RPC state read, and returns only detector identity, signal identity, observation status, attack-start slot, and (when observed) first-detection slot. A completed monitoring window without the signal is `not_observed`; runtime and timeout outcomes remain capability errors rather than no-alert evidence.
 
 ### 5.3 Что не должен делать модуль
 
@@ -255,12 +231,10 @@ BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP
 - automatic existing-target attachment is allowed only for exact trusted thread evidence (Iteration 38): normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` resolve against canonical write-back state; all resolved exact referenced ancestors must agree on one trusted Lead/Deal; a confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is an authoritative thread root, a thread-resolved attachment (`target_provenance=thread_resolved`) propagates the target, legacy records without trusted provenance are never authority, and conflicting exact references fail closed to `ambiguous_thread_target` deferred with zero mutation;
 - an exact Contact/Company is identity evidence, not an executable target. Only after the bounded exact Lead search and related-Deal lookup complete without a target does `identity_only_no_target` with `suitable_target_search=completed_no_target` permit the normal configured `new_lead`/`irrelevant` create path. An independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review; run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment; existing target responsible is never reassigned;
 - email activity body preview является bounded readable plain text: `<!DOCTYPE ...>`, comments, script/style и HTML tags удаляются, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
-- `BitrixReadonlyClient` не содержит mutation methods; `crm.activity.list` остаётся read-only idempotency lookup, а `BitrixWriteClient` ограничен только
-  `crm.item.add` и `crm.activity.add`;
+- `BitrixReadonlyClient` не содержит mutation methods; `crm.activity.list` остаётся read-only idempotency lookup, а `BitrixWriteClient` ограничен только `crm.item.add` и `crm.activity.add`;
 - при enabled write-back dedicated write credential обязан отличаться от read credential и по env name, и по normalized webhook URL;
 - unresolved `existing_deal`/`duplicate`, ambiguous/unsafe target и unresolved responsible fail closed в `deferred` без спекулятивного создания;
-- стабильная cross-run идентичность — `client_id + source_id + (message_id → x_email_id → event_id)`, `event_instance_id` не является remote business
-  identity;
+- стабильная cross-run идентичность — `client_id + source_id + (message_id → x_email_id → event_id)`, `event_instance_id` не является remote business identity;
 - authoritative write-back intent durable сохраняется до mailbox checkpoint; ordering для poll: durable intent → checkpoint → external execution → original per-run projection refresh. Temporary reconciliation outage сохраняется как recoverable deferred state и повторно сверяется из retained run artifacts без mailbox re-ingestion.
 
 Артефакты:

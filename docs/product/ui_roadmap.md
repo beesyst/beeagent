@@ -3130,8 +3130,7 @@ ROP Web Console больше не реконструирует historical ROP st
 - закрепить auditable reason `sender_blacklisted`;
 - обеспечить использование effective result downstream UI/write-back paths;
 - добавить ROP tab `blacklist` / `Чёрный список`;
-- показать description:
-  `Все письма с этих ящиков будут отправлены в классификацию «Irrelevant».`;
+- показать description: `Все письма с этих ящиков будут отправлены в классификацию «Irrelevant».`;
 - показать canonical e-mail table;
 - добавить `Добавить e-mail`;
 - добавить structured Name/Title/Email/Role CRUD с inline edit, direct bounded Add/Save/Delete, e-mail search, canonical pagination и CSV export; CSV import excluded;

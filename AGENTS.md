@@ -269,6 +269,31 @@ When public data fields change:
 - preserve existing fields when required;
 - update contract tests.
 
+## Markdown formatting
+
+For Markdown documentation, use one logical prose paragraph per physical line.
+
+Rules:
+
+- one prose paragraph = one physical line;
+- one list item = one physical line;
+- do not hard-wrap prose at 80/88/100/120 columns;
+- keep line breaks only when they are structurally meaningful;
+- preserve headings, blank-line paragraph boundaries, lists, tables, blockquotes, fenced code blocks, Mermaid, YAML/TOML/JSON/shell/Python examples and other structured Markdown;
+- do not reflow or wrap prose automatically;
+- when editing existing Markdown, preserve this formatting policy in changed sections.
+
+Example:
+
+```text
+Wrong:
+Sibling repositories are needed only when changing BeeDrill, BeeSDK or related
+source together.
+
+Correct:
+Sibling repositories are needed only when changing BeeDrill, BeeSDK or related source together.
+```
+
 ## Verification
 
 Do not run, request or require `uv lock --check` or any dedicated lockfile validation.
