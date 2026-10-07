@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.0...beeagent-v0.70.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* use immutable BeeSDK and BeeDrill release sources ([#287](https://github.com/beesyst/beeagent/issues/287)) ([2a04fd0](https://github.com/beesyst/beeagent/commit/2a04fd0ca331e21d775869f2b4532cb1b01ee5b9))
+
 ## [0.70.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.69.0...beeagent-v0.70.0) (2026-10-02)
 
 
