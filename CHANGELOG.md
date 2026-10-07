@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.1...beeagent-v0.70.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* **settings:** keep disabled ROP runtime dormant ([#289](https://github.com/beesyst/beeagent/issues/289)) ([5abad69](https://github.com/beesyst/beeagent/commit/5abad69dc2abd2aad714f8e4c4edf4f5f0bff40f))
+
 ## [0.70.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.0...beeagent-v0.70.1) (2026-10-07)
 
 
