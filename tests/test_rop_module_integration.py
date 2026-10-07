@@ -40,14 +40,12 @@ def _project_root() -> Path:
 
 def _rop_registry_entry_from_settings() -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
-    entries = settings["modules"]["registry"]
 
-    for item in entries:
+    for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
-            assert item["enabled"] is True
-            return item
+            return {**item, "enabled": True}
 
-    raise AssertionError("modules.registry must contain enabled beeagent-rop")
+    raise AssertionError("modules.registry must contain beeagent-rop")
 
 
 def test_rop_registry_entry_loaded_and_marked_valid(tmp_path: Path) -> None:

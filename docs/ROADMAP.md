@@ -10337,6 +10337,145 @@ git diff --check
 
 BeeAgent provides optional configuration-driven BeeDrill AI explanation through the existing host command without becoming a BeeDrill verdict authority, without exposing raw BeeDrill evidence to provider-specific code, without changing deterministic suite behavior and without introducing a second operator command.
 
+### Iteration 44.10 — Release-backed BeeDrill bootstrap for standalone BeeAgent checkout
+
+**Status:** DONE
+
+#### Goal
+
+Remove the sibling-repository requirement from the normal BeeDrill user/judge flow so a clean BeeAgent checkout can resolve BeeSDK and the enabled BeeDrill module automatically through the existing `./start.sh` bootstrap.
+
+Target user flow:
+
+```text
+git clone BeeAgent
+→ ./start.sh beedrill check
+→ BeeAgent resolves BeeSDK
+→ enabled BeeDrill extra is resolved automatically
+→ BeeDrill module loads
+→ security regression suite executes
+```
+
+The iteration must preserve the existing configuration-driven module model:
+
+```text
+modules.registry[].enabled
++
+modules.registry[].install_extra
+→ runtime dependency selection
+```
+
+No second module installer or setup framework is introduced.
+
+#### Scope
+
+Included:
+
+- replace the normal-user sibling-only BeeSDK dependency source with a reproducible release-backed source;
+- replace the normal-user sibling-only BeeDrill optional dependency source with a reproducible release-backed source;
+- use already released, explicitly pinned BeeSDK and BeeDrill versions;
+- use immutable/reproducible release references rather than a moving branch;
+- update `uv.lock` consistently with the approved dependency-source change;
+- preserve the existing BeeAgent base bootstrap:
+  - install/bootstrap `uv` when needed;
+  - base environment sync;
+  - settings loading;
+  - enabled-module extra resolution;
+  - second locked sync;
+- preserve `modules.registry[].enabled` as the runtime module-availability control;
+- preserve `install_extra: "beedrill"` as the BeeDrill installation profile;
+- preserve disabled-module behavior;
+- verify that a clean BeeAgent checkout with no sibling `beesdk/` or `beedrill/` directory can execute the BeeDrill suite;
+- document the distinction between:
+  - normal user/judge release-backed installation;
+  - coordinated local multi-repository development;
+- reconcile BeeAgent documentation with the actual tracked BeeDrill module configuration.
+
+#### Excluded
+
+- new module installer framework;
+- interactive setup wizard;
+- automatic configuration mutation;
+- dynamic plugin downloads;
+- arbitrary package names from user input;
+- arbitrary Git URLs from configuration;
+- new module registry contract;
+- new BeeSDK public contract;
+- new BeeDrill execution capability;
+- new Solana scenarios;
+- custom protocol integration;
+- BeeDrill verdict changes;
+- Web UI;
+- production/mainnet mutation;
+- unrelated ROP dependency/source redesign unless clean-checkout verification proves it is a direct blocker.
+
+#### Deliverable
+
+A normal BeeAgent checkout no longer requires manually prepared sibling `beesdk/` and `beedrill/` repositories to run the enabled BeeDrill module.
+
+The existing command remains:
+
+```text
+./start.sh beedrill check
+```
+
+and the existing bootstrap automatically resolves the dependencies required by that configured module.
+
+#### Acceptance criteria
+
+- clean BeeAgent checkout contains no required sibling `../beesdk` directory;
+- clean BeeAgent checkout contains no required sibling `../beedrill` directory;
+- BeeSDK resolves from an explicitly pinned reproducible release source;
+- BeeDrill resolves from an explicitly pinned reproducible release source when the BeeDrill module profile is enabled;
+- no moving `main`, branch-head or unpinned dependency source is used;
+- `uv.lock` records the reproducible resolved dependency state;
+- normal `./start.sh` still owns bootstrap and dependency synchronization;
+- no separate BeeDrill install command is required;
+- the existing module registry remains the source of truth for module availability;
+- enabled BeeDrill causes its existing optional dependency profile to be installed;
+- disabled BeeDrill does not require the BeeDrill module at runtime;
+- `./start.sh beedrill check` loads `BeeDrillModule` through the existing module registry and runtime;
+- the three approved BeeDrill scenarios remain unchanged;
+- suite exit semantics remain:
+  - `0=PASS`;
+  - `1=completed security FAIL`;
+  - `2=invalid invocation`;
+  - `3=INCOMPLETE/runtime failure`;
+- no BeeDrill security verdict is calculated or overridden by BeeAgent;
+- existing authority, capability, RPC and Surfpool boundaries remain unchanged;
+- no new runtime dependency package is added beyond changing the approved source of already required BeeSDK/BeeDrill packages;
+- BeeSDK public contracts remain unchanged;
+- documentation clearly separates normal release-backed use from coordinated local source development.
+
+#### Checks
+
+```text
+dependency-source / lockfile review
+clean BeeAgent checkout with no sibling beesdk
+clean BeeAgent checkout with no sibling beedrill
+base ./start.sh bootstrap
+enabled BeeDrill extra resolution
+BeeDrill module registry load
+./start.sh beedrill check
+three-scenario PASS smoke
+suite exit-code verification
+artifact verification
+disabled-module regression
+existing module-registry regression
+existing BeeDrill individual-run regression
+full BeeAgent pytest
+compile/import checks as applicable
+SCA
+dependency provenance review
+no unpinned Git/source reference
+secret/log/artifact inspection
+git diff --check
+```
+
+#### DoD
+
+A judge or developer can obtain BeeAgent, run its normal bootstrap and execute the configured BeeDrill security-regression suite without manually cloning BeeSDK or BeeDrill as sibling repositories, while all existing module, execution, authority and deterministic-verdict boundaries remain unchanged.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage

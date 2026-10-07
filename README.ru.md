@@ -494,13 +494,23 @@ BeeAgent core всегда устанавливает BeeSDK, но не уста
 - `beedrill` устанавливает BeeDrill;
 - disabled module не требует своего sibling package.
 
-BeeSDK всегда устанавливается как `beesdk==0.2.0` из sibling editable source `../beesdk`.
+BeeSDK устанавливается как закреплённый `beesdk==0.2.0` из release-backed
+immutable source. При enabled BeeDrill `./start.sh` также разрешает закреплённый
+release BeeDrill через существующий optional extra. Нормальному пользователю или
+judge не нужны sibling `beesdk/` и `beedrill/`, отдельная команда установки или
+ручной `uv`.
 
-Для ROP production release нужен sibling layout `beeagent/`, `beesdk/` и `beeagent-rop/`. Перед `./start.sh` подготовь sibling `beesdk/` из approved BeeSDK source. При disabled BeeDrill entry `beedrill/` не включается. `./start.sh` устанавливает base dependencies и BeeSDK, читает settings, выполняет locked sync для enabled module extras и выбранного Docling profile, затем запускает BeeAgent.
+`./start.sh` устанавливает base dependencies и BeeSDK, читает settings,
+выполняет locked sync для enabled module extras и выбранного Docling profile,
+затем запускает BeeAgent. Текущий tracked profile включает BeeDrill; его
+deterministic suite не требует AI provider.
 
-Для local development sibling `beesdk/` требуется всегда; sibling source выбранного enabled domain-module profile требуется дополнительно.
+Для coordinated local development maintainer может использовать sibling
+checkouts. `beeagent-rop` остаётся local editable development source только когда
+этот optional profile включён; normal release-backed BeeDrill flow его не
+включает.
 
-### Разработка внутри Bee workspace
+### Coordinated development внутри Bee workspace
 
 Если необходимые sibling packages доступны:
 
@@ -529,7 +539,7 @@ cd beeagent
 uv run --frozen --no-sync pytest -q
 ```
 
-Canonical application entrypoint — `./start.sh`; отдельная install-команда для текущего workspace development flow не требуется.
+Canonical application entrypoint — `./start.sh`; отдельная install-команда не требуется.
 
 ## Расширение BeeAgent
 

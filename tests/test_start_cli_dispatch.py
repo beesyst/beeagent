@@ -400,7 +400,10 @@ def _rop_settings(monkeypatch) -> dict[str, Any]:
     from beeagent_module.core.settings import load_settings as real_load_settings
 
     root = Path(__file__).resolve().parents[1]
-    return real_load_settings(root / "config" / "settings.yml")
+    settings = real_load_settings(root / "config" / "settings.yml")
+    settings["modules"]["registry"][0]["enabled"] = True
+    settings["modules"]["registry"][1]["enabled"] = False
+    return settings
 
 
 def test_bootstrap_command_dispatches_runtime_bootstrap(monkeypatch) -> None:
