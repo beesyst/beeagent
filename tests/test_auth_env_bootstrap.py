@@ -485,6 +485,7 @@ def test_blacklist_trigger_secret_bootstraps_without_external_credentials(
     settings_path.write_text(
         yaml.safe_dump(
             {
+                "modules": {"registry": [{"id": "beeagent-rop", "enabled": True}]},
                 "bitrix": {
                     "blacklist_trigger": {
                         "enabled": True,
@@ -493,7 +494,7 @@ def test_blacklist_trigger_secret_bootstraps_without_external_credentials(
                         "stage_id": "BLACKLIST",
                         "classification_field": "UF_REASON",
                     }
-                }
+                },
             }
         ),
         encoding="utf-8",
@@ -527,3 +528,33 @@ def test_blacklist_trigger_secret_bootstraps_without_external_credentials(
 
     assert generated_again == {}
     assert _env_map(env_path)["BITRIX_ROP_BLACKLIST_TRIGGER_SECRET"] == secret
+
+
+def test_disabled_rop_does_not_bootstrap_blacklist_trigger_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    settings_path = config_dir / "settings.yml"
+    settings_path.write_text(
+        yaml.safe_dump(
+            {
+                "modules": {"registry": [{"id": "beeagent-rop", "enabled": False}]},
+                "bitrix": {
+                    "blacklist_trigger": {
+                        "enabled": True,
+                        "secret_env": "BITRIX_ROP_BLACKLIST_TRIGGER_SECRET",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET=\n", encoding="utf-8")
+    monkeypatch.delenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", raising=False)
+
+    generated = ensure_bootstrap_env(tmp_path, settings_path, env_path, quiet=True)
+
+    assert "BITRIX_ROP_BLACKLIST_TRIGGER_SECRET" not in generated
+    assert _env_map(env_path)["BITRIX_ROP_BLACKLIST_TRIGGER_SECRET"] == ""

@@ -46,7 +46,7 @@ from beeagent_module.core.runtime_context import (
     generate_run_id,
     generate_session_id,
 )
-from beeagent_module.core.settings import load_settings
+from beeagent_module.core.settings import _is_module_enabled, load_settings
 
 _DOCLING_PROFILES = {
     "cpu": "docling-cpu",
@@ -277,6 +277,9 @@ def _handle_rop_cli(
     logger: logging.Logger,
 ) -> None:
     try:
+        if not _is_module_enabled(settings, "beeagent-rop"):
+            raise RopCliError("beeagent-rop module is disabled")
+
         parser = create_rop_parser()
         args = parser.parse_args(cli_args)
 

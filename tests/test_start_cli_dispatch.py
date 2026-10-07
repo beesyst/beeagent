@@ -406,6 +406,27 @@ def _rop_settings(monkeypatch) -> dict[str, Any]:
     return settings
 
 
+def test_disabled_rop_cli_refuses_before_parser_or_handler(monkeypatch, capsys) -> None:
+    def _unexpected_parser() -> object:
+        raise AssertionError("ROP parser must not be created")
+
+    monkeypatch.setattr(start_module, "create_rop_parser", _unexpected_parser)
+
+    with pytest.raises(SystemExit) as exc_info:
+        start_module._handle_rop_cli(
+            ["run"],
+            {
+                "modules": {
+                    "registry": [{"id": "beeagent-rop", "enabled": False}]
+                }
+            },
+            logging.getLogger("test"),
+        )
+
+    assert exc_info.value.code == 1
+    assert "beeagent-rop module is disabled" in capsys.readouterr().err
+
+
 def test_bootstrap_command_dispatches_runtime_bootstrap(monkeypatch) -> None:
     called: dict[str, Any] = {}
 

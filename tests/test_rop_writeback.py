@@ -507,6 +507,13 @@ class TestWritebackSettingsValidation:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         settings = self._load()
+        for item in settings["modules"]["registry"]:
+            if item["id"] == "beeagent-rop":
+                item["enabled"] = True
+                break
+        settings["rop"]["ai_assist"]["enabled"] = False
+        settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = False
+        monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "test-trigger")
         monkeypatch.delenv("BITRIX_WRITEBACK_WEBHOOK_URL", raising=False)
         settings["bitrix"]["writeback"]["enabled"] = True
         settings["bitrix"]["writeback"]["stages"] = {
@@ -4858,6 +4865,7 @@ class TestWritebackExecutor:
         )
         assert record["status"] == "attached"
         assert record["email_activity_id"] == 9001
+
     def test_retry_failed_rearms_exhausted_created_lead_attachment(
         self, tmp_path: Path, writeback_env: None
     ) -> None:
@@ -4914,6 +4922,7 @@ class TestWritebackExecutor:
         assert record["remote_entity_id"] == 1001
         assert record["email_activity_id"] == 9001
         assert record["email_attachment_status"] == "attached"
+
     def test_terminal_401_fails_and_is_not_retried(
         self, tmp_path: Path, writeback_env: None
     ) -> None:

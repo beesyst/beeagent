@@ -71,6 +71,14 @@ def _settings(
     profiles: dict | None = None,
 ) -> dict:
     return {
+        "modules": {
+            "registry": [
+                {
+                    "id": "beeagent-rop",
+                    "enabled": True,
+                }
+            ]
+        },
         "rop": {
             "ai_assist": {
                 "enabled": ai_assist_enabled,

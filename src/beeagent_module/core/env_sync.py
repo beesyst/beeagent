@@ -9,7 +9,6 @@ from typing import Any
 
 import yaml
 
-
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _ENV_VALUE_MAX_LENGTH = 4096
 
@@ -210,6 +209,7 @@ def _read_internal_secret_bootstrap_config(settings_path: Path) -> dict[str, Any
             auth_cfg = raw_auth_cfg
 
     bitrix_cfg = data.get("bitrix", {})
+    modules_cfg = data.get("modules", {})
     widget_cfg: dict[str, Any] = {}
     blacklist_trigger_cfg: dict[str, Any] = {}
     if isinstance(bitrix_cfg, dict):
@@ -219,6 +219,14 @@ def _read_internal_secret_bootstrap_config(settings_path: Path) -> dict[str, Any
         raw_blacklist_trigger_cfg = bitrix_cfg.get("blacklist_trigger", {})
         if isinstance(raw_blacklist_trigger_cfg, dict):
             blacklist_trigger_cfg = raw_blacklist_trigger_cfg
+
+    registry = modules_cfg.get("registry", []) if isinstance(modules_cfg, dict) else []
+    rop_enabled = isinstance(registry, list) and any(
+        isinstance(item, dict)
+        and item.get("id") == "beeagent-rop"
+        and item.get("enabled") is True
+        for item in registry
+    )
 
     auth_enabled = auth_cfg.get("enabled") is True
     session_secret_env = auth_cfg.get("session_secret_env") if auth_enabled else None
@@ -235,7 +243,7 @@ def _read_internal_secret_bootstrap_config(settings_path: Path) -> dict[str, Any
         widget_token_env = ""
 
     blacklist_trigger_secret_env = ""
-    if blacklist_trigger_cfg.get("enabled") is True:
+    if rop_enabled and blacklist_trigger_cfg.get("enabled") is True:
         value = blacklist_trigger_cfg.get("secret_env")
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError("Invalid or missing bitrix.blacklist_trigger.secret_env")

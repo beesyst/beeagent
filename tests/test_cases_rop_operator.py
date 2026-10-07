@@ -22,7 +22,10 @@ from beeagent_module.core.module_contract import (
     ModuleResult,
 )
 from beeagent_module.core.module_registry import ModuleRegistry
-from beeagent_module.core.settings import load_settings
+from beeagent_module.core.settings import (
+    apply_runtime_settings_overrides,
+    load_settings,
+)
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -5098,6 +5101,10 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = True
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -5400,6 +5407,10 @@ def _write_adjudicator_batch_source(
 
 def _adjudicator_enabled_settings() -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = True
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -5628,6 +5639,10 @@ def test_adjudicator_enabled_skips_legacy_ai_assist_provider_path(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = False
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -5768,6 +5783,11 @@ def test_adjudicator_env_kill_switch_skips_all_ai_paths(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
+    apply_runtime_settings_overrides(settings)
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = False
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -5926,6 +5946,10 @@ def test_ai_adjudicator_low_confidence_preserves_deterministic_result(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = True
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -6440,6 +6464,10 @@ def _semantic_attachment_settings() -> dict:
 
 def _semantic_mailbox_settings() -> dict:
     settings = load_settings(_project_root() / "config" / "settings.yml")
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+            break
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _semantic_attachment_settings(),

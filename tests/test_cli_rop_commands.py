@@ -23,7 +23,10 @@ from beeagent_module.core.cli import (
 )
 from beeagent_module.core.rop_review_export import review_tsv_columns
 from beeagent_module.core.rop_sources import load_rop_sources
-from beeagent_module.core.settings import load_settings
+from beeagent_module.core.settings import (
+    apply_runtime_settings_overrides,
+    load_settings,
+)
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -49,6 +52,8 @@ def _with_sources(settings: dict) -> dict:
             item["enabled"] = True
         elif item["id"] == "beedrill":
             item["enabled"] = False
+
+    apply_runtime_settings_overrides(settings)
 
     settings["rop"]["sources"] = [
         {
