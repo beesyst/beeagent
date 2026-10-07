@@ -73,8 +73,8 @@ filterwarnings = [
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
-beedrill = { path = "../beedrill", editable = true }
-beesdk = { path = "../beesdk", editable = true }
+beedrill = { git = "https://github.com/beesyst/beedrill.git", rev = "ba4401c4186ae5723ab6ac46741b5b3518f000c7" }
+beesdk = { git = "https://github.com/beesyst/beesdk.git", rev = "e6629f6ceb4ad58a711c5a7f640db712ce00106a" }
 torch = [
     { index = "pytorch-cpu", extra = "docling-cpu" },
     { index = "pytorch-cu126", extra = "docling-cuda" },
@@ -95,6 +95,9 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv]
+override-dependencies = [
+    "beesdk @ git+https://github.com/beesyst/beesdk.git@e6629f6ceb4ad58a711c5a7f640db712ce00106a",
+]
 conflicts = [
     [
         { extra = "docling-cpu" },

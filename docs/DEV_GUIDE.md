@@ -109,14 +109,18 @@ The host exposes three approved BeeDrill scenarios:
 
 The SPL scenario executes the fixed canonical SPL Token experiment inside the approved offline Surfpool boundary. BeeAgent owns runtime, program selection, RPC, transactions, ephemeral keys, timeouts, and cleanup; it only reports the BeeDrill-produced `security_verdict`. The command invokes the registered `beedrill` module through the normal module runtime, then copies its `security_verdict` into a JSON summary. It does not interpret or calculate that verdict. Exit status is `0` for `pass`, `1` for a completed `fail`, `2` for invalid command input, and `3` for incomplete, refused, timeout, or error results. The canonical module result and scenario artifact remain under the generated run's existing artifact directory.
 
-Use `./start.sh beedrill check` to execute all three scenarios in the fixed approved order. BeeDrill is disabled by default, so explicitly enable it in `config/settings.yml` before this command:
+Use `./start.sh beedrill check` to execute all three scenarios in the fixed
+approved order. The tracked configuration enables BeeDrill. The normal
+`./start.sh` bootstrap resolves its pinned release-backed optional extra; normal
+user and judge use does not require sibling BeeSDK or BeeDrill repositories.
+Maintainers may use sibling sources only for coordinated local development.
 
-```yaml
-- id: "beedrill"
-  enabled: true
-```
-
-The normal `./start.sh` bootstrap then selects the existing optional BeeDrill extra. The aggregate command creates separate run and session IDs for each scenario and writes a bounded host suite summary under `storage/runs/`; it stores references only, never raw evaluator evidence. Its suite exit status is `0` for a complete PASS, `1` for a completed security FAIL without incompleteness, `2` for an invalid check invocation, and `3` for incomplete/runtime failure, including missing or unknown verdicts. CI should use the process exit status directly:
+The aggregate command creates separate run and session IDs for each scenario and
+writes a bounded host suite summary under `storage/runs/`; it stores references
+only, never raw evaluator evidence. Its suite exit status is `0` for a complete
+PASS, `1` for a completed security FAIL without incompleteness, `2` for an
+invalid check invocation, and `3` for incomplete/runtime failure, including
+missing or unknown verdicts. CI should use the process exit status directly:
 
 ```yaml
 - name: BeeDrill security regression
@@ -167,7 +171,13 @@ uv sync
 
 Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop` и `beedrill`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
 
-`./start.sh` запускает обычный `uv sync --frozen`, читает settings и затем синхронизирует extras всех enabled module entries и выбранный Docling CPU/CUDA profile. Disabled entries не добавляют dependencies. Normal sync сохраняет pytest в environment. Production ROP layout всегда включает sibling `beesdk/`, подготовленный из approved BeeSDK source; `beedrill/` не требуется при disabled BeeDrill entry.
+`./start.sh` запускает обычный `uv sync --frozen`, читает settings и затем
+синхронизирует extras всех enabled module entries и выбранный Docling CPU/CUDA
+profile. Disabled entries не добавляют dependencies. Normal sync сохраняет
+pytest в environment. BeeSDK и enabled BeeDrill разрешаются из закреплённых
+release-backed sources; sibling checkout нужен только для coordinated source
+development. Local editable `beeagent-rop` относится к enabled ROP development
+profile и не требуется normal BeeDrill flow.
 
 ### Базовые команды
 

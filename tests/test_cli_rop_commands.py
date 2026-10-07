@@ -44,6 +44,12 @@ def _null_logger() -> logging.Logger:
 
 
 def _with_sources(settings: dict) -> dict:
+    for item in settings["modules"]["registry"]:
+        if item["id"] == "beeagent-rop":
+            item["enabled"] = True
+        elif item["id"] == "beedrill":
+            item["enabled"] = False
+
     settings["rop"]["sources"] = [
         {
             "source_id": "rop_batch_sample",

@@ -17,6 +17,9 @@ conflicts = [[
     { package = "beeagent", extra = "docling-cuda" },
 ]]
 
+[manifest]
+overrides = [{ name = "beesdk", git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a" }]
+
 [[package]]
 name = "accelerate"
 version = "1.14.0"
@@ -144,8 +147,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beeagent-rop", marker = "extra == 'rop'", editable = "../beeagent-rop" },
-    { name = "beedrill", marker = "extra == 'beedrill'", editable = "../beedrill" },
-    { name = "beesdk", editable = "../beesdk" },
+    { name = "beedrill", marker = "extra == 'beedrill'", git = "https://github.com/beesyst/beedrill.git?rev=ba4401c4186ae5723ab6ac46741b5b3518f000c7" },
+    { name = "beesdk", git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
@@ -186,26 +189,15 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 [[package]]
 name = "beedrill"
 version = "0.14.0"
-source = { editable = "../beedrill" }
+source = { git = "https://github.com/beesyst/beedrill.git?rev=ba4401c4186ae5723ab6ac46741b5b3518f000c7#ba4401c4186ae5723ab6ac46741b5b3518f000c7" }
 dependencies = [
     { name = "beesdk" },
 ]
 
-[package.metadata]
-requires-dist = [{ name = "beesdk", editable = "../beesdk" }]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = "==9.1.1" }]
-
 [[package]]
 name = "beesdk"
 version = "0.2.0"
-source = { editable = "../beesdk" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = "==9.1.1" }]
+source = { git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a#e6629f6ceb4ad58a711c5a7f640db712ce00106a" }
 
 [[package]]
 name = "beeui"

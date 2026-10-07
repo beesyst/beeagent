@@ -486,34 +486,31 @@ The project uses a locked `uv` environment for reproducible development and runt
 
 ## Development Setup
 
-### Important: current workspace dependency model
+### Release-backed BeeDrill use
 
-The current `main` branch is still developed as part of the Bee workspace.
-
-`pyproject.toml` currently declares sibling editable sources including:
-
-```text
-../beesdk
-../beedrill
-../beeagent-rop
-```
-
-Some domain modules may be private.
-
-As a result, the current repository is **not yet a completely standalone external installation from a fresh public clone**.
-
-This is a packaging/dependency-boundary limitation, not an architectural requirement of BeeAgent.
-
-The intended framework model is that domain modules can be installed independently and can remain private.
-
-### Bee workspace development
-
-With the required sibling packages available:
+The tracked configuration enables BeeDrill. A normal user or judge needs only
+BeeAgent and the required local Solana toolchain:
 
 ```bash
 git clone https://github.com/beesyst/beeagent.git
 cd beeagent
+./start.sh beedrill check
+```
 
+The normal bootstrap resolves the pinned BeeSDK and BeeDrill release revisions
+from `uv.lock`; it does not require sibling `beesdk` or `beedrill` repositories,
+a separate BeeDrill installer, or a manual `uv` command. BeeDrill's deterministic
+suite does not require an AI provider.
+
+### Coordinated Bee workspace development
+
+Maintainers changing source across repositories may use local sibling checkouts.
+The optional `beeagent-rop` profile remains a local editable development source
+when it is enabled. Normal release-backed BeeDrill use does not enable it.
+
+With the required development siblings available, use the standard commands:
+
+```bash
 ./start.sh
 ```
 
@@ -523,19 +520,13 @@ Explicit runtime:
 ./start.sh telegram
 ```
 
-or:
-
-```bash
-./start.sh web
-```
-
 Run tests:
 
 ```bash
 uv run --frozen pytest -q
 ```
 
-The normal application entrypoint is `./start.sh`; a separate install command is not required for the current workspace development flow.
+The normal application entrypoint is `./start.sh`; a separate install command is not required.
 
 ## Extending BeeAgent
 
