@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.2...beeagent-v0.70.3) (2026-10-08)
+
+
+### Bug Fixes
+
+* separate test and runtime dependency profiles ([5306a00](https://github.com/beesyst/beeagent/commit/5306a00a9439206b9da7dbae8848495e691f3289))
+
 ## [0.70.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.1...beeagent-v0.70.2) (2026-10-07)
 
 
