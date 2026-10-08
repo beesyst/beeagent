@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.4](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.3...beeagent-v0.70.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* restore BeeDrill native runtime readiness ([#293](https://github.com/beesyst/beeagent/issues/293)) ([5279d00](https://github.com/beesyst/beeagent/commit/5279d004d85f0ce604e62c34e4dcfe560637f7d7))
+
 ## [0.70.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.2...beeagent-v0.70.3) (2026-10-08)
 
 
