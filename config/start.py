@@ -122,7 +122,7 @@ def _sync_runtime_extras(extras: list[str], project_root: Path) -> None:
         for extra in extras
     ):
         raise RuntimeError("Invalid runtime dependency extra")
-    argv = ["uv", "sync", "--frozen"]
+    argv = ["uv", "sync", "--frozen", "--no-dev"]
     for extra in sorted(set(extras)):
         argv.extend(["--extra", extra])
     completed = subprocess.run(

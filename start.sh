@@ -16,7 +16,7 @@ fi
 
 if ! uv run --frozen --no-sync python3 -c "import config.start" >/dev/null 2>&1; then
   echo "[run] bootstrapping base environment from uv.lock..."
-  uv sync --frozen
+  uv sync --frozen --no-dev
 fi
 
 echo "[run] resolving extractor profile and syncing environment..."

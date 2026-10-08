@@ -498,7 +498,7 @@ BeeSDK устанавливается как закреплённый `beesdk==0
 
 `./start.sh` устанавливает base dependencies и BeeSDK, читает settings, выполняет locked sync для enabled module extras и выбранного Docling profile, затем запускает BeeAgent. Текущий tracked profile включает BeeDrill; его deterministic suite не требует AI provider.
 
-Для coordinated local development maintainer может использовать sibling checkouts. `beeagent-rop` остаётся local editable development source только когда этот optional profile включён; normal release-backed BeeDrill flow его не включает.
+Для coordinated local development maintainer может использовать sibling checkouts. Dev/test profile (`uv run pytest -q`) использует configured local editable `beeagent-rop` независимо от runtime enablement. Normal BeeDrill runtime запускается без dev dependencies и при disabled ROP не включает `beeagent-rop`.
 
 ### Coordinated development внутри Bee workspace
 
@@ -526,7 +526,7 @@ cd beeagent
 Тесты:
 
 ```bash
-uv run --frozen --no-sync pytest -q
+uv run pytest -q
 ```
 
 Canonical application entrypoint — `./start.sh`; отдельная install-команда не требуется.

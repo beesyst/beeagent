@@ -496,6 +496,7 @@ def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
             "uv",
             "sync",
             "--frozen",
+            "--no-dev",
             "--extra",
             "docling-cpu",
             "--extra",

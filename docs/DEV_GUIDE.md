@@ -160,7 +160,7 @@ uv sync
 
 Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop` и `beedrill`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
 
-`./start.sh` запускает обычный `uv sync --frozen`, читает settings и затем синхронизирует extras всех enabled module entries и выбранный Docling CPU/CUDA profile. Disabled entries не добавляют dependencies. Normal sync сохраняет pytest в environment. BeeSDK и enabled BeeDrill разрешаются из закреплённых release-backed sources; sibling checkout нужен только для coordinated source development. Local editable `beeagent-rop` относится к enabled ROP development profile и не требуется normal BeeDrill flow.
+`uv run pytest -q` использует полный dev/test profile, включая locked ROP и Docling CPU dependencies, независимо от runtime enabled modules; в coordinated workspace ROP для этого profile разрешается через configured local editable `beeagent-rop` source. `./start.sh` запускает `uv sync --frozen --no-dev`, читает settings и затем синхронизирует extras только enabled module entries и выбранный Docling CPU/CUDA profile с `--no-dev`. Disabled entries не добавляют runtime dependencies. BeeSDK и enabled BeeDrill разрешаются из закреплённых release-backed sources. Normal BeeDrill runtime при disabled ROP не включает `beeagent-rop` и не требует ROP runtime setup.
 
 ### Базовые команды
 

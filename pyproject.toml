@@ -42,6 +42,11 @@ docling-cuda = [
 dev = [
     "httpx2==2.10.0",
     "pytest==9.1.1",
+    "beeagent-rop",
+    "docling",
+    "onnxruntime",
+    "torch",
+    "torchvision",
 ]
 
 [build-system]
@@ -76,10 +81,12 @@ beeagent-rop = { path = "../beeagent-rop", editable = true }
 beedrill = { git = "https://github.com/beesyst/beedrill.git", rev = "ba4401c4186ae5723ab6ac46741b5b3518f000c7" }
 beesdk = { git = "https://github.com/beesyst/beesdk.git", rev = "e6629f6ceb4ad58a711c5a7f640db712ce00106a" }
 torch = [
+    { index = "pytorch-cpu", group = "dev" },
     { index = "pytorch-cpu", extra = "docling-cpu" },
     { index = "pytorch-cu126", extra = "docling-cuda" },
 ]
 torchvision = [
+    { index = "pytorch-cpu", group = "dev" },
     { index = "pytorch-cpu", extra = "docling-cpu" },
     { index = "pytorch-cu126", extra = "docling-cuda" },
 ]
@@ -101,6 +108,10 @@ override-dependencies = [
 conflicts = [
     [
         { extra = "docling-cpu" },
+        { extra = "docling-cuda" },
+    ],
+    [
+        { group = "dev" },
         { extra = "docling-cuda" },
     ],
 ]

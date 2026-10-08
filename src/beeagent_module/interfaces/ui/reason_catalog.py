@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from beeagent_rop.contracts import ClassificationReasonCode
-
 from beeagent_module.core.rop_reason_contract import (
     AI_EVIDENCE_CODES,
     AI_REASON_CODES,
@@ -426,6 +424,8 @@ def is_valid_evidence_code(code: str) -> bool:
 
 
 def check_classification_coverage() -> list[str]:
+    from beeagent_rop.contracts import ClassificationReasonCode
+
     public_codes = {code.value for code in ClassificationReasonCode}
     return sorted(public_codes - set(_CLASSIFICATION_REASON_DISPLAY))
 

@@ -2,19 +2,17 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 resolution-markers = [
-    "sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda'",
-    "sys_platform == 'win32' and extra != 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda'",
-    "sys_platform == 'emscripten' and extra != 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda'",
-    "sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda'",
-    "sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda'",
-    "sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda'",
-    "extra != 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda'",
+    "sys_platform == 'darwin'",
+    "sys_platform == 'win32'",
+    "sys_platform == 'emscripten'",
+    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 conflicts = [[
     { package = "beeagent", extra = "docling-cpu" },
     { package = "beeagent", extra = "docling-cuda" },
+], [
+    { package = "beeagent", extra = "docling-cuda" },
+    { package = "beeagent", group = "dev" },
 ]]
 
 [manifest]
@@ -31,8 +29,8 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torch", version = "2.13.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8d/75/94cd5d389649578aca399e5aa822637eec18319a1dadc400ffe2f9a7493f/accelerate-1.14.0.tar.gz", hash = "sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d", size = 412167, upload-time = "2026-06-11T13:45:52.326Z" }
@@ -100,7 +98,7 @@ wheels = [
 
 [[package]]
 name = "beeagent"
-version = "0.70.1"
+version = "0.70.2"
 source = { editable = "." }
 dependencies = [
     { name = "beesdk" },
@@ -123,10 +121,10 @@ beedrill = [
 docling-cpu = [
     { name = "docling" },
     { name = "onnxruntime" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 docling-cuda = [
     { name = "docling" },
@@ -140,8 +138,15 @@ rop = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "beeagent-rop" },
+    { name = "docling" },
     { name = "httpx2" },
+    { name = "onnxruntime" },
     { name = "pytest" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 
 [package.metadata]
@@ -172,8 +177,13 @@ provides-extras = ["rop", "beedrill", "docling-cpu", "docling-cuda"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "beeagent-rop", editable = "../beeagent-rop" },
+    { name = "docling" },
     { name = "httpx2", specifier = "==2.10.0" },
+    { name = "onnxruntime" },
     { name = "pytest", specifier = "==9.1.1" },
+    { name = "torch", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "beeagent", group = "dev" } },
+    { name = "torchvision", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "beeagent", group = "dev" } },
 ]
 
 [[package]]
@@ -265,7 +275,7 @@ name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
@@ -298,7 +308,7 @@ name = "cuda-bindings"
 version = "12.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/68/e4/075052d42872cf8162da53f14447a4b8abc004c3750e4b724ee502428da0/cuda_bindings-12.9.7-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:775960ac9e530717f3b48e165cc6f68684fa9a4141764fd923e4c1a9820acc73", size = 7060090, upload-time = "2026-05-27T18:44:30.281Z" },
@@ -327,37 +337,37 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cufft = [
-    { name = "nvidia-cufft-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cufft-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cufile = [
-    { name = "nvidia-cufile-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cufile-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 curand = [
-    { name = "nvidia-curand-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-curand-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cusolver-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cusparse-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 
 [[package]]
@@ -405,7 +415,7 @@ name = "docling"
 version = "2.122.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "docling-slim", extra = ["standard"], marker = "extra == 'extra-8-beeagent-docling-cpu' or extra == 'extra-8-beeagent-docling-cuda'" },
+    { name = "docling-slim", extra = ["standard"] },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/51/5d/c7c281713a55d80b6affefb4f037f35feee2064c6ab1683a30c0ba15a7d8/docling-2.122.0.tar.gz", hash = "sha256:30fd085e3ebd729e02f9c38e9361df95cb240e4e2d52c807f95043db6df8a677", size = 9066, upload-time = "2026-08-25T09:31:37.017Z" }
 wheels = [
@@ -460,12 +470,12 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic" },
     { name = "rtree" },
-    { name = "safetensors", extra = ["torch"], marker = "extra == 'extra-8-beeagent-docling-cpu' or extra == 'extra-8-beeagent-docling-cuda'" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "safetensors", extra = ["torch"] },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torch", version = "2.13.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
-    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torchvision", version = "0.28.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "tqdm" },
     { name = "transformers" },
@@ -518,7 +528,7 @@ standard = [
     { name = "accelerate" },
     { name = "beautifulsoup4" },
     { name = "defusedxml" },
-    { name = "docling-core", extra = ["chunking"], marker = "extra == 'extra-8-beeagent-docling-cpu' or extra == 'extra-8-beeagent-docling-cuda'" },
+    { name = "docling-core", extra = ["chunking"] },
     { name = "docling-ibm-models" },
     { name = "docling-parse" },
     { name = "httpx" },
@@ -539,11 +549,11 @@ standard = [
     { name = "rich" },
     { name = "rtree" },
     { name = "scipy" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torch", version = "2.13.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
-    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torchvision", version = "0.28.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "typer" },
     { name = "websockets" },
@@ -672,8 +682,8 @@ name = "httpcore2"
 version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra != 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda')" },
-    { name = "truststore", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra != 'extra-8-beeagent-docling-cpu' and extra != 'extra-8-beeagent-docling-cuda')" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/83/a896fc59940fc5a6e2aff3a4be1d92fa890112936803b331cae75a993c34/httpcore2-2.10.0.tar.gz", hash = "sha256:13c0cc3d1919d4f28457f60cd2c2abe04113a8af184ccf1142811beba936f9dc", size = 67427, upload-time = "2026-08-09T09:11:32.123Z" }
 wheels = [
@@ -700,11 +710,11 @@ name = "httpx2"
 version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "httpcore2", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "anyio", marker = "sys_platform != 'emscripten'" },
+    { name = "httpcore2", marker = "sys_platform != 'emscripten'" },
+    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten'" },
     { name = "idna" },
-    { name = "truststore", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bd/3d/f9a8c07a3884f3e5b26205e8436a18b3af61c5d53192c3bea235574dbbec/httpx2-2.10.0.tar.gz", hash = "sha256:8741d7329fe2c7885fc9ceb61c8217acfb87a85f75723714b89ebf7ad7196338", size = 98749, upload-time = "2026-08-09T09:11:33.24Z" }
 wheels = [
@@ -947,7 +957,7 @@ dependencies = [
     { name = "anyio" },
     { name = "distro" },
     { name = "httpx" },
-    { name = "orjson", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "orjson", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "packaging" },
     { name = "pydantic" },
     { name = "requests" },
@@ -1270,7 +1280,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z" },
@@ -1283,7 +1293,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/37/c50d2b2f2c07e146776389e3080f4faf70bcc4fa6e19d65bb54ca174ebc3/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d16079550df460376455cba121db6564089176d9bac9e4f360493ca4741b22a6", size = 200164144, upload-time = "2024-11-20T17:40:58.288Z" },
@@ -1319,9 +1329,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "nvidia-cusparse-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "nvidia-cusparse-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/93/17/dbe1aa865e4fdc7b6d4d0dd308fdd5aaab60f939abfc0ea1954eac4fb113/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_aarch64.whl", hash = "sha256:0ce237ef60acde1efc457335a2ddadfd7610b892d94efee7b776c64bb1cac9e0", size = 157833628, upload-time = "2024-10-01T17:05:05.591Z" },
@@ -1336,7 +1346,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'emscripten' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform == 'win32' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/eb/6681efd0aa7df96b4f8067b3ce7246833dd36830bb4cec8896182773db7d/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d25b62fb18751758fe3c93a4a08eff08effedfe4edf1c6bb5afd0890fe88f887", size = 216451147, upload-time = "2024-11-20T17:44:18.055Z" },
@@ -1800,7 +1810,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2158,8 +2168,8 @@ wheels = [
 [package.optional-dependencies]
 torch = [
     { name = "numpy" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "torch", version = "2.13.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-8-beeagent-docling-cuda'" },
 ]
 
@@ -2219,7 +2229,7 @@ name = "semchunk"
 version = "3.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpire", extra = ["dill"], marker = "extra == 'extra-8-beeagent-docling-cpu' or extra == 'extra-8-beeagent-docling-cuda'" },
+    { name = "mpire", extra = ["dill"] },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/a0/ce7e3d6cc76498fd594e667d10a03f17d7cced129e46869daec23523bf5a/semchunk-3.2.5.tar.gz", hash = "sha256:ee15e9a06a69a411937dd8fcf0a25d7ef389c5195863140436872a02c95b0218", size = 17667, upload-time = "2025-10-28T02:12:38.025Z" }
@@ -2393,13 +2403,13 @@ resolution-markers = [
     "sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "fsspec", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "fsspec", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:d849b390e07d8d333ce8ecaf91b273c656c598379a19c9acf1318a883f6b391c", upload-time = "2026-07-08T12:26:28Z" },
@@ -2416,13 +2426,13 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp314-cp314-linux_s390x.whl", hash = "sha256:dec241fef3984c0d1edadd1f58708e218d4eae881ceef7bc10cf9964d41b68b9", upload-time = "2026-07-08T19:30:20Z" },
@@ -2450,19 +2460,19 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "cuda-bindings", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "cuda-bindings", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "filelock", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "fsspec", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "jinja2", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "networkx", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
-    { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "nvidia-nccl-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "nvidia-nccl-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "setuptools", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
     { name = "sympy", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
-    { name = "triton", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "triton", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (python_full_version >= '3.15' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (sys_platform != 'linux' and extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
     { name = "typing-extensions", marker = "extra == 'extra-8-beeagent-docling-cuda'" },
 ]
 wheels = [
@@ -2486,9 +2496,9 @@ resolution-markers = [
     "sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "pillow", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "numpy", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "pillow", marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform == 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:3bd9dba55224a9db4a2d77f6feaa5651770d8c8e86d3d0ddb0fa6bec54c8712b", upload-time = "2026-07-08T12:26:40Z" },
@@ -2505,9 +2515,9 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "pillow", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda')" },
+    { name = "numpy", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "pillow", marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-beeagent-docling-cpu') or (sys_platform != 'darwin' and extra != 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cpu' and extra == 'extra-8-beeagent-docling-cuda') or (extra == 'extra-8-beeagent-docling-cuda' and extra == 'group-8-beeagent-dev')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:3a1a76c8decb1d7bbedd3588bccc90fb269944b7321a773db181735b42115422", upload-time = "2026-07-08T12:26:39Z" },
