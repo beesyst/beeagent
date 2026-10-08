@@ -12,6 +12,10 @@ from beeagent_module.cli.auth import ensure_auth_env, handle_auth_cli
 from beeagent_module.core.accelerator import detect_accelerator
 from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.beedrill_ai_assist import run_beedrill_ai_assist
+from beeagent_module.core.beedrill_toolchain import (
+    NativeToolchainError,
+    ensure_native_tools,
+)
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -66,6 +70,18 @@ _BEEDRILL_SCENARIOS = {
         "target_profile": "surfpool_local",
         "target_id": "spl_token_freeze_containment",
     },
+}
+_BEEDRILL_DIAGNOSTIC_REASONS = {
+    "missing_surfpool",
+    "missing_solana_cli",
+    "missing_cargo",
+    "missing_sbf_builder",
+    "incompatible_toolchain",
+    "surfpool_startup_failed",
+    "rpc_unavailable",
+    "build_failed",
+    "timeout",
+    "cleanup_failed",
 }
 
 
@@ -348,8 +364,8 @@ def _execute_beedrill_scenario(
             run_id=scenario_run_id,
             session_id=generate_session_id(),
         )
-    except Exception as exc:
-        logger.error("BeeDrill regression execution failed: %s", exc)
+    except Exception:
+        logger.error("BeeDrill regression execution failed")
         return _beedrill_error_record(scenario_run_id, scenario_id)
     execution_status = result.status
     security_verdict = (
@@ -358,8 +374,11 @@ def _execute_beedrill_scenario(
     explanation_facts = (
         result.data.get("explanation_facts") if execution_status == "ok" else None
     )
+    diagnostic_reason = (
+        result.data.get("diagnostic_reason") if execution_status != "ok" else None
+    )
     artifact_dir = f"runs/{scenario_run_id}/module-beedrill"
-    return {
+    record = {
         "schema_version": 1,
         "run_id": scenario_run_id,
         "scenario_id": scenario_id,
@@ -371,6 +390,12 @@ def _execute_beedrill_scenario(
             f"{artifact_dir}/{scenario_id}.json",
         ],
     }
+    if (
+        isinstance(diagnostic_reason, str)
+        and diagnostic_reason in _BEEDRILL_DIAGNOSTIC_REASONS
+    ):
+        record["diagnostic_reason"] = diagnostic_reason
+    return record
 
 
 def _beedrill_suite_record(record: dict[str, object]) -> dict[str, object]:
@@ -384,6 +409,11 @@ def _beedrill_suite_record(record: dict[str, object]) -> dict[str, object]:
         "security_verdict": security_verdict,
         "artifact_refs": record["artifact_refs"],
         "explanation_facts": record.get("explanation_facts"),
+        **(
+            {"diagnostic_reason": record["diagnostic_reason"]}
+            if isinstance(record.get("diagnostic_reason"), str)
+            else {}
+        ),
     }
 
 
@@ -400,8 +430,33 @@ def _handle_beedrill_check(settings: dict, logger: logging.Logger) -> int:
     suite_session_id = generate_session_id("beedrill-suite")
     try:
         registry = build_registry(settings, logger)
-    except Exception as exc:
-        logger.error("BeeDrill regression suite setup failed: %s", exc)
+        if _is_module_enabled(settings, "beedrill"):
+            ensure_native_tools(needs_sbf=True)
+    except NativeToolchainError as exc:
+        print(f"INCOMPLETE: {exc.reason}. {exc}", file=sys.stderr)
+        records = [
+            _beedrill_suite_record(
+                {
+                    **_beedrill_error_record(generate_run_id(), scenario_id),
+                    **(
+                        {"diagnostic_reason": exc.reason}
+                        if (
+                            scenario_id != "spl_token_freeze_containment_replay"
+                            or exc.reason
+                            not in {
+                                "missing_cargo",
+                                "missing_sbf_builder",
+                                "missing_solana_cli",
+                            }
+                        )
+                        else {}
+                    ),
+                }
+            )
+            for scenario_id in _BEEDRILL_SCENARIOS
+        ]
+    except Exception:
+        logger.error("BeeDrill regression suite setup failed")
         records = [
             _beedrill_suite_record(
                 _beedrill_error_record(generate_run_id(), scenario_id)
@@ -471,6 +526,10 @@ def _handle_beedrill_check(settings: dict, logger: logging.Logger) -> int:
     print("BeeDrill Security Regression")
     for record, status in zip(records, statuses, strict=True):
         print(f"{status.upper()}: {record['scenario_id']}")
+        if status == "incomplete" and record.get("diagnostic_reason"):
+            print(
+                f"Reason: {record['diagnostic_reason']}. Check native readiness, local RPC availability and the scenario artifact; retry beedrill check."
+            )
     print(f"Scenarios: passed={passed} failed={failed} incomplete={incomplete}")
     print(f"Suite status: {artifact_status.upper()}")
     return {"pass": 0, "fail": 1, "incomplete": 3}[artifact_status]
@@ -502,8 +561,18 @@ def _handle_beedrill_cli(
     run_id = generate_run_id()
     try:
         registry = build_registry(settings, logger)
-    except Exception as exc:
-        logger.error("BeeDrill regression execution failed: %s", exc)
+        if _is_module_enabled(settings, "beedrill"):
+            ensure_native_tools(
+                needs_sbf=scenario_id != "spl_token_freeze_containment_replay"
+            )
+    except NativeToolchainError as exc:
+        print(f"INCOMPLETE: {exc.reason}. {exc}", file=sys.stderr)
+        summary = {
+            **_beedrill_error_record(run_id, scenario_id),
+            "diagnostic_reason": exc.reason,
+        }
+    except Exception:
+        logger.error("BeeDrill regression execution failed")
         summary = _beedrill_error_record(run_id, scenario_id)
     else:
         summary = _execute_beedrill_scenario(registry, scenario_id, logger, run_id)

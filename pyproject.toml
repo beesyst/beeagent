@@ -23,7 +23,7 @@ rop = [
     "beeagent-rop==0.19.8",
 ]
 beedrill = [
-    "beedrill==0.14.0",
+    "beedrill==0.14.1",
 ]
 docling-cpu = [
     "docling==2.122.0",
