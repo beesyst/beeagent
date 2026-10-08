@@ -27,6 +27,7 @@ from solders.pubkey import Pubkey
 from solders.system_program import CreateAccountParams, create_account
 from solders.transaction import Transaction
 
+from beeagent_module.core.beedrill_toolchain import native_environment
 from beeagent_module.core.module_contract import AuthorityLevel
 
 _CAPABILITY_NAME = "solana.isolated_lifecycle"
@@ -127,9 +128,11 @@ class ScopedSolanaLifecycleCaller:
         if not _is_allowed_payload(payload):
             return self._refused(capability_name, "invalid_payload")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -204,9 +207,11 @@ class ScopedSolanaLifecycleCaller:
         if not _reference_target_resource_is_valid():
             return self._error(capability_name, "target_resource_unavailable")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -264,9 +269,11 @@ class ScopedSolanaLifecycleCaller:
         if not _reference_target_resource_is_valid():
             return self._error(capability_name, "target_resource_unavailable")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -324,9 +331,11 @@ class ScopedSolanaLifecycleCaller:
         if not _reference_target_resource_is_valid():
             return self._error(capability_name, "target_resource_unavailable")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -384,9 +393,11 @@ class ScopedSolanaLifecycleCaller:
         if not _reference_target_resource_is_valid():
             return self._error(capability_name, "target_resource_unavailable")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -444,9 +455,11 @@ class ScopedSolanaLifecycleCaller:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_spl_token_freeze_payload(payload):
             return self._refused(capability_name, "invalid_payload")
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
         try:
@@ -476,7 +489,12 @@ class ScopedSolanaLifecycleCaller:
             result = self._error(capability_name, str(exc))
         except TimeoutError:
             result = self._timeout(capability_name, "transaction_confirmation_timeout")
-        except OSError, ValueError:
+        except OSError:
+            result = self._error(
+                capability_name,
+                "startup_failed" if process is None else "spl_token_observation_failed",
+            )
+        except ValueError:
             result = self._error(capability_name, "spl_token_observation_failed")
         except Exception:
             result = self._error(capability_name, "runtime_error")
@@ -506,9 +524,11 @@ class ScopedSolanaLifecycleCaller:
         if not _reference_oracle_resource_is_valid():
             return self._error(capability_name, "target_resource_unavailable")
 
-        executable = shutil.which("surfpool")
+        executable = shutil.which(
+            "surfpool", path=_isolated_solana_environment()["PATH"]
+        )
         if executable is None:
-            return self._error(capability_name, "executable_unavailable")
+            return self._error(capability_name, "missing_surfpool")
 
         process: subprocess.Popen[bytes] | None = None
         result: CapabilityResult
@@ -775,10 +795,16 @@ def _reference_oracle_resource_is_valid() -> bool:
 
 @contextmanager
 def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
-    build_tool = shutil.which("cargo-build-sbf")
-    solana = shutil.which("solana")
-    if build_tool is None or solana is None:
-        raise _ReferenceTargetFailure("preparation_failed")
+    path = _isolated_solana_environment()["PATH"]
+    cargo = shutil.which("cargo", path=path)
+    build_tool = shutil.which("cargo-build-sbf", path=path)
+    solana = shutil.which("solana", path=path)
+    if cargo is None:
+        raise _ReferenceTargetFailure("missing_cargo")
+    if build_tool is None:
+        raise _ReferenceTargetFailure("missing_sbf_builder")
+    if solana is None:
+        raise _ReferenceTargetFailure("missing_solana_cli")
     resource_root = importlib.resources.files("beedrill").joinpath("reference_target")
     with importlib.resources.as_file(resource_root) as source_root:
         with tempfile.TemporaryDirectory(prefix="beeagent-reference-target-") as temp:
@@ -787,6 +813,10 @@ def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
             _run_target_command(
                 [
                     build_tool,
+                    "--skip-tools-install",
+                    "--no-rustup-override",
+                    "--tools-version",
+                    "v1.54",
                     "--manifest-path",
                     str(source_root / "Cargo.toml"),
                     "--sbf-out-dir",
@@ -845,10 +875,16 @@ def _prepared_reference_target() -> Iterator[_PreparedReferenceTarget]:
 
 @contextmanager
 def _prepared_reference_oracle_market() -> Iterator[_PreparedReferenceTarget]:
-    build_tool = shutil.which("cargo-build-sbf")
-    solana = shutil.which("solana")
-    if build_tool is None or solana is None:
-        raise _ReferenceTargetFailure("preparation_failed")
+    path = _isolated_solana_environment()["PATH"]
+    cargo = shutil.which("cargo", path=path)
+    build_tool = shutil.which("cargo-build-sbf", path=path)
+    solana = shutil.which("solana", path=path)
+    if cargo is None:
+        raise _ReferenceTargetFailure("missing_cargo")
+    if build_tool is None:
+        raise _ReferenceTargetFailure("missing_sbf_builder")
+    if solana is None:
+        raise _ReferenceTargetFailure("missing_solana_cli")
     resource_root = importlib.resources.files("beedrill").joinpath("reference_target")
     with importlib.resources.as_file(resource_root) as source_root:
         with tempfile.TemporaryDirectory(prefix="beeagent-reference-oracle-") as temp:
@@ -857,6 +893,10 @@ def _prepared_reference_oracle_market() -> Iterator[_PreparedReferenceTarget]:
             _run_target_command(
                 [
                     build_tool,
+                    "--skip-tools-install",
+                    "--no-rustup-override",
+                    "--tools-version",
+                    "v1.54",
                     "--manifest-path",
                     str(source_root / "oracle_market" / "Cargo.toml"),
                     "--sbf-out-dir",
@@ -1641,11 +1681,7 @@ def _reference_vault_outflow_signal(state: Keypair) -> bool:
 def _isolated_solana_environment(
     cargo_target_dir: Path | None = None,
 ) -> dict[str, str]:
-    home = Path(os.environ["HOME"])
-    environment = {
-        "HOME": str(home),
-        "PATH": os.pathsep.join((str(home / ".cargo" / "bin"), "/usr/bin", "/bin")),
-    }
+    environment = native_environment()
     if cargo_target_dir is not None:
         environment["CARGO_TARGET_DIR"] = str(cargo_target_dir)
     return environment
@@ -1655,13 +1691,18 @@ def _run_target_command(
     command: list[str], phase: str, environment: dict[str, str] | None = None
 ) -> None:
     try:
-        subprocess.run(
+        process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            check=True,
             env=environment or _isolated_solana_environment(),
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise _ReferenceTargetFailure(f"{phase}_failed") from exc
+    try:
+        status = process.wait(
             timeout=(
                 _BUILD_TIMEOUT_SECONDS
                 if phase == "build"
@@ -1671,9 +1712,21 @@ def _run_target_command(
             ),
         )
     except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as cleanup_error:
+            raise _ReferenceTargetFailure("cleanup_failed") from cleanup_error
+        try:
+            process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+            raise _ReferenceTargetFailure("cleanup_failed") from cleanup_error
         raise _ReferenceTargetTimeout(f"{phase}_timeout") from exc
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except OSError as exc:
         raise _ReferenceTargetFailure(f"{phase}_failed") from exc
+    if status != 0:
+        raise _ReferenceTargetFailure(f"{phase}_failed")
 
 
 @overload

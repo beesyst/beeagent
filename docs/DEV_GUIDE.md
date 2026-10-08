@@ -99,6 +99,12 @@ When Bitrix reconciliation is enabled, the poll persists durable ROP write-back 
 
 ## BeeDrill bounded regression runs
 
+The uncommitted #292 recovery snapshot prepares pinned Surfpool 1.5.0, Agave 4.2.2 and platform-tools 1.54 automatically on Linux x86_64 with glibc 2.34+. `core/beedrill_toolchain.py` owns artifact URLs, sizes and SHA-256 checksums. Preparation verifies official HTTPS downloads, bounds archive extraction, uses a locked atomic user-local cache and reuses verified installations. Reference SBF builds additionally require an existing C linker and glibc development files; first builds need Cargo registry HTTPS access. No sudo, native installer scripts or system package changes are used.
+
+Only enabled valid BeeDrill execution prepares Solana tooling; Web, Telegram and ROP do not. The individual SPL Token scenario needs only Surfpool. Child processes receive a managed HOME and PATH without host secrets; SBF builds cannot install tools or alter rustup. Build/deploy timeout kills the process group and reaps its parent. Unsupported platforms, missing prerequisites and corrupt caches remain INCOMPLETE / exit 3 with bounded diagnostic reasons. Move only the affected BeeDrill cache entry aside for inspection and retry. The existing shared entrypoint bootstrap installs `uv` when it is missing; the restriction on remote installer scripts applies to native Solana/SBF tools.
+
+These changes are not available from an unchanged main clone until delivered. For coordinated recovery verification use `PYTHONPATH=<workspace>/beedrill/src ./start.sh beedrill check`; a standalone recovery host can use the existing pinned BeeDrill release. External protocol onboarding remains outside the recovered three-scenario corpus.
+
 The host exposes three approved BeeDrill scenarios:
 
 - `./start.sh beedrill run --scenario reference_target_containment_replay`

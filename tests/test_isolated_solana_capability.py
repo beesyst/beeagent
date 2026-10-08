@@ -145,8 +145,12 @@ def test_isolated_solana_child_environment_is_allowlisted(
     environment = solana_capability._isolated_solana_environment(Path("/cargo-target"))
 
     assert environment == {
-        "HOME": "/tool-home",
-        "PATH": "/tool-home/.cargo/bin:/usr/bin:/bin",
+        "HOME": "/tool-home/.local/share/beeagent/beedrill-tools/home",
+        "PATH": (
+            "/tool-home/.local/share/beeagent/beedrill-tools/home/.cache/solana/v1.54/platform-tools/rust/bin:"
+            "/tool-home/.local/share/beeagent/beedrill-tools/agave-4.2.2/solana-release/bin:"
+            "/tool-home/.local/share/beeagent/beedrill-tools/surfpool-1.5.0:/usr/bin:/bin"
+        ),
         "CARGO_TARGET_DIR": "/cargo-target",
     }
 
@@ -207,7 +211,9 @@ def test_reference_target_builds_receive_bounded_environment(
             output.mkdir()
             (output / program_name).touch()
 
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda tool: f"/{tool}")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda tool, **_kwargs: f"/{tool}"
+    )
     monkeypatch.setattr(solana_capability, "_run_target_command", run_target_command)
     monkeypatch.setattr(solana_capability, "_rpc_request_airdrop", lambda _: None)
     monkeypatch.setattr(
@@ -232,10 +238,11 @@ def test_deployment_uses_the_bounded_environment(
     monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
     captured: dict[str, object] = {}
 
-    def fake_run(*_args: object, **kwargs: object) -> None:
+    def fake_run(*_args: object, **kwargs: object) -> _Process:
         captured.update(kwargs)
+        return _Process()
 
-    monkeypatch.setattr(solana_capability.subprocess, "run", fake_run)
+    monkeypatch.setattr(solana_capability.subprocess, "Popen", fake_run)
 
     solana_capability._run_target_command(
         ["/solana", "program", "deploy"], "deployment"
@@ -364,7 +371,8 @@ def test_caller_fails_explicitly_when_surfpool_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "beeagent_module.core.isolated_solana_capability.shutil.which", lambda _: None
+        "beeagent_module.core.isolated_solana_capability.shutil.which",
+        lambda _, **_kwargs: None,
     )
 
     result = _caller().call(
@@ -372,7 +380,7 @@ def test_caller_fails_explicitly_when_surfpool_is_unavailable(
     )
 
     assert result.status is CapabilityStatus.ERROR
-    assert result.diagnostics == {"reason": "executable_unavailable"}
+    assert result.diagnostics == {"reason": "missing_surfpool"}
 
 
 def test_successful_lifecycle_uses_fixed_offline_host_command(
@@ -388,7 +396,7 @@ def test_successful_lifecycle_uses_fixed_offline_host_command(
 
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen", fake_popen
@@ -436,7 +444,7 @@ def test_startup_failure_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen", fail_popen
@@ -463,7 +471,7 @@ def test_readiness_failures_are_explicit_and_reaped(
     process = _Process()
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen",
@@ -499,7 +507,7 @@ def test_rpc_failures_are_explicit_and_reaped(
     process = _Process()
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen",
@@ -533,7 +541,7 @@ def test_forced_cleanup_is_reported_after_reaping(
     process = _Process(force_cleanup=True)
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen",
@@ -685,7 +693,7 @@ def test_reference_target_caller_returns_bounded_evidence_and_reaps(
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.shutil.which",
-        lambda _: "/host/surfpool",
+        lambda _, **_kwargs: "/host/surfpool",
     )
     monkeypatch.setattr(
         "beeagent_module.core.isolated_solana_capability.subprocess.Popen",
@@ -778,7 +786,9 @@ def test_reference_target_containment_uses_fixed_scope_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -858,7 +868,9 @@ def test_reference_target_containment_maps_timeout_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -965,7 +977,9 @@ def test_reference_target_attack_uses_fixed_scope_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -1073,7 +1087,9 @@ def test_reference_target_attack_maps_failure_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -1105,7 +1121,9 @@ def test_reference_target_detection_uses_fixed_scope_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -1184,7 +1202,9 @@ def test_reference_target_detection_maps_detector_failure_and_timeout(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -1603,7 +1623,9 @@ def test_reference_target_phase_failure_is_explicit(
     monkeypatch.setattr(
         solana_capability, "_reference_target_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess,
         "Popen",
@@ -1785,7 +1807,9 @@ def test_reference_oracle_caller_returns_bounded_evidence_and_reaps(
     monkeypatch.setattr(
         solana_capability, "_reference_oracle_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
     )
@@ -2000,7 +2024,9 @@ def test_reference_oracle_phase_failures_are_explicit_and_reaped(
     monkeypatch.setattr(
         solana_capability, "_reference_oracle_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
     )
@@ -2032,7 +2058,9 @@ def test_reference_oracle_forced_cleanup_is_explicit(
     monkeypatch.setattr(
         solana_capability, "_reference_oracle_resource_is_valid", lambda: True
     )
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_args, **_kwargs: process
     )
@@ -2171,7 +2199,9 @@ def test_spl_token_caller_returns_bounded_evidence_and_reaps(
 ) -> None:
     process = _Process()
     evidence = _spl_token_freeze_evidence("fixed")
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
     )
@@ -2287,7 +2317,9 @@ def test_spl_token_caller_maps_target_failure_and_timeout(
     reason: str,
 ) -> None:
     process = _Process()
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
     )
@@ -2310,13 +2342,13 @@ def test_spl_token_caller_maps_target_failure_and_timeout(
 def test_spl_token_caller_rejects_unavailable_surfpool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: None)
+    monkeypatch.setattr(solana_capability.shutil, "which", lambda _, **_kwargs: None)
     result = _spl_token_freeze_caller().call(
         "solana.spl_token_freeze_containment",
         {**_SPL_TOKEN_FREEZE_PAYLOAD, "defense_condition": "fixed"},
     )
     assert result.status is CapabilityStatus.ERROR
-    assert result.diagnostics == {"reason": "executable_unavailable"}
+    assert result.diagnostics == {"reason": "missing_surfpool"}
 
 
 def test_spl_token_only_accepts_instruction_error_rejection(
@@ -2357,7 +2389,9 @@ def test_spl_token_cleanup_failure_is_bounded_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     process = _Process(force_cleanup=True)
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
     monkeypatch.setattr(
         solana_capability.subprocess, "Popen", lambda *_a, **_kw: process
     )
@@ -2388,7 +2422,9 @@ def test_spl_token_execution_child_environment_excludes_sentinel_secret(
     captured: dict[str, object] = {}
     process = _Process()
     monkeypatch.setenv("BEEDRILL_TEST_SENTINEL_SECRET", "sentinel-secret-value")
-    monkeypatch.setattr(solana_capability.shutil, "which", lambda _: "/host/surfpool")
+    monkeypatch.setattr(
+        solana_capability.shutil, "which", lambda _, **_kwargs: "/host/surfpool"
+    )
 
     def fake_popen(*_args: object, **kwargs: object) -> _Process:
         captured.update(kwargs)

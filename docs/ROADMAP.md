@@ -10476,6 +10476,141 @@ git diff --check
 
 A judge or developer can obtain BeeAgent, run its normal bootstrap and execute the configured BeeDrill security-regression suite without manually cloning BeeSDK or BeeDrill as sibling repositories, while all existing module, execution, authority and deterministic-verdict boundaries remain unchanged.
 
+### Iteration 44.11 — BeeDrill Native Bootstrap and Isolated Runtime Recovery
+
+**Status:** DONE
+
+#### Goal
+
+Restore reliable BeeDrill execution for clean BeeAgent checkouts by preparing verified native Solana tooling automatically, preserving secure process boundaries and removing protocol-specific LobsterPay integration from BeeAgent core.
+
+#### Scope
+
+- restore the verified main-based native readiness and runtime recovery;
+- retain the existing pinned BeeSDK/BeeDrill dependency-resolution model;
+- automatically prepare approved Surfpool, Solana CLI, SBF builder and Rust tools on supported Linux;
+- verify official download sources, file sizes, SHA-256 digests and safe extraction;
+- use a bounded, atomic, locked user-local native tool cache;
+- preserve the restricted child HOME/PATH and prevent unrelated credential forwarding;
+- apply bounded build/deploy timeouts and process-group cleanup;
+- return allowlisted diagnostic reasons for unsuccessful execution;
+- preserve the three existing BeeDrill regression paths and suite ordering;
+- preserve host-owned capability, RPC, execution and artifact boundaries;
+- remove LobsterPay-specific executor, ABI/account mapping and CLI dispatch;
+- preserve BeeAgent-ROP, BeeSDK, module registry and AI-assist compatibility.
+
+#### Excluded
+
+- new developer-owned Solana program execution;
+- LobsterPay-specific runtime integration;
+- generic protocol adapter or transaction interpreter;
+- dynamic plugins or arbitrary execution inputs;
+- new BeeSDK contracts;
+- production/mainnet execution;
+- operating-system package installation;
+- new dependencies, lockfile updates or version bump;
+- unrelated BeeAgent-ROP changes or UI development.
+
+#### Deliverable
+
+The existing BeeAgent entrypoint prepares the approved native dependencies and runs the bounded BeeDrill suite:
+
+```text
+./start.sh beedrill check
+→ native toolchain readiness
+→ scoped BeeDrill runtime
+→ three isolated Solana regressions
+→ observed host evidence
+→ BeeDrill security verdicts
+→ aggregate ArtifactAPI output
+→ CI exit status
+```
+
+Unsupported native environments must report INCOMPLETE, not a completed security FAIL.
+
+#### Acceptance criteria
+
+- the exact recovery implementation is present on the intended BeeAgent feature branch;
+- protocol-specific LobsterPay code and external execution dispatch are absent;
+- native toolchain identities, download digests and artifact sizes are pinned and verified;
+- archive extraction, cache locking, integrity and cleanup are bounded;
+- warm-cache reuse does not unnecessarily modify verified files;
+- child environments exclude unrelated host credentials;
+- unsupported environments and native preparation failures are explicitly diagnosed;
+- invalid or disabled BeeDrill execution does not provision native tools;
+- BeeAgent retains authority over all RPC, signing, process and isolation behavior;
+- BeeAgent never calculates or overrides BeeDrill security verdicts;
+- `PASS=0`, `FAIL=1`, `INVALID_CLI=2`, `INCOMPLETE=3`;
+- the original three-scenario aggregate schema and ordering are preserved;
+- BeeAgent, BeeDrill and BeeAgent-ROP remain compatible;
+- actual scenario evidence and package/import checks pass;
+- clean-clone suite and cold native preparation are verified as separate tests;
+- independent Max reproduction is pending until performed;
+- no unrelated configuration, dependency or version change is introduced.
+
+#### Checks
+
+```text
+native artifact provenance
+SHA-256 / download / redirect verification
+archive traversal and extraction bounds
+corrupt cache / unsupported platform
+cold native installation
+warm-cache reuse
+restricted HOME/PATH and secret handling
+module registry / disabled-module checks
+capability / authority allowlists
+timeout / process-group cleanup
+three real Solana regressions
+ineffective fixed containment → FAIL
+effective containment → PASS
+RPC failure → INCOMPLETE
+invalid CLI → 2
+suite aggregate/artifact verification
+full BeeAgent pytest
+full BeeDrill pytest
+BeeAgent-ROP compatibility
+clean-clone reproduction
+package build/import/public contracts
+SAST/security-sensitive review
+git diff --check
+```
+
+#### Evidence
+
+- BeeAgent: 2,225 passed.
+- BeeDrill: 586 passed.
+- BeeAgent-ROP: 483 passed.
+- Real Solana suite: 3/3 PASS.
+- Ineffective completed SPL freeze control: FAIL, exit 1.
+- Effective containment: PASS, exit 0.
+- Runtime failure: INCOMPLETE, exit 3.
+- Invalid CLI: exit 2.
+- Native cold preparation: 264.06 seconds.
+- Native cache reuse: 0.69 seconds.
+- Clean clone with exact corrected sources: 3/3 PASS using an existing native cache.
+- Independent Max reproduction: pending.
+
+Evidence and provenance:
+
+`/home/bee/Pro/beeagent/storage/mvp-correction-20261008/`
+
+These are implementation verification results, not an independent external-developer acceptance test.
+
+#### DoD
+
+BeeAgent can prepare the supported native Solana environment and execute the original BeeDrill security-regression corpus through the existing runtime without new protocol-specific core logic, authority escalation, secret leakage or regression to ROP functionality.
+
+Final closure requires adopted Issue scope, completed review and truthful reporting of independent developer validation.
+
+#### Product decision
+
+The external developer-owned pause/freeze execution capability was not implemented in this recovery.
+
+A generic transaction/account binding interpreter requires a separate security-sensitive design and product GO/NO-GO decision.
+
+Any future BeeDrill product integration must preserve BeeAgent ownership of isolated execution, runtime authority, RPC, ephemeral signers, timeouts and artifacts. BeeDrill retains domain evaluation and deterministic security verdicts.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
