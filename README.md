@@ -498,6 +498,18 @@ cd beeagent
 
 The normal bootstrap resolves the pinned BeeSDK and BeeDrill release revisions from `uv.lock`; it does not require sibling `beesdk` or `beedrill` repositories, a separate BeeDrill installer, or a manual `uv` command. BeeDrill's deterministic suite does not require an AI provider.
 
+### External LiteSVM security check
+
+For one supported, already-built LiteSVM project checkout, run:
+
+```bash
+./start.sh beedrill check --project /absolute/path/to/project
+```
+
+The checkout must contain `package.json`, `pnpm-lock.yaml`, `tests/litesvm.test.ts`, and preinstalled Mocha and TSX dependencies under `node_modules`. The host runs only its fixed Node/Mocha/TSX workflow, stages only the supported project inputs, excludes checkout `.git` and `.env*` files, and never runs project install scripts. Linux Bubblewrap user/network namespaces and `systemd-run --user` cgroup-v2 memory controls are required. Exit `0` means a nonempty test suite passed, `1` means it completed and failed, `3` means incomplete or unsupported, and `2` means invalid CLI use. A developer-owned test result is not an independent security verdict.
+
+The current pinned BeeDrill 0.15.0 release does not yet expose this new module case. Until the synchronized BeeDrill release and BeeAgent lock update are published, test a local BeeDrill checkout explicitly with `PYTHONPATH=/path/to/beedrill/src ./start.sh beedrill check --project /absolute/path/to/project`; this capability is therefore not yet proven for a clean release-backed clone.
+
 ### Coordinated Bee workspace development
 
 Maintainers changing source across repositories may use local sibling checkouts. The optional `beeagent-rop` profile remains a local editable development source when it is enabled. Normal release-backed BeeDrill use does not enable it.

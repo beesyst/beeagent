@@ -60,6 +60,10 @@ def _litesvm_diff_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="external_test_regression_diff")
 
 
+def _litesvm_check_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="external_test_check")
+
+
 def _use_reference_target_resources(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2519,3 +2523,27 @@ def test_litesvm_runner_infrastructure_failure_is_not_a_test_outcome(
 
     assert result.status is CapabilityStatus.ERROR
     assert result.diagnostics == {"reason": "runner_unavailable"}
+
+
+def test_litesvm_check_uses_the_single_project_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence = {"schema_version": 1, "side": "project", "test_count": 1}
+    monkeypatch.setattr(solana_capability, "run_litesvm_test", lambda *_: evidence)
+
+    result = _litesvm_check_caller().call(
+        "solana.isolated_litesvm_test_check", {"project": "/project"}
+    )
+
+    assert result.status is CapabilityStatus.OK
+    assert result.data == {"schema_version": 1, "project": evidence}
+
+
+def test_litesvm_check_refuses_extra_project_authority() -> None:
+    result = _litesvm_check_caller().call(
+        "solana.isolated_litesvm_test_check",
+        {"project": "/project", "command": "untrusted"},
+    )
+
+    assert result.status is CapabilityStatus.REFUSED
+    assert result.diagnostics == {"reason": "invalid_payload"}

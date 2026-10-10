@@ -198,8 +198,8 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "beedrill"
-version = "0.15.0"
-source = { git = "https://github.com/beesyst/beedrill.git#f1036e908564a3c25d76564d717029ad81ba5126" }
+version = "0.16.0"
+source = { git = "https://github.com/beesyst/beedrill.git#14531435fc215b65b6fc52759c0ae8819240cc56" }
 dependencies = [
     { name = "beesdk" },
 ]
