@@ -78,8 +78,8 @@ filterwarnings = [
 
 [tool.uv.sources]
 beeagent-rop = { path = "../beeagent-rop", editable = true }
-beedrill = { git = "https://github.com/beesyst/beedrill.git", rev = "ba4401c4186ae5723ab6ac46741b5b3518f000c7" }
-beesdk = { git = "https://github.com/beesyst/beesdk.git", rev = "e6629f6ceb4ad58a711c5a7f640db712ce00106a" }
+beedrill = { git = "https://github.com/beesyst/beedrill.git" }
+beesdk = { git = "https://github.com/beesyst/beesdk.git" }
 torch = [
     { index = "pytorch-cpu", group = "dev" },
     { index = "pytorch-cpu", extra = "docling-cpu" },
