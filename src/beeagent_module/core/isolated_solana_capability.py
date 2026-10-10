@@ -28,6 +28,11 @@ from solders.system_program import CreateAccountParams, create_account
 from solders.transaction import Transaction
 
 from beeagent_module.core.beedrill_toolchain import native_environment
+from beeagent_module.core.isolated_litesvm_test_runner import (
+    IsolatedTestInfrastructureFailure,
+    IsolatedTestRefusal,
+    run_litesvm_test,
+)
 from beeagent_module.core.module_contract import AuthorityLevel
 
 _CAPABILITY_NAME = "solana.isolated_lifecycle"
@@ -37,6 +42,7 @@ _REFERENCE_TARGET_DETECTION_CAPABILITY_NAME = "solana.reference_target_detection
 _REFERENCE_TARGET_CONTAINMENT_CAPABILITY_NAME = "solana.reference_target_containment"
 _REFERENCE_ORACLE_CAPABILITY_NAME = "solana.reference_oracle_manipulation"
 _SPL_TOKEN_FREEZE_CAPABILITY_NAME = "solana.spl_token_freeze_containment"
+_LITESVM_TEST_DIFF_CAPABILITY_NAME = "solana.isolated_litesvm_test_diff"
 _MODULE_ID = "beedrill"
 _CASE_TYPE = "isolated_solana_smoke"
 _REFERENCE_TARGET_CASE_TYPE = "reference_target_baseline"
@@ -45,6 +51,7 @@ _REFERENCE_TARGET_DETECTION_CASE_TYPE = "reference_target_detection"
 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE = "reference_target_containment_replay"
 _REFERENCE_ORACLE_CASE_TYPE = "reference_oracle_manipulation_replay"
 _SPL_TOKEN_FREEZE_CASE_TYPE = "spl_token_freeze_containment_replay"
+_LITESVM_TEST_DIFF_CASE_TYPE = "external_test_regression_diff"
 _TARGET_PROFILE = "surfpool_local"
 _REFERENCE_TARGET_ID = "reference_vault"
 _REFERENCE_TARGET_RESOURCE = "reference_target/reference_vault.json"
@@ -123,6 +130,8 @@ class ScopedSolanaLifecycleCaller:
             return self._call_reference_oracle_manipulation(capability_name, payload)
         if self.case_type == _SPL_TOKEN_FREEZE_CASE_TYPE:
             return self._call_spl_token_freeze_containment(capability_name, payload)
+        if self.case_type == _LITESVM_TEST_DIFF_CASE_TYPE:
+            return self._call_litesvm_test_diff(capability_name, payload)
         if capability_name != _CAPABILITY_NAME:
             return self._refused(capability_name, "unknown_capability")
         if not _is_allowed_payload(payload):
@@ -191,6 +200,7 @@ class ScopedSolanaLifecycleCaller:
                 _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
                 _REFERENCE_ORACLE_CASE_TYPE,
                 _SPL_TOKEN_FREEZE_CASE_TYPE,
+                _LITESVM_TEST_DIFF_CASE_TYPE,
             }
             and self.authority.value == AuthorityLevel.READ_ONLY.value
         )
@@ -576,6 +586,40 @@ class ScopedSolanaLifecycleCaller:
                     result = self._error(capability_name, f"cleanup_{cleanup}")
         return result
 
+    def _call_litesvm_test_diff(
+        self,
+        capability_name: str,
+        payload: Mapping[str, Any],
+    ) -> CapabilityResult:
+        if capability_name != _LITESVM_TEST_DIFF_CAPABILITY_NAME:
+            return self._refused(capability_name, "unknown_capability")
+        if not _is_allowed_litesvm_test_diff_payload(payload):
+            return self._refused(capability_name, "invalid_payload")
+        try:
+            baseline = run_litesvm_test(payload["baseline"], "baseline")
+            candidate = run_litesvm_test(payload["candidate"], "candidate")
+        except IsolatedTestRefusal as exc:
+            return self._refused(capability_name, str(exc))
+        except IsolatedTestInfrastructureFailure as exc:
+            return self._error(capability_name, str(exc))
+        except TimeoutError:
+            return self._timeout(capability_name, "runner_timeout")
+        except OSError:
+            return self._error(capability_name, "runner_unavailable")
+        except RuntimeError as exc:
+            return self._error(capability_name, str(exc))
+        return CapabilityResult(
+            capability_name=capability_name,
+            status=CapabilityStatus.OK,
+            authority=SDKAuthorityLevel.EXECUTION_CAPABLE,
+            summary="Isolated LiteSVM test diff completed",
+            data={
+                "schema_version": 1,
+                "baseline": baseline,
+                "candidate": candidate,
+            },
+        )
+
     def _refused(self, capability_name: str, reason: str) -> CapabilityResult:
         return CapabilityResult(
             capability_name=capability_name,
@@ -620,6 +664,7 @@ def create_capability_caller(
         _REFERENCE_TARGET_CONTAINMENT_CASE_TYPE,
         _REFERENCE_ORACLE_CASE_TYPE,
         _SPL_TOKEN_FREEZE_CASE_TYPE,
+        _LITESVM_TEST_DIFF_CASE_TYPE,
     }:
         return None
     return ScopedSolanaLifecycleCaller(
@@ -637,6 +682,19 @@ def _is_allowed_payload(payload: Mapping[str, Any]) -> bool:
         isinstance(payload, Mapping)
         and set(payload) == {"target_profile"}
         and payload.get("target_profile") == _TARGET_PROFILE
+    )
+
+
+def _is_allowed_litesvm_test_diff_payload(payload: Mapping[str, Any]) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and set(payload) == {"baseline", "candidate"}
+        and all(
+            isinstance(payload.get(side), str)
+            and bool(payload[side])
+            and len(payload[side]) <= 4096
+            for side in ("baseline", "candidate")
+        )
     )
 
 
@@ -1684,6 +1742,7 @@ def _isolated_solana_environment(
     environment = native_environment()
     if cargo_target_dir is not None:
         environment["CARGO_TARGET_DIR"] = str(cargo_target_dir)
+        environment["TMPDIR"] = str(cargo_target_dir.parent)
     return environment
 
 

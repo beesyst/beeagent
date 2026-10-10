@@ -9738,7 +9738,7 @@ BeeAgent can safely execute and evidence the fixed BeeDrill containment experime
 
 ### Iteration 44.4 — Bounded BeeDrill oracle-manipulation capability
 
-**Status:** DONE
+**Status:** SUPERSEDED (CLOSED)
 
 #### Goal
 
@@ -10610,6 +10610,87 @@ The external developer-owned pause/freeze execution capability was not implement
 A generic transaction/account binding interpreter requires a separate security-sensitive design and product GO/NO-GO decision.
 
 Any future BeeDrill product integration must preserve BeeAgent ownership of isolated execution, runtime authority, RPC, ephemeral signers, timeouts and artifacts. BeeDrill retains domain evaluation and deterministic security verdicts.
+
+### Iteration 44.12 — Generic Isolated Project Test Execution
+
+**Status:** DONE
+
+#### Goal
+
+Provide the minimal reusable BeeAgent-hosted isolated native-test execution capability for BeeDrill Test Regression Diff, without embedding external protocol logic or security verdicts into BeeAgent.
+
+#### Scope
+
+- Extend the existing BeeAgent CLI with `beedrill diff`.
+- Accept two external LiteSVM project roots: baseline and candidate.
+- Validate canonical project paths, one supported regular-file layout and preinstalled test dependencies.
+- Use one fixed, host-selected native-test workflow for the MVP.
+- Execute untrusted project tests in separate disposable, security-reviewed isolated environments.
+- Reuse existing runtime, process, timeout, cleanup and artifact infrastructure where applicable.
+- Capture host-observed execution provenance, test identities and bounded process outcomes.
+- Record independent transaction/state observations only when an approved host observer actually provides them.
+- Pass bounded evidence to BeeDrill using existing public module/BeeSDK contracts.
+- Preserve existing CLI commands, module registry, ROP, AI assist and CI behavior.
+
+#### Excluded
+
+- Transfer Switch-specific executors, Program IDs, ABI, PDAs, account mappings, instruction builders, policies or security packs.
+- Domain test-regression classification or security verdict calculation inside BeeAgent.
+- Independent BeeDrill CLI/runtime.
+- Arbitrary test commands from project configuration.
+- Running untrusted Cargo, Node or Anchor code directly on the host, or executing project metadata commands, installers or lifecycle hooks.
+- Generic transaction interpreters, execution DSLs or plugin frameworks.
+- Production/mainnet execution, production secrets and unrestricted network access.
+- BeeSDK interface changes without demonstrated necessity.
+
+#### Deliverable
+
+```bash
+./start.sh beedrill diff \
+  --baseline <project-path> \
+  --candidate <project-path>
+```
+
+BeeAgent owns CLI dispatch, approved isolated execution, host-generated runner evidence, artifact persistence and cleanup.
+
+BeeDrill owns deterministic evidence interpretation and test-regression classification.
+
+#### Acceptance criteria
+
+- CLI entrypoint is integrated with the existing BeeAgent dispatch.
+- Supported project tests can execute without modifying BeeAgent for that project.
+- The isolation mechanism is available, verified and fail-closed before external code executes.
+- Baseline and candidate run independently using comparable test conditions.
+- No project input grants arbitrary host execution, signing, filesystem or RPC authority.
+- Program-specific transaction construction remains outside BeeAgent core.
+- Host-generated runner provenance and bounded process outcomes are recorded correctly.
+- Test assertions, exit status, stdout and project-generated reports never become a security verdict.
+- BeeDrill receives bounded evidence through an approved module/shared contract.
+- The host does not calculate security verdicts.
+- Missing isolation, dependencies, unsupported frameworks and execution errors remain non-successful outcomes.
+- Existing three scenarios, CLI exit codes, optional modules and ROP remain compatible.
+- A second compatible project requires no protocol-specific host code changes.
+
+#### Checks
+
+- CLI argument validation and compatibility.
+- Supported/unsupported LiteSVM project detection.
+- Canonical paths, symlink traversal and malformed input rejection.
+- Fixed runner and execution-authority validation.
+- Sandbox isolation, filesystem/network/secret boundaries.
+- Timeout, cancellation and cleanup.
+- Baseline/candidate environment reproducibility.
+- Provenance and evidence-integrity checks.
+- Real Transfer Switch original/modified test execution with trustworthy process outcomes.
+- Full BeeAgent pytest, build and security checks.
+- BeeDrill regression suite and cross-repository E2E.
+- `git diff --check`.
+
+#### DoD
+
+BeeAgent safely executes the supported external test workflow, supplies bounded host evidence to BeeDrill, preserves all existing host behavior and contains no third-party protocol-specific integration or security verdict.
+
+**DONE requires successful isolated execution, working CLI, test-regression evidence and independent final review. Independent security PASS/FAIL requires a separately approved invariant and host observer.**
 
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
