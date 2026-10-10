@@ -956,9 +956,13 @@ def _validate_bitrix_settings(
                 or len(value.strip()) > 128
             ):
                 raise RuntimeError(f"Invalid or missing bitrix.blacklist_trigger.{key}")
-        if require_writeback_credentials and trigger_cfg["enabled"] and not (
-            os.getenv(trigger_cfg["secret_env"], "").strip()
-            or os.getenv(trigger_cfg["event_app_token_env"], "").strip()
+        if (
+            require_writeback_credentials
+            and trigger_cfg["enabled"]
+            and not (
+                os.getenv(trigger_cfg["secret_env"], "").strip()
+                or os.getenv(trigger_cfg["event_app_token_env"], "").strip()
+            )
         ):
             raise RuntimeError(
                 "Missing required trigger secret or Bitrix event token when "

@@ -415,11 +415,7 @@ def test_disabled_rop_cli_refuses_before_parser_or_handler(monkeypatch, capsys) 
     with pytest.raises(SystemExit) as exc_info:
         start_module._handle_rop_cli(
             ["run"],
-            {
-                "modules": {
-                    "registry": [{"id": "beeagent-rop", "enabled": False}]
-                }
-            },
+            {"modules": {"registry": [{"id": "beeagent-rop", "enabled": False}]}},
             logging.getLogger("test"),
         )
 

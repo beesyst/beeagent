@@ -56,6 +56,10 @@ def _reference_oracle_caller() -> ScopedSolanaLifecycleCaller:
     return _caller(case_type="reference_oracle_manipulation_replay")
 
 
+def _litesvm_diff_caller() -> ScopedSolanaLifecycleCaller:
+    return _caller(case_type="external_test_regression_diff")
+
+
 def _use_reference_target_resources(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -152,6 +156,7 @@ def test_isolated_solana_child_environment_is_allowlisted(
             "/tool-home/.local/share/beeagent/beedrill-tools/surfpool-1.5.0:/usr/bin:/bin"
         ),
         "CARGO_TARGET_DIR": "/cargo-target",
+        "TMPDIR": "/",
     }
 
 
@@ -227,7 +232,10 @@ def test_reference_target_builds_receive_bounded_environment(
     assert build_phase == "build"
     assert build_command[0] == "/cargo-build-sbf"
     assert build_environment is not None
-    assert set(build_environment) == {"HOME", "PATH", "CARGO_TARGET_DIR"}
+    assert set(build_environment) == {"HOME", "PATH", "CARGO_TARGET_DIR", "TMPDIR"}
+    assert build_environment["TMPDIR"] == str(
+        Path(build_environment["CARGO_TARGET_DIR"]).parent
+    )
     assert "BEEDRILL_TEST_SENTINEL_SECRET" not in build_environment
     assert "UNRELATED_SERVICE_TOKEN" not in build_environment
 
@@ -2491,3 +2499,23 @@ def test_spl_token_fixed_rejected_control_returns_failed_containment_evidence(
     assert evidence["target_account_state"] == "initialized"
     assert evidence["second_transfer_status"] == "succeeded"
     assert evidence["residual_loss_units"] == 200_000
+
+
+def test_litesvm_runner_infrastructure_failure_is_not_a_test_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        solana_capability,
+        "run_litesvm_test",
+        lambda *_: (_ for _ in ()).throw(
+            solana_capability.IsolatedTestInfrastructureFailure("runner_unavailable")
+        ),
+    )
+
+    result = _litesvm_diff_caller().call(
+        "solana.isolated_litesvm_test_diff",
+        {"baseline": "/baseline", "candidate": "/candidate"},
+    )
+
+    assert result.status is CapabilityStatus.ERROR
+    assert result.diagnostics == {"reason": "runner_unavailable"}
