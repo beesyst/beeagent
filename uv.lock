@@ -16,7 +16,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "beesdk", git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a" }]
+overrides = [{ name = "beesdk", git = "https://github.com/beesyst/beesdk.git" }]
 
 [[package]]
 name = "accelerate"
@@ -153,7 +153,7 @@ dev = [
 requires-dist = [
     { name = "beeagent-rop", marker = "extra == 'rop'", editable = "../beeagent-rop" },
     { name = "beedrill", marker = "extra == 'beedrill'", git = "https://github.com/beesyst/beedrill.git" },
-    { name = "beesdk", git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a" },
+    { name = "beesdk", git = "https://github.com/beesyst/beesdk.git" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
@@ -207,7 +207,7 @@ dependencies = [
 [[package]]
 name = "beesdk"
 version = "0.2.0"
-source = { git = "https://github.com/beesyst/beesdk.git?rev=e6629f6ceb4ad58a711c5a7f640db712ce00106a#e6629f6ceb4ad58a711c5a7f640db712ce00106a" }
+source = { git = "https://github.com/beesyst/beesdk.git#4762c4e3d60aa1e1c680054908862791702c0382" }
 
 [[package]]
 name = "beeui"
