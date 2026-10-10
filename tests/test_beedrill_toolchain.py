@@ -7,6 +7,7 @@ import tarfile
 import urllib.error
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -313,6 +314,56 @@ def test_unrelated_and_invalid_cli_do_not_provision(monkeypatch, capsys):
         )
         == 2
     )
+
+
+@pytest.mark.parametrize(
+    ("classification", "expected_exit"),
+    [("test_passed", 0), ("test_failed", 1), ("incomplete", 3), ("unsupported", 3)],
+)
+def test_external_check_cli_preserves_ci_exit_semantics(
+    monkeypatch, capsys, tmp_path, classification, expected_exit
+):
+    calls = []
+    monkeypatch.setattr(start, "build_registry", lambda *_: object())
+    monkeypatch.setattr(start, "get_storage_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        start,
+        "execute_module_case",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(data={"classification": classification})
+        ),
+    )
+    monkeypatch.setattr(
+        start,
+        "ensure_native_tools",
+        lambda **_: pytest.fail("external test check must not provision host tools"),
+    )
+
+    result = start._handle_beedrill_cli(
+        ["check", "--project", "/project"], {}, logging.getLogger("test")
+    )
+
+    assert result == expected_exit
+    assert calls[0]["case_type"] == "external_test_check"
+    assert calls[0]["payload"] == {"project": "/project"}
+    assert "test_passed" in capsys.readouterr().out or classification != "test_passed"
+
+
+def test_external_check_cli_requires_an_absolute_project_path(monkeypatch, capsys):
+    monkeypatch.setattr(
+        start,
+        "execute_module_case",
+        lambda **_: pytest.fail("execution must not start for invalid usage"),
+    )
+
+    assert (
+        start._handle_beedrill_cli(
+            ["check", "--project", "relative"], {}, logging.getLogger("test")
+        )
+        == 2
+    )
+    assert "absolute" in capsys.readouterr().err
 
 
 def test_real_command_timeout_kills_builder_descendants(monkeypatch, tmp_path):

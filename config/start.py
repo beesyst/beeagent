@@ -543,10 +543,15 @@ def _handle_beedrill_cli(
     if cli_args and cli_args[0] == "diff":
         return _handle_beedrill_diff(cli_args[1:], settings, logger)
     if cli_args and cli_args[0] == "check":
-        if cli_args != ["check"]:
-            print("Usage: start.py beedrill check", file=sys.stderr)
-            return 2
-        return _handle_beedrill_check(settings, logger)
+        if cli_args == ["check"]:
+            return _handle_beedrill_check(settings, logger)
+        if len(cli_args) == 3 and cli_args[1] == "--project":
+            return _handle_beedrill_external_test_check(cli_args[2], settings, logger)
+        print(
+            "Usage: start.py beedrill check [--project <absolute-path>]",
+            file=sys.stderr,
+        )
+        return 2
     if (
         len(cli_args) != 3
         or cli_args[0] != "run"
@@ -582,6 +587,39 @@ def _handle_beedrill_cli(
     if summary["security_verdict"] == "pass":
         return 0
     if summary["security_verdict"] == "fail":
+        return 1
+    return 3
+
+
+def _handle_beedrill_external_test_check(
+    project: str, settings: dict, logger: logging.Logger
+) -> int:
+    if not Path(project).is_absolute():
+        print("Project path must be absolute", file=sys.stderr)
+        return 2
+    run_id = generate_run_id("beedrill-external-check")
+    try:
+        registry = build_registry(settings, logger)
+        result = execute_module_case(
+            registry=registry,
+            module_id="beedrill",
+            case_type="external_test_check",
+            payload={"project": project},
+            storage_dir=get_storage_dir(),
+            logger=logger,
+            run_id=run_id,
+            session_id=generate_session_id("beedrill-external-check"),
+        )
+    except Exception:
+        logger.error("BeeDrill external test check execution failed")
+        print(json.dumps({"classification": "incomplete", "run_id": run_id}))
+        return 3
+    summary = {"run_id": run_id, **result.data}
+    print(json.dumps(summary, sort_keys=True))
+    classification = result.data.get("classification")
+    if classification == "test_passed":
+        return 0
+    if classification == "test_failed":
         return 1
     return 3
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -181,13 +182,21 @@ def test_harness_changes_are_not_comparable(tmp_path: Path, relative: str) -> No
     assert first["dependencies"] != runner._fingerprint(tmp_path)["dependencies"]
 
 
-def test_unclassified_project_input_fails_closed(tmp_path: Path) -> None:
+def test_ordinary_checkout_metadata_is_excluded_from_staging_projection(
+    tmp_path: Path,
+) -> None:
     _project_layout(tmp_path)
-    (tmp_path / "unverified").mkdir()
-    (tmp_path / "unverified" / "input.js").write_text("", encoding="utf-8")
+    (tmp_path / ".git").write_text("gitdir: /outside", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".cache", encoding="utf-8")
+    (tmp_path / "README.md").write_text("ordinary checkout", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "design.md").write_text("metadata", encoding="utf-8")
 
-    with pytest.raises(runner.IsolatedTestRefusal, match="unsupported_layout"):
-        runner._validate_layout(tmp_path)
+    runner._validate_layout(tmp_path)
+    fingerprint = runner._fingerprint(tmp_path)
+    assert fingerprint["project"]
+    assert runner._is_supported_input(Path("README.md")) is False
+    assert runner._is_supported_input(Path(".git")) is False
 
 
 def test_importable_target_types_are_harness_inputs(tmp_path: Path) -> None:
@@ -204,7 +213,7 @@ def test_importable_target_types_are_harness_inputs(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "relative", ["programs/transfer-switch/helper.ts", "target/idl/helper.mjs"]
 )
-def test_unsupported_target_harness_file_fails_closed(
+def test_unsupported_regular_files_do_not_enter_staging_projection(
     tmp_path: Path, relative: str
 ) -> None:
     _project_layout(tmp_path)
@@ -212,7 +221,15 @@ def test_unsupported_target_harness_file_fails_closed(
     path.parent.mkdir(parents=True)
     path.write_text("", encoding="utf-8")
 
-    with pytest.raises(runner.IsolatedTestRefusal, match="unsupported_layout"):
+    runner._validate_layout(tmp_path)
+    assert runner._is_supported_input(Path(relative)) is False
+
+
+def test_special_checkout_file_still_fails_closed(tmp_path: Path) -> None:
+    _project_layout(tmp_path)
+    os.mkfifo(tmp_path / "README.md")
+
+    with pytest.raises(runner.IsolatedTestRefusal, match="unsafe_project_tree"):
         runner._validate_layout(tmp_path)
 
 
@@ -353,7 +370,7 @@ def test_timeout_kills_all_scoped_sandbox_descendants(
     monkeypatch.setattr(
         runner,
         "_runner_command",
-        lambda _descriptor: "/usr/bin/sleep 30 & wait",
+        lambda _descriptor, **_: "/usr/bin/sleep 30 & wait",
     )
 
     assert runner._run_test_process(
@@ -375,6 +392,120 @@ def test_timeout_kills_all_scoped_sandbox_descendants(
         if time.monotonic() >= deadline:
             pytest.fail("sandbox scope retained a descendant after timeout cleanup")
         time.sleep(0.05)
+
+
+def test_checkout_metadata_and_root_env_files_are_excluded(tmp_path: Path) -> None:
+    _project_layout(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("private", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=value", encoding="utf-8")
+    (tmp_path / ".env.local").write_text("SECRET=value", encoding="utf-8")
+
+    assert runner._bounded_files(tmp_path)
+    runner._validate_layout(tmp_path)
+
+
+def test_nested_env_files_are_excluded_from_supported_inputs(tmp_path: Path) -> None:
+    _project_layout(tmp_path)
+    (tmp_path / "tests" / ".env").write_text("SECRET=value", encoding="utf-8")
+    env_path = tmp_path / "node_modules" / "package" / ".env.local"
+    env_path.parent.mkdir()
+    env_path.write_text("SECRET=value", encoding="utf-8")
+
+    assert runner._bounded_files(tmp_path)
+    runner._validate_layout(tmp_path)
+
+
+def test_staging_projection_excludes_nested_secret_directories(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "staged"
+    source.mkdir()
+    _project_layout(source)
+    (source / ".git").mkdir()
+    (source / ".git" / "config").write_text("private", encoding="utf-8")
+    for relative in (
+        "tests/.env/token",
+        "tests/.env.local/token",
+        "node_modules/package/.env/token",
+        "node_modules/package/.env.local/token",
+    ):
+        secret = source / relative
+        secret.parent.mkdir(parents=True, exist_ok=True)
+        secret.write_text("SECRET=value", encoding="utf-8")
+
+    runner._validate_layout(source)
+    script = runner._STAGE_SCRIPT.replace("Path(\"/input\")", f"Path({str(source)!r})")
+    script = script.replace(
+        "Path(\"/workspace/project\")", f"Path({str(destination)!r})"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(runner._MAX_TOTAL_BYTES),
+            str(runner._MAX_FILE_BYTES),
+            str(runner._MAX_FILES),
+            str(runner._MAX_DIRECTORIES),
+            str(runner._MAX_DEPTH),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (destination / "tests" / "litesvm.test.ts").is_file()
+    assert not (destination / ".git").exists()
+    assert not (destination / "tests" / ".env").exists()
+    assert not (destination / "tests" / ".env.local").exists()
+    assert not (destination / "node_modules" / "package" / ".env").exists()
+    assert not (destination / "node_modules" / "package" / ".env.local").exists()
+
+
+def test_host_selected_node_is_used_inside_the_fixed_runner(tmp_path: Path) -> None:
+    command = runner._sandbox_command(
+        "/usr/bin/bwrap", tmp_path / "project", node="/bin/node"
+    )
+
+    assert "/bin/node" in command
+    assert "/bin/node" in runner._runner_command(18, node="/bin/node")
+    assert "--reporter json" in runner._runner_command(18, node="/bin/node")
+
+
+def test_staging_reads_input_through_pinned_no_follow_descriptors() -> None:
+    assert "os.O_NOFOLLOW" in runner._STAGE_SCRIPT
+    assert "dir_fd=parent_fd" in runner._STAGE_SCRIPT
+    assert "os.fstat(descriptor)" in runner._STAGE_SCRIPT
+    assert "os.fdopen(os.dup(descriptor), \"rb\")" in runner._STAGE_SCRIPT
+    assert "inode_changed" in runner._STAGE_SCRIPT
+
+
+@pytest.mark.parametrize(
+    ("output", "exit_code", "expected"),
+    [
+        (b'{"stats":{"tests":2,"failures":0}}', 0, 2),
+        (b'{"stats":{"tests":2,"failures":1}}', 1, 2),
+        (b'{"stats":{"tests":2,"failures":1}}', 0, 0),
+        (b'{"stats":{"tests":2,"failures":0}}', 1, 0),
+        (b'{"stats":{"tests":0,"failures":0}}', 0, 0),
+        (b'{"stats":{"tests":1000000001,"failures":0}}', 0, 0),
+        (b'{"stats":{"tests":true,"failures":0}}', 0, 0),
+        (b'{"stats":{"tests":1,"failures":-1}}', 1, 0),
+        (b"not-json", 0, 0),
+    ],
+)
+def test_completed_test_count_requires_a_nonempty_json_report(
+    output: bytes, exit_code: int, expected: int
+) -> None:
+    assert runner._completed_test_count(output, exit_code) == expected
+
+
+def test_completed_test_count_rejects_bounded_malformed_bytes() -> None:
+    for value in range(256):
+        assert runner._completed_test_count(bytes([value]) * 64, 0) == 0
+    output = b'{"stats":{"tests":' + b"9" * 5000 + b"}}"
+    assert runner._completed_test_count(output, 0) == 0
 
 
 def _project_layout(root: Path) -> None:

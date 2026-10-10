@@ -10692,6 +10692,84 @@ BeeAgent safely executes the supported external test workflow, supplies bounded 
 
 **DONE requires successful isolated execution, working CLI, test-regression evidence and independent final review. Independent security PASS/FAIL requires a separately approved invariant and host observer.**
 
+### Iteration 44.13 — Single-Project Isolated Security Test Execution and Onboarding
+
+**Status:** DONE
+
+#### Goal
+
+Allow BeeDrill to execute one supported external Solana LiteSVM security-sensitive test directly from a normal single-project checkout, without manually prepared baseline/candidate snapshots or protocol-specific BeeAgent code.
+
+#### Scope
+
+- Add `beedrill check --project <absolute-path>` to the existing CLI.
+- Preserve the current no-argument `beedrill check` regression suite.
+- Reuse the existing isolated LiteSVM execution infrastructure.
+- Add a narrowly scoped host capability for one project.
+- Build a bounded temporary test workspace from an ordinary supported checkout.
+- Exclude `.git`, unrelated files, local secrets and unsupported artifacts.
+- Validate filesystem boundaries, symlinks, file types, sizes and staging limits.
+- Reuse the approved host-selected test workflow and verified isolation.
+- Reuse the existing Node.js runner without introducing another framework.
+- Resolve a supported Node executable through a verified host-controlled mechanism when portability requires it.
+- Preserve Bubblewrap, cgroup limits, no-network execution, environment isolation, timeout and cleanup.
+- Pass bounded host execution evidence to BeeDrill through existing BeeSDK contracts.
+- Update Quick Start documentation and supported-project requirements.
+
+#### Excluded
+
+- Arbitrary project-selected commands, scripts or installers on the host.
+- General Anchor/Cargo/Node build orchestration or arbitrary dependency installation.
+- Additional test runners, new container backends or new sandbox frameworks.
+- Transfer Switch-specific code, ABI mapping or transaction builders.
+- Protocol-specific security verdicts inside BeeAgent.
+- Production/mainnet execution, production secrets and unrestricted network access.
+- BeeSDK changes without a demonstrated contract gap.
+- Web UI or unrelated runtime refactoring.
+
+#### Deliverable
+
+`./start.sh beedrill check --project <absolute-path>`
+
+The command executes one supported external test in verified isolation, supplies bounded evidence to BeeDrill, and returns an actionable CI exit status.
+
+Existing `check`, `run` and `diff` entrypoints continue to work.
+
+#### Acceptance criteria
+
+- A supported ordinary checkout requires no manually created baseline/candidate directories.
+- One existing security-sensitive test executes against a real program.
+- The host never invokes untrusted project execution outside verified isolation.
+- Missing supported dependencies or artifacts produce an explicit non-successful outcome.
+- Filesystem traversal, external symlinks and unsupported content cannot escape the staging boundary.
+- Isolation availability, memory limits and cleanup are verified fail-closed.
+- Test identity, runner identity, execution result and bounded provenance are collected.
+- Infrastructure failures are not presented as successful test outcomes.
+- BeeDrill alone classifies domain-level test outcomes.
+- Existing BeeAgent CLI, modules, ROP, optional AI and CI remain compatible.
+- Positive and negative E2E results are reproduced on an external supported project.
+- A clean GitHub installation works using only documented prerequisites.
+
+#### Checks
+
+- CLI dispatch and invalid-argument tests.
+- Normal checkout, `.git` exclusion and temporary staging tests.
+- Path traversal, symlink, special-file and resource-limit negative tests.
+- Missing runtime, dependencies, artifacts and unsupported-layout tests.
+- Fixed runner identity and prohibited project-command tests.
+- Sandbox, network, environment, secrets, timeout and cleanup verification.
+- Runner outcome and provenance-integrity tests.
+- Full BeeAgent tests, build/import and security checks.
+- Existing BeeDrill `check`, `run`, `diff` and ROP regression tests.
+- Real external-program E2E and clean-clone onboarding.
+- `git diff --check`.
+
+#### DoD
+
+BeeAgent executes one supported external LiteSVM security-sensitive test from a single project checkout through the existing approved isolation boundary, provides truthful bounded evidence to BeeDrill, and preserves current runtime behavior.
+
+Any preparation mechanism not proven safe and reproducible remains unsupported rather than bypassing isolation.
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
