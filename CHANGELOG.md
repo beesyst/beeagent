@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.4...beeagent-v0.71.0) (2026-10-10)
+
+
+### Features
+
+* add isolated LiteSVM test diff execution ([#296](https://github.com/beesyst/beeagent/issues/296)) ([de588df](https://github.com/beesyst/beeagent/commit/de588dfa72a9137c3dc848ed64362a737d9b3515))
+
 ## [0.70.4](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.3...beeagent-v0.70.4) (2026-10-08)
 
 
