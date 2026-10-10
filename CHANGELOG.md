@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.72.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.71.0...beeagent-v0.72.0) (2026-10-10)
+
+
+### Features
+
+* **beedrill:** support isolated single-project security checks ([#299](https://github.com/beesyst/beeagent/issues/299)) ([e3edd27](https://github.com/beesyst/beeagent/commit/e3edd27c170bb2d8c5f94b1a3d5c6288987e5cbb))
+
 ## [0.71.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.70.4...beeagent-v0.71.0) (2026-10-10)
 
 
