@@ -1,0 +1,56 @@
+import http.server
+import json
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import cast
+
+root = Path(sys.argv[1])
+subprocess.run(["/usr/sbin/ip", "link", "set", "lo", "up"], check=True)
+rules = """table inet beescan {
+ chain output {
+ type filter hook output priority -150; policy drop;
+ ip daddr 127.0.0.1 tcp dport 18080 accept
+ ct state established tcp flags & (syn | ack) != syn accept
+ }
+}
+"""
+subprocess.run(["/usr/sbin/nft", "-f", "-"], input=rules, text=True, check=True)
+counts = {18080: 0, 18081: 0}
+lock = threading.Lock()
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        with lock:
+            server = cast(http.server.ThreadingHTTPServer, self.server)
+            counts[server.server_port] += 1
+            (root / "counts.json").write_text(json.dumps(counts))
+        mode = (root / "mode").read_text().strip()
+        if mode == "timeout":
+            time.sleep(10)
+        self.send_response(302 if mode == "redirect" else 200)
+        self.send_header(
+            "Content-Type",
+            "invalid" if mode == "malformed" else "text/html; charset=utf-8",
+        )
+        self.send_header("Set-Cookie", "lab-secret=must-not-persist")
+        if mode == "redirect":
+            self.send_header("Location", "http://127.0.0.1:18081/")
+        if mode == "oversized":
+            self.send_header("Location", "http://127.0.0.1:18081/" + "x" * 5000)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+for port in counts:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+(root / "counts.json").write_text(json.dumps(counts))
+(root / "ready").write_text("ready")
+while True:
+    time.sleep(1)

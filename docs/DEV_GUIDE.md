@@ -164,7 +164,7 @@ uv sync
 
 ### Optional module profiles
 
-Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop` и `beedrill`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
+Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop`, `beedrill` и `beescan`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
 
 `uv run pytest -q` использует полный dev/test profile, включая locked ROP и Docling CPU dependencies, независимо от runtime enabled modules; в coordinated workspace ROP для этого profile разрешается через configured local editable `beeagent-rop` source. `./start.sh` запускает `uv sync --frozen --no-dev`, читает settings и затем синхронизирует extras только enabled module entries и выбранный Docling CPU/CUDA profile с `--no-dev`. Disabled entries не добавляют runtime dependencies. BeeSDK и enabled BeeDrill разрешаются из закреплённых release-backed sources. Normal BeeDrill runtime при disabled ROP не включает `beeagent-rop` и не требует ROP runtime setup.
 
@@ -750,3 +750,7 @@ bitrix:
 - fixture-driven разработка обязательна;
 - deterministic path важнее black-box магии;
 - изменения должны быть объяснимыми, тестируемыми и bounded.
+
+## BeeScan BS-1 lab profile
+
+BeeScan 0.4.0 uses the optional `beescan` extra and `https://github.com/beesyst/beescan.git` source in `pyproject.toml` without an explicit `rev`; frozen synchronization uses reviewed commit `ae1d1d07cf9d0e0fadd5fb9e4d8da71a4573eac2` recorded in `uv.lock`. Its disabled-by-default registry entry has `install_extra: "beescan"`; enabling it selects the extra through standard runtime synchronization. Bootstrap remains READ_ONLY, while HTTP probing still requires separate explicit host approval and a separately provisioned pinned provider. Run coordinated regressions with `uv run --frozen --extra beescan --extra beedrill pytest -q -rs`; the hosted CI core profile exports `--no-dev --extra beescan` and needs no local sibling ROP checkout. Operational prerequisites, CLI commands, artifacts, SCA disposition and the separate mandatory kernel/network lab are documented in [beescan_bs1.md](product/beescan_bs1.md). The positive lab path and negative egress checks are separate from ROP/BeeDrill execution.

@@ -250,6 +250,19 @@ def main() -> None:
     if args and args[0] == "beedrill":
         sys.exit(_handle_beedrill_cli(args[1:], settings=settings, logger=logger))
 
+    if args and args[0] == "beescan":
+        from beeagent_module.core.beescan_probe import handle_beescan_cli
+
+        sys.exit(
+            handle_beescan_cli(
+                args[1:],
+                settings=settings,
+                reload_settings=lambda: load_settings(settings_path),
+                storage_dir=get_storage_dir(),
+                logger=logger,
+            )
+        )
+
     if args and args[0] == "docling-assets-prepare":
         from beeagent_module.core.document_extraction import prepare_docling_assets
 
@@ -260,7 +273,7 @@ def main() -> None:
 
     logger.error("Unknown CLI command: %s", args[0])
     print(
-        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, beedrill, auth, auth-init, docling-assets-prepare",
+        f"Error: Unknown CLI command: {args[0]}. Supported commands: telegram, web, routes, rop, beedrill, beescan, auth, auth-init, docling-assets-prepare",
         file=sys.stderr,
     )
     sys.exit(2)
