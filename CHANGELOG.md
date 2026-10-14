@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.73.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.72.0...beeagent-v0.73.0) (2026-10-14)
+
+
+### Features
+
+* **capabilities:** add governed BeeScan HTTP probing ([#302](https://github.com/beesyst/beeagent/issues/302)) ([62c24fb](https://github.com/beesyst/beeagent/commit/62c24fbc18a4dc40e0a9260ef47c12a5b2f88c38))
+
 ## [0.72.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.71.0...beeagent-v0.72.0) (2026-10-10)
 
 
