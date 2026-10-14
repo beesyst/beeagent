@@ -96,6 +96,16 @@ modules:
       enabled: true
       install_extra: "beedrill"
 
+    - id: "beescan"
+      package: "beescan.module"
+      entry: "BeeScanModule"
+      enabled: false
+      install_extra: "beescan"
+
+beescan:
+  probe_enabled: false
+  approval: null
+
 beedrill:
   ai_assist:
     enabled: false

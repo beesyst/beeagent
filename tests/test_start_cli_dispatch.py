@@ -455,11 +455,15 @@ def test_resolve_extras_docling_cuda(monkeypatch) -> None:
     assert start_module._resolve_runtime_extras(settings) == ["docling-cuda", "rop"]
 
 
-def test_resolve_extras_excludes_disabled_module(monkeypatch) -> None:
+@pytest.mark.parametrize("beescan_enabled", [False, True])
+def test_resolve_extras_excludes_disabled_module(monkeypatch, beescan_enabled) -> None:
     settings = _rop_settings(monkeypatch)
     settings["modules"]["registry"][1]["enabled"] = True
     settings["modules"]["registry"][0]["enabled"] = False
-    assert start_module._resolve_runtime_extras(settings) == ["beedrill"]
+    settings["modules"]["registry"][2]["enabled"] = beescan_enabled
+    assert start_module._resolve_runtime_extras(settings) == (
+        ["beedrill", "beescan"] if beescan_enabled else ["beedrill"]
+    )
 
 
 def test_resolve_extras_unimplemented_engine_fails_fast(monkeypatch) -> None:
@@ -486,13 +490,17 @@ def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
         "run",
         lambda argv, **kwargs: calls.append(argv) or _Completed(),
     )
-    start_module._sync_runtime_extras(["rop", "docling-cpu", "rop"], Path("."))
+    start_module._sync_runtime_extras(
+        ["rop", "beescan", "docling-cpu", "rop"], Path(".")
+    )
     assert calls == [
         [
             "uv",
             "sync",
             "--frozen",
             "--no-dev",
+            "--extra",
+            "beescan",
             "--extra",
             "docling-cpu",
             "--extra",
@@ -542,7 +550,8 @@ def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> No
     assert calls == ["docling-cpu", "rop", "prepare_assets"]
 
 
-def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
+@pytest.mark.parametrize("beescan_enabled", [False, True])
+def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch, beescan_enabled) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
@@ -554,13 +563,14 @@ def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
     def _disabled_settings(*args, **kwargs):
         settings = _rop_settings(monkeypatch)
         settings["rop"]["attachments"]["enabled"] = False
+        settings["modules"]["registry"][2]["enabled"] = beescan_enabled
         return settings
 
     monkeypatch.setattr(start_module, "load_settings", _disabled_settings)
     monkeypatch.setattr(
         start_module,
         "_sync_runtime_extras",
-        lambda *args, **kwargs: calls.append("sync"),
+        lambda extras, root: calls.extend(extras),
     )
     monkeypatch.setattr(
         "beeagent_module.core.document_extraction.prepare_docling_assets",
@@ -569,7 +579,7 @@ def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch) -> None:
 
     start_module.bootstrap_runtime()
 
-    assert calls == ["sync"]
+    assert calls == (["beescan", "rop"] if beescan_enabled else ["rop"])
 
 
 def _beedrill_result(

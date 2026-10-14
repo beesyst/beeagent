@@ -268,6 +268,10 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
                     "expected non-empty safe extra name"
                 )
 
+    from beeagent_module.core.beescan_policy import validate_beescan_settings
+
+    validate_beescan_settings(settings)
+
     rop_enabled = _is_module_enabled(settings, "beeagent-rop")
     beedrill_enabled = _is_module_enabled(settings, "beedrill")
     if rop_enabled:

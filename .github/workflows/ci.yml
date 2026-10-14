@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: "0.11.26"
+      - run: uv python install 3.14
+      - run: uv venv --python 3.14
+      - run: uv export --frozen --no-dev --extra beescan --no-emit-project --no-hashes > /tmp/beeagent-core.txt
+      - name: Install dependencies
+        env:
+          GH_TOKEN: ${{ secrets.BEESCAN_READ_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          gh auth setup-git
+          uv pip install -r /tmp/beeagent-core.txt pytest==9.1.1
+      - run: uv pip install --no-deps -e .
+      - run: >-
+          uv run --frozen --no-sync pytest -q
+          tests/test_module_contract.py tests/test_module_registry.py
+          tests/test_module_runtime.py tests/test_runtime_context.py
+          tests/test_artifact_api.py tests/test_capability_boundary.py
+          tests/test_beescan_probe.py
+      - run: uv build

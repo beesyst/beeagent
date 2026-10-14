@@ -394,12 +394,12 @@ A BS iteration is complete only when:
 
 ## Product stages
 
-| Stage                                   | Iteration    | Focus                                                                   | Status   |
-| --------------------------------------- | ------------ | ----------------------------------------------------------------------- | -------- |
-| Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | PLANNED  |
-| Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | PLANNED  |
-| Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | PLANNED  |
-| Post-MVP                                | Not numbered | UI expansion, monitoring, multi-target assessment and further providers | DEFERRED |
+| Stage                                   | Iteration    | Focus                                                                   | Status      |
+| --------------------------------------- | ------------ | ----------------------------------------------------------------------- | ----------- |
+| Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | IN PROGRESS |
+| Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | PLANNED     |
+| Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | PLANNED     |
+| Post-MVP                                | Not numbered | UI expansion, monitoring, multi-target assessment and further providers | DEFERRED    |
 
 The first BeeScan assessment MVP must be demonstrated by completion of BS-1 through BS-3 together with the matching BeeScan domain iterations.
 
@@ -456,18 +456,18 @@ A downstream iteration may not bypass an unfinished security gate in an upstream
 
 ### Iteration BS-1 — BeeScan Module Integration and Governed HTTP Probe
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
-Deliver the first actual authorized HTTP security probe for BeeScan through the existing BeeAgent runtime, using one pinned ProjectDiscovery httpx provider and independently enforced host controls.
+Integrate BeeScan as an optional BeeAgent module and execute one real, explicitly authorized HTTP probe through a pinned ProjectDiscovery httpx provider with independently enforced host authority, destination and isolation controls.
 
 #### Depends on
 
-- BeeScan Iterations 1–3 completed.
-- BeeScan Iteration 4 public HTTP facts/Observation contract.
-- Compatible BeeSDK and BeeScan package revisions.
-- Verified host isolation and enforceable network-destination restrictions.
+- Completed BeeScan Iterations 1–3.
+- Approved BeeScan Iteration 4 HTTP facts/Observation contract.
+- Compatible BeeScan/BeeSDK dependency revisions.
+- Verified process isolation and actual network egress enforcement.
 
 #### Change level
 
@@ -475,63 +475,64 @@ Deliver the first actual authorized HTTP security probe for BeeScan through the 
 
 #### Scope
 
-- Register BeeScan as an optional installed module through the existing module registry.
-- Verify actual `bootstrap_health` dispatch, SDK compatibility and host-owned artifact lifecycle.
-- Introduce one fixed BeeScan-scoped `web.probe` capability.
-- Reuse BeeScan's exact Mission/Target/Scope/HTTP intent contracts.
-- Require an explicit host-approved operator, engagement, method and target.
-- Independently enforce authorization at the execution boundary.
-- Select one installed and verified ProjectDiscovery httpx executable and fixed provider profile.
-- Restrict actual DNS/resolved destinations, redirects and outbound connections.
-- Require isolation, clean environment, process/resource limits, request/time ceilings and cleanup.
-- Parse and validate only bounded, allowlisted HTTP facts from provider output.
-- Preserve the existing SDK success envelope containing only opaque evidence references.
-- Pass host-validated HTTP facts to BeeScan through a bounded host-controlled integration path.
-- Persist sanitized evidence, status, provenance and structured Observations in BeeAgent artifacts.
-- Provide one reproducible authorized lab invocation through the existing BeeAgent entrypoint.
+- Register BeeScan as an optional module without changing ROP or BeeDrill defaults.
+- Verify actual `bootstrap_health` execution and BeeAgent-owned module artifacts.
+- Introduce one fixed BeeScan-scoped `web.probe` execution path and a minimal authorized lab CLI invocation.
+- Independently validate operator authority, current engagement approval, exact Mission/Target/Scope, method and request/time budgets.
+- Use one installed, version- and identity-verified ProjectDiscovery httpx executable with host-owned fixed arguments.
+- Enforce exact HTTP(S) origin, resolved destinations, no automatic redirect following and deny-by-default network egress.
+- Require a verified isolated worker, minimal environment, controlled credentials, resource limits and cleanup.
+- Parse provider output in BeeAgent and expose only bounded validated HTTP facts to BeeScan's public domain normalization API.
+- Preserve the Iteration 3 evidence-only `CapabilityResult.data` success envelope.
+- Persist bounded host evidence, execution status, provenance and normalized BeeScan Observations.
+- Add `.github/workflows/ci.yml` using the BeeScan workflow as a structural reference, adapted to BeeAgent's actual uv dependency profiles and regression tests.
+- Provide a reproducible real authorized lab run, negative safety scenarios and ROP/BeeDrill compatibility evidence.
 
 #### Excluded
 
-- BeeScan-owned executor, standalone scanner runtime or database.
-- Arbitrary tools, commands, provider flags, redirects, retries and target discovery.
-- New generic sandbox or network orchestration platform.
-- Nuclei, vulnerability Findings, AI and assessment reports.
-- Web dashboard or a new HTTP service.
-- Automatic installation or downloading of scanner binaries.
+- Modifying BeeDrill's existing isolated Solana execution semantics.
+- Adding a second scanner runtime, generic executor framework, database or HTTP service.
+- Arbitrary commands, user-selected provider flags, unrestricted redirects, discovery, crawling or retries.
+- Weakening host authorization, running unrestricted network subprocesses or using fallback execution without isolation.
+- Nuclei, vulnerability Findings, report generation, UI, AI and scheduled scanning.
+- Generic BeeSDK or BeeUI changes without a demonstrated blocker.
 
 #### Deliverable
 
-**One real authorized HTTP probe producing structured, evidence-backed BeeScan Observations through BeeAgent.**
+**One existing BeeAgent runtime → optional BeeScan module → safely governed real `web.probe` execution → host-owned evidence → structured BeeScan Observations, with BeeAgent CI protecting the integration.**
 
 #### Acceptance criteria
 
-- BeeScan loads when enabled and preserves existing registry behavior when disabled.
-- One approved lab HTTP(S) origin receives a real bounded request from the pinned provider.
-- Operator approval, authorization validity, exact origin and budgets are independently enforced by BeeAgent.
-- Actual connected IP addresses cannot escape the approved network policy.
-- DNS rebinding, unsafe redirect targets and provider-induced additional destinations cannot bypass scope.
-- Missing isolation or required enforcement refuses execution without host fallback.
-- Malformed output, provider failure, timeout, exceeded budget and failed cleanup never become successful observations.
-- Valid HTTP facts are linked to the correct Mission, Target, run, provider and bounded evidence references.
-- Artifacts contain no raw bodies, unrestricted headers, cookies, credentials or unsafe paths.
-- Existing ROP and BeeDrill host paths remain compatible.
+- Optional BeeScan registration and bootstrap work in a compatible clean installation.
+- Existing disabled/enabled ROP and BeeDrill module behavior remains compatible.
+- One explicitly approved lab origin receives a real bounded HTTP request.
+- Operator identity and approval are independently established by BeeAgent, not inferred from a caller-controlled authorization reference.
+- Current scope and expiry are rechecked before execution.
+- Actual outbound connections cannot escape the approved destination policy; DNS changes, forbidden addresses, redirects and proxy settings cannot bypass enforcement.
+- Missing provider integrity, network enforcement, isolation or required resources produces a refusal without unrestricted fallback.
+- Fixed request/time budgets remain enforced by the host.
+- Only allowlisted validated HTTP facts and bounded evidence refs enter BeeScan normalization.
+- Malformed output, timeout, incomplete execution, invalid evidence and cleanup failure never produce false-success artifacts.
+- ROP and BeeDrill existing capabilities, CLI commands, outcomes and security isolation remain compatible.
+- BeeAgent GitHub CI runs on pull requests and main pushes, has least-privilege permissions, uses Python 3.14 and validates meaningful tests/build from a clean checkout.
+- The CI workflow does not silently depend on the developer's local `../beeagent-rop` checkout or unavailable secrets.
+- A real positive lab probe, negative enforcement tests and inspected artifacts demonstrate the complete increment.
 
 #### Checks
 
-- Module registry and real bootstrap compatibility tests.
-- Host authorization and scope enforcement tests.
-- Provider pin, configuration and environment checks.
-- DNS rebinding, resolved-IP, redirect, proxy and egress negative tests.
-- Resource, timeout, isolation and cleanup tests.
-- Malformed and oversized provider output tests.
-- Real approved laboratory HTTP probe and inspected host artifacts.
-- Full relevant pytest, build, CI and security-sensitive independent review.
+- Module registry, dependency compatibility, SDK contract and bootstrap tests.
+- Host approval, scope, expiry, method and budget tests.
+- Provider identity, command/profile allowlist and environment tests.
+- DNS rebinding, forbidden destination, redirect, proxy and actual egress negative tests.
+- Worker isolation, missing enforcement, timeouts, cleanup and resource exhaustion tests.
+- Provider malformed/oversized output, evidence integrity and redaction tests.
+- Real approved laboratory HTTP execution and persisted Observation inspection.
+- Existing BeeDrill capability/check/diff and ROP runtime regression tests.
+- Clean-checkout CI, relevant pytest, build, security checks and independent source review.
 
 #### DoD
 
-BS-1 is complete only when a real allowed HTTP target is safely probed through BeeAgent, valid BeeScan Observations are persisted and the network/isolation denial guarantees are demonstrably effective.
-
-Mock-only results or successful DTO tests are insufficient.
+BS-1 is complete only when the authorized laboratory HTTP probe actually executes through BeeAgent with enforceable network and isolation controls, BeeScan produces reviewable Observations, BeeAgent CI succeeds and existing ROP/BeeDrill behavior is verified. Mock-only success, unsafe fallback, false-success artifacts or a failing clean-checkout CI are blockers.
 
 ---
 

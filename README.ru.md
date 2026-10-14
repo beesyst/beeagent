@@ -618,3 +618,7 @@ BeeAgent следует небольшому набору архитектурн
 - [`docs/WEB_UI.md`](docs/WEB_UI.md) — contract Operator Web Console.
 
 Для implementation details источником правды являются эти документы, а не README.
+
+## BeeScan laboratory integration
+
+BeeScan остаётся optional и disabled by default. Команды `./start.sh beescan bootstrap` и `./start.sh beescan probe` используют существующий host runtime; HTTP probe требует независимо утверждённой host config, pinned provider и проверенного rootless network sandbox. Инструкция, bounded artifacts, exit codes и открытые security/delivery gates: [BeeScan BS-1](docs/product/beescan_bs1.md).

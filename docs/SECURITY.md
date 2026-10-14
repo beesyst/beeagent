@@ -549,3 +549,9 @@ The main rules are:
 - review dependencies;
 - use only the security checks that match the real risk;
 - keep everything simple enough to maintain.
+
+## BeeScan HTTP probe boundary (BS-1)
+
+BeeScan HTTP execution is disabled by default and available only through a fixed host CLI/CapabilityCaller using a current trusted OS-operator approval from settings. The host independently enforces exact identity/origin, one-request HEAD profile, DNS pinning, immutable provider digest/version, rootless namespace ownership, exact deny-by-default nftables rules, nested Bubblewrap isolation, minimal environment, resource/output limits and cleanup. Bootstrap remains READ_ONLY and obtains no scanner authority; existing Solana isolation is unchanged.
+
+Only allowlisted host facts and opaque evidence are persisted. Provider output never supplies authority or provenance. Final completion requires a successfully persisted status marker; failures and orphan evidence remain incomplete. The threat model trusts the local operator and namespace supervisor, which must control settings and firewall mutation. Provisioning, reproducible lab checks, SCA advisories and remaining security/delivery gates are documented in [BeeScan BS-1](product/beescan_bs1.md).

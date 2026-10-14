@@ -4,6 +4,7 @@ import logging
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.error
 from dataclasses import replace
 from pathlib import Path
@@ -378,7 +379,16 @@ def test_real_command_timeout_kills_builder_descendants(monkeypatch, tmp_path):
         host._run_target_command([sys.executable, "-c", code], "build")
     child_pid = int(pid_file.read_text())
     state = Path(f"/proc/{child_pid}/stat")
-    assert not state.exists() or state.read_text().split()[2] == "Z"
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            child_state = state.read_text().split()[2]
+        except FileNotFoundError, ProcessLookupError:
+            child_state = None
+        if child_state in {None, "Z"} or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    assert child_state in {None, "Z"}
 
 
 def test_command_cleanup_failure_is_explicit(monkeypatch):

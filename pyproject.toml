@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+beescan = [
+    "beescan==0.4.0",
+]
 rop = [
     "beeagent-rop==0.19.8",
 ]
@@ -77,6 +80,7 @@ filterwarnings = [
 ]
 
 [tool.uv.sources]
+beescan = { git = "https://github.com/beesyst/beescan.git" }
 beeagent-rop = { path = "../beeagent-rop", editable = true }
 beedrill = { git = "https://github.com/beesyst/beedrill.git" }
 beesdk = { git = "https://github.com/beesyst/beesdk.git" }

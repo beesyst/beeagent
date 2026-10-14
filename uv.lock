@@ -118,6 +118,9 @@ dependencies = [
 beedrill = [
     { name = "beedrill" },
 ]
+beescan = [
+    { name = "beescan" },
+]
 docling-cpu = [
     { name = "docling" },
     { name = "onnxruntime" },
@@ -153,6 +156,7 @@ dev = [
 requires-dist = [
     { name = "beeagent-rop", marker = "extra == 'rop'", editable = "../beeagent-rop" },
     { name = "beedrill", marker = "extra == 'beedrill'", git = "https://github.com/beesyst/beedrill.git" },
+    { name = "beescan", marker = "extra == 'beescan'", git = "https://github.com/beesyst/beescan.git" },
     { name = "beesdk", git = "https://github.com/beesyst/beesdk.git" },
     { name = "beeui", specifier = "==0.30.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
@@ -173,7 +177,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'docling-cuda'", specifier = "==0.28.0", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "beeagent", extra = "docling-cuda" } },
     { name = "uvicorn", specifier = "==0.52.1" },
 ]
-provides-extras = ["rop", "beedrill", "docling-cpu", "docling-cuda"]
+provides-extras = ["beescan", "rop", "beedrill", "docling-cpu", "docling-cuda"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -200,6 +204,14 @@ dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 name = "beedrill"
 version = "0.16.0"
 source = { git = "https://github.com/beesyst/beedrill.git#14531435fc215b65b6fc52759c0ae8819240cc56" }
+dependencies = [
+    { name = "beesdk" },
+]
+
+[[package]]
+name = "beescan"
+version = "0.4.0"
+source = { git = "https://github.com/beesyst/beescan.git#ae1d1d07cf9d0e0fadd5fb9e4d8da71a4573eac2" }
 dependencies = [
     { name = "beesdk" },
 ]
