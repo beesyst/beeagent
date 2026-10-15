@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.73.0...beeagent-v0.74.0) (2026-10-15)
+
+
+### Features
+
+* **beescan:** add governed Nuclei detection and evidence handoff ([#305](https://github.com/beesyst/beeagent/issues/305)) ([26a756d](https://github.com/beesyst/beeagent/commit/26a756d9e083ce3ceb8556d926188bf2db7bb53e))
+
 ## [0.73.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.72.0...beeagent-v0.73.0) (2026-10-14)
 
 
