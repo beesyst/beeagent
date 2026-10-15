@@ -621,4 +621,6 @@ BeeAgent следует небольшому набору архитектурн
 
 ## BeeScan laboratory integration
 
-BeeScan остаётся optional и disabled by default. Команды `./start.sh beescan bootstrap` и `./start.sh beescan probe` используют существующий host runtime; HTTP probe требует независимо утверждённой host config, pinned provider и проверенного rootless network sandbox. Инструкция, bounded artifacts, exit codes и открытые security/delivery gates: [BeeScan BS-1](docs/product/beescan_bs1.md).
+BeeScan остаётся optional и disabled by default. Команды `./start.sh beescan bootstrap` и `./start.sh beescan probe` используют существующий host runtime; HTTP probe требует независимо утверждённой host config, pinned provider и проверенного rootless network sandbox. Инструкция, bounded artifacts, exit codes и открытые security/delivery gates: [BeeScan operating guide](docs/product/beescan_guide.md).
+
+BS-2 adds the separately approved `./start.sh beescan detect` command, fixed network-isolated passive Nuclei processing, host-mediated one-request capture and candidate artifacts. Its production dependency gate is pending the reviewed It5 merge; see the [host operating guide](docs/product/beescan_guide.md#bs-2-restricted-detection).

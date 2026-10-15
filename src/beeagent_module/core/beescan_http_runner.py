@@ -1,6 +1,7 @@
 import fcntl
 import hashlib
 import json
+import math
 import os
 import selectors
 import signal
@@ -25,7 +26,7 @@ def bounded_process(
     command = [
         "/usr/bin/prlimit",
         f"--as={memory_mb * 1024 * 1024}",
-        f"--cpu={max(1, seconds)}",
+        f"--cpu={max(1, math.ceil(seconds))}",
         "--nofile=64",
         "--fsize=65536",
         "--core=0",
@@ -176,7 +177,7 @@ def validate_firewall(raw: bytes, policy: ProbePolicy) -> None:
         raise PermissionError("egress_unverified") from None
 
 
-def _provider_snapshot(policy, directory):
+def _provider_snapshot(policy, directory, *, limit_bytes=64 * 1024 * 1024):
     try:
         descriptor = os.open(
             policy.executable,
@@ -189,10 +190,10 @@ def _provider_snapshot(policy, directory):
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_mode & 0o022
-            or info.st_size > 64 * 1024 * 1024
+            or info.st_size > limit_bytes
         ):
             raise PermissionError("provider_integrity")
-        binary = stream.read(64 * 1024 * 1024 + 1)
+        binary = stream.read(limit_bytes + 1)
     if hashlib.sha256(binary).hexdigest() != policy.sha256:
         raise PermissionError("provider_integrity")
     if len(binary) < 64 or binary[:6] != b"\x7fELF\x02\x01":

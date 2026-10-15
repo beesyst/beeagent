@@ -105,6 +105,8 @@ modules:
 beescan:
   probe_enabled: false
   approval: null
+  detection_enabled: false
+  detection_approval: null
 
 beedrill:
   ai_assist:

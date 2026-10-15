@@ -151,10 +151,18 @@ def validate_beescan_settings(settings: dict) -> None:
     )
     if config is None and not enabled:
         return
-    if type(config) is not dict or set(config) != {"probe_enabled", "approval"}:
+    if type(config) is not dict or set(config) not in (
+        {"probe_enabled", "approval"},
+        {"probe_enabled", "approval", "detection_enabled", "detection_approval"},
+    ):
         raise RuntimeError("Invalid beescan settings")
     if type(config["probe_enabled"]) is not bool:
         raise RuntimeError("Invalid beescan.probe_enabled")
+    from beeagent_module.core.beescan_detection_policy import (
+        validate_detection_settings,
+    )
+
+    validate_detection_settings(config, enabled)
     if config["probe_enabled"]:
         if not enabled:
             raise RuntimeError("BeeScan probing requires the enabled module")

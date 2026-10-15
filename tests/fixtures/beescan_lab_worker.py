@@ -23,6 +23,31 @@ lock = threading.Lock()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with lock:
+            server = cast(http.server.ThreadingHTTPServer, self.server)
+            counts[server.server_port] += 1
+            (root / "counts.json").write_text(json.dumps(counts))
+        mode = (root / "mode").read_text().strip()
+        if mode == "timeout":
+            time.sleep(10)
+        self.send_response(302 if mode == "redirect" else 200)
+        self.send_header(
+            "X-Beescan-Marker",
+            "invalid"
+            if mode == "malformed"
+            else "absent"
+            if mode == "negative"
+            else "present",
+        )
+        self.send_header("Set-Cookie", "lab-secret=must-not-persist")
+        if mode == "redirect":
+            self.send_header("Location", "http://127.0.0.1:18081/")
+        if mode == "oversized":
+            self.send_header("X-Oversized", "x" * 9000)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_HEAD(self):
         with lock:
             server = cast(http.server.ThreadingHTTPServer, self.server)

@@ -329,8 +329,8 @@ def _current_policy(settings):
 
 
 def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
-    if args not in (["bootstrap"], ["probe"]):
-        print("Usage: ./start.sh beescan {bootstrap|probe}")
+    if args not in (["bootstrap"], ["probe"], ["detect"]):
+        print("Usage: ./start.sh beescan {bootstrap|probe|detect}")
         return 2
     try:
         registry = ModuleRegistry(settings["modules"]["registry"], logger)
@@ -348,14 +348,23 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
             )
             print(result.summary)
             return 0 if result.status == "ok" else 3
-        result = execute_approved_probe(
+        execute = execute_approved_probe
+        if args == ["detect"]:
+            from beeagent_module.core.beescan_detection import (
+                execute_approved_detection,
+            )
+
+            execute = execute_approved_detection
+        result = execute(
             settings=settings,
             reload_settings=reload_settings,
             storage_dir=storage_dir,
             logger=logger,
         )
         print(json.dumps(result, sort_keys=True))
-        return {"ok": 0, "refused": 3, "timeout": 4, "error": 5}[result["status"]]
+        return {"ok": 0, "matched": 0, "no_match": 0, "refused": 3, "timeout": 4}.get(
+            result["status"], 5
+        )
     except ImportError, OSError, RuntimeError, ValueError, SubprocessError:
         logger.error("BeeScan invocation incomplete")
         print("BeeScan invocation incomplete; inspect host prerequisites")
