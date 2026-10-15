@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 beescan = [
-    "beescan==0.4.0",
+    "beescan==0.5.0",
 ]
 rop = [
     "beeagent-rop==0.19.8",
@@ -46,6 +46,7 @@ dev = [
     "httpx2==2.10.0",
     "pytest==9.1.1",
     "beeagent-rop",
+    "beescan",
     "docling",
     "onnxruntime",
     "torch",

@@ -396,8 +396,8 @@ A BS iteration is complete only when:
 
 | Stage                                   | Iteration    | Focus                                                                   | Status      |
 | --------------------------------------- | ------------ | ----------------------------------------------------------------------- | ----------- |
-| Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | IN PROGRESS |
-| Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | PLANNED     |
+| Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | DONE        |
+| Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | IN PROGRESS |
 | Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | PLANNED     |
 | Post-MVP                                | Not numbered | UI expansion, monitoring, multi-target assessment and further providers | DEFERRED    |
 
@@ -540,7 +540,9 @@ BS-1 is complete only when the authorized laboratory HTTP probe actually execute
 
 ### Iteration BS-2 — Governed Nuclei Detection and Evidence Handoff
 
-**Status:** PLANNED
+**Status:** DONE
+
+Host integration and local It5 laboratory verification are implemented; the merged reviewed BeeScan revision, production pin update, hosted CI and independent review remain delivery gates. Operating instructions belong in [the host guide](beescan_guide.md).
 
 #### Goal
 

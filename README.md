@@ -295,6 +295,7 @@ The platform is designed for small, reviewable changes with explicit scope, clea
 - [Developer Guide](docs/DEV_GUIDE.md)
 - [Security Model](docs/SECURITY.md)
 - [Roadmap](docs/ROADMAP.md)
+- [BeeScan host operating guide](docs/product/beescan_guide.md)
 - [Web Console](docs/WEB_UI.md)
 - [BeeSDK](https://github.com/beesyst/beesdk)
 

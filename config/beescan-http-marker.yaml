@@ -1,0 +1,24 @@
+id: beescan-http-marker
+info:
+  name: BeeScan restricted HTTP marker
+  author: beesyst
+  severity: info
+  metadata:
+    version: "1"
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers-condition: or
+    matchers:
+      - type: word
+        name: marker
+        part: header
+        words:
+          - "X-Beescan-Marker: present"
+      - type: word
+        name: completed
+        part: header
+        words:
+          - "X-Beescan-Completion: complete"

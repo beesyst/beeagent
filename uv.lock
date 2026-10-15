@@ -142,6 +142,7 @@ rop = [
 [package.dev-dependencies]
 dev = [
     { name = "beeagent-rop" },
+    { name = "beescan" },
     { name = "docling" },
     { name = "httpx2" },
     { name = "onnxruntime" },
@@ -182,6 +183,7 @@ provides-extras = ["beescan", "rop", "beedrill", "docling-cpu", "docling-cuda"]
 [package.metadata.requires-dev]
 dev = [
     { name = "beeagent-rop", editable = "../beeagent-rop" },
+    { name = "beescan", git = "https://github.com/beesyst/beescan.git" },
     { name = "docling" },
     { name = "httpx2", specifier = "==2.10.0" },
     { name = "onnxruntime" },
@@ -210,8 +212,8 @@ dependencies = [
 
 [[package]]
 name = "beescan"
-version = "0.4.0"
-source = { git = "https://github.com/beesyst/beescan.git#ae1d1d07cf9d0e0fadd5fb9e4d8da71a4573eac2" }
+version = "0.5.0"
+source = { git = "https://github.com/beesyst/beescan.git#10c1ea2a43e98b91c71f17709f8d8fd33cc29c18" }
 dependencies = [
     { name = "beesdk" },
 ]
