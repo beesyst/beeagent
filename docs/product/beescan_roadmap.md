@@ -398,7 +398,7 @@ A BS iteration is complete only when:
 | --------------------------------------- | ------------ | ----------------------------------------------------------------------- | ----------- |
 | Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | DONE        |
 | Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | IN PROGRESS |
-| Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | PLANNED     |
+| Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | IN PROGRESS |
 | Post-MVP                                | Not numbered | UI expansion, monitoring, multi-target assessment and further providers | DEFERRED    |
 
 The first BeeScan assessment MVP must be demonstrated by completion of BS-1 through BS-3 together with the matching BeeScan domain iterations.
@@ -616,7 +616,7 @@ One restricted detector runs against an approved lab target through BeeAgent and
 
 ### Iteration BS-3 — Authorized Assessment Workflow and Report Delivery
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
@@ -638,7 +638,7 @@ Provide one usable BeeAgent operator workflow that starts from an authorized Web
 - Reuse authenticated operator identity and explicit engagement approval.
 - Validate the approved Mission, target, providers and execution budgets before beginning.
 - Coordinate the fixed supported sequence: scope validation, HTTP reconnaissance, restricted detection, triage and reporting.
-- Preserve one consistent host-generated run identity and associated artifact references.
+- Preserve one logical parent assessment identity and independently generated immutable probe/detection child-run identities with traceable artifact references.
 - Support an explicit human review/triage handoff with attributable reviewer decisions where required.
 - Consume BeeScan domain report output without implementing a second reporting engine.
 - Persist Markdown and JSON reports through BeeAgent-owned artifact interfaces.
@@ -663,7 +663,7 @@ Provide one usable BeeAgent operator workflow that starts from an authorized Web
 
 - An operator can reproduce the complete workflow from documented prerequisites.
 - Authorization remains valid at every execution boundary.
-- HTTP observations, detector results, candidate Findings, triage records and reports refer to the same approved Mission/run.
+- HTTP observations, detector results, candidate Findings, triage records and reports refer to the same approved Mission and logical assessment, while preserving their independent child-run provenance.
 - VERIFIED, CANDIDATE, REJECTED, NO FINDINGS, REFUSED and INCOMPLETE states remain distinguishable as applicable.
 - A scanner match cannot automatically create a VERIFIED finding.
 - A missing, malformed or unauthorized evidence reference cannot establish a successful assessment.

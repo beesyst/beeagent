@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import SubprocessError
@@ -165,12 +165,32 @@ def parse_detection_output(raw, capture, *, limit):
 def _persist(artifacts, filename, data):
     path = artifacts.write_json(filename, data)
     path.chmod(0o600)
-    expected = json.loads(json.dumps(data))
-    if _json(read_regular(path, limit=131072)) != expected:
+    expected = json.dumps(data, sort_keys=True)
+    if json.dumps(_json(read_regular(path, limit=131072)), sort_keys=True) != expected:
         raise OSError("artifact_incomplete")
     with path.open("rb") as stream:
         os.fsync(stream.fileno())
     return path
+
+
+@dataclass(frozen=True)
+class AssessmentSourceBinding:
+    configured_policy: DetectionPolicy
+    observation: object
+
+    def bind(self, current):
+        from beescan.capabilities.http_probe import HttpObservation
+
+        if (
+            current != self.configured_policy
+            or type(self.observation) is not HttpObservation
+        ):
+            raise PermissionError("approval_or_source_changed")
+        return replace(
+            current,
+            source_run_id=self.observation.facts.provenance.run_id,
+            source_observation_id=self.observation.observation_id,
+        )
 
 
 class GovernedDetectionCaller:
@@ -182,6 +202,7 @@ class GovernedDetectionCaller:
         self.run_id, self.artifacts = run_id, artifacts
         self.facts = None
         self.provenance = None
+        self.evidence_record = None
         self._used = False
         self._lock = Lock()
 
@@ -249,18 +270,16 @@ class GovernedDetectionCaller:
                 if matched
                 else [],
             )
-            _persist(
-                self.artifacts,
-                ref + ".json",
-                {
-                    "schema_version": 1,
-                    "facts": facts,
-                    "capture": capture,
-                    "provenance": asdict(provenance),
-                    "profile": intent.profile,
-                    "source_run_id": self.policy.source_run_id,
-                },
-            )
+            evidence_record = {
+                "schema_version": 1,
+                "facts": facts,
+                "capture": capture,
+                "provenance": asdict(provenance),
+                "profile": intent.profile,
+                "source_run_id": self.policy.source_run_id,
+            }
+            _persist(self.artifacts, ref + ".json", evidence_record)
+            self.evidence_record = evidence_record
             self.facts, self.provenance = facts, provenance
             return CapabilityResult(
                 intent.capability_name,
@@ -322,16 +341,23 @@ def _current_policy(settings):
 
 
 def execute_approved_detection(
-    *, settings, reload_settings, storage_dir: Path, logger: logging.Logger
+    *,
+    settings,
+    reload_settings,
+    storage_dir: Path,
+    logger: logging.Logger,
+    assessment_source=None,
+    on_complete=None,
+    on_started=None,
 ):
     run_id = generate_run_id()
     artifacts = ArtifactAPI(
         RuntimeContext(
-            run_id,
-            generate_session_id(),
-            "restricted_detection",
-            "beescan",
-            AuthorityLevel.EXECUTION_CAPABLE,
+            run_id=run_id,
+            session_id=generate_session_id(),
+            case_type="restricted_detection",
+            module_id="beescan",
+            authority=AuthorityLevel.EXECUTION_CAPABLE,
         ),
         storage_dir,
         logger,
@@ -346,8 +372,19 @@ def execute_approved_detection(
     }
     artifacts.artifact_dir().chmod(0o700)
     _persist(artifacts, "detection_status.json", status)
+    if on_started is not None:
+        on_started(run_id)
+    outcome = evidence_record = None
+    candidates = ()
     try:
-        policy = _current_policy(settings)
+
+        def current_policy(current_settings):
+            configured = _current_policy(current_settings)
+            return (
+                assessment_source.bind(configured) if assessment_source else configured
+            )
+
+        policy = current_policy(settings)
         policy.authorize_operator(operator_uid=os.getuid(), at=datetime.now(UTC))
         from beescan.capabilities.detection import (
             correlate_detections,
@@ -355,10 +392,12 @@ def execute_approved_detection(
         )
 
         observation = load_source(storage_dir, policy)
+        if assessment_source and observation != assessment_source.observation:
+            raise PermissionError("approval_or_source_changed")
         intent = policy.intent(observation, at=datetime.now(UTC))
         caller = GovernedDetectionCaller(
             policy=policy,
-            reload_policy=lambda: _current_policy(reload_settings()),
+            reload_policy=lambda: current_policy(reload_settings()),
             observation=observation,
             storage_dir=storage_dir,
             run_id=run_id,
@@ -369,8 +408,12 @@ def execute_approved_detection(
             status=result.status.value, reason=result.diagnostics.get("reason", "ok")
         )
         if result.status is CapabilityStatus.OK:
+            provenance = caller.provenance
+            evidence_record = caller.evidence_record
+            if provenance is None or evidence_record is None:
+                raise ValueError("missing_host_evidence")
             outcome = normalize_detection(
-                intent, result, provenance=caller.provenance, facts=caller.facts
+                intent, result, provenance=provenance, facts=caller.facts
             )
             candidates = correlate_detections((outcome,))
             _persist(
@@ -397,7 +440,7 @@ def execute_approved_detection(
                 evidence_refs=list(outcome.evidence_refs),
                 source_run_id=policy.source_run_id,
                 source_observation_id=observation.observation_id,
-                provenance=asdict(caller.provenance),
+                provenance=asdict(provenance),
             )
     except PermissionError:
         status.update(status="refused", reason="authorization_refused", complete=False)
@@ -422,5 +465,13 @@ def execute_approved_detection(
         )
     pending = _persist(artifacts, "detection_status.pending.json", status)
     os.replace(pending, artifacts.artifact_dir() / "detection_status.json")
+    if (
+        status["complete"]
+        and outcome is not None
+        and outcome.status.value in {"matched", "no_match"}
+        and evidence_record is not None
+        and on_complete is not None
+    ):
+        on_complete(outcome, candidates, evidence_record)
     logger.info("BeeScan detection: run_id=%s status=%s", run_id, status["status"])
     return status

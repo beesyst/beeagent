@@ -146,6 +146,8 @@ class GovernedHttpCaller:
     def call(self, capability_name, payload):
         from beescan.capabilities.http_probe import HostProvenance
 
+        from beeagent_module.core.beescan_detection import _persist
+
         status = CapabilityStatus.REFUSED
         reason = "authorization_refused"
         with self._lock:
@@ -181,8 +183,9 @@ class GovernedHttpCaller:
                 connected_ip=self.policy.connected_ip,
             )
             self._authorize(intent)
-            self.artifacts.write_json(
-                ref + ".json", {"schema_version": 1, **asdict(facts)}
+            self.artifacts.artifact_dir().chmod(0o700)
+            _persist(
+                self.artifacts, ref + ".json", {"schema_version": 1, **asdict(facts)}
             )
             self.facts = facts
             return CapabilityResult(
@@ -237,25 +240,36 @@ class GovernedHttpCaller:
 
 
 def execute_approved_probe(
-    *, settings, reload_settings, storage_dir: Path, logger: logging.Logger
+    *,
+    settings,
+    reload_settings,
+    storage_dir: Path,
+    logger: logging.Logger,
+    on_complete=None,
+    on_started=None,
 ):
     from beescan.capabilities.http_probe import (
         normalize_http_observation,
         normalize_http_probe,
     )
 
+    from beeagent_module.core.beescan_detection import _persist
+
     run_id, session_id = generate_run_id(), generate_session_id()
     artifacts = ArtifactAPI(
         RuntimeContext(
-            run_id,
-            session_id,
-            "http_probe",
-            "beescan",
-            AuthorityLevel.EXECUTION_CAPABLE,
+            run_id=run_id,
+            session_id=session_id,
+            case_type="http_probe",
+            module_id="beescan",
+            authority=AuthorityLevel.EXECUTION_CAPABLE,
         ),
         storage_dir,
         logger,
     )
+    artifacts.artifact_dir().chmod(0o700)
+    if on_started is not None:
+        on_started(run_id)
     status = {
         "schema_version": 1,
         "run_id": run_id,
@@ -264,6 +278,7 @@ def execute_approved_probe(
         "reason": "capability_disabled",
         "evidence_refs": [],
     }
+    observation = None
     config = settings.get("beescan", {})
     enabled = any(
         item["id"] == "beescan" and item["enabled"] is True
@@ -291,7 +306,8 @@ def execute_approved_probe(
                     intent, result, provenance=facts.provenance
                 )
                 observation = normalize_http_observation(intent, outcome, facts)
-                artifacts.write_json(
+                _persist(
+                    artifacts,
                     "http_observation.json",
                     {"schema_version": 1, **asdict(observation)},
                 )
@@ -308,7 +324,9 @@ def execute_approved_probe(
                 status.update(
                     status="error", reason="artifact_incomplete", complete=False
                 )
-    artifacts.write_json("http_probe_status.json", status)
+    _persist(artifacts, "http_probe_status.json", status)
+    if status["complete"] and observation is not None and on_complete is not None:
+        on_complete(observation)
     logger.info(
         "BeeScan HTTP probe: run_id=%s status=%s reason=%s",
         run_id,
@@ -329,8 +347,8 @@ def _current_policy(settings):
 
 
 def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
-    if args not in (["bootstrap"], ["probe"], ["detect"]):
-        print("Usage: ./start.sh beescan {bootstrap|probe|detect}")
+    if args not in (["bootstrap"], ["probe"], ["detect"], ["assess"]):
+        print("Usage: ./start.sh beescan {bootstrap|probe|detect|assess}")
         return 2
     try:
         registry = ModuleRegistry(settings["modules"]["registry"], logger)
@@ -355,6 +373,12 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
             )
 
             execute = execute_approved_detection
+        elif args == ["assess"]:
+            from beeagent_module.core.beescan_assessment import (
+                execute_approved_assessment,
+            )
+
+            execute = execute_approved_assessment
         result = execute(
             settings=settings,
             reload_settings=reload_settings,
