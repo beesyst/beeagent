@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.74.0...beeagent-v0.75.0) (2026-10-16)
+
+
+### Features
+
+* **beescan:** add governed assessment workflow and real end-to-end verification ([#308](https://github.com/beesyst/beeagent/issues/308)) ([f52bfde](https://github.com/beesyst/beeagent/commit/f52bfdee0b701ab3da59936cec76627cd3608ca5))
+
 ## [0.74.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.73.0...beeagent-v0.74.0) (2026-10-15)
 
 
