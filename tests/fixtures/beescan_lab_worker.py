@@ -19,6 +19,7 @@ rules = """table inet beescan {
 """
 subprocess.run(["/usr/sbin/nft", "-f", "-"], input=rules, text=True, check=True)
 counts = {18080: 0, 18081: 0}
+requests = []
 lock = threading.Lock()
 
 
@@ -28,6 +29,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             server = cast(http.server.ThreadingHTTPServer, self.server)
             counts[server.server_port] += 1
             (root / "counts.json").write_text(json.dumps(counts))
+            requests.append(
+                {"port": server.server_port, "method": "GET", "path": self.path}
+            )
+            (root / "requests.json").write_text(json.dumps(requests))
         mode = (root / "mode").read_text().strip()
         if mode == "timeout":
             time.sleep(10)
@@ -53,6 +58,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             server = cast(http.server.ThreadingHTTPServer, self.server)
             counts[server.server_port] += 1
             (root / "counts.json").write_text(json.dumps(counts))
+            requests.append(
+                {"port": server.server_port, "method": "HEAD", "path": self.path}
+            )
+            (root / "requests.json").write_text(json.dumps(requests))
         mode = (root / "mode").read_text().strip()
         if mode == "timeout":
             time.sleep(10)
@@ -76,6 +85,7 @@ for port in counts:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 (root / "counts.json").write_text(json.dumps(counts))
+(root / "requests.json").write_text(json.dumps(requests))
 (root / "ready").write_text("ready")
 while True:
     time.sleep(1)
