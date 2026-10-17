@@ -14,6 +14,7 @@ from beesdk.modules import AuthorityLevel as SDKAuthority
 from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.beescan_detection_policy import DetectionPolicy
 from beeagent_module.core.beescan_detection_runner import (
+    parse_capture,
     read_regular,
     run_detection_provider,
     safe_response,
@@ -195,11 +196,22 @@ class AssessmentSourceBinding:
 
 class GovernedDetectionCaller:
     def __init__(
-        self, *, policy, reload_policy, observation, storage_dir, run_id, artifacts
+        self,
+        *,
+        policy,
+        reload_policy,
+        observation,
+        storage_dir,
+        run_id,
+        artifacts,
+        http_signals=False,
     ):
+        if type(http_signals) is not bool:
+            raise ValueError("invalid_signal_selection")
         self.policy, self.reload_policy = policy, reload_policy
         self.observation, self.storage_dir = observation, storage_dir
         self.run_id, self.artifacts = run_id, artifacts
+        self.http_signals = http_signals
         self.facts = None
         self.provenance = None
         self.evidence_record = None
@@ -238,8 +250,14 @@ class GovernedDetectionCaller:
             ):
                 return self._failure(status, "invalid_payload")
             self._authorize(intent)
+            options = {"http_signals": True} if self.http_signals else {}
             raw, capture = run_detection_provider(
-                self.policy, reauthorize=lambda: self._authorize(intent)
+                self.policy, reauthorize=lambda: self._authorize(intent), **options
+            )
+            capture = parse_capture(
+                json.dumps(capture).encode("ascii"),
+                self.policy,
+                http_signals=self.http_signals,
             )
             matched = parse_detection_output(
                 raw, capture, limit=self.policy.output_bytes
@@ -347,6 +365,7 @@ def execute_approved_detection(
     storage_dir: Path,
     logger: logging.Logger,
     assessment_source=None,
+    http_signals=False,
     on_complete=None,
     on_started=None,
 ):
@@ -402,6 +421,7 @@ def execute_approved_detection(
             storage_dir=storage_dir,
             run_id=run_id,
             artifacts=artifacts,
+            http_signals=http_signals,
         )
         result = caller.call(intent.capability_name, intent.payload)
         status.update(

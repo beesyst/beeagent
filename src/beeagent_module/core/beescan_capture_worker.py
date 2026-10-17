@@ -6,6 +6,50 @@ import sys
 from urllib.parse import urlsplit
 
 
+def normalized_headers(values, *, https):
+    nosniff = values.get("x-content-type-options")
+    hsts = values.get("strict-transport-security")
+    result = {
+        "nosniff": "absent"
+        if nosniff is None
+        else "nosniff"
+        if nosniff.lower() == "nosniff"
+        else "other",
+        "hsts": "absent" if hsts is None else "other",
+        "hsts_max_age": None,
+        "https": https,
+        "complete": True,
+    }
+    if hsts is not None:
+        seen = set()
+        for directive in hsts.split(";"):
+            directive = directive.strip()
+            if not directive:
+                continue
+            match = re.fullmatch(
+                r'([A-Za-z][A-Za-z0-9-]*)(?:\s*=\s*([A-Za-z0-9-]+|"[A-Za-z0-9-]*"))?',
+                directive,
+            )
+            if match is None:
+                raise ValueError
+            name, value = match.groups()
+            name = name.lower()
+            if name in seen:
+                raise ValueError
+            seen.add(name)
+            if name == "max-age":
+                if value is None:
+                    raise ValueError
+                value = value.strip('"')
+                if not value.isascii() or not value.isdecimal() or len(value) > 19:
+                    raise ValueError
+                age = int(value)
+                if age > 2**63 - 1:
+                    raise ValueError
+                result.update(hsts="max_age", hsts_max_age=age)
+    return result
+
+
 def capture(config):
     origin = urlsplit(config["origin"])
     family = socket.AF_INET6 if ":" in config["connected_ip"] else socket.AF_INET
@@ -35,6 +79,8 @@ def capture(config):
             if 300 <= status <= 399:
                 return 3, None
             marker = None
+            headers = {}
+            signals = config.get("http_signals", False)
             seen = set()
             for line in lines[1:-2]:
                 name, separator, value = line.partition(":")
@@ -47,15 +93,23 @@ def capture(config):
                 name = name.lower()
                 if (
                     name in {"x-beescan-marker", "content-length", "transfer-encoding"}
-                    and name in seen
-                ):
+                    or signals
+                    and name in {"x-content-type-options", "strict-transport-security"}
+                ) and name in seen:
                     raise ValueError
                 seen.add(name)
+                if signals and name in {
+                    "x-content-type-options",
+                    "strict-transport-security",
+                }:
+                    if len(value) > 1024:
+                        raise ValueError
+                    headers[name] = value.strip()
                 if name == "x-beescan-marker":
                     marker = value.strip()
                     if marker not in {"present", "absent"}:
                         raise ValueError
-            return 0, {
+            result = {
                 "origin": config["origin"],
                 "connected_ip": config["connected_ip"],
                 "port": config["port"],
@@ -65,6 +119,11 @@ def capture(config):
                 "marker_header": marker,
                 "complete": True,
             }
+            if signals:
+                result["header_facts"] = normalized_headers(
+                    headers, https=origin.scheme == "https"
+                )
+            return 0, result
         finally:
             stream.close()
 

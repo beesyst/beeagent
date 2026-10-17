@@ -57,12 +57,14 @@ def safe_response(capture):
     return f"HTTP/1.1 {capture['status_code']} Captured\r\n{header}X-Beescan-Completion: complete\r\nContent-Length: 0\r\n\r\n"
 
 
-def parse_capture(raw, policy):
+def parse_capture(raw, policy, *, http_signals=False):
+    if type(http_signals) is not bool:
+        raise ValueError("invalid_signal_selection")
     if type(raw) is not bytes or not 1 <= len(raw) <= 4096:
         raise ValueError("invalid_capture")
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object)
-        if type(data) is not dict or set(data) != {
+        fields = {
             "origin",
             "connected_ip",
             "port",
@@ -71,7 +73,10 @@ def parse_capture(raw, policy):
             "status_code",
             "marker_header",
             "complete",
-        }:
+        }
+        if http_signals:
+            fields.add("header_facts")
+        if type(data) is not dict or set(data) != fields:
             raise ValueError
         expected = {
             "origin": policy.origin,
@@ -97,6 +102,32 @@ def parse_capture(raw, policy):
             or data["marker_header"] not in {"present", "absent"}
         ):
             raise ValueError
+        if http_signals:
+            facts = data["header_facts"]
+            if type(facts) is not dict or set(facts) != {
+                "nosniff",
+                "hsts",
+                "hsts_max_age",
+                "https",
+                "complete",
+            }:
+                raise ValueError
+            if (
+                type(facts["nosniff"]) is not str
+                or facts["nosniff"] not in {"absent", "nosniff", "other"}
+                or type(facts["hsts"]) is not str
+                or facts["hsts"] not in {"absent", "max_age", "other"}
+                or type(facts["https"]) is not bool
+                or facts["https"] != policy.origin.startswith("https:")
+                or facts["complete"] is not True
+            ):
+                raise ValueError
+            age = facts["hsts_max_age"]
+            if facts["hsts"] == "max_age":
+                if type(age) is not int or not 0 <= age <= 2**63 - 1:
+                    raise ValueError
+            elif age is not None:
+                raise ValueError
         return data
     except ValueError, TypeError, KeyError, RecursionError, UnicodeError:
         raise ValueError("invalid_capture") from None
@@ -169,7 +200,7 @@ def _sandbox(policy):
     return command
 
 
-def run_detection_provider(policy, *, reauthorize):
+def run_detection_provider(policy, *, reauthorize, http_signals=False):
     deadline = time.monotonic() + policy.time_budget_seconds
 
     def run(argv, *, limit, pass_fds=(), stderr=False):
@@ -292,6 +323,8 @@ def run_detection_provider(policy, *, reauthorize):
                 "port": policy.port,
                 "seconds": max(0.001, deadline - time.monotonic()),
             }
+            if http_signals:
+                config["http_signals"] = True
             code, raw_capture = run(
                 [
                     *prefix,
@@ -312,7 +345,7 @@ def run_detection_provider(policy, *, reauthorize):
                 raise TimeoutError("timeout")
             if code:
                 raise ValueError("capture_failed")
-            capture = parse_capture(raw_capture, policy)
+            capture = parse_capture(raw_capture, policy, http_signals=http_signals)
             input_file = directory / "input.txt"
             input_file.write_text(safe_response(capture), encoding="ascii")
             input_file.chmod(0o444)

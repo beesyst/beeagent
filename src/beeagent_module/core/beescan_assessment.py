@@ -93,7 +93,12 @@ def _write_report(artifacts, name, content):
 
 
 def execute_approved_assessment(
-    *, settings, reload_settings, storage_dir: Path, logger: logging.Logger
+    *,
+    settings,
+    reload_settings,
+    storage_dir: Path,
+    logger: logging.Logger,
+    http_signals=False,
 ):
     run_id = generate_run_id()
     artifacts = ArtifactAPI(
@@ -125,6 +130,7 @@ def execute_approved_assessment(
     candidates = ()
     probe_state, detection_state = "incomplete", "incomplete"
     report = detection_snapshot = None
+    signal_assessment = None
 
     def current_settings():
         current = reload_settings()
@@ -156,6 +162,15 @@ def execute_approved_assessment(
             build_assessment_report,
         )
 
+        if type(http_signals) is not bool:
+            raise ValueError("invalid_signal_selection")
+        if http_signals:
+            from beescan.domain.http_signals import (
+                HstsFact,
+                HttpHeaderFacts,
+                HttpSignalAssessment,
+                NosniffFact,
+            )
         probe, detection = _policies(settings)
         seconds = probe.time_budget_seconds + detection.time_budget_seconds
         if datetime.now(UTC).timestamp() + seconds > min(
@@ -239,6 +254,7 @@ def execute_approved_assessment(
                 storage_dir=storage_dir,
                 logger=logger,
                 assessment_source=AssessmentSourceBinding(detection, observation),
+                http_signals=http_signals,
                 on_complete=lambda outcome, candidates, evidence: records.append(
                     (outcome, candidates, evidence)
                 ),
@@ -291,6 +307,23 @@ def execute_approved_assessment(
                 detection_snapshot["detection_status.json"] = _read_run(
                     storage_dir, detection_result["run_id"], "detection_status.json"
                 )
+                if http_signals:
+                    header = evidence_record["capture"]["header_facts"]
+                    signal_assessment = HttpSignalAssessment(
+                        outcome,
+                        HttpHeaderFacts(
+                            outcome.intent.mission_id,
+                            outcome.intent.target_id,
+                            outcome.intent.origin,
+                            observation.observation_id,
+                            outcome.provenance,
+                            outcome.evidence_refs,
+                            header["complete"],
+                            NosniffFact(header["nosniff"]),
+                            HstsFact(header["hsts"]),
+                            header["hsts_max_age"],
+                        ),
+                    )
                 detection_state = "complete"
                 status.update(status="ok", reason="ok")
             else:
@@ -318,6 +351,11 @@ def execute_approved_assessment(
             max_requests=2,
             max_seconds=max(probe.time_budget_seconds, detection.time_budget_seconds),
         )
+        signal_options = (
+            {"signals_selected": True, "signal_assessment": signal_assessment}
+            if http_signals
+            else {}
+        )
         report = build_assessment_report(
             AssessmentInput(
                 run_id,
@@ -337,6 +375,7 @@ def execute_approved_assessment(
                 observation,
                 outcome,
                 candidates,
+                **signal_options,
             )
         )
         _write_report(artifacts, "report.md", report.markdown)

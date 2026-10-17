@@ -338,3 +338,107 @@ def test_real_assessment_execution_boundary(assessment_lab, monkeypatch, failure
     assert json.loads((root / "requests.json").read_text()) == requests
     parent = root / "storage/runs" / status["assessment_run_id"] / "module-beescan"
     assert json.loads((parent / "assessment_status.json").read_text()) == status
+
+
+@pytest.mark.parametrize("lab", [False, True], indirect=True, ids=["http", "https"])
+def test_real_signal_assessment(assessment_lab, monkeypatch):
+    settings, probe, root = assessment_lab
+    tls = probe.origin.startswith("https:")
+    original = beescan_detection_runner.bounded_process
+
+    def process(argv, **kwargs):
+        if tls and "/capture.py" in argv:
+            argv = list(argv)
+            index = argv.index("/usr/bin/python3") - 1
+            assert argv[index] == "--"
+            argv[index:index] = ["--ro-bind", str(root / "trust"), "/etc/ssl/certs"]
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(beescan_detection_runner, "bounded_process", process)
+    assert_kernel_egress(probe)
+    logger = logging.getLogger("signal-lab")
+    handler = logging.FileHandler(root / "signals.log")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        for mode, nosniff, hsts, expected in (
+            ("signal-effective", "effective", "effective", "no_findings"),
+            ("signal-missing", "missing", "missing", "signals"),
+            ("signal-ineffective", "ineffective", "effective", "signals"),
+            (
+                "signal-hsts-missing",
+                "effective",
+                "missing",
+                "signals" if tls else "no_findings",
+            ),
+            (
+                "signal-hsts-disabled",
+                "effective",
+                "ineffective",
+                "signals" if tls else "no_findings",
+            ),
+            ("ok", "missing", "effective", "findings"),
+        ):
+            (root / "mode").write_text(mode)
+            before = len(json.loads((root / "requests.json").read_text()))
+            status = execute_approved_assessment(
+                settings=settings,
+                reload_settings=lambda: settings,
+                storage_dir=root / "storage",
+                logger=logger,
+                http_signals=True,
+            )
+            assert status["complete"], status
+            assert status["result"] == expected
+            parent = (
+                root / "storage/runs" / status["assessment_run_id"] / "module-beescan"
+            )
+            data = json.loads((parent / "report.json").read_text())
+            assert data["schema_version"] == 2
+            assert [c["state"] for c in data["signal_checks"]] == [
+                nosniff,
+                hsts if tls else "not_applicable",
+            ]
+            assert json.loads((root / "requests.json").read_text())[before:] == [
+                {"port": 18080, "method": "HEAD", "path": "/"},
+                {"port": 18080, "method": "GET", "path": "/"},
+            ]
+            assert json.loads((root / "counts.json").read_text())["18081"] == 0
+        for mode in ("signal-duplicate", "signal-malformed", "oversized", "redirect"):
+            (root / "mode").write_text(mode)
+            status = execute_approved_assessment(
+                settings=settings,
+                reload_settings=lambda: settings,
+                storage_dir=root / "storage",
+                logger=logger,
+                http_signals=True,
+            )
+            assert not status["complete"], status
+            assert status.get("result") != "no_findings"
+        if tls:
+            monkeypatch.setattr(beescan_detection_runner, "bounded_process", original)
+            (root / "mode").write_text("signal-effective")
+            before = json.loads((root / "requests.json").read_text())
+            status = execute_approved_assessment(
+                settings=settings,
+                reload_settings=lambda: settings,
+                storage_dir=root / "storage",
+                logger=logger,
+                http_signals=True,
+            )
+            assert not status["complete"]
+            after = json.loads((root / "requests.json").read_text())
+            assert after[len(before) :] == [
+                {"port": 18080, "method": "HEAD", "path": "/"}
+            ]
+        for path in (root / "storage").rglob("*"):
+            if path.is_file():
+                text = path.read_text()
+                assert all(
+                    secret not in text
+                    for secret in ("lab-secret", "Set-Cookie", "includeSubDomains")
+                )
+                assert path.stat().st_mode & 0o077 == 0
+    finally:
+        logger.removeHandler(handler)
+        handler.close()

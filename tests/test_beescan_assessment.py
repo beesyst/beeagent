@@ -41,10 +41,18 @@ def assessment(approved, monkeypatch):
             {"url": policy.origin, "status_code": 200, "failed": False}
         ).encode()
 
-    def detection_provider(policy, *, reauthorize):
+    def detection_provider(policy, *, reauthorize, http_signals=False):
         reauthorize()
         calls.append("detection")
         capture = captured()
+        if http_signals:
+            capture["header_facts"] = {
+                "nosniff": "nosniff",
+                "hsts": "absent",
+                "hsts_max_age": None,
+                "https": False,
+                "complete": True,
+            }
         return output(capture), capture
 
     monkeypatch.setattr(beescan_probe, "run_provider", probe_provider)
@@ -54,18 +62,32 @@ def assessment(approved, monkeypatch):
     return settings, root, calls
 
 
-def run_assessment(assessment, reload_settings=None):
+def run_assessment(assessment, reload_settings=None, *, http_signals=False):
     settings, root, _ = assessment
     return host.execute_approved_assessment(
         settings=settings,
         reload_settings=reload_settings or (lambda: settings),
         storage_dir=root,
         logger=logging.getLogger("assessment-test"),
+        http_signals=http_signals,
     )
 
 
 @pytest.mark.parametrize("matched", [True, False])
-def test_assessment_complete_with_fresh_source(assessment, monkeypatch, matched):
+@pytest.mark.parametrize("legacy_contract", [False, True])
+def test_assessment_complete_with_fresh_source(
+    assessment, monkeypatch, matched, legacy_contract
+):
+    if legacy_contract:
+        from beescan.domain import reporting
+
+        original_input = reporting.AssessmentInput
+
+        def legacy_input(*args):
+            monkeypatch.setattr(reporting, "AssessmentInput", original_input)
+            return original_input(*args)
+
+        monkeypatch.setattr(reporting, "AssessmentInput", legacy_input)
     settings, root, calls = assessment
     original = copy.deepcopy(settings)
 
@@ -234,7 +256,10 @@ def test_assessment_provider_and_cleanup_failures(
 @pytest.mark.parametrize(
     "filename", ["report.md", "report.json", "assessment_status.pending.json"]
 )
-def test_assessment_partial_persistence(assessment, monkeypatch, filename):
+@pytest.mark.parametrize("http_signals", [False, True])
+def test_assessment_partial_persistence(
+    assessment, monkeypatch, filename, http_signals
+):
     original_text = host.ArtifactAPI.write_text
     original_json = host.ArtifactAPI.write_json
 
@@ -248,7 +273,7 @@ def test_assessment_partial_persistence(assessment, monkeypatch, filename):
 
     monkeypatch.setattr(host.ArtifactAPI, "write_text", text_write)
     monkeypatch.setattr(host.ArtifactAPI, "write_json", json_write)
-    result = run_assessment(assessment)
+    result = run_assessment(assessment, http_signals=http_signals)
     assert result["complete"] is False
     _, root, _ = assessment
     saved = json.loads(
@@ -355,7 +380,10 @@ def test_assessment_rejects_source_changed_before_binding(
 @pytest.mark.parametrize(
     "name", ["detection_status.json", "detection_candidates.json", "evidence"]
 )
-def test_assessment_rejects_detection_artifact_tampering(assessment, monkeypatch, name):
+@pytest.mark.parametrize("http_signals", [False, True])
+def test_assessment_rejects_detection_artifact_tampering(
+    assessment, monkeypatch, name, http_signals
+):
     original = host.execute_approved_detection
 
     def changed(**kwargs):
@@ -377,7 +405,7 @@ def test_assessment_rejects_detection_artifact_tampering(assessment, monkeypatch
         return result
 
     monkeypatch.setattr(host, "execute_approved_detection", changed)
-    status = run_assessment(assessment)
+    status = run_assessment(assessment, http_signals=http_signals)
     assert not status["complete"]
 
 
@@ -416,8 +444,9 @@ def test_assessment_cli_dispatch(assessment, capsys):
 @pytest.mark.parametrize(
     "mutation", ["report.md", "report.json", "child", "approval", "deadline"]
 )
+@pytest.mark.parametrize("http_signals", [False, True])
 def test_assessment_terminal_commit_revalidates_required_state(
-    assessment, monkeypatch, mutation
+    assessment, monkeypatch, mutation, http_signals
 ):
     original = host.ArtifactAPI.write_json
     clock = [0.0]
@@ -443,7 +472,7 @@ def test_assessment_terminal_commit_revalidates_required_state(
         return path
 
     monkeypatch.setattr(host.ArtifactAPI, "write_json", corrupted)
-    result = run_assessment(assessment)
+    result = run_assessment(assessment, http_signals=http_signals)
     assert result["complete"] is False
     marker = (
         assessment[1]
@@ -456,3 +485,117 @@ def test_assessment_terminal_commit_revalidates_required_state(
         assert result["status"] == "refused"
     elif mutation == "deadline":
         assert result["status"] == "timeout"
+
+
+@pytest.mark.parametrize("marker", ["present", "absent"])
+@pytest.mark.parametrize("nosniff", ["absent", "nosniff", "other"])
+def test_signal_assessment_public_report_and_evidence(
+    assessment, monkeypatch, marker, nosniff
+):
+    from beescan.domain.http_signals import (
+        HstsFact,
+        HttpHeaderFacts,
+        HttpSignalAssessment,
+        NosniffFact,
+    )
+    from beescan.domain.reporting import AssessmentInput, build_assessment_report
+
+    settings, root, calls = assessment
+    reports = []
+    original = build_assessment_report
+
+    def report(record):
+        assert type(record) is AssessmentInput
+        assert type(record.signal_assessment) is HttpSignalAssessment
+        assert type(record.signal_assessment.facts) is HttpHeaderFacts
+        facts = record.signal_assessment.facts
+        assert facts.nosniff is NosniffFact(nosniff)
+        assert facts.hsts is HstsFact.ABSENT
+        result = original(record)
+        reports.append(result)
+        return result
+
+    def provider(policy, *, reauthorize, http_signals):
+        assert http_signals is True
+        reauthorize()
+        calls.append("detection")
+        capture = captured(marker)
+        capture["header_facts"] = {
+            "nosniff": nosniff,
+            "hsts": "absent",
+            "hsts_max_age": None,
+            "https": False,
+            "complete": True,
+        }
+        return output(capture), capture
+
+    monkeypatch.setattr(beescan_detection, "run_detection_provider", provider)
+    monkeypatch.setattr("beescan.domain.reporting.build_assessment_report", report)
+    status = host.execute_approved_assessment(
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=root,
+        logger=logging.getLogger("signals"),
+        http_signals=True,
+    )
+    assert status["complete"], status
+    assert calls == ["probe", "detection"]
+    expected = (
+        "findings"
+        if marker == "present"
+        else "no_findings"
+        if nosniff == "nosniff"
+        else "signals"
+    )
+    assert status["result"] == expected
+    parent = root / "runs" / status["assessment_run_id"] / "module-beescan"
+    assert (parent / "report.md").read_bytes() == reports[0].markdown.encode()
+    assert (parent / "report.json").read_bytes() == reports[0].canonical_json.encode()
+    assert reports[0].data["signal_checks"][1]["state"] == "not_applicable"
+    for path in root.rglob("*.json"):
+        text = path.read_text()
+        assert "Set-Cookie" not in text and "lab-secret" not in text
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "type", "incomplete", "https", "unknown", "extra", "age"]
+)
+def test_signal_assessment_rejects_bad_capture(assessment, monkeypatch, mutation):
+    def provider(policy, *, reauthorize, http_signals):
+        reauthorize()
+        capture = captured("absent")
+        header = {
+            "nosniff": "nosniff",
+            "hsts": "absent",
+            "hsts_max_age": None,
+            "https": False,
+            "complete": True,
+        }
+        capture["header_facts"] = header
+        if mutation == "missing":
+            del capture["header_facts"]
+        elif mutation == "type":
+            header["nosniff"] = True
+        elif mutation == "incomplete":
+            header["complete"] = False
+        elif mutation == "https":
+            header["https"] = True
+        elif mutation == "unknown":
+            header["nosniff"] = "verified"
+        elif mutation == "extra":
+            header["raw"] = "secret"
+        else:
+            header["hsts_max_age"] = 1
+        return output(capture), capture
+
+    monkeypatch.setattr(beescan_detection, "run_detection_provider", provider)
+    settings, root, _ = assessment
+    result = host.execute_approved_assessment(
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=root,
+        logger=logging.getLogger("signals"),
+        http_signals=True,
+    )
+    assert not result["complete"]
+    assert result.get("result") != "no_findings"

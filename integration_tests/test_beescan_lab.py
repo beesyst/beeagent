@@ -15,7 +15,7 @@ from beeagent_module.core.beescan_probe import execute_approved_probe
 
 
 @pytest.fixture
-def lab(tmp_path):
+def lab(tmp_path, request):
     provider = os.environ.get("BEEAGENT_BEESCAN_LAB_PROVIDER")
     if not provider:
         pytest.fail("Explicit pinned lab provider required", pytrace=False)
@@ -28,6 +28,36 @@ def lab(tmp_path):
         for name in ("HttpFacts", "HttpObservation", "normalize_http_observation")
     ):
         pytest.fail("BeeScan It4 is required for the laboratory gate", pytrace=False)
+    tls = getattr(request, "param", False)
+    if tls:
+        subprocess.run(
+            [
+                "/usr/bin/openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(tmp_path / "server.key"),
+                "-out",
+                str(tmp_path / "server.pem"),
+                "-days",
+                "1",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        trust = tmp_path / "trust"
+        trust.mkdir()
+        (trust / "lab.pem").write_bytes((tmp_path / "server.pem").read_bytes())
+        subprocess.run(
+            ["/usr/bin/openssl", "rehash", str(trust)], check=True, capture_output=True
+        )
     (tmp_path / "mode").write_text("ok")
     worker = (
         Path(__file__).resolve().parents[1]
@@ -64,7 +94,7 @@ def lab(tmp_path):
             "scope-lab",
             "mission-lab",
             "target-lab",
-            "http://127.0.0.1:18080",
+            ("https" if tls else "http") + "://127.0.0.1:18080",
             True,
             False,
             now - timedelta(minutes=1),
