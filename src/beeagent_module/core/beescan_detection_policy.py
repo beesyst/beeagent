@@ -226,7 +226,7 @@ class DetectionPolicy:
             raise PermissionError("authorization_refused")
 
 
-def validate_detection_settings(config, module_enabled):
+def validate_detection_settings(config, module_enabled, *, validate_contracts=True):
     keys = {"detection_enabled", "detection_approval"}
     if not keys & config.keys():
         return
@@ -234,6 +234,13 @@ def validate_detection_settings(config, module_enabled):
         raise RuntimeError("Invalid beescan detection settings")
     if config["detection_enabled"] and not module_enabled:
         raise RuntimeError("BeeScan detection requires the enabled module")
+    if not validate_contracts:
+        approval = config["detection_approval"]
+        if approval is not None and type(approval) is not dict:
+            raise RuntimeError("Invalid beescan.detection_approval contract")
+        if config["detection_enabled"] and approval is None:
+            raise RuntimeError("Invalid beescan.detection_approval contract")
+        return
     if config["detection_enabled"] or config["detection_approval"] is not None:
         try:
             from beescan.capabilities.detection import DetectionIntent

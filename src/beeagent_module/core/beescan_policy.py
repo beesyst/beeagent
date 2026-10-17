@@ -143,7 +143,7 @@ class ProbePolicy:
         )
 
 
-def validate_beescan_settings(settings: dict) -> None:
+def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> None:
     config = settings.get("beescan")
     enabled = any(
         item.get("id") == "beescan" and item.get("enabled") is True
@@ -162,10 +162,16 @@ def validate_beescan_settings(settings: dict) -> None:
         validate_detection_settings,
     )
 
-    validate_detection_settings(config, enabled)
+    validate_detection_settings(config, enabled, validate_contracts=validate_contracts)
+    if config["probe_enabled"] and not enabled:
+        raise RuntimeError("BeeScan probing requires the enabled module")
+    if not validate_contracts:
+        if config["approval"] is not None and type(config["approval"]) is not dict:
+            raise RuntimeError("Invalid beescan.approval contract")
+        if config["probe_enabled"] and config["approval"] is None:
+            raise RuntimeError("Invalid beescan.approval contract")
+        return
     if config["probe_enabled"]:
-        if not enabled:
-            raise RuntimeError("BeeScan probing requires the enabled module")
         try:
             ProbePolicy.from_config(config["approval"])
         except ValueError, TypeError, ImportError:

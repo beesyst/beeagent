@@ -3,6 +3,7 @@ import logging
 import re
 import subprocess
 import sys
+import tomllib
 from copy import deepcopy
 from pathlib import Path
 
@@ -15,6 +16,10 @@ from beeagent_module.core.beedrill_ai_assist import run_beedrill_ai_assist
 from beeagent_module.core.beedrill_toolchain import (
     NativeToolchainError,
     ensure_native_tools,
+)
+from beeagent_module.core.beescan_providers import (
+    ProviderProvisioningError,
+    ensure_beescan_providers,
 )
 from beeagent_module.core.cli import (
     RopCliError,
@@ -100,9 +105,17 @@ def bootstrap_runtime() -> None:
     )
     load_dotenv(dotenv_path=env_path, override=False)
 
-    settings = load_settings(settings_path)
+    settings = load_settings(settings_path, bootstrap=True)
+    selection = deepcopy(settings["modules"]["registry"])
     extras = _resolve_runtime_extras(settings)
     _sync_runtime_extras(extras, project_root)
+    settings = load_settings(settings_path)
+    if (
+        settings["modules"]["registry"] != selection
+        or _resolve_runtime_extras(settings) != extras
+    ):
+        raise RuntimeError("Runtime dependency selection changed during bootstrap")
+    ensure_beescan_providers(settings)
     if any(extra in _DOCLING_PROFILES.values() for extra in extras):
         from beeagent_module.core.document_extraction import prepare_docling_assets
 
@@ -138,6 +151,12 @@ def _sync_runtime_extras(extras: list[str], project_root: Path) -> None:
         for extra in extras
     ):
         raise RuntimeError("Invalid runtime dependency extra")
+    with (project_root / "pyproject.toml").open("rb") as stream:
+        declared = tomllib.load(stream)["project"]["optional-dependencies"]
+    if any(extra not in declared for extra in extras):
+        raise RuntimeError(
+            "Runtime dependency extra is not declared in project metadata"
+        )
     argv = ["uv", "sync", "--frozen", "--no-dev"]
     for extra in sorted(set(extras)):
         argv.extend(["--extra", extra])
@@ -184,7 +203,11 @@ def main() -> None:
         return
 
     if args and args[0] == "bootstrap":
-        bootstrap_runtime()
+        try:
+            bootstrap_runtime()
+        except ProviderProvisioningError as exc:
+            print(f"BeeScan provider provisioning failed: {exc}", file=sys.stderr)
+            sys.exit(1)
         return
 
     sync_env_with_example(project_root)

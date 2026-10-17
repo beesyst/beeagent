@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from beesdk.modules import AuthorityLevel, ModuleResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -551,7 +553,9 @@ def test_bootstrap_runtime_prepares_assets_for_active_docling(monkeypatch) -> No
 
 
 @pytest.mark.parametrize("beescan_enabled", [False, True])
-def test_bootstrap_runtime_skips_assets_when_disabled(monkeypatch, beescan_enabled) -> None:
+def test_bootstrap_runtime_skips_assets_when_disabled(
+    monkeypatch, beescan_enabled
+) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr(start_module, "sync_env_with_example", lambda *args: None)
@@ -1119,3 +1123,134 @@ def test_beedrill_check_ai_artifact_failure_preserves_exit_code(
         )
         == 0
     )
+
+
+@pytest.fixture
+def beescan_bootstrap_project(monkeypatch, tmp_path):
+    settings = _rop_settings(monkeypatch)
+    for item in settings["modules"]["registry"]:
+        item["enabled"] = item["id"] == "beescan"
+    settings["beescan"] = {
+        "probe_enabled": True,
+        "approval": {"invalid": "contract"},
+        "detection_enabled": False,
+        "detection_approval": None,
+    }
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/settings.yml").write_text(yaml.safe_dump(settings))
+    monkeypatch.setattr(start_module, "get_project_root", lambda: tmp_path)
+    monkeypatch.setattr(start_module, "sync_env_with_example", lambda *_: None)
+    monkeypatch.setattr(start_module, "load_dotenv", lambda *_a, **_k: None)
+    monkeypatch.setattr(start_module, "ensure_bootstrap_env", lambda **_: {})
+    return settings, tmp_path / "config/settings.yml"
+
+
+def test_cold_bootstrap_syncs_before_domain_contract_validation(
+    beescan_bootstrap_project, monkeypatch
+):
+    import builtins
+
+    from beeagent_module.core.beescan_policy import ProbePolicy
+
+    installed = False
+    calls = []
+    original_import = builtins.__import__
+
+    def import_package(name, *args, **kwargs):
+        if name.startswith("beescan") and not installed:
+            raise ImportError("optional dependency not installed")
+        return original_import(name, *args, **kwargs)
+
+    def contract(config):
+        from beescan.domain.models import TargetKind
+
+        assert TargetKind is not None and installed
+        calls.append("contract")
+
+    def sync(extras, root):
+        nonlocal installed
+        assert extras == ["beescan"]
+        installed = True
+        calls.append("sync")
+
+    monkeypatch.setattr(builtins, "__import__", import_package)
+    monkeypatch.setattr(ProbePolicy, "from_config", contract)
+    monkeypatch.setattr(start_module, "_sync_runtime_extras", sync)
+    monkeypatch.setattr(
+        start_module, "ensure_beescan_providers", lambda _: calls.append("providers")
+    )
+    start_module.bootstrap_runtime()
+    assert calls == ["sync", "contract", "providers"]
+
+
+def test_invalid_approval_after_sync_never_provisions(
+    beescan_bootstrap_project, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        start_module, "_sync_runtime_extras", lambda *_: calls.append("sync")
+    )
+    monkeypatch.setattr(
+        start_module,
+        "ensure_beescan_providers",
+        lambda _: pytest.fail("invalid approval"),
+    )
+    with pytest.raises(RuntimeError, match="approval contract"):
+        start_module.bootstrap_runtime()
+    assert calls == ["sync"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["registry", "entry", "package", "extra", "enabled", "duplicate", "probe_flag"],
+)
+def test_untrusted_selection_refuses_before_sync(
+    beescan_bootstrap_project, monkeypatch, mutation
+):
+    settings, path = beescan_bootstrap_project
+    item = settings["modules"]["registry"][2]
+    if mutation == "registry":
+        settings["modules"]["registry"] = "beescan"
+    elif mutation == "duplicate":
+        settings["modules"]["registry"].append(deepcopy(item))
+    elif mutation == "probe_flag":
+        settings["beescan"]["probe_enabled"] = "true"
+    else:
+        item[{"extra": "install_extra"}.get(mutation, mutation)] = "untrusted"
+    path.write_text(yaml.safe_dump(settings))
+    monkeypatch.setattr(
+        start_module, "_sync_runtime_extras", lambda *_: pytest.fail("sync")
+    )
+    with pytest.raises(RuntimeError):
+        start_module.bootstrap_runtime()
+
+
+def test_undeclared_extra_refuses_before_uv(monkeypatch):
+    monkeypatch.setattr(
+        start_module.subprocess, "run", lambda *_a, **_k: pytest.fail("uv")
+    )
+    with pytest.raises(RuntimeError, match="not declared"):
+        start_module._sync_runtime_extras(["unknown-but-safe"], Path("."))
+
+
+@pytest.mark.parametrize("mutation", ["extra", "package"])
+def test_changed_dependency_selection_refuses_before_provision(
+    beescan_bootstrap_project, monkeypatch, mutation
+):
+    settings, path = beescan_bootstrap_project
+    settings["beescan"].update(probe_enabled=False, approval=None)
+    path.write_text(yaml.safe_dump(settings))
+
+    def sync(*_):
+        if mutation == "extra":
+            settings["modules"]["registry"][1]["enabled"] = True
+        else:
+            settings["modules"]["registry"][2]["package"] = "untrusted.module"
+        path.write_text(yaml.safe_dump(settings))
+
+    monkeypatch.setattr(start_module, "_sync_runtime_extras", sync)
+    monkeypatch.setattr(
+        start_module, "ensure_beescan_providers", lambda _: pytest.fail("changed")
+    )
+    with pytest.raises(RuntimeError, match="selection changed"):
+        start_module.bootstrap_runtime()
