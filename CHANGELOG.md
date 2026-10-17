@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.76.0...beeagent-v0.76.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **beescan:** provision pinned Nuclei and fix cold startup ([#313](https://github.com/beesyst/beeagent/issues/313)) ([6d07361](https://github.com/beesyst/beeagent/commit/6d073619ecbdd76a2dda863848dcde631e459c2b))
+
 ## [0.76.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.75.0...beeagent-v0.76.0) (2026-10-17)
 
 
