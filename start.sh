@@ -19,7 +19,7 @@ if ! uv run --frozen --no-sync python3 -c "import config.start" >/dev/null 2>&1;
   uv sync --frozen --no-dev
 fi
 
-echo "[run] resolving extractor profile and syncing environment..."
+echo "[run] syncing selected dependencies and preparing native providers..."
 uv run --frozen --no-sync python3 config/start.py bootstrap
 
 echo "[run] starting BeeAgent..."

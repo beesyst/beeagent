@@ -101,7 +101,7 @@ def is_valid_https_origin(value: str) -> bool:
     return bool(_HTTPS_ORIGIN_RE.fullmatch(value))
 
 
-def load_settings(settings_path: Path) -> dict:
+def load_settings(settings_path: Path, *, bootstrap: bool = False) -> dict:
     if not settings_path.exists():
         raise RuntimeError(f"Settings file not found: {settings_path}")
 
@@ -111,11 +111,15 @@ def load_settings(settings_path: Path) -> dict:
     if not isinstance(content, dict):
         raise RuntimeError("Settings file must contain a top-level mapping")
 
-    validate_settings(content, project_root=settings_path.parent.parent)
+    validate_settings(
+        content, project_root=settings_path.parent.parent, bootstrap=bootstrap
+    )
     return content
 
 
-def validate_settings(settings: dict, project_root: Path | None = None) -> None:
+def validate_settings(
+    settings: dict, project_root: Path | None = None, *, bootstrap: bool = False
+) -> None:
     missing_keys: list[str] = []
 
     for key_path in GLOBAL_REQUIRED_KEYS:
@@ -244,6 +248,7 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
     if not isinstance(registry, list):
         raise RuntimeError("Invalid type for modules.registry, expected list")
 
+    module_ids = set()
     for idx, item in enumerate(registry):
         if not isinstance(item, dict):
             raise RuntimeError(
@@ -258,6 +263,20 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
             raise RuntimeError(
                 f"Invalid or missing modules.registry[{idx}].enabled, expected bool"
             )
+        if bootstrap:
+            if item["id"] in module_ids:
+                raise RuntimeError("Duplicate bootstrap module selection")
+            module_ids.add(item["id"])
+            if (
+                item["id"] == "beescan"
+                and item["enabled"]
+                and (
+                    item["package"] != "beescan.module"
+                    or item["entry"] != "BeeScanModule"
+                    or item.get("install_extra") != "beescan"
+                )
+            ):
+                raise RuntimeError("Invalid BeeScan bootstrap module selection")
         if "install_extra" in item:
             install_extra = item["install_extra"]
             if not isinstance(install_extra, str) or not _INSTALL_EXTRA_RE.fullmatch(
@@ -270,7 +289,7 @@ def validate_settings(settings: dict, project_root: Path | None = None) -> None:
 
     from beeagent_module.core.beescan_policy import validate_beescan_settings
 
-    validate_beescan_settings(settings)
+    validate_beescan_settings(settings, validate_contracts=not bootstrap)
 
     rop_enabled = _is_module_enabled(settings, "beeagent-rop")
     beedrill_enabled = _is_module_enabled(settings, "beedrill")

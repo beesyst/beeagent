@@ -2,15 +2,19 @@
 
 ## BS-1 laboratory execution
 
-BeeScan 0.5.0 is an optional dependency, disabled in the tracked registry. Bootstrap keeps its READ_ONLY module contract and supports only `bootstrap_health`. The separate host command `./start.sh beescan probe` executes the one approved host Mission; it accepts no target, authority, provider or arbitrary payload arguments. Existing Solana dispatch and ROP/BeeDrill defaults are unchanged.
+BeeScan 0.7.0 is an optional dependency, disabled in the tracked registry. Bootstrap keeps its READ_ONLY module contract and supports only `bootstrap_health`. The separate host command `./start.sh beescan probe` executes the one approved host Mission; it accepts no target, authority, provider or arbitrary payload arguments. Existing Solana dispatch and ROP/BeeDrill defaults are unchanged.
 
 ## Installation and approval
 
-The optional `beescan` extra in `pyproject.toml` selects BeeScan 0.5.0 from `https://github.com/beesyst/beescan.git`; the Git source has no explicit `rev`, and frozen installation/export uses the existing lock with the BeeSDK 0.2.0 contract. BeeScan main was checked at `10c1ea2a43e98b91c71f17709f8d8fd33cc29c18` and contains It5; it does not contain the new It6 reporting API. A reviewed merged reporting revision is required before the BS-3 dependency integration can be delivered. The registry entry declares `install_extra: "beescan"`, so enabling it selects this extra through the standard runtime dependency synchronization. `./start.sh` uses exact `uv sync --frozen --no-dev` with enabled extras; manual wheel preservation and the BeeScan-specific `--inexact` workaround are unnecessary. The scanner executable remains separately provisioned and is never installed or downloaded by runtime.
+The optional `beescan` extra in `pyproject.toml` selects BeeScan 0.7.0 from `https://github.com/beesyst/beescan.git`; frozen installation uses the existing lock and BeeSDK 0.2.0 contract. Enable the existing `beescan.module` / `BeeScanModule` registry entry with `install_extra: "beescan"`. `./start.sh` validates module selection and dependency profile, synchronizes the selected extras with `uv sync --frozen --no-dev`, then reloads and fully validates the approval contracts before preparing native providers. Malformed or duplicate module selections, an altered BeeScan binding, undeclared extras or changed dependency selection refuse. Manual preinstallation of the Python extra is unnecessary. No settings, approval, source binding or provider digest is generated or rewritten by provisioning.
 
 In `config/settings.yml`, enable only the existing BeeScan registry entry to use `./start.sh beescan bootstrap`. Keep `beescan.probe_enabled: false` and `approval: null` for bootstrap. To authorize a laboratory probe, a trusted local operator edits the host settings, sets `probe_enabled: true` and supplies every approval field below. CLI/module payloads cannot change this binding. OS UID, current approval, exclusion, validity window, exact identity/profile and budgets are checked again immediately before execution; approval changes or disabling the module refuse. The expiry must accommodate the full request duration. Settings and runtime storage must remain writable only by trusted operators.
 
-Before enabling probe or detection approvals in a fresh environment, install the optional contract with `uv sync --frozen --no-dev --extra beescan`. Startup validates enabled approval contracts before synchronizing runtime extras, so enabling approvals while BeeScan is absent fails validation before that automatic installation. The frozen It5 dependency supports standalone probe/detection but cannot run BS-3 reporting until a reviewed merged It6 revision is integrated.
+Automatic native delivery supports Linux x86_64. The single host-managed directory is `$HOME/.local/share/beeagent/beescan-providers` (for user `bee`, `/home/bee/.local/share/beeagent/beescan-providers`). Approval executable paths must be explicit absolute paths; YAML does not expand `$HOME` or `~`. With `detection_enabled: true` and that directory's `nuclei` path, startup downloads only the reviewed official Nuclei archive, verifies archive and executable SHA-256, and installs the executable atomically at mode 0555. Provider preparation runs only for selected capabilities of the enabled module. A disabled module or unselected capability causes no provider download or cache creation. Existing custom executable paths remain supported when their exact pinned bytes and permissions verify; startup never downloads to or overwrites custom paths.
+
+The managed directory must be owned by the startup user with mode 0700; parent directories must have trusted ownership, no symlinks and no group/world write permission (system sticky temporary directories are allowed). Bootstrap uses a private mode-0600 lock with a 60-second wait, a 600-second download deadline, 30-second socket timeouts, exact download size limits and an HTTPS redirect host allowlist inherited from BeeDrill. Proxy environment variables do not select download sources. Downloads and extraction remain in private temporary directories and are removed after failure. Warm starts rehash installed bytes without network access. Corrupt installations fail closed without automatic replacement; inspect and move only the affected managed binary aside before retrying. No downloaded bytes execute during provisioning. Existing runtime snapshot, version, static-ELF, approval, UID, namespace, nftables and destination checks still govern execution.
+
+Fully automatic httpx delivery is blocked: no reviewed distributable URL/archive for the exact Go 1.27.2 custom static rebuild is configured or documented. The inspected BeeAgent releases have no attached assets; unauthenticated BeeScan release metadata is unavailable (404), so private release availability could not be established. Publish those exact bytes with SHA-256 `bb28edc87dfd8b11f25ebb73b325f05424e8ee2dd5c818649f1f7d28da6a32b5` at a reviewed immutable HTTPS release URL, with its archive size/digest and provenance, before adding automatic httpx delivery. A local laboratory binary is not a distributable source. Until then, the trusted operator must supply the exact rebuild at the configured path, including the managed `httpx` path if selected. Missing httpx produces an explicit distribution blocker; upstream release bytes and alternate digests are never substituted.
 
 ```yaml
 beescan:
@@ -31,7 +35,7 @@ beescan:
     time_budget_seconds: 5
     connected_ip: 127.0.0.1
     allow_private_lab: true
-    executable: /opt/beescan/httpx
+    executable: /home/bee/.local/share/beeagent/beescan-providers/httpx
     sha256: bb28edc87dfd8b11f25ebb73b325f05424e8ee2dd5c818649f1f7d28da6a32b5
     provider_version: "1.12.0"
     network_namespace: /proc/12345/ns/net
@@ -40,7 +44,7 @@ beescan:
     output_bytes: 16384
 ```
 
-The example UID, namespace PID and validity window must match the live operator/lab. Required fields have no hidden defaults. The only supported executable is the BS-1 Linux amd64 static rebuild of ProjectDiscovery httpx 1.12.0 from upstream commit `4b6a9a9d476f94a4f3a630f37051f5671ecfb1f8`, using Go 1.27.2 and the fixed executable digest above. This is a host-reviewed rebuild, not a newly published upstream release. The original Go 1.26.0 release executable with digest `6d78b83b4da452a7e0bd3613c4fae04cbf523209f083904b563f4d4406a680b0` is no longer accepted. Changing configured digest/version cannot select another provider. Provision and verify the rebuild before runtime; unsupported platforms, missing provider, integrity mismatch or unavailable isolation fail closed.
+The example UID, namespace PID and validity window must match the live operator/lab. Required fields have no hidden defaults. The only supported executable is the BS-1 Linux amd64 static rebuild of ProjectDiscovery httpx 1.12.0 from upstream commit `4b6a9a9d476f94a4f3a630f37051f5671ecfb1f8`, using Go 1.27.2 and the fixed executable digest above. This is a host-reviewed rebuild, not a newly published upstream release. The original Go 1.26.0 release executable with digest `6d78b83b4da452a7e0bd3613c4fae04cbf523209f083904b563f4d4406a680b0` is no longer accepted. Changing configured digest/version cannot select another provider. Until a reviewed distribution exists, provision and verify the rebuild before startup; unsupported platforms, missing provider, integrity mismatch or unavailable isolation fail closed.
 
 Use the exact source archive from `https://api.github.com/repos/projectdiscovery/httpx/tarball/4b6a9a9d476f94a4f3a630f37051f5671ecfb1f8` with SHA-256 `959865e9d608ce8a7507e46d0d399e92ba1e1de7b4f9ccd00678ebe2cf953f72`. Verify the official `go1.27.2.linux-amd64.tar.gz` against SHA-256 `ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5` from [Go download metadata](https://go.dev/dl/?mode=json). Build in the extracted source directory without editing `go.mod`, `go.sum` or source files:
 
@@ -50,7 +54,7 @@ chmod 0555 /absolute/path/to/httpx
 sha256sum /absolute/path/to/httpx
 ```
 
-The resulting SHA-256 must exactly match the approval/policy pin. Two independent output builds produced that digest; the executable is 58,029,060 bytes, within the existing 64 MiB bound. ELF symbols are retained for binary analysis; DWARF is omitted. The provider still reports its actual upstream version `v1.12.0`. No runtime installer, download, new provider arguments or relaxed integrity check is introduced.
+The resulting SHA-256 must exactly match the approval/policy pin. Two independent output builds produced that digest; the executable is 58,029,060 bytes, within the existing 64 MiB bound. ELF symbols are retained for binary analysis; DWARF is omitted. The provider still reports its actual upstream version `v1.12.0`. Startup verifies this exact rebuild without downloading or building a substitute; provider arguments and integrity checks remain unchanged.
 
 ## Network and process boundary
 
@@ -144,7 +148,7 @@ The trusted host capture worker sends exactly one fixed HTTP/1.1 GET `/` to the 
 
 Capture runs inside the verified BS-1 rootless network namespace and exact nftables destination allowlist, with capabilities dropped and nested user namespaces disabled. Nuclei runs separately with `--unshare-all` and no shared network namespace. It receives a synthetic bounded HTTP representation containing only the captured status/enum marker and host-added completion header. This uses the upstream [passive HTTP response mode](https://github.com/projectdiscovery/nuclei/blob/a8c88feb4a1c8e961b7902534ce3af97e9d524a4/pkg/protocols/offlinehttp/request.go). The copied pinned template supplies an internal `completed` matcher as an integrity check; this matcher never becomes a Finding. Exactly one completion event and zero or one consistent `marker` event are mandatory. Empty stdout, exit zero alone, extra/duplicate records, unknown fields/template/matcher, false completion, forged provenance/authority and contradictory input paths all fail. Raw JSONL is validated then discarded.
 
-Nuclei sees only its read-only executable/template/input, private tmpfs HOME, minimal devices and isolated proc. Public/GitHub/GitLab/AWS/Azure template downloads are disabled in the cleared environment; update, cloud authentication, stdin, OAST, redirects, headless and code execution are unavailable in the fixed arguments/template. Even a scanner networking attempt has no egress. The capture process additionally sees read-only system Python/libraries and certificate store. Host settings, storage, HOME and credentials are absent from both workers. There is no alternative executable/template flag or runtime installer.
+Nuclei sees only its read-only executable/template/input, private tmpfs HOME, minimal devices and isolated proc. Public/GitHub/GitLab/AWS/Azure template downloads are disabled in the cleared environment; update, cloud authentication, stdin, OAST, redirects, headless and code execution are unavailable in the fixed arguments/template. Even a scanner networking attempt has no egress. The capture process additionally sees read-only system Python/libraries and certificate store. Host settings, storage, HOME and credentials are absent from both workers. There is no alternative executable/template CLI flag; provisioning belongs only to the startup bootstrap and grants no execution authority.
 
 One overall worker deadline covers namespace verification, version check, capture and scanner. Limits include 2048–4096 MiB address space, CPU ceiling, 64 descriptors, 64 KiB file size, zero core dumps, 4096 UID-wide processes/threads, `GOMAXPROCS=2`, and 1024–16384 combined output bytes (capture is independently limited to 4096 bytes). `RLIMIT_NPROC` shares the UID budget with other processes and can refuse on a busy host; it is not a per-worker cgroup limit. Process groups are killed/reaped, Bubblewrap PID isolation/die-with-parent handles detached descendants, temporary snapshots are removed and namespace descriptors closed on all exits. Cleanup failures remain unsuccessful.
 
@@ -152,12 +156,11 @@ One overall worker deadline covers namespace verification, version check, captur
 
 The reviewed upstream release is [Nuclei v3.11.1](https://github.com/projectdiscovery/nuclei/releases/tag/v3.11.1), source commit `a8c88feb4a1c8e961b7902534ce3af97e9d524a4`. Official `nuclei_3.11.1_linux_amd64.zip` SHA-256 is `ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6`; the extracted static Linux amd64 executable is 143294626 bytes with SHA-256 `c49588140f357cbdddd5436dec11201953a4c5390faeec90777f9ee2cfd70251`. Its actual reported version is `v3.11.1`; embedded Go build metadata reports `go1.26.5`. Other versions, digests and dynamic ELF binaries refuse. The larger binary snapshot limit is detection-only; BS-1 keeps its 64 MiB default.
 
-Provision offline before execution: verify the archive against the upstream release checksum, extract only `nuclei`, place it at the operator-controlled absolute path, set mode `0555`, and verify its executable digest. Use the repository's exact `config/beescan-http-marker.yaml` bytes with SHA-256 `51bab1f02a5553709d4684c83e81e371cc935f07f2a1c6edd554cffc19027597`, mode `0644` or stricter. Configured asset paths select locations only; immutable host digests determine which bytes may execute. Symlinks, writable provider/template files and modified templates refuse. Review a replacement before changing either pin; never update them from scanner output.
+Set `detection_approval.executable` to the explicit absolute managed `nuclei` path and run the normal `./start.sh beescan bootstrap`, `detect` or `assess` command; startup provisions Nuclei before CLI dispatch. Manual Nuclei download/extraction is unnecessary for this managed path. A configured custom path such as `/opt/beescan/nuclei` must already contain the verified binary; bootstrap preserves that location and refuses if it is missing or corrupt. Use the repository's exact `config/beescan-http-marker.yaml` bytes with SHA-256 `51bab1f02a5553709d4684c83e81e371cc935f07f2a1c6edd554cffc19027597`, mode 0644 or stricter. Provisioning does not edit the template or approval. Configured paths select locations only; immutable host digests determine accepted bytes. Symlinks, group/world-writable assets and modified templates refuse.
 
 ```bash
-sha256sum /opt/beescan/nuclei /absolute/path/to/beeagent/config/beescan-http-marker.yaml
-chmod 0555 /opt/beescan/nuclei
-chmod 0644 /absolute/path/to/beeagent/config/beescan-http-marker.yaml
+./start.sh beescan bootstrap
+sha256sum "$HOME/.local/share/beeagent/beescan-providers/nuclei" config/beescan-http-marker.yaml
 ```
 
 ### Detection approval
@@ -182,7 +185,7 @@ detection_approval:
   time_budget_seconds: 15
   connected_ip: 127.0.0.1
   allow_private_lab: true
-  executable: /opt/beescan/nuclei
+  executable: /home/bee/.local/share/beeagent/beescan-providers/nuclei
   sha256: c49588140f357cbdddd5436dec11201953a4c5390faeec90777f9ee2cfd70251
   provider_version: "3.11.1"
   network_namespace: /proc/12345/ns/net
@@ -207,21 +210,16 @@ Host artifacts use schema version 1 under the new run's `module-beescan/`: `dete
 
 `matched` and `no_match` alone have `complete: true` and exit 0. `refused` exits 3, `timeout` exits 4, and `error`, `malformed` or `incomplete` exit 5; invalid CLI syntax exits 2. `no_match` means this fixed marker was absent in a completed header capture, not that the target is vulnerability-free. Refusal means repair/reapprove the specific prerequisite; execution/parser/resource failures require inspection and a new explicitly authorized run. There are no automatic retries, repairs, approval extensions or follow-up scans.
 
-### Local verification and dependency gate
+### Frozen installation and local verification
 
-BeeScan main was checked at `10c1ea2a43e98b91c71f17709f8d8fd33cc29c18` and includes the released It5 API. BS-3 additionally needs the It6 reporting API, which currently exists only in its feature worktree. Production dependency declarations and lock remain unchanged for this increment. A separately built It6 wheel in an isolated development environment proves local API integration only. After It6 has a reviewed merged revision, select that actual immutable revision with only its necessary lock update, run clean-checkout feature/core/ROP/BeeDrill regressions, the real two-provider lab and hosted CI, then obtain independent read-only review. Do not point production dependencies at a sibling directory or unmerged branch.
-
-For an isolated coordinated dev run, build the reviewed BeeScan wheel, create a separate venv, install that wheel without dependencies, and expose the already installed host dependencies through a `.pth` file. This preserves the production environment and Git source pin. Example for this workspace's Python 3.14 environment:
+Use the tracked dependency metadata and frozen lock for production and regression checks. `./start.sh` performs exact synchronization, so wheel overlays and temporary source/lock edits are unnecessary for the released BeeScan 0.7.0 contracts. A cold checkout needs authorized read access to the configured Git dependency sources; cached installation alone does not prove credential-free distribution or hosted CI success.
 
 ```bash
-uv venv /tmp/beeagent-bs2-it5-env --python .venv/bin/python
-uv pip install --python /tmp/beeagent-bs2-it5-env/bin/python --no-deps ../beescan/dist/beescan-0.5.0-py3-none-any.whl
-printf "import site; site.addsitedir('%s/.venv/lib/python3.14/site-packages')\n" "$PWD" > /tmp/beeagent-bs2-it5-env/lib/python3.14/site-packages/host-dependencies.pth
-UV_PROJECT_ENVIRONMENT=/tmp/beeagent-bs2-it5-env uv run --frozen --no-sync python -m pytest -q
-BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/verified/nuclei UV_PROJECT_ENVIRONMENT=/tmp/beeagent-bs2-it5-env uv run --frozen --no-sync python -m pytest -q integration_tests/test_beescan_detection_lab.py
+uv sync --frozen --no-dev --extra beescan
+./start.sh beescan bootstrap
+uv run --frozen --extra beescan --extra beedrill pytest -q -rs
+BEEAGENT_BEESCAN_NUCLEI="$HOME/.local/share/beeagent/beescan-providers/nuclei" uv run --frozen --extra beescan pytest -q integration_tests/test_beescan_detection_lab.py
 ```
-
-This wheel-overlay environment is for direct `uv run --frozen --no-sync` development checks. `./start.sh` always performs its own exact frozen synchronization and therefore replaces the overlay with the locked Git package. To test the real entrypoint before It6 merges, use a separate temporary copy of `src/`, `config/`, `start.sh`, `pyproject.toml`, `uv.lock`, `.python-version`, `.env.example` and `README.md`; never copy production `.env`, logs or storage. In that copy only, set the BeeScan source to the absolute built wheel path, resolve a separate lab lock with `uv lock`, and install `uv sync --frozen --no-dev --extra beescan` before enabling approvals. Resolve any relative development source path in the temporary metadata to its existing absolute location; runtime synchronization still uses `--no-dev`. Disable unrelated module/connector actions consistently, create a private empty lab `.env`, configure the explicitly approved namespace and loopback policies, and invoke the unchanged `./start.sh beescan assess`. Keep that copy's storage/logs and lock as pre-merge evidence. This verifies the entrypoint with a non-editable wheel; it does not prove production Git dependency or fresh-checkout reproducibility. Never copy the temporary metadata or approvals back into the production worktree.
 
 BS-2 feature tests require the actual It5 API and do not silently skip an unavailable contract. The separate real lab requires an explicitly provisioned binary and kernel isolation; it fails on missing prerequisites. Its source observation comes from an actual local HEAD capture using the explicitly named test-only `lab-http-head` provider, then the production governed GET/passive-Nuclei path executes. This does not pretend that httpx ran. The existing independent BS-1 httpx lab remains unchanged. The detection lab verifies positive/negative candidates, redirect denial, timeout, malformed/oversized headers, exact request counts, forbidden-port/proxy and IPv4/IPv6 egress, operator/scope/provider/template refusals and secret exclusion. Unit tests use mock scanner output for malformed output, provenance injection, changed approval/source, one-shot execution and persistence faults; those tests are separate from real Nuclei execution.
 
@@ -259,10 +257,10 @@ A marker match produces a CANDIDATE with `review_state=pending`. This command ac
 
 After repairing a refused/incomplete prerequisite, inspect the parent and both children, explicitly reapprove the intended invocation if needed and run a new assessment. Do not edit evidence into a success state, reuse child IDs as a new parent, extend expired approval automatically or manually copy arbitrary historical sources into the assessment. Preserve interrupted evidence for review.
 
-For local development only, build BeeScan It6 and install its wheel into an isolated venv as described above; do not change production sources to an editable sibling. The mandatory real lab uses both actual governed providers and the existing rootless test-only target, with no synthetic HEAD replacement:
+Use the locked BeeScan extra and the protected exact provider binaries; do not change production sources to an editable sibling. The mandatory real lab uses both actual governed providers and the existing rootless test-only target, with no synthetic HEAD replacement:
 
 ```bash
-BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/pinned/nuclei UV_PROJECT_ENVIRONMENT=/tmp/beeagent-bs3-it6-env uv run --frozen --no-sync python -m pytest -q integration_tests/test_beescan_assessment_lab.py --basetemp=/tmp/beeagent-bs3-real-lab
+BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/pinned/nuclei uv run --frozen --extra beescan python -m pytest -q integration_tests/test_beescan_assessment_lab.py --basetemp=/tmp/beeagent-bs3-real-lab
 ```
 
 The lab requires a positive CANDIDATE and complete NO_MATCH report, exactly two allowed requests each, zero forbidden-port requests, unchanged configured source IDs, valid namespace egress and zero secret leakage. Missing providers or kernel prerequisites fail this explicitly invoked gate. Unit tests with substituted provider output are separate evidence. Fresh-checkout installation, SCA for the actual Git revision change, hosted CI, independent security review and real two-provider laboratory success remain mandatory release gates; until they pass, report MVP NO-GO.
@@ -271,7 +269,7 @@ The lab persists per-request method/port/path records in `requests.json` alongsi
 
 ## BS-4 passive HTTP header signals
 
-Use `./start.sh beescan assess --http-signals` to explicitly select the fixed `http-headers-v1` profile under the same independent probe/detection approvals. No approval is edited and no configuration key, provider, template, URL, request, retry or execution authority is added. `beescan assess` remains the legacy marker-only report; bootstrap/probe/detect are unchanged. The selected signal API must be installed before work starts; missing It7 refuses before requests. Production Git/lock integration must wait for the reviewed merged BeeScan It7 revision; local wheel verification is not that delivery gate.
+Use `./start.sh beescan assess --http-signals` to explicitly select the fixed `http-headers-v1` profile under the same independent probe/detection approvals. No approval is edited and no configuration key, provider, template, URL, request, retry or execution authority is added. `beescan assess` remains the legacy marker-only report; bootstrap/probe/detect are unchanged. The selected signal API must be installed before work starts; missing It7 refuses before requests. The locked BeeScan 0.7.0 dependency provides this contract; frozen installation and real laboratory results must still be verified in the deployment environment.
 
 The existing bounded single GET captures only normalized `X-Content-Type-Options` and `Strict-Transport-Security` facts in addition to the existing status/marker. `header_facts` has exactly `nosniff` (`absent`, `nosniff`, `other`), `hsts` (`absent`, `max_age`, `other`), `hsts_max_age` (null or integer `0..2**63-1`), `https` (bound to approved origin) and `complete=true`. The worker requires a complete ASCII header block of at most 8192 bytes; each relevant value is at most 1024 characters. Relevant duplicate header names, case-insensitively, are rejected even when values agree. Controls, non-ASCII, invalid field names, folded fields, incomplete terminators and oversized metadata reject capture. Missing security headers become `absent` only after complete capture. Other fields and bodies are discarded, including cookies and authentication material.
 
@@ -281,10 +279,10 @@ The capture facts are persisted only inside the existing host-generated detectio
 
 ### HTTP and HTTPS laboratory procedure
 
-Build the current BeeScan wheel and install it non-editably into a separate test environment using the existing wheel-overlay procedure. Keep production metadata and lock unchanged. Run the real governed laboratories with the protected, digest-matching executables:
+Install the locked BeeScan extra and keep production metadata and lock unchanged. Run the real governed laboratories with the protected, digest-matching executables:
 
 ```bash
-BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/pinned/nuclei UV_PROJECT_ENVIRONMENT=/tmp/bs4-it7-env uv run --frozen --no-sync python -m pytest -q integration_tests/test_beescan_assessment_lab.py --basetemp=/tmp/bs4-it7-lab
+BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/pinned/nuclei uv run --frozen --extra beescan python -m pytest -q integration_tests/test_beescan_assessment_lab.py --basetemp=/tmp/bs4-it7-lab
 ```
 
 The new HTTP/HTTPS tests generate a one-day fixture certificate with an IP SAN for the approved loopback origin. They mount only its temporary hashed CA directory into the capture sandbox certificate-store path using test instrumentation; system trust is never modified and production TLS verification stays enabled. Removing that test mount must fail HTTPS capture before any GET is delivered. The existing httpx HEAD probe does not provide an authenticated-peer guarantee; verified HTTPS signal context comes from the Python GET capture's default SSL context and hostname verification.
