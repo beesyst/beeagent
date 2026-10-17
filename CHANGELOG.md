@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.75.0...beeagent-v0.76.0) (2026-10-17)
+
+
+### Features
+
+* deliver governed BeeScan HTTP header signals ([#311](https://github.com/beesyst/beeagent/issues/311)) ([1753336](https://github.com/beesyst/beeagent/commit/1753336dbeb35fa0df5663a1883af37cb0ffe886))
+
 ## [0.75.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.74.0...beeagent-v0.75.0) (2026-10-16)
 
 
