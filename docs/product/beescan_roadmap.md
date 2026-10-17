@@ -693,6 +693,71 @@ If any mandatory authority, network isolation, evidence, triage or artifact gate
 
 ---
 
+## Stage 4 — Governed Web Security Signals
+
+### Iteration BS-4 — Governed HTTP Header Signal Capture and Assessment Delivery
+
+**Status:** DONE
+
+#### Goal
+
+Extend the existing BeeScan assessment workflow to securely obtain the minimal HTTP header facts required by BeeScan It7 and deliver useful advisory security signals without granting additional network or scanner authority.
+
+#### Scope
+
+- Reuse the existing independently approved HTTP probe and restricted detection workflow.
+- Reuse the existing single governed GET response capture; introduce no additional target request.
+- Extract only bounded, allowlisted security header facts for `X-Content-Type-Options` and HTTPS `Strict-Transport-Security`.
+- Normalize captured metadata before it enters BeeScan domain contracts or host artifacts.
+- Preserve exact Mission, Target, origin, approval, source Observation, detection run and evidence bindings.
+- Invoke BeeScan It7's public offline signal evaluation and reporting contracts.
+- Persist versioned or compatible signal-enabled Markdown/JSON reports through existing ArtifactAPI.
+- Preserve fixed provider, template, sandbox, namespace, egress, timeout and cleanup enforcement.
+- Preserve legacy bootstrap, probe, detect and marker-only assessment behavior.
+- Document authorization, operator invocation, supported signals and recovery procedures.
+
+#### Excluded
+
+- Additional HEAD/GET requests, crawling, arbitrary destinations or authorization expansion.
+- New executable providers, scanner profiles, Nuclei templates or runtime downloads.
+- Raw HTTP headers, response bodies, cookies, secrets or unrestricted scanner output in artifacts.
+- Arbitrary security rules, new configuration sources, generic workflow frameworks or services.
+- BeeSDK, BeeUI, database, scheduling, interactive review or automatic VERIFIED changes.
+
+#### Deliverable
+
+One authorized `./start.sh beescan assess` invocation that performs the existing two-request workflow, evaluates the two predefined security signals using the reviewed BeeScan It7 contract, and persists safe, reviewable assessment artifacts.
+
+#### Acceptance criteria
+
+- Existing independent probe and detection approvals remain mandatory and unmodified.
+- A completed assessment makes at most one approved HEAD and one approved GET, with no redirects or retries.
+- Only two explicitly allowlisted header fact families can cross the capture boundary.
+- Capture never stores or exposes unrestricted header values, cookie material or response bodies.
+- Missing, duplicate, conflicting, malformed or oversized relevant metadata is handled deterministically and fail closed.
+- HTTPS-specific HSTS assessment requires validated HTTPS context; HTTP is not misclassified.
+- Host-generated signal facts are bound to the fresh Observation, original child runs and validated evidence.
+- Signal and marker results remain distinct and reports never imply automatic vulnerability verification.
+- Missing signal evidence, partial persistence, failed provider, revoked authority or changed source cannot produce complete success.
+- Existing standalone commands, fixed Nuclei template and provider integrity checks remain compatible.
+- Real positive, negative, non-applicable, refusal and failure laboratories pass.
+- BeeAgent full regressions, clean frozen dependency installation and hosted CI pass.
+
+#### Checks
+
+- Capture parser, allowlist, bounds, duplicate-header and malformed-response tests.
+- Real HTTP and HTTPS laboratory scenarios with documented TLS trust requirements.
+- Existing BS-1/BS-2/BS-3 request accounting, provider, firewall, sandbox and approval regressions.
+- Source mutation, terminal persistence, timeout, cleanup and secret-leakage tests.
+- Exact report bytes, original child provenance and artifact permission inspection.
+- ROP and BeeDrill regression coverage.
+- Relevant SAST, dependency SCA if the BeeScan Git revision changes, build and fresh-checkout checks.
+- Independent security review and hosted CI.
+
+#### DoD
+
+A fresh authorized operator can reproduce meaningful HTTP security signal results through the existing governed BeeAgent assessment, with truthful bounded reports, unchanged execution authority and verified positive, negative and failure handling.
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.

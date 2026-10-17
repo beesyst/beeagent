@@ -610,3 +610,129 @@ def test_capture_contract_bound_to_policy(approved, key, value):
     capture[key] = value
     with pytest.raises(ValueError):
         runner.parse_capture(json.dumps(capture).encode(), policy)
+
+
+@pytest.mark.parametrize(
+    "value,kind,age",
+    [
+        (None, "absent", None),
+        ("max-age=0", "max_age", 0),
+        ('MAX-AGE="60"; includeSubDomains; preload', "max_age", 60),
+        ("includeSubDomains", "other", None),
+        ("", "other", None),
+    ],
+)
+def test_normalized_hsts(value, kind, age):
+    from beeagent_module.core.beescan_capture_worker import normalized_headers
+
+    headers = {} if value is None else {"strict-transport-security": value}
+    result = normalized_headers(headers, https=True)
+    assert result == {
+        "nosniff": "absent",
+        "hsts": kind,
+        "hsts_max_age": age,
+        "https": True,
+        "complete": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "max-age=-1",
+        "max-age=no",
+        "max-age",
+        "max-age=1; max-age=2",
+        "max-age=18446744073709551616",
+        'max-age="1',
+        "max-age=1, max-age=2",
+        "max-age=1; preload; preload",
+        "<secret>",
+    ],
+)
+def test_malformed_hsts_rejected(value):
+    from beeagent_module.core.beescan_capture_worker import normalized_headers
+
+    with pytest.raises(ValueError):
+        normalized_headers({"strict-transport-security": value}, https=True)
+
+
+def test_signal_capture_seeded_malformed_protocol(approved):
+    policy = approved[0]
+    generator = random.Random(310)
+    for _ in range(1000):
+        raw = generator.randbytes(generator.randrange(4097))
+        with pytest.raises(ValueError):
+            runner.parse_capture(raw, policy, http_signals=True)
+    capture = captured()
+    capture["header_facts"] = {
+        "nosniff": "nosniff",
+        "hsts": "absent",
+        "hsts_max_age": None,
+        "https": False,
+        "complete": True,
+    }
+    raw = json.dumps(capture).encode()
+    assert runner.parse_capture(raw, policy, http_signals=True) == capture
+    for malformed in (
+        raw.replace(b'"nosniff": "nosniff"', b'"nosniff":"nosniff","nosniff":"other"'),
+        raw + b" " * 4096,
+    ):
+        with pytest.raises(ValueError):
+            runner.parse_capture(malformed, policy, http_signals=True)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        b"X-Content-Type-Options: nosniff\r\nX-Content-Type-Options: nosniff\r\n\r\n",
+        b"Strict-Transport-Security: max-age=1\r\nstrict-transport-security: max-age=1\r\n\r\n",
+        b"X-Content-Type-Options: \xff\r\n\r\n",
+        b"X-Content-Type-Options: nosniff\r\n",
+        b"X-Content-Type-Options: " + b"a" * 1025 + b"\r\n\r\n",
+        b"X-Content-Type-Options: " + b"a" * 8192 + b"\r\n\r\n",
+        b" X-Content-Type-Options: nosniff\r\n\r\n",
+        b"Strict-Transport-Security: max-age=1; max-age=1\r\n\r\n",
+    ],
+)
+def test_signal_worker_rejects_unsafe_header_blocks(monkeypatch, headers):
+    from beeagent_module.core import beescan_capture_worker as worker
+
+    response = bytearray(b"HTTP/1.1 200 OK\r\n" + headers)
+    requests = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def settimeout(self, seconds):
+            pass
+
+        def connect(self, destination):
+            assert destination == ("127.0.0.1", 18080)
+
+        def sendall(self, request):
+            requests.append(request)
+
+        def recv(self, size):
+            return bytes([response.pop(0)]) if response else b""
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(worker.socket, "socket", lambda *args: Connection())
+    with pytest.raises((ValueError, UnicodeError)):
+        worker.capture(
+            {
+                "origin": "http://127.0.0.1:18080",
+                "connected_ip": "127.0.0.1",
+                "port": 18080,
+                "seconds": 1,
+                "http_signals": True,
+            }
+        )
+    assert len(requests) == 1
+    assert requests[0].startswith(b"GET / HTTP/1.1\r\n")

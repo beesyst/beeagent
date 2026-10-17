@@ -1,5 +1,6 @@
 import http.server
 import json
+import ssl
 import subprocess
 import sys
 import threading
@@ -42,10 +43,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "invalid"
             if mode == "malformed"
             else "absent"
-            if mode == "negative"
+            if mode == "negative" or mode.startswith("signal-")
             else "present",
         )
         self.send_header("Set-Cookie", "lab-secret=must-not-persist")
+        if mode in {
+            "signal-effective",
+            "signal-hsts-missing",
+            "signal-hsts-disabled",
+            "signal-duplicate",
+        }:
+            self.send_header("X-Content-Type-Options", "nosniff")
+        if mode == "signal-ineffective":
+            self.send_header("X-Content-Type-Options", "invalid")
+        if mode in {"signal-effective", "signal-ineffective", "ok"}:
+            self.send_header(
+                "Strict-Transport-Security", "max-age=60; includeSubDomains"
+            )
+        if mode == "signal-hsts-disabled":
+            self.send_header("Strict-Transport-Security", "max-age=0")
+        if mode == "signal-duplicate":
+            self.send_header("X-Content-Type-Options", "nosniff")
+        if mode == "signal-malformed":
+            self.send_header("Strict-Transport-Security", "max-age=no")
         if mode == "redirect":
             self.send_header("Location", "http://127.0.0.1:18081/")
         if mode == "oversized":
@@ -71,6 +91,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "invalid" if mode == "malformed" else "text/html; charset=utf-8",
         )
         self.send_header("Set-Cookie", "lab-secret=must-not-persist")
+        if mode in {
+            "signal-effective",
+            "signal-hsts-missing",
+            "signal-hsts-disabled",
+            "signal-duplicate",
+        }:
+            self.send_header("X-Content-Type-Options", "nosniff")
+        if mode == "signal-ineffective":
+            self.send_header("X-Content-Type-Options", "invalid")
+        if mode in {"signal-effective", "signal-ineffective", "ok"}:
+            self.send_header(
+                "Strict-Transport-Security", "max-age=60; includeSubDomains"
+            )
+        if mode == "signal-hsts-disabled":
+            self.send_header("Strict-Transport-Security", "max-age=0")
+        if mode == "signal-duplicate":
+            self.send_header("X-Content-Type-Options", "nosniff")
+        if mode == "signal-malformed":
+            self.send_header("Strict-Transport-Security", "max-age=no")
         if mode == "redirect":
             self.send_header("Location", "http://127.0.0.1:18081/")
         if mode == "oversized":
@@ -83,6 +122,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 for port in counts:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    if (root / "server.pem").exists():
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(root / "server.pem", root / "server.key")
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 (root / "counts.json").write_text(json.dumps(counts))
 (root / "requests.json").write_text(json.dumps(requests))

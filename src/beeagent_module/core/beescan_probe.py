@@ -347,8 +347,16 @@ def _current_policy(settings):
 
 
 def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
-    if args not in (["bootstrap"], ["probe"], ["detect"], ["assess"]):
-        print("Usage: ./start.sh beescan {bootstrap|probe|detect|assess}")
+    if args not in (
+        ["bootstrap"],
+        ["probe"],
+        ["detect"],
+        ["assess"],
+        ["assess", "--http-signals"],
+    ):
+        print(
+            "Usage: ./start.sh beescan {bootstrap|probe|detect|assess [--http-signals]}"
+        )
         return 2
     try:
         registry = ModuleRegistry(settings["modules"]["registry"], logger)
@@ -373,13 +381,15 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
             )
 
             execute = execute_approved_detection
-        elif args == ["assess"]:
+        elif args[0] == "assess":
             from beeagent_module.core.beescan_assessment import (
                 execute_approved_assessment,
             )
 
             execute = execute_approved_assessment
+        options = {"http_signals": True} if args == ["assess", "--http-signals"] else {}
         result = execute(
+            **options,
             settings=settings,
             reload_settings=reload_settings,
             storage_dir=storage_dir,
