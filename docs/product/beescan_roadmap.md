@@ -758,6 +758,88 @@ One authorized `./start.sh beescan assess` invocation that performs the existing
 
 A fresh authorized operator can reproduce meaningful HTTP security signal results through the existing governed BeeAgent assessment, with truthful bounded reports, unchanged execution authority and verified positive, negative and failure handling.
 
+## Stage 5 — Governed Web Exposure Detection
+
+### Iteration BS-5 — Governed Public Git Metadata Exposure Assessment
+
+**Status:** PLANNED
+
+#### Goal
+
+Extend the existing BeeScan operator assessment with one explicitly authorized, tightly bounded Git metadata exposure check and deliver its validated results through the BeeScan It8 public domain contracts.
+
+#### Depends on
+
+- BeeAgent BS-1 through BS-4 completed and their security boundaries preserved.
+- BeeScan Iteration 8 public exposure detection and reporting contracts.
+- Existing BeeAgent authentication, scope enforcement, host artifact lifecycle and provider-integrity mechanisms.
+- Availability of every required reviewed executable for real end-to-end laboratory verification.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add one optional, explicitly authorized exposure check for the fixed path `/.git/HEAD` on the already approved HTTP(S) origin.
+- Require host-controlled selection and authorization for the additional request; existing probe and detection approvals must not silently grant broader path or request authority.
+- Enforce the exact HTTP method, path, destination, connected IP, scheme, port, TLS verification, request budget and execution deadline.
+- Reuse the existing host-owned isolation, namespace, nftables, resource-limit, cleanup and artifact mechanisms.
+- Perform no redirects, retries, proxy requests, path discovery or additional network connections.
+- Read only a strictly bounded response sufficient to classify Git HEAD exposure evidence.
+- Discard raw response content after validation and preserve only minimal, allowlisted facts and host-controlled evidence references.
+- Bind the check to the authorized Mission, Target, parent assessment, source Observation, provider identity and individual execution status.
+- Invoke BeeScan It8's offline validation, Finding candidate and report contracts.
+- Preserve the current probe, marker detection, HTTP security signals and human review behavior.
+- Document operator configuration, explicit approval, real laboratory execution and recovery/failure semantics.
+
+#### Excluded
+
+- Generic HTTP request execution, user-selected paths, crawling or directory enumeration.
+- Retrieving `.git/config`, Git objects, `.env`, secrets or arbitrary response bodies.
+- Cloning repositories, reconstructing source code, active exploitation or automated credential extraction.
+- Arbitrary Nuclei templates, new scanner marketplaces or autonomous tool selection.
+- Broadening current network destinations, bypassing TLS, firewall, namespaces or provider integrity checks.
+- Automatic VERIFIED Findings, additional target authorization or autonomous follow-up requests.
+- New standalone BeeScan runtime, database, UI, scheduler or general workflow framework.
+
+#### Deliverable
+
+One opt-in, authorized BeeAgent assessment that performs the existing governed checks plus a single fixed Git metadata exposure check, passes bounded evidence to BeeScan It8 and persists a truthful Markdown/JSON assessment package with traceable Finding candidates.
+
+#### Acceptance criteria
+
+- The new check is disabled without explicit host-side authorization and cannot inherit execution authority merely from an existing assessment.
+- An enabled authorized check performs at most one additional fixed-path HTTP(S) request, accounted for in the overall approved budgets.
+- No request can escape the approved origin, destination, method, path, validity window or resource ceilings.
+- Redirects, DNS changes, forbidden ports, proxy settings and TLS failures cannot bypass enforcement.
+- Host capture accepts only bounded, validated evidence and never retains arbitrary Git file content in public artifacts.
+- Positive evidence matches the exact target, source run, request identity and approved Git metadata check.
+- An HTML fallback, HTTP status alone, malformed response or incomplete capture cannot create a false-positive Finding.
+- Missing provider, revoked authorization, timeout, invalid provenance or persistence failure cannot produce a falsely complete assessment.
+- BeeScan owns the final exposure interpretation and CANDIDATE Finding semantics; the host does not duplicate domain rules.
+- Existing HEAD probe, restricted Nuclei detection, header signals, reports and review contracts remain compatible.
+- An authorized real HTTP and HTTPS laboratory demonstrates positive, negative, refusal and failure outcomes.
+- BeeAgent full regressions, frozen dependency installation, applicable security checks and hosted CI pass.
+
+#### Checks
+
+- Exact method/path, request-count, authorization, expiry and budget tests.
+- DNS, SNI, TLS, redirect, proxy, destination and nftables isolation tests.
+- Bounded response parsing, malformed content, truncation, HTML fallback and redaction tests.
+- Source provenance, child-run identity, evidence linking and incomplete-status tests.
+- Real local HTTP/HTTPS positive and negative laboratories using explicitly approved test targets.
+- Existing BS-1 through BS-4 workflow, provider, sandbox and report regressions.
+- BeeScan It8 contract integration and deterministic report verification.
+- ROP, BeeDrill, module registry and authentication compatibility tests.
+- Security-sensitive SAST, applicable dependency checks, full pytest, fresh-checkout smoke, independent review and hosted CI.
+
+#### DoD
+
+A fresh, explicitly authorized operator can run the opt-in Git metadata exposure assessment through BeeAgent, obtain a bounded, traceable BeeScan Finding candidate when positive evidence exists, and inspect truthful negative, refused or incomplete outcomes. The additional request is independently authorized, strictly limited and verified under the existing isolation and destination controls. No scanner match is represented as an automatically verified vulnerability.
+
+---
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.
