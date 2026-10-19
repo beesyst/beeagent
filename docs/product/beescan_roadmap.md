@@ -840,6 +840,88 @@ A fresh, explicitly authorized operator can run the opt-in Git metadata exposure
 
 ---
 
+## Stage 6 — Governed Human Review and Case Delivery
+
+### Iteration BS-6 — Governed Finding Review and Bug Bounty Case Package Delivery
+
+**Status:** PLANNED
+
+#### Goal
+
+Complete the BeeScan operator assessment workflow by securely accepting attributable human Finding reviews, validating independent host evidence and delivering deterministic reviewed-case and manual bug bounty submission artifacts through the existing BeeAgent CLI and ArtifactAPI.
+
+#### Depends on
+
+- Completed BeeAgent BS-1 through BS-5 assessment and security boundaries.
+- Reviewed BeeScan Iteration 9 case-package contracts available through a reproducible immutable Git revision.
+- Existing BeeAgent authentication, storage, artifact read-back and provenance validation mechanisms.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add a separate explicit CLI workflow to review Findings from an existing completed BeeScan assessment without repeating network assessment requests.
+- Resolve the selected assessment and candidate through host-owned persisted artifacts rather than caller-supplied Finding objects or untrusted report text.
+- Reconstruct and validate the necessary typed source records, original run identities, child provenance, completion states and evidence references.
+- Authenticate the actual reviewer through a trusted host-controlled operator context and record attributable review identity and decision time.
+- Accept bounded manual review decisions and independent verification evidence through an explicit, validated operator input contract.
+- Verify that independent evidence exists in authorized host-controlled storage, is readable, bounded and belongs to the selected assessment/reviewer workflow.
+- Distinguish VERIFIED, REJECTED and INCONCLUSIVE decisions and preserve pending CANDIDATE status when review is absent.
+- Pass only authenticated, validated review facts and reconstructed public domain records to the BeeScan It9 API.
+- Persist versioned, tamper-evident-by-validation review records, reviewed-case Markdown/JSON and optional manual submission drafts through existing ArtifactAPI mechanisms.
+- Preserve original scan reports, scanner evidence and terminal assessment state without in-place replacement.
+- Revalidate source artifacts, review provenance and generated package bytes before declaring review delivery complete.
+- Document the operator procedure, evidence prerequisites, refusal states and recovery workflow.
+
+#### Excluded
+
+- New HTTP requests, scans, provider profiles, origin selection or authority expansion.
+- Treating a CLI argument, review-file field, scanner output or AI assertion as reviewer authentication.
+- Accepting unverified arbitrary filesystem paths as evidence references.
+- Modifying original assessment evidence or converting incomplete scans into completed ones.
+- Automated exploit verification, arbitrary reproduction scripts or bounty-platform submission.
+- BeeUI dashboards, multi-user review services, workflow schedulers, new databases or generic review frameworks.
+- New BeeSDK interfaces or changes to BeeDrill and ROP.
+
+#### Deliverable
+
+A working operator CLI review flow that reads one existing authorized assessment, verifies independent human evidence, persists attributable review decisions and produces a complete reviewed Finding case package and optional manual bug bounty submission draft without rescanning the target.
+
+#### Acceptance criteria
+
+- Review selection resolves to an existing complete authorized assessment and an actual candidate belonging to that assessment.
+- Missing, corrupt, inconsistent or altered parent/child artifacts fail closed.
+- Reviewer identity is established by the host; user-supplied reviewer claims never grant authentication.
+- VERIFIED requires present, bounded, independent host-validated evidence that cannot be substituted with original scanner evidence.
+- Forged, duplicate, conflicting, stale and cross-assessment decisions cannot become trusted reviews.
+- Review execution does not initiate HTTP requests, invoke scanners, modify provider policy or broaden assessment authorization.
+- Original assessment status, reports, candidate identities and evidence remain unchanged.
+- Review records and generated packages use protected storage, bounded serialization, safe permissions and verified persistence.
+- Interrupted or failed review/package persistence remains explicitly incomplete and does not corrupt earlier successful artifacts.
+- Deterministic BeeScan-reviewed case outputs match the reconstructed trusted inputs.
+- No raw secrets, unrestricted target responses, unsafe reproduction content or unverified impact claims enter public case packages.
+- Existing `assess`, `assess --http-signals` and `assess --git-exposure` behavior remains compatible.
+- Frozen installation of the reviewed BeeScan It9 revision, full host regressions and hosted CI pass.
+
+#### Checks
+
+- Positive VERIFIED review with genuinely separate authorized verification evidence.
+- REJECTED, INCONCLUSIVE, pending and invalid-review scenarios.
+- Forged reviewer, unknown Finding, altered source, cross-run reference and duplicate-decision tests.
+- Missing evidence, symlink/path traversal, oversize, unsafe content and artifact mutation tests.
+- Interrupted write, atomic persistence, read-back verification and recovery tests.
+- Explicit zero-network-execution verification for the complete review flow.
+- Reproducible CLI smoke with a fresh completed assessment and a real host-controlled review fixture.
+- Byte-compatible legacy assessment outputs and existing BS-1 through BS-5 laboratory regressions.
+- ROP, BeeDrill, authentication, module and ArtifactAPI compatibility checks.
+- Security-sensitive static review, applicable property/security checks, full pytest, build, fresh frozen installation, independent review and hosted CI.
+
+#### DoD
+
+An authenticated operator can review an existing completed BeeScan assessment, independently verify or reject its candidate Findings, and obtain securely persisted, traceable Markdown/JSON reviewed-case artifacts and a conservative manual bug bounty submission draft when supported by valid VERIFIED evidence. The original assessment remains immutable, no new network activity or authority is introduced, and all persistence, failure, regression and delivery gates pass.
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.
