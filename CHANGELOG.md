@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.77.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.76.1...beeagent-v0.77.0) (2026-10-19)
+
+
+### Features
+
+* **beescan:** add governed Git HEAD exposure assessment ([#316](https://github.com/beesyst/beeagent/issues/316)) ([5b8934c](https://github.com/beesyst/beeagent/commit/5b8934c2dee0f2a562a2fc304603ee41f8c3d2a3))
+
 ## [0.76.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.76.0...beeagent-v0.76.1) (2026-10-17)
 
 
