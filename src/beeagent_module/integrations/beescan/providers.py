@@ -12,9 +12,9 @@ from beeagent_module.core.beedrill_toolchain import (
     NativeToolchainError,
     _download,
 )
-from beeagent_module.core.beescan_detection_policy import NUCLEI_SHA256
-from beeagent_module.core.beescan_policy import HTTPX_SHA256
 from beeagent_module.core.settings import _is_module_enabled
+from beeagent_module.integrations.beescan.detection_policy import NUCLEI_SHA256
+from beeagent_module.integrations.beescan.policy import HTTPX_SHA256
 
 NUCLEI_ARTIFACT = NativeArtifact(
     "nuclei-3.11.1",

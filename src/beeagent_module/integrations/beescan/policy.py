@@ -166,12 +166,14 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
         raise RuntimeError("Invalid beescan settings")
     if type(config["probe_enabled"]) is not bool:
         raise RuntimeError("Invalid beescan.probe_enabled")
-    from beeagent_module.core.beescan_detection_policy import (
+    from beeagent_module.integrations.beescan.detection_policy import (
         validate_detection_settings,
     )
 
     validate_detection_settings(config, enabled, validate_contracts=validate_contracts)
-    from beeagent_module.core.beescan_git_exposure import validate_git_exposure_settings
+    from beeagent_module.integrations.beescan.git_exposure import (
+        validate_git_exposure_settings,
+    )
 
     validate_git_exposure_settings(
         config, enabled, validate_contracts=validate_contracts

@@ -17,10 +17,6 @@ from beeagent_module.core.beedrill_toolchain import (
     NativeToolchainError,
     ensure_native_tools,
 )
-from beeagent_module.core.beescan_providers import (
-    ProviderProvisioningError,
-    ensure_beescan_providers,
-)
 from beeagent_module.core.cli import (
     RopCliError,
     create_rop_parser,
@@ -56,6 +52,10 @@ from beeagent_module.core.runtime_context import (
     generate_session_id,
 )
 from beeagent_module.core.settings import _is_module_enabled, load_settings
+from beeagent_module.integrations.beescan.providers import (
+    ProviderProvisioningError,
+    ensure_beescan_providers,
+)
 
 _DOCLING_PROFILES = {
     "cpu": "docling-cpu",
@@ -274,7 +274,7 @@ def main() -> None:
         sys.exit(_handle_beedrill_cli(args[1:], settings=settings, logger=logger))
 
     if args and args[0] == "beescan":
-        from beeagent_module.core.beescan_probe import handle_beescan_cli
+        from beeagent_module.integrations.beescan.probe import handle_beescan_cli
 
         sys.exit(
             handle_beescan_cli(

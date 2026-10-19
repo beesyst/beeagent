@@ -11,16 +11,16 @@ from pathlib import Path
 import pytest
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_detection import execute_approved_detection
-from beeagent_module.core.beescan_detection_policy import (
+from beeagent_module.core.module_contract import AuthorityLevel
+from beeagent_module.core.runtime_context import RuntimeContext
+from beeagent_module.integrations.beescan.detection import execute_approved_detection
+from beeagent_module.integrations.beescan.detection_policy import (
     NUCLEI_SHA256,
     NUCLEI_VERSION,
     TEMPLATE_SHA256,
     DetectionPolicy,
 )
-from beeagent_module.core.beescan_detection_runner import _sandbox
-from beeagent_module.core.module_contract import AuthorityLevel
-from beeagent_module.core.runtime_context import RuntimeContext
+from beeagent_module.integrations.beescan.detection_runner import _sandbox
 from integration_tests.test_beescan_lab import assert_kernel_egress
 
 

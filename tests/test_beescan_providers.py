@@ -15,7 +15,7 @@ from typing import cast
 import pytest
 
 from beeagent_module.core import beedrill_toolchain as download
-from beeagent_module.core import beescan_providers as native
+from beeagent_module.integrations.beescan import providers as native
 
 
 @pytest.fixture
@@ -315,10 +315,12 @@ def test_downloader_rejects_untrusted_redirects(url):
 def test_missing_runtime_prerequisite_remains_fail_closed(monkeypatch, provider):
     from pathlib import Path
 
-    from beeagent_module.core.beescan_detection_policy import DetectionPolicy
-    from beeagent_module.core.beescan_detection_runner import run_detection_provider
-    from beeagent_module.core.beescan_http_runner import run_provider
-    from beeagent_module.core.beescan_policy import ProbePolicy
+    from beeagent_module.integrations.beescan.detection_policy import DetectionPolicy
+    from beeagent_module.integrations.beescan.detection_runner import (
+        run_detection_provider,
+    )
+    from beeagent_module.integrations.beescan.http_runner import run_provider
+    from beeagent_module.integrations.beescan.policy import ProbePolicy
 
     original = Path.stat
 

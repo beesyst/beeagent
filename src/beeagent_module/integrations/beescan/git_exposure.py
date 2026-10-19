@@ -7,15 +7,15 @@ from subprocess import SubprocessError
 from uuid import uuid4
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_detection import _json, _persist
-from beeagent_module.core.beescan_detection_runner import run_detection_provider
-from beeagent_module.core.beescan_http_runner import verify_resolution
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.runtime_context import (
     RuntimeContext,
     generate_run_id,
     generate_session_id,
 )
+from beeagent_module.integrations.beescan.detection import _json, _persist
+from beeagent_module.integrations.beescan.detection_runner import run_detection_provider
+from beeagent_module.integrations.beescan.http_runner import verify_resolution
 
 
 @dataclass(frozen=True)

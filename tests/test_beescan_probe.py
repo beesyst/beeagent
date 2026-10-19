@@ -12,26 +12,26 @@ import pytest
 from beesdk.capabilities import CapabilityStatus
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_http_runner import (
+from beeagent_module.core.module_contract import AuthorityLevel
+from beeagent_module.core.runtime_context import RuntimeContext
+from beeagent_module.integrations.beescan.http_runner import (
     bounded_process,
     expected_firewall,
     provider_arguments,
     validate_firewall,
     verify_resolution,
 )
-from beeagent_module.core.beescan_policy import (
+from beeagent_module.integrations.beescan.policy import (
     HTTPX_SHA256,
     ProbePolicy,
     validate_beescan_settings,
 )
-from beeagent_module.core.beescan_probe import (
+from beeagent_module.integrations.beescan.probe import (
     GovernedHttpCaller,
     execute_approved_probe,
     handle_beescan_cli,
     parse_http_output,
 )
-from beeagent_module.core.module_contract import AuthorityLevel
-from beeagent_module.core.runtime_context import RuntimeContext
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ def test_disabled_configuration_without_installed_module():
 def test_authorization_denies_before_provider(policy, tmp_path, monkeypatch, changes):
     policy = replace(policy, **changes)
     monkeypatch.setattr(
-        "beeagent_module.core.beescan_probe.run_provider",
+        "beeagent_module.integrations.beescan.probe.run_provider",
         lambda *a, **k: pytest.fail("unauthorized execution"),
     )
     caller = make_caller(policy, tmp_path)
@@ -353,7 +353,7 @@ def test_contradictory_provider_metadata_never_observes(
         {"url": policy.origin, "status_code": 200, "failed": False} | metadata
     ).encode()
     monkeypatch.setattr(
-        "beeagent_module.core.beescan_probe.run_provider", lambda *a, **k: raw
+        "beeagent_module.integrations.beescan.probe.run_provider", lambda *a, **k: raw
     )
     caller = make_caller(policy, tmp_path)
     result = caller.call("web.probe", policy.intent().payload)
@@ -385,7 +385,7 @@ def test_host_handoff_and_artifacts_with_fixture_provider(
         }
     ).encode()
     monkeypatch.setattr(
-        "beeagent_module.core.beescan_probe.run_provider", lambda *a, **k: raw
+        "beeagent_module.integrations.beescan.probe.run_provider", lambda *a, **k: raw
     )
     settings = settings_for(policy)
     status = execute_approved_probe(
@@ -421,7 +421,7 @@ def test_failed_execution_never_observes(
     def fail(*a, **k):
         raise failure
 
-    monkeypatch.setattr("beeagent_module.core.beescan_probe.run_provider", fail)
+    monkeypatch.setattr("beeagent_module.integrations.beescan.probe.run_provider", fail)
     settings = settings_for(policy)
     result = execute_approved_probe(
         settings=settings,
@@ -491,7 +491,7 @@ def test_dns_rebinding_rechecked_before_provider(policy, tmp_path, monkeypatch):
     changed = replace(policy, origin="http://lab.example.test:18080")
     addresses = iter([b'["127.0.0.1"]', b'["127.0.0.2"]'])
     monkeypatch.setattr(
-        "beeagent_module.core.beescan_http_runner.bounded_process",
+        "beeagent_module.integrations.beescan.http_runner.bounded_process",
         lambda *a, **k: (0, next(addresses)),
     )
 
@@ -499,7 +499,9 @@ def test_dns_rebinding_rechecked_before_provider(policy, tmp_path, monkeypatch):
         reauthorize()
         pytest.fail("Changed DNS must refuse before provider execution")
 
-    monkeypatch.setattr("beeagent_module.core.beescan_probe.run_provider", provider)
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.probe.run_provider", provider
+    )
     caller = make_caller(changed, tmp_path)
     result = caller.call("web.probe", changed.intent().payload)
     assert result.status is CapabilityStatus.REFUSED
@@ -509,7 +511,7 @@ def test_dns_rebinding_rechecked_before_provider(policy, tmp_path, monkeypatch):
 
 def test_one_shot_budget_and_evidence_envelope(policy, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "beeagent_module.core.beescan_probe.run_provider",
+        "beeagent_module.integrations.beescan.probe.run_provider",
         lambda *a, **k: json.dumps(
             {"url": policy.origin, "status_code": 200, "failed": False}
         ).encode(),
@@ -561,7 +563,7 @@ def test_real_memory_limit_and_descendant_cleanup(tmp_path):
 
 @pytest.mark.parametrize("kind", ["fifo", "symlink"])
 def test_provider_special_file_refuses_without_blocking(policy, tmp_path, kind):
-    from beeagent_module.core.beescan_http_runner import _provider_snapshot
+    from beeagent_module.integrations.beescan.http_runner import _provider_snapshot
 
     executable = tmp_path / "httpx"
     if kind == "fifo":

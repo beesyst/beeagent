@@ -14,8 +14,6 @@ from beesdk.capabilities import CapabilityResult, CapabilityStatus
 from beesdk.modules import AuthorityLevel as SDKAuthority
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_http_runner import run_provider, verify_resolution
-from beeagent_module.core.beescan_policy import ProbePolicy
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.module_runtime import execute_module_case
@@ -24,6 +22,11 @@ from beeagent_module.core.runtime_context import (
     generate_run_id,
     generate_session_id,
 )
+from beeagent_module.integrations.beescan.http_runner import (
+    run_provider,
+    verify_resolution,
+)
+from beeagent_module.integrations.beescan.policy import ProbePolicy
 
 if TYPE_CHECKING:
     from beescan.capabilities.http_probe import HttpFacts
@@ -146,7 +149,7 @@ class GovernedHttpCaller:
     def call(self, capability_name, payload):
         from beescan.capabilities.http_probe import HostProvenance
 
-        from beeagent_module.core.beescan_detection import _persist
+        from beeagent_module.integrations.beescan.detection import _persist
 
         status = CapabilityStatus.REFUSED
         reason = "authorization_refused"
@@ -253,7 +256,7 @@ def execute_approved_probe(
         normalize_http_probe,
     )
 
-    from beeagent_module.core.beescan_detection import _persist
+    from beeagent_module.integrations.beescan.detection import _persist
 
     run_id, session_id = generate_run_id(), generate_session_id()
     artifacts = ArtifactAPI(
@@ -379,13 +382,13 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
             return 0 if result.status == "ok" else 3
         execute = execute_approved_probe
         if args == ["detect"]:
-            from beeagent_module.core.beescan_detection import (
+            from beeagent_module.integrations.beescan.detection import (
                 execute_approved_detection,
             )
 
             execute = execute_approved_detection
         elif args[0] == "assess":
-            from beeagent_module.core.beescan_assessment import (
+            from beeagent_module.integrations.beescan.assessment import (
                 execute_approved_assessment,
             )
 

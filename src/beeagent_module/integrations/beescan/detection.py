@@ -12,21 +12,21 @@ from beesdk.capabilities import CapabilityResult, CapabilityStatus
 from beesdk.modules import AuthorityLevel as SDKAuthority
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_detection_policy import DetectionPolicy
-from beeagent_module.core.beescan_detection_runner import (
-    parse_capture,
-    read_regular,
-    run_detection_provider,
-    safe_response,
-)
-from beeagent_module.core.beescan_http_runner import verify_resolution
-from beeagent_module.core.beescan_probe import _unique_object
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.runtime_context import (
     RuntimeContext,
     generate_run_id,
     generate_session_id,
 )
+from beeagent_module.integrations.beescan.detection_policy import DetectionPolicy
+from beeagent_module.integrations.beescan.detection_runner import (
+    parse_capture,
+    read_regular,
+    run_detection_provider,
+    safe_response,
+)
+from beeagent_module.integrations.beescan.http_runner import verify_resolution
+from beeagent_module.integrations.beescan.probe import _unique_object
 
 
 def _json(raw):
