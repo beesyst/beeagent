@@ -762,7 +762,7 @@ A fresh authorized operator can reproduce meaningful HTTP security signal result
 
 ### Iteration BS-5 — Governed Public Git Metadata Exposure Assessment
 
-**Status:** PLANNED
+**Status:** IN PROGRESS
 
 #### Goal
 

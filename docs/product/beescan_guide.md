@@ -288,3 +288,47 @@ BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NU
 The new HTTP/HTTPS tests generate a one-day fixture certificate with an IP SAN for the approved loopback origin. They mount only its temporary hashed CA directory into the capture sandbox certificate-store path using test instrumentation; system trust is never modified and production TLS verification stays enabled. Removing that test mount must fail HTTPS capture before any GET is delivered. The existing httpx HEAD probe does not provide an authenticated-peer guarantee; verified HTTPS signal context comes from the Python GET capture's default SSL context and hostname verification.
 
 The laboratories check effective/missing/ineffective nosniff, effective/missing/disabled HTTPS HSTS, HTTP not-applicable, marker plus signals, duplicate/malformed/oversized headers and redirect refusal. Every successful assessment must record exactly HEAD `/`, GET `/`, zero forbidden-port requests, original child provenance, safe reports and 0600 artifacts. Existing authority, source, namespace, firewall, timeout, provider, cleanup and terminal-persistence laboratories remain required. Hosted CI, independent security review and the clean frozen installation using the final reviewed merged Git revision are pending delivery gates until actually executed.
+
+## BS-5 optional Git HEAD exposure
+
+Select `./start.sh beescan assess --git-exposure` only after installing the reviewed BeeScan It8 API. It can be combined with `--http-signals` in either order; duplicate/unknown options, custom targets and paths remain invalid. Defaults are `beescan.git_exposure_enabled: false` and `git_exposure_approval: null`. Enabling the capability and separately approving it does not select it automatically. Existing probe/detection approvals never grant the extra request. Missing It8 refuses before network execution.
+
+A trusted operator supplies every field of the separate approval below. Identity, canonical origin, connected IP, namespace pair and private-lab policy must match both existing approvals; validity windows must accommodate the aggregate duration. The shown UID/PID/window are illustrative and must be replaced by the authorized live laboratory values. No provider executable is added for this built-in capture: the existing isolated Python worker consumes the installed BeeScan signature parser; the original httpx and Nuclei prerequisites remain mandatory for the preceding assessment stages.
+
+```yaml
+git_exposure_enabled: true
+git_exposure_approval:
+  operator_uid: 1000
+  project_id: project-lab
+  scope_id: scope-lab
+  mission_id: mission-lab
+  target_id: target-lab
+  origin: http://127.0.0.1:18080
+  approved: true
+  excluded: false
+  valid_from: "2026-10-18T00:00:00+00:00"
+  expires_at: "2026-10-19T00:00:00+00:00"
+  method: git_head_exposure
+  http_method: GET
+  path: /.git/HEAD
+  request_budget: 1
+  time_budget_seconds: 5
+  connected_ip: 127.0.0.1
+  allow_private_lab: true
+  network_namespace: /proc/12345/ns/net
+  user_namespace: /proc/12345/ns/user
+  memory_mb: 256
+  output_bytes: 4096
+```
+
+The approval is nested under `beescan` alongside existing approvals. Request budget is exactly one, time is 1–60 seconds, memory 256–4096 MiB and normalized output 1024–4096 bytes. A selected assessment allows at most three requests and at most 60 aggregate seconds, with per-stage limits retained. Unselected assessments preserve their existing two-stage budget semantics. Authorization/source/DNS are rechecked before the new worker request and before terminal success. The same rootless namespace ownership, exact nftables allowlist, Bubblewrap, minimal environment, process limits and cleanup apply. The worker connects directly to the pinned IP and verifies HTTPS using the approved origin hostname/default trust, ignoring proxy variables and performing no redirects or retries.
+
+Capture accepts a complete ASCII header block up to 8192 bytes, an explicit unique decimal Content-Length up to 1024 and exactly that many body bytes followed by connection close. Missing/duplicate length, transfer/content encodings, duplicated content type, oversized/truncated framing, malformed headers or redirects fail closed. Chunked/close-delimited responses are deliberately unsupported in this first profile. The worker invokes BeeScan's bounded offline signature parser in memory and emits only a signature category. HTTP non-200 and HTML media types cannot produce positive signature evidence. Raw response bytes, reference names, object IDs, cookies and error details are never persisted or logged.
+
+A selected parent adds `exposure_run_id`; its distinct child stores `git_exposure_status.json`, `git_exposure_result.json` and, on completion, one `git-evidence-<opaque-id>.json`. Facts bind parent, source Observation/probe, Mission, Target, origin, fixed GET/path and host child provenance. Directories remain 0700 and files 0600. The parent validates every child record/evidence and rechecks their exact bytes before terminal completion. Reports use BeeScan schema 3, with optional HTTP advisories retained. Positive results are informational CANDIDATE Findings; complete no-match remains distinct from refusal, timeout, error and incomplete. Selected failure prevents complete success. No review submission or automatic VERIFIED is added.
+
+After failure, preserve the parent and referenced child artifacts, repair the actual prerequisite, explicitly restore only intended authority and run a new assessment. Never edit evidence or reuse an old child as proof of a new check. Unselected `assess` and `assess --http-signals` retain schema 1/2 report bytes and do not create an exposure child or request.
+
+Production metadata and `uv.lock` pin BeeScan 0.7.0 to immutable Git revision `a1b44b3d1d2982341e7c659c0872cec7c69c5111`, which includes the It8 contracts. Set `umask 022` before `uv sync --frozen --no-dev --extra beescan` and use authorized read access to the private Git source. The installed signature asset must not be group/world writable; a cached wheel built with a permissive umask must be rebuilt in a protected cache. A fresh environment with an empty uv cache was verified against this revision without PYTHONPATH or an editable BeeScan source; `direct_url.json` records the exact commit. Development sibling imports remain separate evidence. Independent security review and hosted CI remain mandatory delivery gates.
+
+With the exact protected providers available, run `BEEAGENT_BEESCAN_LAB_PROVIDER=/absolute/path/to/pinned/httpx BEEAGENT_BEESCAN_NUCLEI=/absolute/path/to/pinned/nuclei uv run --frozen --extra beescan python -m pytest -q integration_tests/test_beescan_assessment_lab.py -k real_git`. HTTP/HTTPS fixtures cover symbolic/detached positive, negative, HTML fallback, redirect, timeout, oversized/truncated framing, separate approval refusal, exact three-request accounting, forbidden-port isolation and artifact redaction. A missing explicit provider is a failed prerequisite, not a skipped or successful laboratory. The httpx digest remains `bb28edc87dfd8b11f25ebb73b325f05424e8ee2dd5c818649f1f7d28da6a32b5`. Hosted CI and independent security review remain separate mandatory delivery gates.

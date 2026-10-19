@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 beescan = [
-    "beescan==0.7.0",
+    "beescan==0.8.0",
 ]
 rop = [
     "beeagent-rop==0.19.8",
