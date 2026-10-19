@@ -15,7 +15,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from beeagent_module.core.beescan_policy import ProbePolicy
+from beeagent_module.integrations.beescan.policy import ProbePolicy
 
 ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": "/tmp"}
 

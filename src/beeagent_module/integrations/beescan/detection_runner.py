@@ -7,14 +7,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from beeagent_module.core.beescan_detection_policy import TEMPLATE_SHA256
-from beeagent_module.core.beescan_http_runner import (
+from beeagent_module.integrations.beescan.detection_policy import TEMPLATE_SHA256
+from beeagent_module.integrations.beescan.http_runner import (
     _open_namespace,
     _provider_snapshot,
     bounded_process,
     validate_firewall,
 )
-from beeagent_module.core.beescan_probe import _unique_object
+from beeagent_module.integrations.beescan.probe import _unique_object
 
 
 def read_regular(path, *, limit, dir_fd=None):
@@ -267,6 +267,7 @@ def run_detection_provider(
         validate_firewall(rules, policy)
         with tempfile.TemporaryDirectory(prefix="bee-detect-") as temporary:
             directory = Path(temporary)
+            offline: list[str] = []
             if not git_exposure:
                 binary = _provider_snapshot(
                     policy, directory, limit_bytes=192 * 1024 * 1024
@@ -300,7 +301,7 @@ def run_detection_provider(
                     raise PermissionError("provider_version_unverified")
             worker = directory / "capture.py"
             worker.write_bytes(
-                Path(__file__).with_name("beescan_capture_worker.py").read_bytes()
+                Path(__file__).with_name("capture_worker.py").read_bytes()
             )
             worker.chmod(0o444)
             capture_sandbox = _sandbox(policy)

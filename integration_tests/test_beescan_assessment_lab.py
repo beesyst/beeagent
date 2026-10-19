@@ -6,9 +6,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from beeagent_module.core import beescan_assessment as host
-from beeagent_module.core import beescan_detection, beescan_detection_runner
-from beeagent_module.core.beescan_assessment import execute_approved_assessment
+from beeagent_module.integrations.beescan import assessment as host
+from beeagent_module.integrations.beescan import detection as beescan_detection
+from beeagent_module.integrations.beescan import (
+    detection_runner as beescan_detection_runner,
+)
+from beeagent_module.integrations.beescan.assessment import execute_approved_assessment
 from integration_tests import test_beescan_lab
 from integration_tests.test_beescan_lab import assert_kernel_egress
 from tests import test_beescan_detection
@@ -446,7 +449,7 @@ def test_real_signal_assessment(assessment_lab, monkeypatch):
 
 @pytest.mark.parametrize("lab", [False, True], indirect=True, ids=["http", "https"])
 def test_real_git_exposure_assessment(assessment_lab, monkeypatch):
-    from beeagent_module.core.beescan_git_exposure import GitExposurePolicy
+    from beeagent_module.integrations.beescan.git_exposure import GitExposurePolicy
 
     settings, probe, root = assessment_lab
     fields = {

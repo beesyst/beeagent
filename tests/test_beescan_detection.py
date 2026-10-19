@@ -10,15 +10,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from beeagent_module.core import beescan_detection as host
-from beeagent_module.core import beescan_detection_runner as runner
-from beeagent_module.core.beescan_detection_policy import (
+from beeagent_module.integrations.beescan import detection as host
+from beeagent_module.integrations.beescan import detection_runner as runner
+from beeagent_module.integrations.beescan.detection_policy import (
     NUCLEI_SHA256,
     NUCLEI_VERSION,
     TEMPLATE_SHA256,
     DetectionPolicy,
 )
-from beeagent_module.core.beescan_policy import validate_beescan_settings
+from beeagent_module.integrations.beescan.policy import validate_beescan_settings
 
 
 @pytest.fixture
@@ -623,7 +623,7 @@ def test_capture_contract_bound_to_policy(approved, key, value):
     ],
 )
 def test_normalized_hsts(value, kind, age):
-    from beeagent_module.core.beescan_capture_worker import normalized_headers
+    from beeagent_module.integrations.beescan.capture_worker import normalized_headers
 
     headers = {} if value is None else {"strict-transport-security": value}
     result = normalized_headers(headers, https=True)
@@ -651,7 +651,7 @@ def test_normalized_hsts(value, kind, age):
     ],
 )
 def test_malformed_hsts_rejected(value):
-    from beeagent_module.core.beescan_capture_worker import normalized_headers
+    from beeagent_module.integrations.beescan.capture_worker import normalized_headers
 
     with pytest.raises(ValueError):
         normalized_headers({"strict-transport-security": value}, https=True)
@@ -696,7 +696,7 @@ def test_signal_capture_seeded_malformed_protocol(approved):
     ],
 )
 def test_signal_worker_rejects_unsafe_header_blocks(monkeypatch, headers):
-    from beeagent_module.core import beescan_capture_worker as worker
+    from beeagent_module.integrations.beescan import capture_worker as worker
 
     response = bytearray(b"HTTP/1.1 200 OK\r\n" + headers)
     requests = []

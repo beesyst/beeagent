@@ -8,28 +8,28 @@ from subprocess import SubprocessError
 from time import monotonic
 
 from beeagent_module.core.artifact_api import ArtifactAPI
-from beeagent_module.core.beescan_detection import (
+from beeagent_module.core.module_contract import AuthorityLevel
+from beeagent_module.core.runtime_context import (
+    RuntimeContext,
+    generate_run_id,
+    generate_session_id,
+)
+from beeagent_module.integrations.beescan.detection import (
     AssessmentSourceBinding,
     _json,
     _persist,
     execute_approved_detection,
     load_source,
 )
-from beeagent_module.core.beescan_detection import (
+from beeagent_module.integrations.beescan.detection import (
     _current_policy as detection_policy,
 )
-from beeagent_module.core.beescan_detection_runner import read_regular
-from beeagent_module.core.beescan_probe import (
+from beeagent_module.integrations.beescan.detection_runner import read_regular
+from beeagent_module.integrations.beescan.probe import (
     _current_policy as probe_policy,
 )
-from beeagent_module.core.beescan_probe import (
+from beeagent_module.integrations.beescan.probe import (
     execute_approved_probe,
-)
-from beeagent_module.core.module_contract import AuthorityLevel
-from beeagent_module.core.runtime_context import (
-    RuntimeContext,
-    generate_run_id,
-    generate_session_id,
 )
 
 
@@ -139,7 +139,7 @@ def execute_approved_assessment(
         if _policies(current) != (probe, detection):
             raise PermissionError("assessment_approval_changed")
         if git_exposure:
-            from beeagent_module.core.beescan_git_exposure import current_policy
+            from beeagent_module.integrations.beescan.git_exposure import current_policy
 
             if current_policy(current) != exposure_policy:
                 raise PermissionError("assessment_approval_changed")
@@ -189,7 +189,7 @@ def execute_approved_assessment(
         probe, detection = _policies(settings)
         policies = [probe, detection]
         if git_exposure:
-            from beeagent_module.core.beescan_git_exposure import current_policy
+            from beeagent_module.integrations.beescan.git_exposure import current_policy
 
             exposure_policy = current_policy(settings)
             for field in (
@@ -391,7 +391,7 @@ def execute_approved_assessment(
                     status=detection_state, reason="detection_did_not_complete"
                 )
         if git_exposure and observation is not None and detection_state == "complete":
-            from beeagent_module.core.beescan_git_exposure import (
+            from beeagent_module.integrations.beescan.git_exposure import (
                 current_policy,
                 execute_git_exposure,
             )

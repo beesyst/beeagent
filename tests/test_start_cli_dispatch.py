@@ -1150,7 +1150,7 @@ def test_cold_bootstrap_syncs_before_domain_contract_validation(
 ):
     import builtins
 
-    from beeagent_module.core.beescan_policy import ProbePolicy
+    from beeagent_module.integrations.beescan.policy import ProbePolicy
 
     installed = False
     calls = []

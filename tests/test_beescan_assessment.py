@@ -5,9 +5,10 @@ from dataclasses import asdict
 
 import pytest
 
-from beeagent_module.core import beescan_assessment as host
-from beeagent_module.core import beescan_detection, beescan_probe
-from beeagent_module.core.beescan_policy import HTTPX_SHA256, ProbePolicy
+from beeagent_module.integrations.beescan import assessment as host
+from beeagent_module.integrations.beescan import detection as beescan_detection
+from beeagent_module.integrations.beescan import probe as beescan_probe
+from beeagent_module.integrations.beescan.policy import HTTPX_SHA256, ProbePolicy
 from tests import test_beescan_detection
 from tests.test_beescan_detection import captured, output, settings_for
 
@@ -603,7 +604,7 @@ def test_signal_assessment_rejects_bad_capture(assessment, monkeypatch, mutation
 
 @pytest.fixture
 def git_assessment(assessment, monkeypatch):
-    from beeagent_module.core import beescan_git_exposure as exposure
+    from beeagent_module.integrations.beescan import git_exposure as exposure
 
     settings, _, calls = assessment
     base = settings["beescan"]["approval"]
@@ -741,7 +742,7 @@ def test_git_unselected_preserves_legacy(git_assessment):
     ],
 )
 def test_git_failure_never_complete(git_assessment, monkeypatch, failure, expected):
-    from beeagent_module.core import beescan_git_exposure as exposure
+    from beeagent_module.integrations.beescan import git_exposure as exposure
 
     def provider(policy, **kwargs):
         kwargs["reauthorize"]()
@@ -761,7 +762,7 @@ def test_git_failure_never_complete(git_assessment, monkeypatch, failure, expect
     "mutation", ["revoked", "source", "result", "evidence", "terminal"]
 )
 def test_git_mutation_and_persistence(git_assessment, monkeypatch, mutation):
-    from beeagent_module.core import beescan_git_exposure as exposure
+    from beeagent_module.integrations.beescan import git_exposure as exposure
 
     if mutation in {"revoked", "source"}:
         original = exposure.run_detection_provider
@@ -814,11 +815,11 @@ def test_git_mutation_and_persistence(git_assessment, monkeypatch, mutation):
 def test_git_capture_envelope_and_fuzz(git_assessment):
     import random
 
-    from beeagent_module.core.beescan_git_exposure import (
+    from beeagent_module.integrations.beescan.git_exposure import (
         GitExposurePolicy,
         parse_git_capture,
     )
-    from beeagent_module.core.beescan_policy import validate_beescan_settings
+    from beeagent_module.integrations.beescan.policy import validate_beescan_settings
 
     config = git_assessment[0]["beescan"]
     validate_beescan_settings(git_assessment[0])
@@ -877,7 +878,7 @@ def git_worker_response(monkeypatch, body, *, status=200, extra=b"", length=None
 
     from beescan.domain import git_head_signature
 
-    from beeagent_module.core import beescan_capture_worker as worker
+    from beeagent_module.integrations.beescan import capture_worker as worker
 
     monkeypatch.setitem(sys.modules, "git_head_signature", git_head_signature)
     response = bytearray(
@@ -985,7 +986,7 @@ def test_git_missing_contract_refuses_before_network(git_assessment, monkeypatch
 
 
 def test_git_completed_negative_assessment(git_assessment, monkeypatch):
-    from beeagent_module.core import beescan_git_exposure as exposure
+    from beeagent_module.integrations.beescan import git_exposure as exposure
 
     original = exposure.run_detection_provider
 

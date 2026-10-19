@@ -287,7 +287,7 @@ def validate_settings(
                     "expected non-empty safe extra name"
                 )
 
-    from beeagent_module.core.beescan_policy import validate_beescan_settings
+    from beeagent_module.integrations.beescan.policy import validate_beescan_settings
 
     validate_beescan_settings(settings, validate_contracts=not bootstrap)
 

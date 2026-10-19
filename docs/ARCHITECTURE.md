@@ -55,6 +55,8 @@ BeeAgent владеет bounded execution-capable Bitrix write-back path для 
 - authoritative write-back state живёт в `storage/interfaces/rop_writeback_state.json` (durable, cross-run, idempotent), per-run операторская проекция — `rop_writeback_summary.json`;
 - `beeagent-rop` остаётся источником классификационной семантики и не меняется; write-back authority находится в BeeAgent server-side policy, а не в AI/final decision/`should_rop_see`.
 
+BeeScan-specific host integration lives in `beeagent_module.integrations.beescan`: `assessment`, `probe`, `policy`, `http_runner`, `detection`, `detection_policy`, `detection_runner`, `capture_worker`, `git_exposure` and `providers`. The detection runner loads its adjacent `capture_worker.py`; Git HEAD signature parsing remains in the installed BeeScan domain package. Generic host infrastructure stays in `core/`, including the existing `beedrill_toolchain` downloader used by provider provisioning.
+
 ## Что НЕ живёт в BeeAgent
 
 В `beeagent` не должна жить клиентская логика вида:
@@ -155,6 +157,8 @@ repo/
 │       │   ├── artifacts.py      # artifact API
 │       │   ├── capabilities.py   # capability boundary
 │       │   └── context.py        # ModuleContext / RunContext / SessionContext
+│       ├── integrations/
+│       │   └── beescan/
 │       ├── cases/
 │       │   ├── ...
 │       ├── agents/

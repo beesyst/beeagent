@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from beeagent_module.core.beescan_policy import HTTPX_SHA256, ProbePolicy
-from beeagent_module.core.beescan_probe import execute_approved_probe
+from beeagent_module.integrations.beescan.policy import HTTPX_SHA256, ProbePolicy
+from beeagent_module.integrations.beescan.probe import execute_approved_probe
 
 
 @pytest.fixture
