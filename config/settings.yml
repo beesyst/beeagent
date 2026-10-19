@@ -107,6 +107,8 @@ beescan:
   approval: null
   detection_enabled: false
   detection_approval: null
+  git_exposure_enabled: false
+  git_exposure_approval: null
 
 beedrill:
   ai_assist:

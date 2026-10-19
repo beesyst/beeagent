@@ -200,7 +200,11 @@ def _sandbox(policy):
     return command
 
 
-def run_detection_provider(policy, *, reauthorize, http_signals=False):
+def run_detection_provider(
+    policy, *, reauthorize, http_signals=False, git_exposure=False
+):
+    if type(git_exposure) is not bool or (git_exposure and http_signals):
+        raise ValueError("invalid_capture_selection")
     deadline = time.monotonic() + policy.time_budget_seconds
 
     def run(argv, *, limit, pass_fds=(), stderr=False):
@@ -263,36 +267,37 @@ def run_detection_provider(policy, *, reauthorize, http_signals=False):
         validate_firewall(rules, policy)
         with tempfile.TemporaryDirectory(prefix="bee-detect-") as temporary:
             directory = Path(temporary)
-            binary = _provider_snapshot(
-                policy, directory, limit_bytes=192 * 1024 * 1024
-            )
-            template = snapshot_template(policy, directory)
-            offline = [
-                *_sandbox(policy),
-                "--ro-bind",
-                str(binary),
-                "/provider",
-                "--ro-bind",
-                str(template),
-                "/template.yaml",
-            ]
-            code, version = run(
-                [
-                    *offline,
-                    "--",
+            if not git_exposure:
+                binary = _provider_snapshot(
+                    policy, directory, limit_bytes=192 * 1024 * 1024
+                )
+                template = snapshot_template(policy, directory)
+                offline = [
+                    *_sandbox(policy),
+                    "--ro-bind",
+                    str(binary),
                     "/provider",
-                    "-version",
-                    "-duc",
-                    "-auth=false",
-                    "-no-color",
-                ],
-                limit=4096,
-                stderr=True,
-            )
-            if code:
-                raise PermissionError("isolation_unavailable")
-            if b"Nuclei Engine Version: v3.11.1\n" not in version:
-                raise PermissionError("provider_version_unverified")
+                    "--ro-bind",
+                    str(template),
+                    "/template.yaml",
+                ]
+                code, version = run(
+                    [
+                        *offline,
+                        "--",
+                        "/provider",
+                        "-version",
+                        "-duc",
+                        "-auth=false",
+                        "-no-color",
+                    ],
+                    limit=4096,
+                    stderr=True,
+                )
+                if code:
+                    raise PermissionError("isolation_unavailable")
+                if b"Nuclei Engine Version: v3.11.1\n" not in version:
+                    raise PermissionError("provider_version_unverified")
             worker = directory / "capture.py"
             worker.write_bytes(
                 Path(__file__).with_name("beescan_capture_worker.py").read_bytes()
@@ -316,6 +321,19 @@ def run_detection_provider(policy, *, reauthorize, http_signals=False):
             ]
             if Path("/etc/ssl/certs").is_dir():
                 capture_sandbox += ["--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs"]
+            if git_exposure:
+                from beescan.domain import git_head_signature
+
+                signature = directory / "git_head_signature.py"
+                signature.write_bytes(
+                    read_regular(git_head_signature.__file__, limit=8192)
+                )
+                signature.chmod(0o444)
+                capture_sandbox += [
+                    "--ro-bind",
+                    str(signature),
+                    "/git_head_signature.py",
+                ]
             reauthorize()
             config = {
                 "origin": policy.origin,
@@ -325,6 +343,8 @@ def run_detection_provider(policy, *, reauthorize, http_signals=False):
             }
             if http_signals:
                 config["http_signals"] = True
+            if git_exposure:
+                config["git_exposure"] = True
             code, raw_capture = run(
                 [
                     *prefix,
@@ -345,6 +365,8 @@ def run_detection_provider(policy, *, reauthorize, http_signals=False):
                 raise TimeoutError("timeout")
             if code:
                 raise ValueError("capture_failed")
+            if git_exposure:
+                return raw_capture
             capture = parse_capture(raw_capture, policy, http_signals=http_signals)
             input_file = directory / "input.txt"
             input_file.write_text(safe_response(capture), encoding="ascii")

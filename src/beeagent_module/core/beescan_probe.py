@@ -353,9 +353,12 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
         ["detect"],
         ["assess"],
         ["assess", "--http-signals"],
+        ["assess", "--git-exposure"],
+        ["assess", "--http-signals", "--git-exposure"],
+        ["assess", "--git-exposure", "--http-signals"],
     ):
         print(
-            "Usage: ./start.sh beescan {bootstrap|probe|detect|assess [--http-signals]}"
+            "Usage: ./start.sh beescan {bootstrap|probe|detect|assess [--http-signals] [--git-exposure]}"
         )
         return 2
     try:
@@ -387,7 +390,9 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
             )
 
             execute = execute_approved_assessment
-        options = {"http_signals": True} if args == ["assess", "--http-signals"] else {}
+        options = {"http_signals": True} if "--http-signals" in args else {}
+        if "--git-exposure" in args:
+            options["git_exposure"] = True
         result = execute(
             **options,
             settings=settings,

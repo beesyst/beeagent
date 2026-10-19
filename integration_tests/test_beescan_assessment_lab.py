@@ -442,3 +442,96 @@ def test_real_signal_assessment(assessment_lab, monkeypatch):
     finally:
         logger.removeHandler(handler)
         handler.close()
+
+
+@pytest.mark.parametrize("lab", [False, True], indirect=True, ids=["http", "https"])
+def test_real_git_exposure_assessment(assessment_lab, monkeypatch):
+    from beeagent_module.core.beescan_git_exposure import GitExposurePolicy
+
+    settings, probe, root = assessment_lab
+    fields = {
+        name: getattr(probe, name)
+        for name in GitExposurePolicy.__dataclass_fields__
+        if hasattr(probe, name)
+    }
+    fields.update(
+        method="git_head_exposure",
+        http_method="GET",
+        path="/.git/HEAD",
+        output_bytes=4096,
+        time_budget_seconds=5,
+    )
+    for name in ("valid_from", "expires_at"):
+        fields[name] = fields[name].isoformat()
+    settings["beescan"].update(git_exposure_enabled=True, git_exposure_approval=fields)
+    original = beescan_detection_runner.bounded_process
+
+    def process(argv, **kwargs):
+        if probe.origin.startswith("https:") and "/capture.py" in argv:
+            argv = list(argv)
+            index = argv.index("/usr/bin/python3") - 1
+            assert argv[index] == "--"
+            argv[index:index] = ["--ro-bind", str(root / "trust"), "/etc/ssl/certs"]
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(beescan_detection_runner, "bounded_process", process)
+    assert_kernel_egress(probe)
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(key, "http://127.0.0.1:18081")
+    for mode, complete, expected in (
+        ("git-symbolic", True, "findings"),
+        ("git-detached", True, "findings"),
+        ("git-negative", True, "no_findings"),
+        ("git-html", True, "no_findings"),
+        ("git-redirect", False, None),
+        ("git-oversized", False, None),
+        ("git-truncated", False, None),
+        ("git-timeout", False, None),
+    ):
+        (root / "mode").write_text(mode)
+        before = len(json.loads((root / "requests.json").read_text()))
+        result = execute_approved_assessment(
+            settings=settings,
+            reload_settings=lambda: settings,
+            storage_dir=root / "storage",
+            logger=logging.getLogger("git-lab"),
+            git_exposure=True,
+        )
+        assert result["complete"] is complete, result
+        if expected:
+            assert result["result"] == expected
+        assert json.loads((root / "requests.json").read_text())[before:] == [
+            {"port": 18080, "method": "HEAD", "path": "/"},
+            {"port": 18080, "method": "GET", "path": "/"},
+            {"port": 18080, "method": "GET", "path": "/.git/HEAD"},
+        ]
+        assert json.loads((root / "counts.json").read_text())["18081"] == 0
+    before = json.loads((root / "requests.json").read_text())
+    settings["beescan"]["git_exposure_approval"]["approved"] = False
+    result = execute_approved_assessment(
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=root / "storage",
+        logger=logging.getLogger("git-lab"),
+        git_exposure=True,
+    )
+    assert result["status"] == "refused" and not result["complete"]
+    assert json.loads((root / "requests.json").read_text()) == before
+    for path in (root / "storage").rglob("*.json"):
+        assert all(
+            value not in path.read_text()
+            for value in (
+                "private-lab-branch",
+                "refs/heads",
+                "lab-secret",
+                "Set-Cookie",
+            )
+        )
+        assert path.stat().st_mode & 0o077 == 0

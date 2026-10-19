@@ -35,6 +35,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
             (root / "requests.json").write_text(json.dumps(requests))
         mode = (root / "mode").read_text().strip()
+        if self.path == "/.git/HEAD":
+            if mode == "git-timeout":
+                time.sleep(10)
+            body = {
+                "git-symbolic": b"ref: refs/heads/private-lab-branch\n",
+                "git-detached": b"a" * 40 + b"\n",
+                "git-negative": b"Not found",
+                "git-html": b"<html>ref: refs/heads/main</html>",
+                "git-oversized": b"a" * 1025,
+                "git-truncated": b"ref: refs/heads/main",
+            }.get(mode, b"Not found")
+            self.send_response(302 if mode == "git-redirect" else 200)
+            if mode == "git-redirect":
+                self.send_header("Location", "http://127.0.0.1:18081/")
+            self.send_header(
+                "Content-Length", str(len(body) + (1 if mode == "git-truncated" else 0))
+            )
+            self.send_header("Set-Cookie", "lab-secret=must-not-persist")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if mode == "timeout":
             time.sleep(10)
         self.send_response(302 if mode == "redirect" else 200)
@@ -43,7 +64,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "invalid"
             if mode == "malformed"
             else "absent"
-            if mode == "negative" or mode.startswith("signal-")
+            if mode == "negative" or mode.startswith(("signal-", "git-"))
             else "present",
         )
         self.send_header("Set-Cookie", "lab-secret=must-not-persist")

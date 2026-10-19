@@ -599,3 +599,416 @@ def test_signal_assessment_rejects_bad_capture(assessment, monkeypatch, mutation
     )
     assert not result["complete"]
     assert result.get("result") != "no_findings"
+
+
+@pytest.fixture
+def git_assessment(assessment, monkeypatch):
+    from beeagent_module.core import beescan_git_exposure as exposure
+
+    settings, _, calls = assessment
+    base = settings["beescan"]["approval"]
+    fields = {
+        name: base[name]
+        for name in exposure.GitExposurePolicy.__dataclass_fields__
+        if name in base
+    }
+    fields.update(
+        method="git_head_exposure",
+        http_method="GET",
+        path="/.git/HEAD",
+        output_bytes=4096,
+    )
+    settings["beescan"].update(git_exposure_enabled=True, git_exposure_approval=fields)
+
+    def provider(policy, *, reauthorize, git_exposure):
+        assert git_exposure is True
+        reauthorize()
+        calls.append("git")
+        return json.dumps(
+            {
+                "origin": policy.origin,
+                "connected_ip": policy.connected_ip,
+                "port": policy.port,
+                "method": "GET",
+                "path": "/.git/HEAD",
+                "request_count": 1,
+                "complete": True,
+                "status_code": 200,
+                "signature": "symbolic",
+            }
+        ).encode()
+
+    monkeypatch.setattr(exposure, "run_detection_provider", provider)
+    monkeypatch.setattr(exposure, "verify_resolution", lambda policy: None)
+    return assessment
+
+
+def run_git(assessment, *, http_signals=False):
+    return host.execute_approved_assessment(
+        settings=assessment[0],
+        reload_settings=lambda: assessment[0],
+        storage_dir=assessment[1],
+        logger=logging.getLogger("git-assessment-test"),
+        git_exposure=True,
+        http_signals=http_signals,
+    )
+
+
+@pytest.mark.parametrize("signals", [False, True])
+def test_git_selected_provenance_and_redaction(git_assessment, signals):
+    _settings, root, calls = git_assessment
+    result = run_git(git_assessment, http_signals=signals)
+    assert result["complete"], result
+    assert calls == ["probe", "detection", "git"]
+    assert result["budgets"]["max_requests"] == 3
+    assert (
+        len(
+            {
+                result[key]
+                for key in (
+                    "assessment_run_id",
+                    "probe_run_id",
+                    "detection_run_id",
+                    "exposure_run_id",
+                )
+            }
+        )
+        == 4
+    )
+    parent = root / "runs" / result["assessment_run_id"] / "module-beescan"
+    report = json.loads((parent / "report.json").read_text())
+    assert report["schema_version"] == 3
+    assert report["exposure"]["state"] == "positive"
+    assert report["exposure"]["run_id"] == result["exposure_run_id"]
+    child = root / "runs" / result["exposure_run_id"] / "module-beescan"
+    facts = json.loads((child / "git_exposure_result.json").read_text())["facts"]
+    assert facts["assessment_run_id"] == result["assessment_run_id"]
+    assert facts["source_observation_id"] == result["http_observation_id"]
+    for directory in (parent, child):
+        for path in directory.iterdir():
+            assert path.stat().st_mode & 0o077 == 0
+            assert all(
+                secret not in path.read_text()
+                for secret in ("refs/heads", "Set-Cookie", "lab-secret")
+            )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("approved", False),
+        ("excluded", True),
+        ("path", "/.git/config"),
+        ("http_method", "HEAD"),
+        ("method", "http_probe"),
+        ("origin", "http://other.test"),
+        ("connected_ip", "127.0.0.2"),
+        ("expires_at", "2020-01-01T00:00:00+00:00"),
+        ("request_budget", 2),
+        ("time_budget_seconds", 60),
+    ],
+)
+def test_git_refused_before_any_request(git_assessment, field, value):
+    git_assessment[0]["beescan"]["git_exposure_approval"][field] = value
+    result = run_git(git_assessment)
+    assert not result["complete"]
+    assert git_assessment[2] == []
+
+
+@pytest.mark.parametrize("value", [None, False, "true"])
+def test_git_selection_requires_separate_enabled_approval(git_assessment, value):
+    config = git_assessment[0]["beescan"]
+    config["git_exposure_enabled"] = value
+    assert not run_git(git_assessment)["complete"]
+    assert git_assessment[2] == []
+
+
+def test_git_unselected_preserves_legacy(git_assessment):
+    git_assessment[0]["beescan"]["git_exposure_approval"]["approved"] = False
+    result = run_assessment(git_assessment)
+    assert result["complete"]
+    assert git_assessment[2] == ["probe", "detection"]
+    assert "exposure_run_id" not in result
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        (PermissionError, "refused"),
+        (TimeoutError, "timeout"),
+        (ValueError, "error"),
+        (OSError, "error"),
+    ],
+)
+def test_git_failure_never_complete(git_assessment, monkeypatch, failure, expected):
+    from beeagent_module.core import beescan_git_exposure as exposure
+
+    def provider(policy, **kwargs):
+        kwargs["reauthorize"]()
+        raise failure("private-error-must-not-be-logged")
+
+    monkeypatch.setattr(exposure, "run_detection_provider", provider)
+    result = run_git(git_assessment)
+    assert result["status"] == expected, result
+    assert not result["complete"]
+    parent = git_assessment[1] / "runs" / result["assessment_run_id"] / "module-beescan"
+    report = json.loads((parent / "report.json").read_text())
+    assert not report["complete"]
+    assert report["result"] != "no_findings"
+
+
+@pytest.mark.parametrize(
+    "mutation", ["revoked", "source", "result", "evidence", "terminal"]
+)
+def test_git_mutation_and_persistence(git_assessment, monkeypatch, mutation):
+    from beeagent_module.core import beescan_git_exposure as exposure
+
+    if mutation in {"revoked", "source"}:
+        original = exposure.run_detection_provider
+
+        def provider(policy, **kwargs):
+            if mutation == "revoked":
+                git_assessment[0]["beescan"]["git_exposure_approval"]["approved"] = (
+                    False
+                )
+            else:
+                parent = next(
+                    git_assessment[1].glob(
+                        "runs/*/module-beescan/assessment_status.json"
+                    )
+                )
+                source_run_id = json.loads(parent.read_text())["probe_run_id"]
+                path = (
+                    git_assessment[1]
+                    / "runs"
+                    / source_run_id
+                    / "module-beescan/http_observation.json"
+                )
+                path.write_text("{}")
+            return original(policy, **kwargs)
+
+        monkeypatch.setattr(exposure, "run_detection_provider", provider)
+    else:
+        original = host.ArtifactAPI.write_json
+
+        def write(self, name, data):
+            if mutation == "result" and name == "git_exposure_result.json":
+                raise OSError("persistence")
+            path = original(self, name, data)
+            if name == "assessment_status.pending.json" and data.get("complete"):
+                if mutation == "evidence":
+                    next(
+                        git_assessment[1].glob(
+                            "runs/*/module-beescan/git-evidence-*.json"
+                        )
+                    ).write_text("{}")
+                else:
+                    raise OSError("terminal")
+            return path
+
+        monkeypatch.setattr(host.ArtifactAPI, "write_json", write)
+    result = run_git(git_assessment)
+    assert not result["complete"], result
+
+
+def test_git_capture_envelope_and_fuzz(git_assessment):
+    import random
+
+    from beeagent_module.core.beescan_git_exposure import (
+        GitExposurePolicy,
+        parse_git_capture,
+    )
+    from beeagent_module.core.beescan_policy import validate_beescan_settings
+
+    config = git_assessment[0]["beescan"]
+    validate_beescan_settings(git_assessment[0])
+    policy = GitExposurePolicy.from_config(config["git_exposure_approval"])
+    data = {
+        "origin": policy.origin,
+        "connected_ip": policy.connected_ip,
+        "port": policy.port,
+        "method": "GET",
+        "path": "/.git/HEAD",
+        "request_count": 1,
+        "complete": True,
+        "status_code": 200,
+        "signature": None,
+    }
+    assert parse_git_capture(json.dumps(data).encode(), policy)["signature"] is None
+    for key, value in (
+        ("path", "/"),
+        ("method", "HEAD"),
+        ("complete", 1),
+        ("request_count", 2),
+        ("status_code", 302),
+        ("signature", "refs/heads/secret"),
+        ("origin", "https://other.test"),
+    ):
+        with pytest.raises(ValueError):
+            parse_git_capture(json.dumps({**data, key: value}).encode(), policy)
+    generator = random.Random(315)
+    for _ in range(1000):
+        with pytest.raises((ValueError, UnicodeError)):
+            parse_git_capture(generator.randbytes(generator.randrange(1, 4200)), policy)
+    config["git_exposure_approval"] = None
+    with pytest.raises(RuntimeError):
+        validate_beescan_settings(git_assessment[0])
+
+
+@pytest.mark.parametrize(
+    "body,status,extra,expected",
+    [
+        (b"ref: refs/heads/secret\n", 200, b"", "symbolic"),
+        (b"a" * 40, 200, b"", "detached"),
+        (b"ref: refs/heads/secret\n", 404, b"", None),
+        (b"<html>ref: refs/heads/secret</html>", 200, b"", None),
+        (b"ref: refs/heads/secret\n", 200, b"Content-Type: text/html\r\n", None),
+        (b"ref: refs/heads/a..b\n", 200, b"", None),
+    ],
+)
+def test_git_worker_fixed_request(monkeypatch, body, status, extra, expected):
+    result = git_worker_response(monkeypatch, body, status=status, extra=extra)
+    assert result is not None
+    assert result["signature"] == expected
+
+
+def git_worker_response(monkeypatch, body, *, status=200, extra=b"", length=None):
+    import sys
+
+    from beescan.domain import git_head_signature
+
+    from beeagent_module.core import beescan_capture_worker as worker
+
+    monkeypatch.setitem(sys.modules, "git_head_signature", git_head_signature)
+    response = bytearray(
+        f"HTTP/1.1 {status} Captured\r\nContent-Length: {len(body) if length is None else length}\r\n".encode()
+        + extra
+        + b"\r\n"
+        + body
+    )
+    requests = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def settimeout(self, seconds):
+            pass
+
+        def connect(self, destination):
+            assert destination == ("127.0.0.1", 18080)
+
+        def sendall(self, request):
+            requests.append(request)
+
+        def recv(self, size):
+            chunk = bytes(response[:size])
+            del response[:size]
+            return chunk
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(worker.socket, "socket", lambda *args: Connection())
+    code, result = worker.capture(
+        {
+            "origin": "http://127.0.0.1:18080",
+            "connected_ip": "127.0.0.1",
+            "port": 18080,
+            "seconds": 1,
+            "git_exposure": True,
+        }
+    )
+    assert len(requests) == 1
+    assert requests[0].startswith(b"GET /.git/HEAD HTTP/1.1\r\n")
+    if status == 302:
+        assert code == 3 and result is None
+    return result
+
+
+@pytest.mark.parametrize(
+    "body,extra,length",
+    [
+        (b"a" * 1025, b"", None),
+        (b"a" * 40, b"", 41),
+        (b"a" * 40, b"", 39),
+        (b"a" * 40, b"Content-Length: 40\r\n", None),
+        (b"a" * 40, b"Transfer-Encoding: chunked\r\n", None),
+        (b"a" * 40, b"Content-Encoding: gzip\r\n", None),
+        (b"a" * 40, b"Content-Type: text/plain\r\nContent-Type: text/plain\r\n", None),
+    ],
+)
+def test_git_worker_rejects_ambiguous_framing(monkeypatch, body, extra, length):
+    with pytest.raises(ValueError):
+        git_worker_response(monkeypatch, body, extra=extra, length=length)
+
+
+def test_git_worker_redirect(monkeypatch):
+    git_worker_response(monkeypatch, b"", status=302)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--git-exposure"],
+        ["--git-exposure", "--http-signals"],
+        ["--http-signals", "--git-exposure"],
+    ],
+)
+def test_git_cli_combinations(git_assessment, options, capsys):
+    settings, root, calls = git_assessment
+    settings["modules"]["registry"][0].update(
+        package="beescan.module", entry="BeeScanModule"
+    )
+    code = beescan_probe.handle_beescan_cli(
+        ["assess", *options],
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=root,
+        logger=logging.getLogger("git-cli"),
+    )
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["complete"]
+    assert calls == ["probe", "detection", "git"]
+
+
+def test_git_missing_contract_refuses_before_network(git_assessment, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "beescan.domain.git_exposure", None)
+    result = run_git(git_assessment)
+    assert result["status"] == "refused" and not result["complete"]
+    assert git_assessment[2] == []
+
+
+def test_git_completed_negative_assessment(git_assessment, monkeypatch):
+    from beeagent_module.core import beescan_git_exposure as exposure
+
+    original = exposure.run_detection_provider
+
+    def git_provider(policy, **kwargs):
+        raw = original(policy, **kwargs)
+        assert isinstance(raw, bytes)
+        data = json.loads(raw)
+        data["signature"] = None
+        return json.dumps(data).encode()
+
+    def marker_provider(policy, *, reauthorize):
+        reauthorize()
+        git_assessment[2].append("detection")
+        capture = captured("absent")
+        return output(capture), capture
+
+    monkeypatch.setattr(exposure, "run_detection_provider", git_provider)
+    monkeypatch.setattr(beescan_detection, "run_detection_provider", marker_provider)
+    result = run_git(git_assessment)
+    assert result["complete"] and result["result"] == "no_findings", result
+    assert git_assessment[2] == ["probe", "detection", "git"]
+    parent = git_assessment[1] / "runs" / result["assessment_run_id"] / "module-beescan"
+    assert (
+        json.loads((parent / "report.json").read_text())["exposure"]["state"]
+        == "no_match"
+    )

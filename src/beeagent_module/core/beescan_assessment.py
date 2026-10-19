@@ -99,6 +99,7 @@ def execute_approved_assessment(
     storage_dir: Path,
     logger: logging.Logger,
     http_signals=False,
+    git_exposure=False,
 ):
     run_id = generate_run_id()
     artifacts = ArtifactAPI(
@@ -131,11 +132,17 @@ def execute_approved_assessment(
     probe_state, detection_state = "incomplete", "incomplete"
     report = detection_snapshot = None
     signal_assessment = None
+    exposure_policy = exposure_result = exposure_snapshot = None
 
     def current_settings():
         current = reload_settings()
         if _policies(current) != (probe, detection):
             raise PermissionError("assessment_approval_changed")
+        if git_exposure:
+            from beeagent_module.core.beescan_git_exposure import current_policy
+
+            if current_policy(current) != exposure_policy:
+                raise PermissionError("assessment_approval_changed")
         if monotonic() >= deadline:
             raise TimeoutError("assessment_timeout")
         return current
@@ -162,8 +169,16 @@ def execute_approved_assessment(
             build_assessment_report,
         )
 
-        if type(http_signals) is not bool:
+        if type(http_signals) is not bool or type(git_exposure) is not bool:
             raise ValueError("invalid_signal_selection")
+        if git_exposure:
+            from beescan.domain.git_exposure import GitExposureResult
+
+            if (
+                GitExposureResult is None
+                or "exposure_selected" not in AssessmentInput.__dataclass_fields__
+            ):
+                raise ImportError("Git exposure contract unavailable")
         if http_signals:
             from beescan.domain.http_signals import (
                 HstsFact,
@@ -172,17 +187,46 @@ def execute_approved_assessment(
                 NosniffFact,
             )
         probe, detection = _policies(settings)
+        policies = [probe, detection]
+        if git_exposure:
+            from beeagent_module.core.beescan_git_exposure import current_policy
+
+            exposure_policy = current_policy(settings)
+            for field in (
+                "operator_uid",
+                "project_id",
+                "scope_id",
+                "mission_id",
+                "target_id",
+                "origin",
+                "connected_ip",
+                "allow_private_lab",
+                "network_namespace",
+                "user_namespace",
+            ):
+                if getattr(probe, field) != getattr(exposure_policy, field):
+                    raise PermissionError("assessment_identity_mismatch")
+            policies.append(exposure_policy)
+            status["exposure_run_id"] = None
         seconds = probe.time_budget_seconds + detection.time_budget_seconds
+        if git_exposure:
+            if exposure_policy is None:
+                raise PermissionError("git_exposure_disabled")
+            seconds += exposure_policy.time_budget_seconds
+            if seconds > 60:
+                raise PermissionError("assessment_budget_exceeded")
         if datetime.now(UTC).timestamp() + seconds > min(
-            probe.expires_at.timestamp(), detection.expires_at.timestamp()
+            policy.expires_at.timestamp() for policy in policies
         ):
             raise PermissionError("assessment_validity_insufficient")
         deadline = monotonic() + seconds
         status["budgets"] = {
-            "max_requests": probe.request_budget + detection.request_budget,
+            "max_requests": sum(policy.request_budget for policy in policies),
             "max_seconds": seconds,
-            "max_memory_mb": max(probe.memory_mb, detection.memory_mb),
-            "max_provider_output_bytes": probe.output_bytes + detection.output_bytes,
+            "max_memory_mb": max(policy.memory_mb for policy in policies),
+            "max_provider_output_bytes": sum(
+                policy.output_bytes for policy in policies
+            ),
         }
 
         def detection_settings():
@@ -308,6 +352,13 @@ def execute_approved_assessment(
                     storage_dir, detection_result["run_id"], "detection_status.json"
                 )
                 if http_signals:
+                    from beescan.domain.http_signals import (
+                        HstsFact,
+                        HttpHeaderFacts,
+                        HttpSignalAssessment,
+                        NosniffFact,
+                    )
+
                     header = evidence_record["capture"]["header_facts"]
                     signal_assessment = HttpSignalAssessment(
                         outcome,
@@ -339,23 +390,74 @@ def execute_approved_assessment(
                 status.update(
                     status=detection_state, reason="detection_did_not_complete"
                 )
+        if git_exposure and observation is not None and detection_state == "complete":
+            from beeagent_module.core.beescan_git_exposure import (
+                current_policy,
+                execute_git_exposure,
+            )
+
+            validate_source()
+            if exposure_policy is None:
+                raise PermissionError("git_exposure_disabled")
+            if monotonic() + exposure_policy.time_budget_seconds > deadline:
+                raise TimeoutError("assessment_timeout")
+            exposure_status, exposure_result = execute_git_exposure(
+                policy=exposure_policy,
+                reload_policy=lambda: current_policy(current_settings()),
+                observation=observation,
+                assessment_run_id=run_id,
+                storage_dir=storage_dir,
+                logger=logger,
+                validate_source=validate_source,
+                on_started=lambda child_id: start_child("exposure", child_id),
+            )
+            status["exposure_run_id"] = exposure_status["run_id"]
+            if exposure_result.facts.provenance.run_id != status["exposure_run_id"]:
+                raise ValueError("exposure_provenance_mismatch")
+            exposure_snapshot = {}
+            for name, data in (
+                ("git_exposure_status.json", exposure_status),
+                (
+                    "git_exposure_result.json",
+                    {"schema_version": 1, **asdict(exposure_result)},
+                ),
+                *(
+                    (
+                        ref + ".json",
+                        {"schema_version": 1, **asdict(exposure_result.facts)},
+                    )
+                    for ref in exposure_result.facts.evidence_refs
+                ),
+            ):
+                _expect(storage_dir, status["exposure_run_id"], name, data)
+                exposure_snapshot[name] = _read_run(
+                    storage_dir, status["exposure_run_id"], name
+                )
+            if not exposure_status["complete"]:
+                status.update(
+                    status=exposure_status["status"], reason="exposure_did_not_complete"
+                )
         current_settings()
         scope = EngagementScope(
             probe.scope_id,
             probe.project_id,
             (probe.target_id,),
             probe.scope_id,
-            valid_from=max(probe.valid_from, detection.valid_from),
-            expires_at=min(probe.expires_at, detection.expires_at),
-            approved_methods=(probe.method, detection.method),
-            max_requests=2,
-            max_seconds=max(probe.time_budget_seconds, detection.time_budget_seconds),
+            valid_from=max(policy.valid_from for policy in policies),
+            expires_at=min(policy.expires_at for policy in policies),
+            approved_methods=tuple(policy.method for policy in policies),
+            max_requests=len(policies),
+            max_seconds=max(policy.time_budget_seconds for policy in policies),
         )
         signal_options = (
             {"signals_selected": True, "signal_assessment": signal_assessment}
             if http_signals
             else {}
         )
+        if git_exposure:
+            signal_options.update(
+                exposure_selected=True, exposure_result=exposure_result
+            )
         report = build_assessment_report(
             AssessmentInput(
                 run_id,
@@ -365,7 +467,9 @@ def execute_approved_assessment(
                     probe.mission_id,
                     probe.project_id,
                     probe.scope_id,
-                    ("web.probe", "web.detect.restricted"),
+                    ("web.probe", "web.detect.restricted", "web.exposure.git_head")
+                    if git_exposure
+                    else ("web.probe", "web.detect.restricted"),
                 ),
                 Target(probe.target_id, probe.project_id, TargetKind.URL, probe.origin),
                 StepState(probe_state),
@@ -423,6 +527,16 @@ def execute_approved_assessment(
             for name, raw in detection_snapshot.items():
                 if _read_run(storage_dir, status["detection_run_id"], name) != raw:
                     raise ValueError("assessment_artifact_changed")
+            if git_exposure:
+                if (
+                    not exposure_snapshot
+                    or exposure_result is None
+                    or not exposure_result.facts.complete
+                ):
+                    raise ValueError("assessment_exposure_incomplete")
+                for name, raw in exposure_snapshot.items():
+                    if _read_run(storage_dir, status["exposure_run_id"], name) != raw:
+                        raise ValueError("assessment_artifact_changed")
             for name, content in (
                 ("report.md", report.markdown),
                 ("report.json", report.canonical_json),

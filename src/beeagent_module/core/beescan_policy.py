@@ -154,6 +154,14 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
     if type(config) is not dict or set(config) not in (
         {"probe_enabled", "approval"},
         {"probe_enabled", "approval", "detection_enabled", "detection_approval"},
+        {
+            "probe_enabled",
+            "approval",
+            "detection_enabled",
+            "detection_approval",
+            "git_exposure_enabled",
+            "git_exposure_approval",
+        },
     ):
         raise RuntimeError("Invalid beescan settings")
     if type(config["probe_enabled"]) is not bool:
@@ -163,6 +171,11 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
     )
 
     validate_detection_settings(config, enabled, validate_contracts=validate_contracts)
+    from beeagent_module.core.beescan_git_exposure import validate_git_exposure_settings
+
+    validate_git_exposure_settings(
+        config, enabled, validate_contracts=validate_contracts
+    )
     if config["probe_enabled"] and not enabled:
         raise RuntimeError("BeeScan probing requires the enabled module")
     if not validate_contracts:
@@ -171,14 +184,7 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
         if config["probe_enabled"] and config["approval"] is None:
             raise RuntimeError("Invalid beescan.approval contract")
         return
-    if config["probe_enabled"]:
-        try:
-            ProbePolicy.from_config(config["approval"])
-        except ValueError, TypeError, ImportError:
-            raise RuntimeError(
-                "Invalid or unavailable beescan.approval contract"
-            ) from None
-    elif config["approval"] is not None:
+    if config["probe_enabled"] or config["approval"] is not None:
         try:
             ProbePolicy.from_config(config["approval"])
         except ValueError, TypeError, ImportError:
