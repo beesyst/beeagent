@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.0...beeagent-v0.78.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **beescan:** bootstrap real lab providers and validate Git asset ([#322](https://github.com/beesyst/beeagent/issues/322)) ([58ee17f](https://github.com/beesyst/beeagent/commit/58ee17ff01a69d7a8050fb492234f67fd9159142))
+
 ## [0.78.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.77.0...beeagent-v0.78.0) (2026-10-20)
 
 
