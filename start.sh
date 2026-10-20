@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "beescan" && "${2:-}" == "review" ]]; then
+  if [[ ! -x .venv/bin/python3 ]]; then
+    echo "BeeScan review requires an already installed host environment" >&2
+    exit 3
+  fi
+  exec .venv/bin/python3 config/start.py "$@"
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "[install] uv не найден, устанавливаю..."
   curl -LsSf https://astral.sh/uv/install.sh | sh

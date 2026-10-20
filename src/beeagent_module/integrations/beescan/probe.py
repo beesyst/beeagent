@@ -350,7 +350,8 @@ def _current_policy(settings):
 
 
 def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
-    if args not in (
+    review_invocation = len(args) == 4 and args[0] == "review"
+    if not review_invocation and args not in (
         ["bootstrap"],
         ["probe"],
         ["detect"],
@@ -361,14 +362,35 @@ def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
         ["assess", "--git-exposure", "--http-signals"],
     ):
         print(
-            "Usage: ./start.sh beescan {bootstrap|probe|detect|assess [--http-signals] [--git-exposure]}"
+            "Usage: ./start.sh beescan {bootstrap|probe|detect|assess [--http-signals] [--git-exposure]|review ASSESSMENT FINDING INPUT.json}"
         )
         return 2
     try:
-        registry = ModuleRegistry(settings["modules"]["registry"], logger)
+        registry_config = settings["modules"]["registry"]
+        if review_invocation:
+            registry_config = [
+                item for item in registry_config if item["id"] == "beescan"
+            ]
+        registry = ModuleRegistry(registry_config, logger)
         if registry.get("beescan") is None:
             print("BeeScan module is disabled or unavailable")
             return 3
+        if review_invocation:
+            from beeagent_module.integrations.beescan.review import execute_review
+
+            result = execute_review(
+                settings=settings,
+                reload_settings=reload_settings,
+                storage_dir=storage_dir,
+                logger=logger,
+                assessment_run_id=args[1],
+                finding_id=args[2],
+                input_name=args[3],
+            )
+            print(json.dumps(result, sort_keys=True))
+            return (
+                0 if result["complete"] else 3 if result["status"] == "refused" else 5
+            )
         if args == ["bootstrap"]:
             result = execute_module_case(
                 registry,
