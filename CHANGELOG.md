@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.1...beeagent-v0.78.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **beescan:** support approved IP in multi-address DNS ([#324](https://github.com/beesyst/beeagent/issues/324)) ([38e6652](https://github.com/beesyst/beeagent/commit/38e665249a6ab7b51930662c8fa4bd6edcb63591))
+
 ## [0.78.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.0...beeagent-v0.78.1) (2026-10-20)
 
 
