@@ -12,6 +12,7 @@ from beeagent_module.integrations.beescan import (
     detection_runner as beescan_detection_runner,
 )
 from beeagent_module.integrations.beescan.assessment import execute_approved_assessment
+from beeagent_module.integrations.beescan.providers import ensure_beescan_providers
 from integration_tests import test_beescan_lab
 from integration_tests.test_beescan_lab import assert_kernel_egress
 from tests import test_beescan_detection
@@ -48,6 +49,7 @@ def assessment_lab(lab, approved):
     for name in ("valid_from", "expires_at"):
         values[name] = values[name].isoformat()
     settings["beescan"].update(probe_enabled=True, approval=values)
+    ensure_beescan_providers(settings)
     return settings, probe, root
 
 
@@ -447,8 +449,27 @@ def test_real_signal_assessment(assessment_lab, monkeypatch):
         handler.close()
 
 
+def check_git_signature_asset() -> None:
+    from beescan.domain import git_head_signature
+
+    try:
+        beescan_detection_runner.read_regular(git_head_signature.__file__, limit=8192)
+    except OSError:
+        pytest.fail(
+            "Installed BeeScan Git signature asset is unavailable or unsafe. "
+            "Reinstall the locked BeeScan revision with umask 022 and a fresh "
+            "protected cache; the asset must not be group/world writable.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture
+def git_signature_asset():
+    check_git_signature_asset()
+
+
 @pytest.mark.parametrize("lab", [False, True], indirect=True, ids=["http", "https"])
-def test_real_git_exposure_assessment(assessment_lab, monkeypatch):
+def test_real_git_exposure_assessment(assessment_lab, monkeypatch, git_signature_asset):
     from beeagent_module.integrations.beescan.git_exposure import GitExposurePolicy
 
     settings, probe, root = assessment_lab
