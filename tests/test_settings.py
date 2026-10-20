@@ -116,6 +116,9 @@ def test_beedrill_ai_assist_settings_fail_fast(monkeypatch, mutate) -> None:
     _base_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     changed = deepcopy(settings)
+    for module in changed["modules"]["registry"]:
+        if module["id"] == "beedrill":
+            module["enabled"] = True
     mutate(changed)
     with pytest.raises(RuntimeError, match="beedrill"):
         validate_settings(changed)

@@ -403,8 +403,8 @@ def _rop_settings(monkeypatch) -> dict[str, Any]:
 
     root = Path(__file__).resolve().parents[1]
     settings = real_load_settings(root / "config" / "settings.yml")
-    settings["modules"]["registry"][0]["enabled"] = True
-    settings["modules"]["registry"][1]["enabled"] = False
+    for module in settings["modules"]["registry"]:
+        module["enabled"] = module["id"] == "beeagent-rop"
     return settings
 
 
