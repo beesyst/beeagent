@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.77.0...beeagent-v0.78.0) (2026-10-20)
+
+
+### Features
+
+* **beescan:** add governed finding review and case delivery ([#320](https://github.com/beesyst/beeagent/issues/320)) ([1508795](https://github.com/beesyst/beeagent/commit/1508795eb6204c5736c1e87d62ea49020b3513b7))
+
 ## [0.77.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.76.1...beeagent-v0.77.0) (2026-10-19)
 
 
