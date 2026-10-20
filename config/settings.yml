@@ -93,13 +93,13 @@ modules:
     - id: "beedrill"
       package: "beedrill.module"
       entry: "BeeDrillModule"
-      enabled: true
+      enabled: false
       install_extra: "beedrill"
 
     - id: "beescan"
       package: "beescan.module"
       entry: "BeeScanModule"
-      enabled: false
+      enabled: true
       install_extra: "beescan"
 
 beescan:

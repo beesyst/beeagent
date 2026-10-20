@@ -428,8 +428,10 @@ def verify_resolution(policy):
             records = json.loads(output)
             if type(records) is not list or not 1 <= len(records) <= 16:
                 raise ValueError
+            if any(type(value) is not str for value in records):
+                raise ValueError
             addresses = {str(ip_address(value)) for value in records}
         except ValueError, TypeError:
             raise PermissionError("dns_unverified") from None
-    if addresses != {policy.connected_ip}:
+    if policy.connected_ip not in addresses:
         raise PermissionError("dns_changed")

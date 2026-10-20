@@ -218,6 +218,111 @@ def test_dns_literal_change_and_fixed_arguments(policy):
     } & set(arguments)
 
 
+@pytest.mark.parametrize(
+    "approved_ip", ["32.184.31.224", "32.190.221.106", "2606:4700::1111"]
+)
+@pytest.mark.parametrize(
+    "extra",
+    [[], ["32.184.31.224", "32.190.221.106"], ["2606:4700::1111"], ["127.0.0.1"]],
+)
+def test_dns_accepts_only_pinned_destination(policy, monkeypatch, approved_ip, extra):
+    policy = replace(
+        policy,
+        origin="https://postbook.example.test",
+        connected_ip=approved_ip,
+        allow_private_lab=False,
+    )
+    before = asdict(policy)
+    rules = expected_firewall(policy.connected_ip, policy.port)
+
+    def resolve(argv, **limits):
+        assert argv[-1] == "postbook.example.test"
+        assert limits == {"seconds": 3, "limit": 4096, "memory_mb": 256}
+        return 0, json.dumps([approved_ip, *extra]).encode()
+
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.bounded_process", resolve
+    )
+    verify_resolution(policy)
+    assert asdict(policy) == before
+    assert expected_firewall(policy.connected_ip, policy.port) == rules
+    validate_firewall(json.dumps({"nftables": rules}).encode(), policy)
+    for other in set(extra) - {approved_ip}:
+        expanded = rules[:3] + [expected_firewall(other, policy.port)[2]] + rules[3:]
+        for altered in (expanded, expected_firewall(other, policy.port)):
+            with pytest.raises(PermissionError, match="egress_unverified"):
+                validate_firewall(json.dumps({"nftables": altered}).encode(), policy)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        b"not-json",
+        b"{}",
+        b"null",
+        b"[]",
+        b'["32.184.31.224", "bad-ip"]',
+        b'["32.184.31.224", null]',
+        b'["32.184.31.224", true]',
+        b'["32.184.31.224", 548937696]',
+        b'["32.184.31.224", []]',
+        b'["32.184.31.224", {}]',
+        b'["32.184.31.224", "::ffff:gggg"]',
+        json.dumps(["32.184.31.224"] * 17).encode(),
+    ],
+)
+def test_dns_malformed_or_excessive_answers_refuse(policy, monkeypatch, raw):
+    policy = replace(
+        policy, origin="https://postbook.example.test", connected_ip="32.184.31.224"
+    )
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.bounded_process",
+        lambda *a, **k: (0, raw),
+    )
+    with pytest.raises(PermissionError, match="dns_unverified"):
+        verify_resolution(policy)
+
+
+def test_dns_failed_lookup_refuses_even_with_approved_output(policy, monkeypatch):
+    policy = replace(policy, origin="http://lab.example.test:18080")
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.bounded_process",
+        lambda *a, **k: (1, b'["127.0.0.1"]'),
+    )
+    with pytest.raises(PermissionError, match="dns_unverified"):
+        verify_resolution(policy)
+
+
+def test_dns_maximum_answer_count_and_no_automatic_selection(policy, monkeypatch):
+    policy = replace(
+        policy,
+        origin="https://postbook.example.test",
+        connected_ip="32.184.31.224",
+        allow_private_lab=False,
+    )
+    maximum = [policy.connected_ip] + [f"32.190.221.{i}" for i in range(15)]
+    answers = iter(
+        [json.dumps(maximum).encode(), b'["32.190.221.106", "2606:4700::1111"]']
+    )
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.bounded_process",
+        lambda *a, **k: (0, next(answers)),
+    )
+    verify_resolution(policy)
+    with pytest.raises(PermissionError, match="dns_changed"):
+        verify_resolution(policy)
+    assert policy.connected_ip == "32.184.31.224"
+    with pytest.raises(ValueError, match="private_destination_denied"):
+        replace(policy, connected_ip="127.0.0.1")
+    for expanded in (
+        ["32.184.31.224", "32.190.221.106"],
+        "32.184.31.224,32.190.221.106",
+    ):
+        with pytest.raises(ValueError):
+            replace(policy, connected_ip=expanded)
+
+
 def test_previous_provider_digest_is_not_authorized(policy):
     with pytest.raises(ValueError, match="invalid_probe_policy"):
         replace(
@@ -489,7 +594,7 @@ def test_real_bounded_process_timeout_output_and_environment():
 
 def test_dns_rebinding_rechecked_before_provider(policy, tmp_path, monkeypatch):
     changed = replace(policy, origin="http://lab.example.test:18080")
-    addresses = iter([b'["127.0.0.1"]', b'["127.0.0.2"]'])
+    addresses = iter([b'["127.0.0.1", "127.0.0.2", "::1"]', b'["127.0.0.2", "::1"]'])
     monkeypatch.setattr(
         "beeagent_module.integrations.beescan.http_runner.bounded_process",
         lambda *a, **k: (0, next(addresses)),
@@ -507,6 +612,46 @@ def test_dns_rebinding_rechecked_before_provider(policy, tmp_path, monkeypatch):
     assert result.status is CapabilityStatus.REFUSED
     assert result.diagnostics["reason"] == "dns_changed"
     assert caller.facts is None
+
+
+def test_dns_changed_extras_keep_approval_and_provider_destination(
+    policy, tmp_path, monkeypatch
+):
+    policy = replace(
+        policy, origin="https://postbook.example.test", connected_ip="32.184.31.224"
+    )
+    answers = iter(
+        [
+            b'["32.190.221.106", "32.184.31.224"]',
+            b'["2606:4700::1111", "32.184.31.224"]',
+        ]
+    )
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.bounded_process",
+        lambda *a, **k: (0, next(answers)),
+    )
+
+    def provider(actual, *, reauthorize):
+        assert actual is policy
+        reauthorize()
+        assert actual.connected_ip == "32.184.31.224" and actual.port == 443
+        return json.dumps(
+            {
+                "url": policy.origin,
+                "status_code": 200,
+                "failed": False,
+                "host_ip": policy.connected_ip,
+                "port": "443",
+            }
+        ).encode()
+
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.probe.run_provider", provider
+    )
+    caller = make_caller(policy, tmp_path)
+    result = caller.call("web.probe", policy.intent().payload)
+    assert result.status is CapabilityStatus.OK
+    assert caller.facts is not None
 
 
 def test_one_shot_budget_and_evidence_envelope(policy, tmp_path, monkeypatch):
