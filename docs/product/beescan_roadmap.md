@@ -844,7 +844,9 @@ A fresh, explicitly authorized operator can run the opt-in Git metadata exposure
 
 ### Iteration BS-6 — Governed Finding Review and Bug Bounty Case Package Delivery
 
-**Status:** PLANNED
+**Status:** DONE
+
+The coordinated It9/BS-6 CLI, source reconstruction, evidence intake and protected delivery are implemented for local verification with a temporary editable BeeScan dependency. Final immutable revision, fresh frozen integration, independent verification/review and hosted CI remain pending; this status does not declare production delivery.
 
 #### Goal
 

@@ -17,7 +17,7 @@ from beeagent_module.integrations.beescan.http_runner import (
 from beeagent_module.integrations.beescan.probe import _unique_object
 
 
-def read_regular(path, *, limit, dir_fd=None):
+def read_regular(path, *, limit, dir_fd=None, owner_uid=None):
     descriptor = os.open(
         path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd
     )
@@ -29,7 +29,29 @@ def read_regular(path, *, limit, dir_fd=None):
             or info.st_size > limit
         ):
             raise PermissionError("invalid_asset")
+        if owner_uid is not None and (
+            info.st_uid != owner_uid
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+            or not info.st_mode & 0o400
+        ):
+            raise PermissionError("invalid_owned_asset")
         data = stream.read(limit + 1)
+        if owner_uid is not None and any(
+            getattr(os.fstat(stream.fileno()), field) != getattr(info, field)
+            for field in (
+                "st_dev",
+                "st_ino",
+                "st_size",
+                "st_mode",
+                "st_uid",
+                "st_gid",
+                "st_nlink",
+                "st_mtime_ns",
+                "st_ctime_ns",
+            )
+        ):
+            raise PermissionError("owned_asset_changed")
         if len(data) > limit:
             raise PermissionError("invalid_asset")
         return data
