@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.2...beeagent-v0.79.0) (2026-10-22)
+
+
+### Features
+
+* **beescan:** add governed managed public egress ([#327](https://github.com/beesyst/beeagent/issues/327)) ([d7eba75](https://github.com/beesyst/beeagent/commit/d7eba75224ce2a45df36578621d511580198cda4))
+
 ## [0.78.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.1...beeagent-v0.78.2) (2026-10-20)
 
 
