@@ -930,17 +930,17 @@ An authenticated operator can review an existing completed BeeScan assessment, i
 
 ### Iteration BS-7 — Managed Rootless Public Egress and Authorized External Assessment
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
-Enable BeeAgent to prepare, validate, use and clean up a tightly restricted public network path for one explicitly authorized external HTTP(S) assessment, without requiring the operator to manually construct a network namespace for every run.
+Enable BeeAgent to automatically prepare, validate, reuse and clean up one tightly restricted Linux network environment for an explicitly authorized external HTTP(S) assessment, without requiring operator-managed per-run namespaces or a separate container runtime.
 
 #### Depends on
 
 - Completed BeeAgent BS-1 through BS-6 and the merged multi-address DNS authorization fix.
-- Existing pinned httpx/Nuclei providers, BeeScan public assessment contracts and real local laboratory evidence.
-- A validated rootless egress mechanism compatible with the existing namespace ownership and exact nftables enforcement requirements.
+- Existing pinned httpx/Nuclei providers, BeeScan 0.9.0 public contracts and real local laboratory evidence.
+- Verified Linux kernel prerequisites and one security-reviewed rootless networking backend.
 
 #### Change level
 
@@ -948,59 +948,66 @@ Enable BeeAgent to prepare, validate, use and clean up a tightly restricted publ
 
 #### Scope
 
-- Evaluate existing host networking constraints and select one minimal, reproducible rootless egress backend based on verified security and execution behavior.
-- Implement an opt-in BeeAgent-owned lifecycle for preparing an isolated user/network namespace, public routing and return traffic, readiness verification and deterministic cleanup.
-- Integrate managed egress into the existing approved BeeScan CLI assessment workflow without creating another execution runtime.
-- Resolve any required managed namespace binding through explicit host-validated contracts without silently modifying operator approvals or weakening policy equality and reload checks.
-- Preserve one operator-approved `connected_ip`, one destination port, bounded DNS membership verification, fixed methods and paths, and the existing exact nftables allowlist.
-- Verify the network boundary before execution and at existing authorization checkpoints; reject missing, altered or unavailable isolation and routing prerequisites.
-- Keep the public egress backend and its helper processes outside the untrusted provider sandbox while preventing them from expanding the provider's approved destinations.
-- Enforce bounded setup, execution and teardown deadlines; terminate and reap owned helpers and namespace supervisors on success, refusal, timeout and interruption.
-- Persist bounded host-controlled egress lifecycle and failure evidence linked to the corresponding assessment run, without leaking secrets or unrestricted network data.
-- Document dependency preparation, operator setup, supported platforms, configuration, recovery and real external assessment procedures.
+- Evaluate the actual Linux host capabilities and select exactly one minimal rootless networking backend after demonstrating compatibility with the current security boundary.
+- Implement one BeeAgent-owned managed egress lifecycle with bounded preparation, readiness verification, execution and deterministic cleanup.
+- Provide explicit prerequisite diagnostics and opt-in provisioning of the selected pinned backend from a trusted, integrity-verified distribution; never perform hidden privileged package installation.
+- Create one ephemeral network session per authorized assessment and reuse it across the existing approved probe, detection and optional Git exposure stages.
+- Integrate managed egress into the existing BeeScan assessment orchestrator without introducing a second execution runtime or a generic isolation-provider framework.
+- Introduce explicit managed namespace binding while preserving immutable operator approvals, independent authorization, policy equality, reload validation and legacy externally managed namespace compatibility.
+- Preserve one operator-approved `connected_ip`, one TCP destination port, bounded DNS membership checks, fixed request profiles and the existing exact nftables allowlist.
+- Verify effective destination restrictions both inside the network namespace and across the host-side networking helper or forwarding boundary.
+- Revalidate authorization, namespace identity and effective enforcement at existing execution checkpoints, without continuous polling.
+- Preserve existing nested Bubblewrap process isolation, pinned provider integrity, TLS hostname verification and request/resource budgets.
+- Enforce bounded setup, readiness, execution and teardown deadlines; terminate and reap owned helpers and namespace supervisors on success, refusal, timeout and interruption.
+- Persist bounded host-controlled egress lifecycle and cleanup evidence linked to the parent assessment run, without secrets or unrestricted network data.
+- Document supported Linux prerequisites, backend provisioning, configuration, operator workflow, failure handling and recovery.
 
 #### Excluded
 
-- Changes to BeeScan, BeeSDK or BeeUI domain and presentation contracts.
-- Automatic target authorization, DNS-selected destinations, multi-target assessment or wildcard/CIDR expansion.
-- Host-wide unrestricted networking, weakened nftables rules, TLS bypass, redirects, retries or proxy-based scope escape.
-- Mandatory VPN/Tor, arbitrary proxy rotation, transparent traffic interception or a generic network orchestration framework.
-- Web crawling, form discovery, new vulnerability detectors, additional Nuclei templates or autonomous follow-up requests.
-- New standalone services, databases, schedulers or privileged daemons without a demonstrated blocking requirement.
+- Changes to BeeScan, BeeSDK or BeeUI public contracts.
+- Docker-first, Podman, Firejail or multi-backend fallback execution frameworks.
+- Custom TCP/IP stacks, custom NAT implementations, generic container orchestration or new persistent services.
+- Automatic `apt`, `dnf`, `yum` or Docker installation during assessment.
+- Automatic target authorization, DNS-selected destinations, multi-target execution or wildcard/CIDR expansion.
+- Host-wide unrestricted networking, firewall bypass, TLS bypass, redirects, retries or proxy-based scope escape.
+- Arbitrary new providers, web crawling, form discovery, vulnerability detectors or additional Nuclei profiles.
 - Automatic VERIFIED Findings, exploitation or bug bounty submission.
 
 #### Deliverable
 
-A working BeeAgent host integration that creates and manages a restricted public egress environment for one authorized HTTP(S) assessment, executes the existing real httpx/Nuclei workflow, persists truthful assessment and egress lifecycle artifacts, and performs verified cleanup without operator-managed per-run namespace setup.
+A working BeeAgent-managed Linux egress capability that prepares one restricted public network session, executes the existing real httpx/Nuclei assessment against an explicitly approved external HTTP(S) target, preserves current assessment/report contracts and produces verified cleanup and lifecycle evidence without operator-managed per-run networking.
 
 #### Acceptance criteria
 
-- Disabled or unapproved execution creates no public network path and sends no target requests.
-- An explicitly approved external HTTPS assessment can execute through an automatically prepared, operator-owned and independently verified namespace.
-- DNS answers containing multiple addresses do not expand authority; only the exact approved destination IP and port are reachable.
-- DNS changes removing the approved address, changed approvals, expired scope, missing tools or incompatible namespace ownership refuse before unauthorized execution.
-- The selected egress backend cannot bypass the effective destination allowlist through forwarding, helper processes, host networking, alternate routes, DNS or proxy environment variables.
-- Existing exact nftables validation, process sandboxing, TLS hostname verification, provider integrity and resource limits remain effective.
-- The implementation preserves assessment identity, parent/child runs, source observations, evidence references and existing Markdown/JSON reports.
-- Readiness, setup failures, route failures, cleanup errors and interrupted executions produce explicit incomplete/refused states, never false success.
-- Owned egress resources are removed or safely invalidated after termination, with no surviving execution authority.
-- A reproducible real network laboratory demonstrates allowed connectivity, denied destinations, failure handling and cleanup.
-- An explicitly authorized external HTTPS smoke demonstrates actual off-namespace connectivity and a complete assessment; unavailable host prerequisites are reported as BLOCKED rather than simulated success.
-- ROP, BeeDrill, legacy BeeScan CLI, offline human review and existing laboratory behavior remain compatible.
+- Disabled or unapproved execution creates no public network session and sends no target requests.
+- Missing or incompatible Linux prerequisites produce an explicit blocked/refused outcome without weakening isolation or silently switching backends.
+- The selected networking executable and required assets have reviewed provenance, pinned integrity and protected installation permissions.
+- One explicitly authorized assessment creates exactly one managed network session, reused by its permitted stages and destroyed after completion.
+- Managed namespace binding never rewrites operator approvals or bypasses equality/reload validation; legacy namespace mode remains compatible.
+- Only the approved destination IP and port are reachable; multi-address DNS answers never expand authority.
+- Real tests demonstrate that neither the scanner namespace nor its host-side networking helper provides an unauthorized egress path.
+- Changed approvals, expired scope, DNS removal, altered isolation, routing or firewall prerequisites refuse before further unauthorized execution.
+- Existing exact nftables validation, provider sandboxes, TLS verification, integrity checks and budgets remain effective.
+- Original assessment identities, observations, candidates, source evidence and deterministic Markdown/JSON reports remain compatible.
+- Setup, readiness, execution, interruption and cleanup failures produce truthful incomplete/refused/timeout states, never false success.
+- Cleanup is verified before successful terminal assessment completion; no owned process or resource retains execution authority.
+- A reproducible real Linux network laboratory proves allowed connectivity, forbidden destinations, return traffic, interruption and cleanup.
+- An explicitly authorized external HTTPS smoke demonstrates the existing real httpx/Nuclei assessment through managed public egress.
+- Existing BeeScan CLI, laboratory, offline review, ROP and BeeDrill regressions remain compatible.
 
 #### Checks
 
-- Rootless backend feasibility and security review before implementation.
-- Positive and negative tests for authorization, destination, DNS, TLS, namespace ownership and firewall enforcement.
-- Real network tests for allowed and forbidden TCP destinations, helper isolation, routing and return traffic.
-- Startup, repeated execution, missing prerequisites, timeout, cancellation, process reaping and resource-leak tests.
-- Full real httpx/Nuclei assessment and existing HTTP/HTTPS/Git-exposure laboratory regressions.
-- Host artifact integrity, status completeness, secret redaction and failure recovery tests.
-- Applicable SAST/SCA, full pytest, fresh frozen installation, independent security review and hosted CI.
+- Rootless backend feasibility, kernel prerequisites, executable supply-chain review and host-helper containment assessment.
+- Authorization, managed binding, namespace ownership, DNS, exact nftables and destination enforcement tests.
+- Real networking tests for permitted and forbidden destinations, alternate routes, proxy attempts and helper behavior.
+- Startup, repeated-run, missing prerequisites, timeout, cancellation, process reaping and resource-leak tests.
+- Full real httpx/Nuclei assessment and existing HTTP/HTTPS, security-header and Git-exposure laboratory regressions.
+- Host lifecycle artifact integrity, terminal-state consistency, safe permissions, redaction and failure-recovery tests.
+- Applicable SAST/SCA/DAST, full pytest, frozen installation, build, independent security review and hosted CI.
 
 #### DoD
 
-A trusted operator can authorize one external HTTP(S) target in BeeAgent, invoke the existing BeeScan assessment CLI and obtain a complete evidence-backed report without manually creating network namespaces, configuring per-run routes or weakening security controls. Public egress remains restricted to the approved destination, owned resources are cleaned up, failures remain fail-closed, and real network plus regression verification passes. No changes to BeeScan domain contracts or automatic vulnerability verification are introduced.
+An authorized operator can invoke the existing BeeScan assessment CLI against one approved external HTTP(S) target, obtain a complete evidence-backed report and verified network cleanup without manually preparing per-run namespaces, routes or firewall rules. One reviewed Linux backend enforces the exact destination boundary, original operator approvals and existing security controls remain effective, and real network plus regression verification passes. Unsupported environments fail closed. BeeScan domain contracts and automatic vulnerability verification remain unchanged.
 
 ## Post-MVP product directions
 

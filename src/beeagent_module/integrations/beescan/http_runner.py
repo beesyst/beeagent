@@ -214,6 +214,9 @@ def _provider_snapshot(policy, directory, *, limit_bytes=64 * 1024 * 1024):
 
 
 def _open_namespace(path, kind, operator_uid):
+    from beeagent_module.integrations.beescan.egress import resolve_namespace
+
+    path = resolve_namespace(path)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
     except OSError:
@@ -391,6 +394,9 @@ def run_provider(policy: ProbePolicy, *, reauthorize):
             if b"Current Version: v1.12.0" not in version:
                 raise PermissionError("provider_version_unverified")
             reauthorize()
+            from beeagent_module.integrations.beescan.egress import checkpoint
+
+            checkpoint(policy)
             code, output = bounded_process(
                 [*sandbox, "--", *provider_arguments(policy)],
                 seconds=policy.time_budget_seconds,

@@ -165,6 +165,27 @@ def load_assessment(storage_dir, assessment_run_id, settings):
     report = snapshot.json(assessment_run_id, "report.json")
     config = settings["beescan"]
     probe = ProbePolicy.from_config(config["approval"])
+    from beeagent_module.integrations.beescan.egress import (
+        MANAGED_NET,
+        PASTA_SHA256,
+        PASTA_VERSION,
+    )
+
+    if probe.network_namespace == MANAGED_NET:
+        contains(parent, {"egress_artifact": "egress_lifecycle.json"})
+        contains(
+            snapshot.json(assessment_run_id, "egress_lifecycle.json"),
+            {
+                "schema_version": 1,
+                "assessment_run_id": assessment_run_id,
+                "backend": "pasta",
+                "backend_version": PASTA_VERSION,
+                "backend_sha256": PASTA_SHA256,
+                "state": "closed",
+                "enforcement_verified": True,
+                "cleanup_verified": True,
+            },
+        )
     detection = DetectionPolicy.from_config(config["detection_approval"])
     policies = [probe, detection]
     exposure_selected = "exposure" in report

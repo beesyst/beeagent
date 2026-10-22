@@ -1,8 +1,10 @@
+import copy
 import hashlib
 import io
 import os
 import stat
 import subprocess
+import tarfile
 import threading
 import urllib.error
 import urllib.request
@@ -10,6 +12,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from http.client import HTTPMessage
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -127,7 +130,13 @@ def test_custom_verified_path_is_preserved(distribution, monkeypatch, name):
     }
     monkeypatch.setattr(native, "_download", lambda *_: pytest.fail("custom path"))
     native.ensure_beescan_providers(settings)
-    assert custom.stat() == before
+    after = custom.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_mode) == (
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_mode,
+    )
+    assert custom.read_bytes() == content
     assert not (root / name).exists()
 
 
@@ -366,3 +375,348 @@ def test_bootstrap_lock_timeout_is_bounded(distribution, monkeypatch):
     with pytest.raises(native.ProviderProvisioningError, match="lock timed out"):
         native.ensure_beescan_providers(settings)
     assert not (root / "nuclei").exists()
+
+
+@pytest.fixture
+def pasta_distribution(distribution, monkeypatch):
+    root, settings, content, _ = distribution
+    package = b"p" * native.PASTA_ARTIFACT.size
+    binary = b"x" * 277704
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as bundle:
+        member = tarfile.TarInfo("./usr/bin/passt")
+        member.size = len(binary)
+        bundle.addfile(member, io.BytesIO(binary))
+    monkeypatch.setattr(
+        native,
+        "PASTA_ARTIFACT",
+        replace(native.PASTA_ARTIFACT, sha256=hashlib.sha256(package).hexdigest()),
+    )
+    monkeypatch.setattr(native.egress, "PACKAGE_SHA256", native.PASTA_ARTIFACT.sha256)
+    monkeypatch.setattr(
+        native.egress, "PASTA_SHA256", hashlib.sha256(binary).hexdigest()
+    )
+    monkeypatch.setattr(native.platform, "libc_ver", lambda: ("glibc", "2.38"))
+    root.mkdir(mode=0o700)
+    (root / "httpx").write_bytes(content)
+    (root / "httpx").chmod(0o555)
+    settings["beescan"].update(
+        probe_enabled=True, approval={"executable": str(root / "httpx")}
+    )
+    for key in ("approval", "detection_approval"):
+        settings["beescan"][key].update(
+            network_namespace=native.egress.MANAGED_NET,
+            user_namespace=native.egress.MANAGED_USER,
+        )
+    calls = []
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return native.PASTA_ARTIFACT.url
+
+    class Opener:
+        def open(self, request, timeout):
+            assert request.full_url == native.PASTA_ARTIFACT.url
+            assert timeout == 10
+            calls.append(request.full_url)
+            return Response(package)
+
+    monkeypatch.setattr(native.urllib.request, "build_opener", lambda *_: Opener())
+
+    def extract(command, **kwargs):
+        assert command[:2] == ["/usr/bin/dpkg-deb", "--fsys-tarfile"]
+        assert kwargs["timeout"] == 5 and kwargs["check"]
+        return SimpleNamespace(stdout=archive.getvalue())
+
+    monkeypatch.setattr(subprocess, "run", extract)
+    return root, settings, package, binary, calls
+
+
+def test_managed_cold_and_offline_warm_bootstrap(pasta_distribution, monkeypatch):
+    root, settings, _, binary, calls = pasta_distribution
+    original = copy.deepcopy(settings)
+    native.ensure_beescan_providers(settings)
+    assert calls == [native.PASTA_ARTIFACT.url]
+    assert (root / "pasta").read_bytes() == binary
+    assert stat.S_IMODE((root / "pasta").stat().st_mode) == 0o500
+    assert (root / "nuclei").is_file()
+    before = (root / "pasta").stat()
+    monkeypatch.setattr(
+        native, "_download_pasta", lambda *_: pytest.fail("warm network forbidden")
+    )
+    native.ensure_beescan_providers(settings)
+    after = (root / "pasta").stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_mode) == (
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_mode,
+    )
+    assert (root / "pasta").read_bytes() == binary
+    assert settings == original
+    assert sorted(p.name for p in root.iterdir()) == [
+        ".bootstrap.lock",
+        "httpx",
+        "nuclei",
+        "pasta",
+    ]
+
+
+@pytest.mark.parametrize(
+    "selection", ["disabled", "probe_only", "detection_only", "legacy", "mixed", "git"]
+)
+def test_unselected_managed_helper_is_not_provisioned(pasta_distribution, selection):
+    root, settings, _, _, calls = pasta_distribution
+    config = settings["beescan"]
+    if selection == "disabled":
+        settings["modules"]["registry"][0]["enabled"] = False
+    elif selection == "probe_only":
+        config["detection_enabled"] = False
+    elif selection == "detection_only":
+        config["probe_enabled"] = False
+    elif selection == "git":
+        config.update(git_exposure_enabled=True, git_exposure_approval=None)
+    else:
+        for key in (
+            ("approval", "detection_approval")
+            if selection == "legacy"
+            else ("approval",)
+        ):
+            config[key].update(
+                network_namespace="/proc/123/ns/net", user_namespace="/proc/123/ns/user"
+            )
+    before = (root / "httpx").stat()
+    native.ensure_beescan_providers(settings)
+    assert not calls and not (root / "pasta").exists()
+    after = (root / "httpx").stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_mode) == (
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_mode,
+    )
+    if selection == "disabled":
+        assert sorted(p.name for p in root.iterdir()) == ["httpx"]
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "mode", "symlink", "fifo", "directory"])
+def test_existing_pasta_is_never_silently_replaced(pasta_distribution, mutation):
+    root, settings, _, binary, calls = pasta_distribution
+    path = root / "pasta"
+    if mutation == "symlink":
+        path.symlink_to(root / "missing")
+    elif mutation == "fifo":
+        os.mkfifo(path)
+    elif mutation == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(binary if mutation == "mode" else b"bad")
+        path.chmod(0o777 if mutation == "mode" else 0o500)
+    before = path.lstat()
+    with pytest.raises(native.ProviderProvisioningError):
+        native.ensure_beescan_providers(settings)
+    assert path.lstat() == before and not calls
+
+
+@pytest.mark.parametrize(
+    "failure", ["size", "digest", "interrupt", "extraction", "binary"]
+)
+def test_pasta_failure_cleans_private_temporary_files(
+    pasta_distribution, monkeypatch, failure
+):
+    root, settings, package, _, _ = pasta_distribution
+    if failure in {"size", "digest", "interrupt"}:
+
+        def fetch(target):
+            target.write_bytes(
+                package[:-1] if failure == "size" else b"z" * len(package)
+            )
+            if failure == "interrupt":
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(native, "_download_pasta", fetch)
+    elif failure == "extraction":
+        monkeypatch.setattr(
+            subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=b"partial tar")
+        )
+    else:
+        monkeypatch.setattr(native.egress, "PASTA_SHA256", "0" * 64)
+    error = (
+        KeyboardInterrupt
+        if failure == "interrupt"
+        else native.ProviderProvisioningError
+    )
+    with pytest.raises(error):
+        native.ensure_beescan_providers(settings)
+    assert not (root / "pasta").exists()
+    assert sorted(p.name for p in root.iterdir()) == [".bootstrap.lock", "httpx"]
+
+
+def test_concurrent_managed_bootstrap_installs_once(pasta_distribution):
+    root, settings, _, binary, calls = pasta_distribution
+    barrier = threading.Barrier(2)
+
+    def bootstrap():
+        barrier.wait(timeout=5)
+        native.ensure_beescan_providers(settings)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(bootstrap) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+    assert calls == [native.PASTA_ARTIFACT.url]
+    assert (root / "pasta").read_bytes() == binary
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://archive.ubuntu.com/other",
+        "http://archive.ubuntu.com/x",
+        "https://evil.test/x",
+    ],
+)
+def test_pasta_rejects_every_redirect(url):
+    with pytest.raises(native.ProviderProvisioningError, match="must not redirect"):
+        native._PastaRedirect().redirect_request(
+            urllib.request.Request(native.PASTA_ARTIFACT.url),
+            io.BytesIO(),
+            302,
+            "redirect",
+            HTTPMessage(),
+            url,
+        )
+
+
+@pytest.mark.parametrize("payload", [b"", b"short", b"z" * 259676, b"x" * 259677])
+def test_pasta_download_rejects_wrong_size_or_digest(tmp_path, monkeypatch, payload):
+    class Response(io.BytesIO):
+        def geturl(self):
+            return native.PASTA_ARTIFACT.url
+
+    class Opener:
+        def open(self, *_a, **_k):
+            return Response(payload)
+
+    monkeypatch.setattr(native.urllib.request, "build_opener", lambda *_: Opener())
+    with pytest.raises(native.ProviderProvisioningError):
+        native._download_pasta(tmp_path / "package.deb")
+
+
+def test_pasta_uses_system_tls_and_no_proxy(pasta_distribution, monkeypatch):
+    import ssl
+
+    root, settings, _, _, _ = pasta_distribution
+    original = native.urllib.request.build_opener
+
+    def opener(*handlers):
+        proxy, https, redirects = handlers
+        assert proxy.proxies == {}
+        assert https._context.check_hostname
+        assert https._context.verify_mode == ssl.CERT_REQUIRED
+        assert isinstance(redirects, native._PastaRedirect)
+        return original(*handlers)
+
+    monkeypatch.setattr(native.urllib.request, "build_opener", opener)
+    native.ensure_beescan_providers(settings)
+    assert (root / "pasta").exists()
+
+
+def test_pasta_download_deadline_and_socket_failure(pasta_distribution, monkeypatch):
+    root, settings, _, _, calls = pasta_distribution
+    now = iter([0, 0, 31])
+    monkeypatch.setattr(native.time, "monotonic", lambda: next(now))
+    with pytest.raises(native.ProviderProvisioningError, match="timed out"):
+        native.ensure_beescan_providers(settings)
+    assert calls and not (root / "pasta").exists()
+
+
+@pytest.mark.parametrize("libc,version", [("glibc", "2.37"), ("musl", "1.2")])
+def test_managed_incompatible_libc_refuses_without_download(
+    pasta_distribution, monkeypatch, libc, version
+):
+    root, settings, _, _, calls = pasta_distribution
+    monkeypatch.setattr(native.platform, "libc_ver", lambda: (libc, version))
+    with pytest.raises(native.ProviderProvisioningError, match="glibc 2.38"):
+        native.ensure_beescan_providers(settings)
+    assert not calls and not (root / ".bootstrap.lock").exists()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "tls", "origin", "partial"])
+def test_pasta_transport_failure_is_atomic(pasta_distribution, monkeypatch, failure):
+    root, settings, _, _, _ = pasta_distribution
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return (
+                "https://evil.test/package.deb"
+                if failure == "origin"
+                else native.PASTA_ARTIFACT.url
+            )
+
+        def read1(self, size: int | None = -1):
+            if self.tell():
+                raise ConnectionResetError("interrupted download")
+            return super().read1(size)
+
+    class Opener:
+        def open(self, *_a, **_k):
+            if failure == "timeout":
+                raise TimeoutError("socket timeout")
+            if failure == "tls":
+                raise urllib.error.URLError(
+                    native.ssl.SSLCertVerificationError("untrusted certificate")
+                )
+            return Response(b"partial")
+
+    monkeypatch.setattr(native.urllib.request, "build_opener", lambda *_: Opener())
+    with pytest.raises(native.ProviderProvisioningError):
+        native.ensure_beescan_providers(settings)
+    assert sorted(p.name for p in root.iterdir()) == [".bootstrap.lock", "httpx"]
+
+
+def test_pasta_missing_extractor_refuses_without_install(
+    pasta_distribution, monkeypatch
+):
+    root, settings, _, _, _ = pasta_distribution
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError("/usr/bin/dpkg-deb")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    with pytest.raises(
+        native.ProviderProvisioningError, match="system extraction prerequisites"
+    ):
+        native.ensure_beescan_providers(settings)
+    assert not (root / "pasta").exists()
+    assert sorted(p.name for p in root.iterdir()) == [".bootstrap.lock", "httpx"]
+
+
+def test_managed_helper_with_custom_providers_and_git(pasta_distribution):
+    root, settings, _, _, calls = pasta_distribution
+    native.ensure_beescan_providers(settings)
+    for key, name in (("approval", "httpx"), ("detection_approval", "nuclei")):
+        custom = root.parent / name
+        (root / name).rename(custom)
+        settings["beescan"][key]["executable"] = str(custom)
+    settings["beescan"].update(
+        git_exposure_enabled=True,
+        git_exposure_approval={
+            "network_namespace": native.egress.MANAGED_NET,
+            "user_namespace": native.egress.MANAGED_USER,
+        },
+    )
+    (root / "pasta").unlink()
+    native.ensure_beescan_providers(settings)
+    assert len(calls) == 2
+    assert sorted(p.name for p in root.iterdir()) == [".bootstrap.lock", "pasta"]
+
+
+def test_missing_httpx_does_not_hide_completed_pasta_provisioning(pasta_distribution):
+    root, settings, _, binary, calls = pasta_distribution
+    (root / "httpx").unlink()
+    with pytest.raises(
+        native.ProviderProvisioningError, match="distribution unavailable"
+    ):
+        native.ensure_beescan_providers(settings)
+    assert calls == [native.PASTA_ARTIFACT.url]
+    assert (root / "pasta").read_bytes() == binary
+    assert (root / "nuclei").is_file()

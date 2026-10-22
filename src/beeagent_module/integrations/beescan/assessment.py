@@ -133,6 +133,11 @@ def execute_approved_assessment(
     report = detection_snapshot = None
     signal_assessment = None
     exposure_policy = exposure_result = exposure_snapshot = None
+    egress_session = None
+
+    def close_egress():
+        if egress_session is not None and not egress_session.closed:
+            egress_session.close()
 
     def current_settings():
         current = reload_settings()
@@ -238,6 +243,24 @@ def execute_approved_assessment(
             status["phase"] = stage
             _persist(artifacts, "assessment_status.json", status)
 
+        from beeagent_module.integrations.beescan.egress import (
+            MANAGED_NET,
+            ManagedEgress,
+        )
+
+        if probe.network_namespace == MANAGED_NET:
+            current_settings()
+            from beeagent_module.integrations.beescan.http_runner import (
+                verify_resolution,
+            )
+
+            verify_resolution(probe)
+            egress_session = ManagedEgress(
+                probe, artifacts=artifacts, assessment_run_id=run_id, seconds=seconds
+            )
+            status["egress_artifact"] = "egress_lifecycle.json"
+            egress_session.start()
+            current_settings()
         probe_records = []
         probe_result = execute_approved_probe(
             settings=current_settings(),
@@ -437,6 +460,7 @@ def execute_approved_assessment(
                 status.update(
                     status=exposure_status["status"], reason="exposure_did_not_complete"
                 )
+        close_egress()
         current_settings()
         scope = EngagementScope(
             probe.scope_id,
@@ -489,8 +513,11 @@ def execute_approved_assessment(
             result=report.data["result"],
             report_artifacts=["report.md", "report.json"],
         )
-    except PermissionError:
-        status.update(status="refused", complete=False, reason="authorization_refused")
+    except PermissionError as error:
+        from beeagent_module.integrations.beescan.egress import EGRESS_REASONS
+
+        reason = str(error) if str(error) in EGRESS_REASONS else "authorization_refused"
+        status.update(status="refused", complete=False, reason=reason)
     except TimeoutError:
         status.update(status="timeout", complete=False, reason="assessment_timeout")
     except ImportError:
@@ -511,10 +538,29 @@ def execute_approved_assessment(
             complete=False,
             reason="execution_or_artifact_incomplete",
         )
+    finally:
+        try:
+            close_egress()
+        except OSError, RuntimeError, SubprocessError:
+            status.update(
+                status="incomplete", complete=False, reason="egress_cleanup_unverified"
+            )
     try:
         status["phase"] = "terminal"
         pending = _persist(artifacts, "assessment_status.pending.json", status)
         if status["complete"]:
+            if egress_session is not None:
+                if (
+                    not egress_session.closed
+                    or not egress_session.evidence["cleanup_verified"]
+                ):
+                    raise ValueError("egress_cleanup_unverified")
+                _expect(
+                    storage_dir,
+                    run_id,
+                    "egress_lifecycle.json",
+                    egress_session.evidence,
+                )
             if (
                 report is None
                 or observation is None
