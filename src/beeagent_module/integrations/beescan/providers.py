@@ -1,9 +1,13 @@
 import hashlib
 import os
 import platform
+import ssl
 import stat
+import subprocess
+import tarfile
 import tempfile
 import time
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -13,6 +17,7 @@ from beeagent_module.core.beedrill_toolchain import (
     _download,
 )
 from beeagent_module.core.settings import _is_module_enabled
+from beeagent_module.integrations.beescan import egress
 from beeagent_module.integrations.beescan.detection_policy import NUCLEI_SHA256
 from beeagent_module.integrations.beescan.policy import HTTPX_SHA256
 
@@ -28,6 +33,16 @@ NUCLEI_ARTIFACT = NativeArtifact(
 )
 NUCLEI_BYTES = 143294626
 HTTPX_BYTES = 58029060
+PASTA_ARTIFACT = NativeArtifact(
+    f"passt-{egress.PASTA_VERSION}",
+    "https://archive.ubuntu.com/ubuntu/pool/universe/p/passt/"
+    "passt_0.0~git20260120.386b5f5-1_amd64.deb",
+    egress.PACKAGE_SHA256,
+    259676,
+    "pasta",
+    ("pasta",),
+    "egress_prerequisite_unavailable",
+)
 
 
 class ProviderProvisioningError(RuntimeError):
@@ -129,6 +144,70 @@ def _install_nuclei(root: Path) -> None:
             os.close(descriptor)
 
 
+class _PastaRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ProviderProvisioningError("Pinned pasta download must not redirect")
+
+
+def _download_pasta(target: Path) -> None:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+        _PastaRedirect(),
+    )
+    request = urllib.request.Request(
+        PASTA_ARTIFACT.url, headers={"User-Agent": "BeeAgent-BeeScan"}
+    )
+    deadline = time.monotonic() + 30
+    checksum = hashlib.sha256()
+    size = 0
+    descriptor = os.open(
+        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
+    )
+    with (
+        os.fdopen(descriptor, "wb") as stream,
+        opener.open(request, timeout=10) as response,
+    ):
+        if response.geturl() != PASTA_ARTIFACT.url:
+            raise ProviderProvisioningError("Unexpected pasta download origin")
+        while chunk := response.read1(65536):
+            size += len(chunk)
+            if time.monotonic() >= deadline:
+                raise ProviderProvisioningError("Pinned pasta download timed out")
+            if size > PASTA_ARTIFACT.size:
+                raise ProviderProvisioningError("Pasta package exceeded pinned size")
+            checksum.update(chunk)
+            stream.write(chunk)
+        if time.monotonic() >= deadline:
+            raise ProviderProvisioningError("Pinned pasta download timed out")
+        if size != PASTA_ARTIFACT.size or checksum.hexdigest() != PASTA_ARTIFACT.sha256:
+            raise ProviderProvisioningError("Pasta package integrity mismatch")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _install_pasta(root: Path) -> None:
+    destination = egress.executable_path()
+    if destination.exists() or destination.is_symlink():
+        egress._binary(destination)
+        return
+    with tempfile.TemporaryDirectory(prefix=".pasta-", dir=root) as temporary:
+        package = Path(temporary) / "package.deb"
+        _download_pasta(package)
+        egress.provision(package)
+        egress._binary(destination)
+        descriptor = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _check_provider(name, path, digest, size, root):
     try:
         _verify(path, digest, size, managed=path == root / name)
@@ -167,8 +246,29 @@ def ensure_beescan_providers(settings: dict) -> None:
     ]
     if not selected:
         return
+    managed_approvals = ["approval", "detection_approval"]
+    if config.get("git_exposure_enabled") is True:
+        managed_approvals.append("git_exposure_approval")
+    pasta_selected = (
+        config.get("probe_enabled") is True
+        and config.get("detection_enabled") is True
+        and all(
+            isinstance(config.get(key), dict)
+            and config[key].get("network_namespace") == egress.MANAGED_NET
+            and config[key].get("user_namespace") == egress.MANAGED_USER
+            for key in managed_approvals
+        )
+    )
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ProviderProvisioningError("BeeScan native providers require Linux x86_64")
+    if pasta_selected:
+        libc, version = platform.libc_ver()
+        if libc != "glibc" or tuple(
+            int(part) for part in version.split(".") if part.isdigit()
+        ) < (2, 38):
+            raise ProviderProvisioningError(
+                "Managed BeeScan requires glibc 2.38 or newer"
+            )
     import fcntl
 
     root = provider_root()
@@ -180,7 +280,7 @@ def ensure_beescan_providers(settings: dict) -> None:
                 managed.append((name, path, digest, size))
             else:
                 _check_provider(name, path, digest, size, root)
-        if not managed:
+        if not managed and not pasta_selected:
             return
         _secure_root(root)
         descriptor = os.open(
@@ -208,12 +308,22 @@ def ensure_beescan_providers(settings: dict) -> None:
                             "Provider bootstrap lock timed out"
                         )
                     time.sleep(0.1)
+            if pasta_selected:
+                _install_pasta(root)
             for name, path, digest, size in managed:
                 if name == "nuclei":
                     _install_nuclei(root)
                 _check_provider(name, path, digest, size, root)
-    except (OSError, ValueError, zipfile.BadZipFile, NativeToolchainError) as exc:
+    except (
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        tarfile.TarError,
+        subprocess.SubprocessError,
+        NativeToolchainError,
+    ) as exc:
         raise ProviderProvisioningError(
-            "Cannot safely provision BeeScan providers. Check official GitHub HTTPS "
-            "access, disk space, intact pinned bytes and private directory permissions."
+            "Cannot safely provision BeeScan providers. Check pinned GitHub/Ubuntu "
+            "HTTPS access, system extraction prerequisites, disk space, intact pinned "
+            "bytes and private directory permissions."
         ) from exc

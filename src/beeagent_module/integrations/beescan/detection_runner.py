@@ -358,6 +358,9 @@ def run_detection_provider(
                     "/git_head_signature.py",
                 ]
             reauthorize()
+            from beeagent_module.integrations.beescan.egress import checkpoint
+
+            checkpoint(policy)
             config = {
                 "origin": policy.origin,
                 "connected_ip": policy.connected_ip,
@@ -395,6 +398,7 @@ def run_detection_provider(
             input_file.write_text(safe_response(capture), encoding="ascii")
             input_file.chmod(0o444)
             reauthorize()
+            checkpoint(policy)
             code, output = run(
                 [
                     *offline,

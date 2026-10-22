@@ -258,7 +258,10 @@ def test_policy_rejects_unsafe_inputs(approved, key, value):
         {"excluded": True},
         {"approved": False},
         {"operator_uid": os.getuid() + 1},
-        {"expires_at": datetime.now(UTC) - timedelta(seconds=1)},
+        {
+            "valid_from": datetime(2020, 1, 1, tzinfo=UTC),
+            "expires_at": datetime(2020, 1, 2, tzinfo=UTC),
+        },
         {"source_run_id": "other-run"},
         {"source_observation_id": "other-observation"},
     ],

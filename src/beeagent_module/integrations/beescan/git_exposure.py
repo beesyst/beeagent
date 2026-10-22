@@ -1,5 +1,4 @@
 import os
-import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from ipaddress import ip_address
@@ -88,8 +87,9 @@ class GitExposurePolicy:
             or type(self.user_namespace) is not str
         ):
             raise ValueError("invalid_git_exposure_approval")
-        match = re.fullmatch(r"/proc/([1-9][0-9]{0,9})/ns/net", self.network_namespace)
-        if match is None or self.user_namespace != f"/proc/{match[1]}/ns/user":
+        from beeagent_module.integrations.beescan.egress import namespace_pair
+
+        if not namespace_pair(self.network_namespace, self.user_namespace):
             raise ValueError("invalid_git_exposure_approval")
         if type(self.connected_ip) is not str:
             raise ValueError("invalid_git_exposure_approval")

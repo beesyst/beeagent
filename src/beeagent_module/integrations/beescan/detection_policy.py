@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from ipaddress import ip_address
@@ -116,8 +115,9 @@ class DetectionPolicy:
                 or any(ord(c) < 32 for c in value)
             ):
                 raise ValueError("invalid_detection_policy")
-        match = re.fullmatch(r"/proc/([1-9][0-9]{0,9})/ns/net", self.network_namespace)
-        if match is None or self.user_namespace != f"/proc/{match[1]}/ns/user":
+        from beeagent_module.integrations.beescan.egress import namespace_pair
+
+        if not namespace_pair(self.network_namespace, self.user_namespace):
             raise ValueError("invalid_detection_policy")
         if (
             type(self.origin) is not str
