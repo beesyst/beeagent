@@ -1009,6 +1009,107 @@ A working BeeAgent-managed Linux egress capability that prepares one restricted 
 
 An authorized operator can invoke the existing BeeScan assessment CLI against one approved external HTTP(S) target, obtain a complete evidence-backed report and verified network cleanup without manually preparing per-run namespaces, routes or firewall rules. One reviewed Linux backend enforces the exact destination boundary, original operator approvals and existing security controls remain effective, and real network plus regression verification passes. Unsupported environments fail closed. BeeScan domain contracts and automatic vulnerability verification remain unchanged.
 
+---
+
+## Stage 8 — AI-Guided Authorized Web Investigation
+
+### Iteration BS-8 — Supervised AI-Guided Web Investigation v0
+
+**Status:** PLANNED
+
+#### Goal
+
+Enable an operator to provide one explicitly authorized HTTP(S) target and a natural-language task, then let BeeAgent autonomously execute one bounded Web investigation and return an evidence-backed answer through BeeScan without manual Burp, Repeater or HTTP parameter editing.
+
+The first vertical scenario is `framework_version_disclosure`: identify a relevant query parameter, trigger a non-destructive invalid-input error and extract the disclosed framework version.
+
+#### Depends on
+
+- Completed BeeScan Iteration 10 offline Web investigation API at a reviewed immutable Git revision.
+- Completed BeeAgent BS-7 managed rootless public egress and existing BeeScan assessment/provenance contracts.
+- Existing BeeAgent `ai.profiles`, `ai_transport.call_structured_ai`, ArtifactAPI and protected runtime configuration.
+- Explicit operator authorization for the selected target and new investigation request profile.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add one explicit BeeAgent investigation entrypoint, provisionally `./start.sh beescan investigate`, accepting a bounded task file and an exact target that must match the independently approved host configuration.
+- Introduce an opt-in Web investigation capability with separate, fail-fast validated operator approval; existing probe/detection approvals must not implicitly authorize new paths or mutations.
+- Reuse BeeAgent's AI transport and OpenRouter profile with a configured DeepSeek model, without changing other modules' AI provider selection.
+- Invoke AI once to classify the operator's task into the fixed supported `framework_version_disclosure` intent and return a schema-validated, bounded plan.
+- Reject unsupported, ambiguous or malformed AI plans before any target request; AI-generated targets, arbitrary URLs, payloads and commands never become executable authority.
+- Implement one deterministic host orchestrator for the supported plan rather than an open-ended LLM tool-calling loop.
+- Extend the existing protected BeeScan HTTP execution boundary with bounded GET/response capture for approved relative paths and a single fixed invalid-input mutation.
+- Reuse BS-7 managed egress, exact IP/port containment, DNS revalidation, TLS verification, isolation and cleanup.
+- Implement a maximum three-request target workflow: GET root for discovery, GET one discovered endpoint as baseline, GET the same endpoint with one approved parameter mutation.
+- Accept only one eligible same-origin discovered endpoint and one numeric query parameter; no JavaScript execution, form submission, redirects or cross-origin traversal.
+- Enforce aggregate deadlines, per-response header/body limits, request counts, protected artifact storage and one investigation-owned lifecycle.
+- Feed bounded validated discovery/baseline/error evidence into BeeScan It10 for deterministic interpretation and version extraction.
+- Invoke AI again only to explain normalized, redacted findings; the authoritative answer and evidence references remain BeeScan-derived.
+- Produce explicit terminal statuses, an auditable step trace, source evidence, `investigation_status.json`, `investigation_result.json` and Markdown/JSON reports suitable for a later BeeUI chat interface.
+- Preserve existing `beescan bootstrap/probe/detect/assess/review`, ROP, BeeDrill, original providers and default-disabled execution settings.
+- Document OpenRouter key setup, profile selection, cost/request budgets, authorized invocation, failure handling and artifact inspection.
+
+#### Excluded
+
+- BeeUI/chat frontend, web action routes or separate frontend development in this iteration.
+- Arbitrary LLM tool execution, unbounded autonomous loops, generic agent DAGs, shell access, browser control or a new AI framework.
+- New crawling frameworks, Wapiti/ZAP/Burp dependencies, plugin marketplaces or proxy services.
+- SQLi, XSS, IDOR exploitation, POST mutation, authenticated application workflows or multi-target scanning.
+- Scope inference from the task text, AI output, hyperlinks, DNS answers or scanner results.
+- Sending secrets, cookies, unrestricted HTTP bodies or raw private evidence to OpenRouter.
+- Automatic VERIFIED findings, unsafe impact claims or external challenge-answer submission.
+- Broad changes to BeeSDK, BeeUI, BeeScan's existing offline contracts or unrelated modules.
+
+#### Deliverable
+
+One working operator-supervised, autonomous BeeScan investigation flow:
+
+`Target + task + existing host approval → AI task interpretation → governed Web discovery and bounded checks → BeeScan evidence analysis → AI explanation → final answer and reports`.
+
+The execution is driven by BeeAgent, and the security-domain answer is derived from BeeScan's verified evidence rather than AI guessing.
+
+#### Acceptance criteria
+
+- A fresh operator can supply the authorized target and natural-language task using one documented CLI invocation.
+- The chosen OpenRouter/DeepSeek configuration is validated independently of other modules' active AI profiles.
+- Invalid provider credentials, model failures, unsupported tasks and invalid structured plans produce truthful statuses without unauthorized requests.
+- AI cannot change method, destination, allowed parameter mutation, maximum request count or approval authority.
+- The complete supported workflow requires no manual discovery, Repeater editing or response inspection.
+- No target request executes before independent host authorization and successful managed isolation.
+- Exactly one approved origin/IP/port remains effective for all discovery and verification requests.
+- All target responses are treated as untrusted; prompt injection in HTML/errors cannot grant actions or change reported facts.
+- Successful evidence yields the detected framework and exact version with source request/response identities and bounded evidence references.
+- Missing version, patched application and unsupported task return NO_MATCH or INCONCLUSIVE, never invented answers.
+- AI summarization can explain valid findings but cannot replace or promote the authoritative evidence-derived result.
+- Setup failure, timeout, cancellation, expiry/revocation and cleanup failure cannot produce a successful completed investigation.
+- Original assessment/review artifacts and security behavior remain compatible.
+- Status, steps and report artifacts are independently readable and sufficient for a future BeeUI chat presentation.
+- Existing CLI and module workflows, frozen dependency profiles and unrelated modules remain regression-clean.
+
+#### Checks
+
+- Mocked OpenRouter/DeepSeek structured task-plan and report-response fixtures; malformed JSON, prompt injection, model outage and over-budget cases.
+- Negative authorization, expired/revoked approval, altered scope, DNS, path traversal, redirects and external-link tests.
+- Request/method/path/parameter budget tests, bounded response framing, TLS and process isolation checks.
+- Real Linux managed-egress laboratory with one vulnerable application exposing a framework version through an invalid numeric query value.
+- Patched and deceptive-response variants with no unsupported version claim.
+- Independent capture/evidence/source identity and deterministic BeeScan It10 report validation.
+- Authorized external HTTP(S) smoke against an explicitly approved test instance when its availability and authorization conditions permit.
+- Existing BS-1–BS-7, legacy networking, BeeScan, ROP, BeeDrill and offline review regression suites.
+- Ruff/type checks, applicable SAST/SCA/DAST/property checks, full frozen pytest, build, fresh installation, artifact inspection, independent BeeMCP review and hosted CI.
+
+#### DoD
+
+An operator can run one approved, task-driven Web investigation without Burp or manual HTTP editing. BeeAgent uses OpenRouter/DeepSeek to interpret the task, independently governs each HTTP operation and passes validated evidence to BeeScan It10, which extracts the correct framework/version or explicitly reports insufficient evidence. The completed run provides auditable, protected JSON/Markdown artifacts, passes real vulnerable/patched laboratory scenarios and preserves existing authority and compatibility boundaries.
+
+The implementation remains CLI-first and supplies a stable backend result/action contract for the next separately reviewed BeeUI chat increment. No version change occurs during the feature implementation.
+
+---
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.
