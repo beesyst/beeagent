@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.80.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.79.0...beeagent-v0.80.0) (2026-10-23)
+
+
+### Features
+
+* **beescan:** integrate governed AI web investigation ([#330](https://github.com/beesyst/beeagent/issues/330)) ([15f26a6](https://github.com/beesyst/beeagent/commit/15f26a63791bc56c785789c06d85c79f3d7105e0))
+
 ## [0.79.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.78.2...beeagent-v0.79.0) (2026-10-22)
 
 
