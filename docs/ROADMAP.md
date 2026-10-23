@@ -10770,6 +10770,103 @@ BeeAgent executes one supported external LiteSVM security-sensitive test from a 
 
 Any preparation mechanism not proven safe and reproducible remains unsupported rather than bypassing isolation.
 
+### Iteration 45 — Unified AI Profile Selection v1
+
+**Status:** PLANNED
+
+#### Goal
+
+Provide one reusable BeeAgent AI profile selection contract with a default provider and independent module-level overrides for ROP, BeeDrill and BeeScan.
+
+Allow multiple modules to use different configured AI providers without changing other modules' behavior, duplicating profile resolution logic or introducing a second configuration source.
+
+#### Depends on
+
+- Completed BeeAgent BS-8 and BeeScan It10.
+- Existing `ai.profiles`, AI transport and provider-specific structured-output contracts.
+- Existing ROP adjudicator, ROP AI assist, BeeDrill AI assist and BeeScan investigation integrations.
+
+#### Change level
+
+`security-sensitive`
+
+Reason: AI credentials, external provider destinations, configuration migration, runtime selection and provider trust boundaries.
+
+#### Scope
+
+- Introduce one shared BeeAgent core AI profile resolver using `config/settings.yml` as the only configuration source.
+- Support explicit `ai.default_profile` selection from existing named `ai.profiles`.
+- Support optional module overrides: `rop.ai_assist.ai_profile`, `beedrill.ai_assist.ai_profile` and the existing `beescan.investigation.ai_profile`.
+- Resolve each consumer as **module override → global default**, with no implicit fallback to another provider.
+- Allow BeeScan to inherit the default when no explicit named override is configured; preserve existing explicit selection.
+- Reuse the shared resolver in ROP adjudicator, existing ROP AI assist, BeeDrill AI assist and BeeScan investigation.
+- Preserve legacy single-enabled-profile configurations when `ai.default_profile` is absent; reject ambiguous mixed selection modes rather than silently choosing one.
+- Validate selected profile names, supported provider types, URLs, models and environment-variable references fail-fast.
+- Require the relevant credential only for a consumer that actually needs AI execution, preserving existing disabled and dry-run behavior.
+- Preserve the existing OpenAI Responses and OpenAI-compatible transport implementations, structured-output validation and bounded request limits.
+- Preserve provider/model provenance in existing safe artifacts without exposing credentials.
+- Update configuration examples, AI usage documentation and focused regression tests.
+
+#### Excluded
+
+- LiteLLM, Pydantic AI or another provider abstraction dependency.
+- Provider auto-discovery, routing, retries across providers or automatic failover.
+- Automatic model selection based on price, latency or task complexity.
+- New AI features, agents, prompts, domain rules or execution permissions.
+- Changes to BeeScan security findings, HTTP investigation authority or ROP classification policy.
+- BeeSDK, BeeUI, Web Console and unrelated module changes.
+- New AI secrets storage, database or separate configuration service.
+
+#### Deliverable
+
+BeeAgent provides a shared production AI profile resolver and one documented configuration contract.
+
+Example supported configuration:
+
+- Global default: `openrouter`.
+- ROP: inherits `openrouter`.
+- BeeDrill: explicit `openai` override.
+- BeeScan: explicit `deepseek` override.
+
+Each enabled consumer resolves the expected provider/model/credential reference independently while reusing the existing AI transport.
+
+Existing legacy configurations remain functional during migration.
+
+#### Acceptance criteria
+
+- One shared resolver replaces duplicated profile-selection implementations in active AI consumers.
+- Default selection and module overrides have deterministic, documented precedence.
+- ROP adjudicator and applicable legacy ROP AI assist paths use consistent profile selection.
+- BeeDrill and BeeScan can select independent providers without changing the global default.
+- Existing global OpenRouter/DeepSeek configuration remains compatible.
+- Legacy `enabled: true` selection continues to work when `ai.default_profile` is absent.
+- Missing, unknown, malformed or conflicting profile selections fail closed with actionable errors.
+- Disabled AI consumers do not require unrelated provider credentials or perform provider requests.
+- No automatic provider fallback or unauthorized external destination is introduced.
+- Existing AI output validation, deterministic fallbacks and security boundaries remain unchanged.
+- Existing artifacts contain correct provider/model provenance without secrets.
+- No unrelated runtime, module or dependency behavior changes.
+
+#### Checks
+
+- Unit matrix: legacy/default/override, ROP/BeeDrill/BeeScan, OpenAI Responses/OpenRouter/direct DeepSeek.
+- Negative tests: conflicting selection modes, unknown profiles, invalid model, URL or credential reference, missing selected credential.
+- AI transport mocked tests: request schema, bounded output, failure/degraded behavior and no unintended network calls.
+- ROP adjudicator and ROP AI assist regression tests.
+- BeeDrill AI assist regression tests.
+- BeeScan BS-8 and BS-7 authorization, investigation and laboratory regressions.
+- Full frozen BeeAgent pytest, build, applicable Ruff/security checks and `git diff --check`.
+- Local smoke with independently selected provider profiles and protected dummy credentials.
+- Verify unchanged BeeSDK/BeeUI dependencies, existing Git-pinned BeeScan integration and package version.
+
+#### DoD
+
+All supported AI consumers use one verified profile resolution contract, independent module selection works, old configurations remain compatible, invalid configurations fail safely, full local regressions pass and updated documentation describes the actual behavior.
+
+**No automatic provider fallback, execution-authority expansion, new framework dependency or version bump.**
+
+---
+
 ## Этап 5 — Operator / product shell v1 (ориентир)
 
 ### Purpose of stage
