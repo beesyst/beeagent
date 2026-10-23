@@ -14,6 +14,16 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True, params=["openai", "openrouter"])
+def _isolated_global_ai(request, monkeypatch, isolated_ai_settings):
+    loader = load_settings
+
+    def load_isolated(path):
+        return isolated_ai_settings(loader(path), request.param)
+
+    monkeypatch.setattr(f"{__name__}.load_settings", load_isolated)
+
+
 def test_load_settings_uses_ai_source_of_truth_without_llm(
     monkeypatch,
 ) -> None:
@@ -476,7 +486,9 @@ def test_disabled_rop_does_not_require_ai_or_bitrix_credentials(
 
     settings = load_settings(_project_root() / "config" / "settings.yml")
 
-    assert settings["ai"]["profiles"]["openai"]["enabled"] is True
+    active = [p for p in settings["ai"]["profiles"].values() if p["enabled"]]
+    assert len(active) == 1
+    monkeypatch.delenv(active[0]["api_key_env"], raising=False)
     validate_settings(settings)
 
 
@@ -484,9 +496,10 @@ def test_enabled_rop_requires_adjudicator_ai_credential(monkeypatch) -> None:
     _base_env(monkeypatch)
     settings = load_settings(_project_root() / "config" / "settings.yml")
     _enable_rop(settings)
-    monkeypatch.delenv("OPENAI_API_KEY")
+    active = next(p for p in settings["ai"]["profiles"].values() if p["enabled"])
+    monkeypatch.delenv(active["api_key_env"])
 
-    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+    with pytest.raises(RuntimeError, match=active["api_key_env"]):
         validate_settings(settings)
 
 

@@ -33,9 +33,27 @@ os.environ.setdefault("BEEAGENT_WEB_ROP_TOKEN", "test-rop-token")
 os.environ.setdefault("BEEAGENT_WEB_OPERATOR_TOKEN", "test-operator-token")
 
 
+@pytest.fixture
+def global_ai_profile(request):
+    return getattr(request, "param", "openai")
+
+
 @pytest.fixture(autouse=True)
-def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+def _isolated_global_ai(monkeypatch, isolated_ai_settings, global_ai_profile):
+    loader = load_settings
+
+    def load_isolated(path):
+        return isolated_ai_settings(loader(path), global_ai_profile)
+
+    monkeypatch.setattr(f"{__name__}.load_settings", load_isolated)
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda *args, **kwargs: None,
+    )
 
 
 def _null_logger() -> logging.Logger:
@@ -2886,13 +2904,21 @@ def test_rop_batch_final_classification_reviewed_it21_gate(
     }
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_rop_batch_reviewed_buyer_rfq_exercises_ai_adjudicator_gate(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     provider_calls: list[None] = []
 
     def _provider_response(**kwargs) -> str:
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert kwargs["provider"] == profile["provider"]
+        assert kwargs["model"] == profile["model"]
+        assert kwargs["base_url"] == profile["base_url"]
+        assert kwargs["api_key"] == "sk-test"
+        assert kwargs["responses_text_format"]["strict"] is True
         provider_calls.append(None)
         return json.dumps(
             {
@@ -2910,7 +2936,7 @@ def test_rop_batch_reviewed_buyer_rfq_exercises_ai_adjudicator_gate(
         )
 
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -2999,13 +3025,21 @@ def test_rop_batch_reviewed_buyer_rfq_exercises_ai_adjudicator_gate(
         _remove_fake_package("test_stub_adj_buyer_rfq")
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_rop_batch_spam_labelled_rfq_exercises_ai_adjudicator_gate(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     provider_calls: list[None] = []
 
     def _provider_response(**kwargs) -> str:
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert kwargs["provider"] == profile["provider"]
+        assert kwargs["model"] == profile["model"]
+        assert kwargs["base_url"] == profile["base_url"]
+        assert kwargs["api_key"] == "sk-test"
+        assert kwargs["responses_text_format"]["strict"] is True
         provider_calls.append(None)
         return json.dumps(
             {
@@ -3023,7 +3057,7 @@ def test_rop_batch_spam_labelled_rfq_exercises_ai_adjudicator_gate(
         )
 
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -3825,13 +3859,21 @@ def test_final_decisions_route_degraded_tender_to_deterministic_preserved() -> N
         assert decision["needs_attention"] is False
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_entity_encoded_rfq_reaches_public_module_and_ai_qualification(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     provider_calls: list[dict] = []
 
     def _provider_response(**kwargs) -> str:
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert kwargs["provider"] == profile["provider"]
+        assert kwargs["model"] == profile["model"]
+        assert kwargs["base_url"] == profile["base_url"]
+        assert kwargs["api_key"] == "sk-test"
+        assert kwargs["responses_text_format"]["strict"] is True
         provider_calls.append(kwargs)
         assert "Запрос цен № T-0002338" in kwargs["prompt"]
         return json.dumps(
@@ -3850,7 +3892,7 @@ def test_entity_encoded_rfq_reaches_public_module_and_ai_qualification(
         )
 
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -5067,13 +5109,21 @@ def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
         _remove_fake_package("test_stub_no_merge")
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_ai_adjudicator_accepted_result_updates_classified_events(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     provider_calls: list[None] = []
 
     def _provider_response(**kwargs) -> str:
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert kwargs["provider"] == profile["provider"]
+        assert kwargs["model"] == profile["model"]
+        assert kwargs["base_url"] == profile["base_url"]
+        assert kwargs["api_key"] == "sk-test"
+        assert kwargs["responses_text_format"]["strict"] is True
         provider_calls.append(None)
         return (
             "```json\n"
@@ -5095,7 +5145,7 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
         )
 
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -5234,8 +5284,9 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
             (run_dir / "rop_ai_adjudicator_results.json").read_text(encoding="utf-8")
         )
         result = ai_results["results"][0]
-        assert result["ai_provider"] == "openai_responses"
-        assert result["ai_model"] == settings["ai"]["profiles"]["openai"]["model"]
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert result["ai_provider"] == profile["provider"]
+        assert result["ai_model"] == profile["model"]
         assert result["ai_confidence"] == 0.91
         assert result["ai_reason"] == "Clear RFQ content"
         assert result["ai_reason_code"] == "customer_request_detected"
@@ -5417,13 +5468,21 @@ def _adjudicator_enabled_settings() -> dict:
     return settings
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_ai_adjudicator_high_confidence_tender_candidate_ignores_non_actionable_digest(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     provider_calls: list[None] = []
 
     def _provider_response(**kwargs) -> str:
+        profile = settings["ai"]["profiles"][global_ai_profile]
+        assert kwargs["provider"] == profile["provider"]
+        assert kwargs["model"] == profile["model"]
+        assert kwargs["base_url"] == profile["base_url"]
+        assert kwargs["api_key"] == "sk-test"
+        assert kwargs["responses_text_format"]["strict"] is True
         provider_calls.append(None)
         return json.dumps(
             {
@@ -5441,7 +5500,7 @@ def test_ai_adjudicator_high_confidence_tender_candidate_ignores_non_actionable_
         )
 
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         _provider_response,
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -5920,16 +5979,18 @@ def test_adjudicator_env_kill_switch_skips_all_ai_paths(
         _remove_fake_package("test_stub_adj_env_off")
 
 
+@pytest.mark.parametrize("global_ai_profile", ["openai", "openrouter"], indirect=True)
 def test_ai_adjudicator_low_confidence_preserves_deterministic_result(
     tmp_path: Path,
     monkeypatch,
+    global_ai_profile,
 ) -> None:
     monkeypatch.setattr(
         "beeagent_module.cases.rop_operator._is_event_eligible_for_ai_assist",
         lambda event, min_confidence: False,
     )
     monkeypatch.setattr(
-        "beeagent_module.core.rop_ai_adjudicator.call_openai_responses_api",
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         lambda **kwargs: json.dumps(
             {
                 "case_type": "existing_deal",

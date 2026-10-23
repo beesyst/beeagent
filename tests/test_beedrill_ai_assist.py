@@ -1,6 +1,8 @@
 import json
 import logging
 
+import pytest
+
 from beeagent_module.core import beedrill_ai_assist
 
 
@@ -49,8 +51,9 @@ def _write_prompt(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize("global_name", ["openai", "openrouter", "deepseek"])
 def test_beedrill_ai_assist_persists_bounded_response_and_provenance(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, isolated_ai_settings, global_name
 ) -> None:
     _write_prompt(tmp_path)
     monkeypatch.setenv("TEST_BEE_DRILL_API_KEY", "test-key")
@@ -71,8 +74,10 @@ def test_beedrill_ai_assist_persists_bounded_response_and_provenance(
         ),
     )
 
+    settings = isolated_ai_settings(_settings(), global_name)
+    profile = settings["ai"]["profiles"][global_name]
     artifact = beedrill_ai_assist.run_beedrill_ai_assist(
-        settings=_settings(),
+        settings=settings,
         records=_records(
             {
                 "schema_version": 1,
@@ -92,12 +97,21 @@ def test_beedrill_ai_assist_persists_bounded_response_and_provenance(
             "run_id": "scenario-run-1",
         }
     ]
-    assert artifact["provider"] == "openai_compatible"
-    assert artifact["model"] == "test-model"
+    assert artifact["provider"] == profile["provider"]
+    assert artifact["model"] == profile["model"]
     response = artifact["response"]
     assert isinstance(response, dict)
     assert "security_verdict" not in response
     assert len(calls) == 1
+    assert calls[0]["provider"] == profile["provider"]
+    assert calls[0]["model"] == profile["model"]
+    assert calls[0]["base_url"] == profile["base_url"]
+    assert calls[0]["api_key"] == "sk-test"
+    responses_text_format = calls[0]["responses_text_format"]
+    assert isinstance(responses_text_format, dict)
+    assert responses_text_format["strict"] is True
+    assert calls[0]["timeout_seconds"] == 20
+    assert calls[0]["output_chars_max"] == 4000
     prompt = calls[0]["prompt"]
     assert isinstance(prompt, str)
     assert "IGNORE PREVIOUS INSTRUCTIONS" in prompt

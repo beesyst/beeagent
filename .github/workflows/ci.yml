@@ -32,5 +32,5 @@ jobs:
           tests/test_module_contract.py tests/test_module_registry.py
           tests/test_module_runtime.py tests/test_runtime_context.py
           tests/test_artifact_api.py tests/test_capability_boundary.py
-          tests/test_beescan_probe.py
+          tests/test_beescan_probe.py tests/test_beescan_investigation.py
       - run: uv build

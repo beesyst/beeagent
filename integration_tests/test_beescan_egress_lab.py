@@ -2,6 +2,7 @@ import copy
 import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import ssl
@@ -679,6 +680,9 @@ def test_real_launcher_managed_assessment(managed_lab):
 
     settings, root, requests, _sessions, _probe = managed_lab
     repository = Path(__file__).resolve().parents[1]
+    (root / "beescan").symlink_to(
+        repository.parent / "beescan", target_is_directory=True
+    )
     project = root / "cli-project"
     project.mkdir(mode=0o700)
     for source in repository.iterdir():
@@ -718,6 +722,20 @@ def test_real_launcher_managed_assessment(managed_lab):
         " if 'exec' in command:command=[*command,'--map-host-loopback','192.0.2.1']\n"
         " return original(self,command,**kwargs)\n"
         "egress.ManagedEgress._spawn=spawn\n"
+    )
+    uv = shutil.which("uv")
+    assert uv is not None
+    subprocess.run(
+        [uv, "sync", "--frozen", "--no-dev", "--extra", "beescan"],
+        cwd=project,
+        env={
+            **os.environ,
+            "UV_PROJECT_ENVIRONMENT": str(project / ".venv"),
+            "UV_OFFLINE": "1",
+        },
+        capture_output=True,
+        check=True,
+        timeout=120,
     )
     result = subprocess.run(
         ["./start.sh", "beescan", "assess", "--http-signals"],

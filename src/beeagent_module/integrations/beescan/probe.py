@@ -350,6 +350,29 @@ def _current_policy(settings):
 
 
 def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
+    if args and args[0] == "investigate":
+        if len(args) != 2:
+            print("Usage: ./start.sh beescan investigate TASK.json")
+            return 2
+        from beeagent_module.integrations.beescan.investigation import (
+            execute_investigation,
+        )
+
+        try:
+            result = execute_investigation(
+                task_path=args[1],
+                settings=settings,
+                reload_settings=reload_settings,
+                storage_dir=storage_dir,
+                logger=logger,
+            )
+        except ImportError, OSError, RuntimeError, ValueError:
+            logger.error("BeeScan investigation incomplete")
+            return 5
+        print(json.dumps(result, sort_keys=True))
+        if result["complete"] and result["status"] in {"MATCH", "NO_MATCH"}:
+            return 0
+        return {"REFUSED": 3, "TIMEOUT": 4}.get(result["status"], 5)
     review_invocation = len(args) == 4 and args[0] == "review"
     if not review_invocation and args not in (
         ["bootstrap"],

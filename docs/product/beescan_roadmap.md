@@ -1015,7 +1015,7 @@ An authorized operator can invoke the existing BeeScan assessment CLI against on
 
 ### Iteration BS-8 — Supervised AI-Guided Web Investigation v0
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
