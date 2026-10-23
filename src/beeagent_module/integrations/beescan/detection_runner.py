@@ -223,11 +223,31 @@ def _sandbox(policy):
 
 
 def run_detection_provider(
-    policy, *, reauthorize, http_signals=False, git_exposure=False
+    policy,
+    *,
+    reauthorize,
+    http_signals=False,
+    git_exposure=False,
+    investigation=None,
+    on_attempt=None,
+    deadline=None,
 ):
     if type(git_exposure) is not bool or (git_exposure and http_signals):
         raise ValueError("invalid_capture_selection")
-    deadline = time.monotonic() + policy.time_budget_seconds
+    if investigation is not None and (
+        git_exposure
+        or http_signals
+        or not callable(on_attempt)
+        or type(investigation) is not dict
+        or set(investigation) != {"relative_url", "body_bytes_max"}
+        or type(investigation["body_bytes_max"]) is not int
+        or not 1024 <= investigation["body_bytes_max"] <= 16384
+    ):
+        raise ValueError("invalid_capture_selection")
+    deadline = min(
+        deadline if deadline is not None else float("inf"),
+        time.monotonic() + policy.time_budget_seconds,
+    )
 
     def run(argv, *, limit, pass_fds=(), stderr=False):
         remaining = deadline - time.monotonic()
@@ -290,7 +310,7 @@ def run_detection_provider(
         with tempfile.TemporaryDirectory(prefix="bee-detect-") as temporary:
             directory = Path(temporary)
             offline: list[str] = []
-            if not git_exposure:
+            if not git_exposure and investigation is None:
                 binary = _provider_snapshot(
                     policy, directory, limit_bytes=192 * 1024 * 1024
                 )
@@ -344,6 +364,12 @@ def run_detection_provider(
             ]
             if Path("/etc/ssl/certs").is_dir():
                 capture_sandbox += ["--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs"]
+            marker = None
+            if investigation is not None:
+                marker = directory / "attempt"
+                marker.write_bytes(b"0")
+                marker.chmod(0o600)
+                capture_sandbox += ["--bind", str(marker), "/attempt"]
             if git_exposure:
                 from beescan.domain import git_head_signature
 
@@ -371,27 +397,45 @@ def run_detection_provider(
                 config["http_signals"] = True
             if git_exposure:
                 config["git_exposure"] = True
-            code, raw_capture = run(
-                [
-                    *prefix,
-                    *capture_sandbox,
-                    "--",
-                    "/usr/bin/python3",
-                    "-I",
-                    "-S",
-                    "/capture.py",
-                    json.dumps(config),
-                ],
-                limit=4096,
-                pass_fds=descriptors,
-            )
+            if investigation is not None:
+                config.update(investigation=True, **investigation)
+            try:
+                code, raw_capture = run(
+                    [
+                        *prefix,
+                        *capture_sandbox,
+                        "--",
+                        "/usr/bin/python3",
+                        "-I",
+                        "-S",
+                        "/capture.py",
+                        json.dumps(config),
+                    ],
+                    limit=(investigation["body_bytes_max"] * 6 + 4096)
+                    if investigation is not None
+                    else 4096,
+                    pass_fds=descriptors,
+                )
+            finally:
+                if marker is not None:
+                    attempt = None
+                    try:
+                        raw = read_regular(marker, limit=1, owner_uid=os.getuid())
+                        if raw in {b"0", b"1"}:
+                            attempt = raw == b"1"
+                    finally:
+                        if not callable(on_attempt):
+                            raise ValueError("invalid_capture_selection")
+                        on_attempt(attempt)
+                    if attempt is None:
+                        raise ValueError("request_count_unverified")
             if code == 3:
                 raise PermissionError("redirect_refused")
             if code == 4:
                 raise TimeoutError("timeout")
             if code:
                 raise ValueError("capture_failed")
-            if git_exposure:
+            if git_exposure or investigation is not None:
                 return raw_capture
             capture = parse_capture(raw_capture, policy, http_signals=http_signals)
             input_file = directory / "input.txt"
