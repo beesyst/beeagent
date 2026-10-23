@@ -374,7 +374,7 @@ Read at minimum in the primary repository:
 
 Read as applicable:
 
-- `README.ru.md`;
+- `README.md`;
 - `docs/ARCHITECTURE.md`;
 - `docs/DEV_GUIDE.md`;
 - `docs/SPEC.md`;
@@ -840,11 +840,11 @@ DoD
 Use this form:
 
 ```
-## Этап <номер> — <English stage title>
+## Stage <number> — <English stage title>
 
-### Итерация <ID> — <English iteration title>
+### Iteration <ID> — <English iteration title>
 
-**Статус:** PLANNED
+**Status:** PLANNED
 
 #### Goal
 

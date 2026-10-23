@@ -415,3 +415,53 @@ def test_dry_run_returns_placeholder() -> None:
     assert result is not None
     parsed = json.loads(result)
     assert parsed["reason_code"] == "dry_run_placeholder"
+
+
+def test_historical_rop_profile_uses_shared_validation(monkeypatch):
+    cfg = _default_ai_cfg()
+    cfg.update(
+        profile="historic",
+        profiles={
+            "historic": {
+                "provider": "openai_compatible",
+                "model_env": "HISTORIC_MODEL",
+                "base_url_env": "HISTORIC_URL",
+                "api_key_env": "HISTORIC_KEY",
+            }
+        },
+    )
+    monkeypatch.setenv("HISTORIC_MODEL", "historic-model")
+    monkeypatch.setenv("HISTORIC_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.delenv("HISTORIC_KEY", raising=False)
+    result = resolve_ai_profile(cfg, _default_ai_settings())
+    assert result["profile"] == "historic"
+    assert result["model"] == "historic-model"
+    assert _call_ai_provider(result, "facts", _null_logger()) is not None
+    for selected in ("ai_profile", "default_profile"):
+        ai = _default_ai_settings()
+        changed = dict(cfg)
+        if selected == "ai_profile":
+            changed[selected] = "openai"
+        else:
+            ai[selected] = "openai"
+        with pytest.raises(RuntimeError, match="Conflicting"):
+            resolve_ai_profile(changed, ai)
+    monkeypatch.setenv("HISTORIC_URL", "https://user:secret@host.test")
+    with pytest.raises(RuntimeError, match="base_url"):
+        resolve_ai_profile(cfg, _default_ai_settings())
+
+
+def test_dry_run_legacy_selection_requires_no_credential_or_network(monkeypatch):
+    from beeagent_module.core.settings import validate_settings
+
+    settings = _valid_settings()
+    cfg = settings["rop"]["ai_assist"]
+    cfg.update(enabled=True, dry_run=True, ai_profile="deepseek")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda *a, **k: pytest.fail("network")
+    )
+    validate_settings(settings)
+    selected = resolve_ai_profile(cfg, settings["ai"])
+    assert selected["model"] == "deepseek-chat"
+    assert _call_ai_provider(selected, "facts", _null_logger()) is not None

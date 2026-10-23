@@ -28,6 +28,7 @@ def isolated_ai_settings(monkeypatch):
 
     def configure(settings, selected):
         isolated = deepcopy(settings)
+        isolated["ai"].pop("default_profile", None)
         isolated["ai"]["profiles"] = {
             name: {
                 "enabled": name == selected,

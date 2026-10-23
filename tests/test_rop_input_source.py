@@ -2252,7 +2252,7 @@ def test_mailbox_truncated_mime_degrades_without_crash(monkeypatch) -> None:
         b"Content-Type: multipart/mixed; boundary=sep\n\n"
         b"--sep\nContent-Type: application/pdf\n"
         b"Content-Disposition: attachment; filename=a.pdf\n\n"
-        b"%PDF-"  # truncated attachment payload
+        b"%PDF-"
     )
 
     events, _metadata, diagnostics = load_mailbox_readonly(

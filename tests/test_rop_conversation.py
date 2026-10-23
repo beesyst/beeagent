@@ -1109,7 +1109,7 @@ class TestResolveOutboundBridge:
 
     def test_missing_entity_id_fail_closed(self) -> None:
         event = self._event()
-        evidence = self._evidence(target_entity_id=None)  # type: ignore[arg-type]
+        evidence = self._evidence(target_entity_id=None)
         assert resolve_outbound_bridge(event, evidence) is None
 
     def test_other_event_evidence_ignored(self) -> None:

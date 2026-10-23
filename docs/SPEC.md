@@ -1,63 +1,63 @@
 # SPEC — BeeAgent
 
-## 0. Термины
+## 0. Terms
 
-- Репозиторий: `beeagent`
-- Python-пакет (import): `beeagent_module`
-- Core: общее ядро оркестрации BeeAgent
-- Module: отдельный доменный модуль, подключаемый к BeeAgent (`beeagent-rop`, будущие `beescan`, `merch`)
-- Case: прикладной сценарий, который вызывается transport/UI слоем
-- Agent: workflow/graph под конкретный сценарий
-- Adapter: слой доступа к данным
-- Capability: внешний исполняемый или интеграционный вызов (MCP, n8n, API, system)
-- Transport/UI: тонкий слой взаимодействия (`telegram`, позже web и др.)
-- Run: один воспроизводимый запуск сценария с `run_id`
-- Artifact: файл в `storage/`, который фиксирует результат, шаги или состояние запуска
-- Authority: граница прав (`read-only`, `draft-only`, `execution-capable`)
+- Repository: `beeagent`
+- Python package (import): `beeagent_module`
+- Core: BeeAgent’s shared orchestration core
+- Module: a separate domain module connected to BeeAgent (`beeagent-rop`, with `beescan` and `merch` planned)
+- Case: an application scenario invoked by the transport/UI layer
+- Agent: workflow/graph for a specific scenario
+- Adapter: Data access layer
+- Capability: an external execution or integration call (MCP, n8n, API, system)
+- Transport/UI: thin layer of interaction (`telegram`, later web, etc.)
+- Run: one reproducible scenario execution with a `run_id`
+- Artifact: a file in `storage/` recording a run’s result, steps or state
+- Authority: Rights boundary (`read-only`, `draft-only`, `execution-capable`)
 
-## 1. Цель
+## 1. Purpose
 
-Сделать `BeeAgent` как explainable, stateful, modular AI orchestration system, а не как “чат-бот с тулзами”.
+Build `BeeAgent` as an explainable, stateful, modular AI orchestration system rather than a “chatbot with tools”.
 
-Система должна уметь:
+The system must be capable of:
 
-- запускать и сопровождать сценарии через единое core;
-- работать с transport/UI слоями без вшивания бизнес-логики в UI;
-- подключать отдельные доменные модули как python-пакеты;
-- хранить state, artifacts, approvals, summaries и trace внутри BeeAgent;
-- использовать AI как bounded assistive layer, а не как black-box замену deterministic logic;
-- использовать MCP / n8n / внешние systems как capability layer, а не как место жизни доменной логики.
+- start and manage scenarios through a single core;
+- work with transport/UI layers without embedding business logic in the UI;
+- connect separate domain modules as Python packages;
+- store state, artifacts, approvals, summaries and traces inside BeeAgent;
+- use AI as a bounded assistive layer rather than a black-box replacement for deterministic logic;
+- use MCP / n8n / external systems as a capability layer rather than a home for domain logic.
 
-## 2. Принципы разработки
+## 2. Development principles
 
-- KISS: минимум лишних абстракций, максимум ясных contracts
-- Core должен оставаться универсальным, доменная логика живёт в модулях
+- KISS: minimum excess abstractions, maximum clear contracts
+- Core must remain universal, domain logic lives in modules
 - `config/settings.yml` — runtime source of truth
-- Новые обязательные ключи валидируются fail-fast
-- Логи должны быть понятными
-- Артефакты должны быть воспроизводимыми
-- Secrets не должны попадать в logs/storage
-- Long-running state должен жить в BeeAgent, а не внутри одного tool/MCP вызова
-- UI должен быть thin layer
-- Capability boundary должен быть явным
-- Execution-capable paths должны быть bounded и operator-visible
+- New required keys are validated fail-fast
+- Logs must be understandable
+- Artifacts must be reproducible
+- Secrets must not enter logs/storage
+- Long-running state must live in BeeAgent rather than within one tool/MCP call
+- UI must be a thin layer
+- The capability boundary must be explicit
+- Execution-capable paths must be bounded and operator-visible
 
-## 3. Архитектурная схема
+## 3. Architecture
 
-Базовая схема системы:
+System reference diagram:
 
 `UI/Transport → BeeAgent core → module/case → capability layer (MCP / n8n / API / systems)`
 
-Где:
+Where:
 
-- `UI/Transport` отвечает только за вход/выход;
-- `BeeAgent core` отвечает за orchestration, state, approvals, artifacts, policy;
-- `module` отвечает за доменную логику;
-- `capability layer` отвечает за внешние действия и интеграции.
+- `UI/Transport` is responsible for entry/exit only;
+- `BeeAgent core` is responsible for orchestration, state, approvals, artifacts, policy;
+- `module` is responsible for domain logic;
+- `capability layer` is responsible for external activities and integration.
 
-## 4. Что живёт в core, а что не живёт
+## 4. What belongs in the core and what does not
 
-### 4.1 Что должно жить в `beeagent`
+### 4.1 What must live in `beeagent`
 
 - module contract
 - module registry
@@ -72,39 +72,39 @@
 - capability abstraction
 - bounded authority logic
 
-### 4.2 Что не должно жить в `beeagent`
+### 4.2 What must not live in `beeagent`
 
-- клиентская бизнес-логика РОПа
+- client-specific ROP business logic
 - welding-specific lead rules
 - client-specific duplicate heuristics
 - client-specific email semantics
 - merchandising-specific business rules
 - beescan-specific business rules
 
-Это должно жить в отдельных модулях.
+This must live in separate modules.
 
-## 5. Модульная модель
+## 5. Modular Model
 
-### 5.1 Модуль
+### 5.1 Module
 
-Модуль — это отдельный python-пакет, который подключается к BeeAgent как локальная зависимость.
+A module is a separate Python package connected to BeeAgent as a local dependency.
 
-Примеры:
+Examples:
 
 - `beeagent-rop`
 - `beescan`
 - `beeagent-merch` / `beeagent-merchandising`
 
-### 5.2 Что должен уметь модуль
+### 5.2 What a module must be able to do
 
-Модуль должен:
+The module must:
 
-- иметь `module_id`
-- объявлять поддерживаемые `case_type`
-- принимать `ModuleContext`
-- возвращать bounded result
-- использовать BeeAgent artifact/runtime contracts
-- не ломать authority boundary
+- have `module_id`
+- declare supported `case_type` values
+- receive `ModuleContext`
+- return a bounded result
+- use BeeAgent artifact/runtime contracts
+- preserve the authority boundary
 
 For BeeDrill's `isolated_solana_smoke`, BeeAgent injects a caller bound to the host-generated run, session, module, case and read-only module authority. The caller accepts only `solana.isolated_lifecycle` with the fixed `surfpool_local` intent, then owns the offline Surfpool process, fixed local read-only RPC check and cleanup. The returned capability evidence reports the host-applied execution-capable authority without changing the module authority.
 
@@ -114,70 +114,70 @@ For BeeDrill's `reference_target_attack`, the same caller accepts only `solana.r
 
 For BeeDrill's `reference_target_detection`, the same caller accepts only `solana.reference_target_detection` with the fixed `surfpool_local` and `reference_vault` payload from the read-only detection case. BeeAgent installs the fixed `reference_vault_outflow_monitor` before the attack, independently observes `vault_outflow_signal` through the fixed local RPC state read, and returns only detector identity, signal identity, observation status, attack-start slot, and (when observed) first-detection slot. A completed monitoring window without the signal is `not_observed`; runtime and timeout outcomes remain capability errors rather than no-alert evidence.
 
-### 5.3 Что не должен делать модуль
+### 5.3 What a module must not do
 
-Модуль не должен:
+The module must not:
 
-- напрямую управлять transport/UI;
-- хранить свой отдельный runtime вне BeeAgent;
-- напрямую подменять core orchestration;
-- тихо выполнять внешние действия в обход capability layer;
-- создавать hidden execution path.
+- directly control transport/UI;
+- maintain its own separate runtime outside BeeAgent;
+- directly replace core orchestration;
+- silently perform external actions bypassing capability layer;
+- create a hidden execution path.
 
 ## 6. Capability layer
 
-BeeAgent работает через capability layer для внешних действий.
+BeeAgent works via capability layer for external action.
 
-Примеры capabilities:
+Capability examples:
 
 - MCP tool call
 - n8n workflow trigger
 - API call
 - file/system operation
 
-### Правило
+### Rule
 
-- доменная логика не живёт в capability layer;
-- capability layer не хранит основной state long-running задачи;
-- ошибки, timeout, refusal должны быть явными и воспроизводимыми.
+- domain logic does not live in capability layer;
+- the capability layer does not store the primary state of a long-running task;
+- errors, timeout, refusal must be visible and reproducible.
 
-## 7. Транспорт / UI
+## 7. Transport / UI
 
-### v0 / текущий baseline
+### v0 / Current baseline
 
 - Telegram
 
-### позже
+### later
 
 - web/operator shell
-- другие transport/UI surfaces
+- Other transport/UI surfaces
 
-### Правило
+### Rule
 
 Transport/UI:
 
-- вызывает cases/module flows;
-- не читает storage напрямую;
-- не хранит бизнес-логику;
-- не подменяет orchestration.
+- invokes cases/module flows;
+- does not read storage directly;
+- Does not store business logic;
+- does not replace orchestration.
 
-## 8. Конфигурация
+## 8. Settings
 
-### Источник правды
+### Source of Truth
 
 `config/settings.yml`
 
-### Правила
+### Rules
 
-- required keys должны быть явно заданы;
-- новые обязательные ключи валидируются в `src/beeagent_module/core/settings.py`;
-- без hidden defaults для важных runtime paths.
+- required keys must be explicitly specified;
+- new required keys are validated in `src/beeagent_module/core/settings.py`;
+- without hidden defaults for important runtime paths.
 
-## 9. Артефакты
+## 9. Artifacts
 
-Все значимые результаты должны быть воспроизводимы через artifacts в `storage/`.
+All significant results must be reproducible through artifacts in `storage/`.
 
-Типовые артефакты:
+Typical artifacts:
 
 - `storage/runs/<run_id>/run.json`
 - `storage/runs/<run_id>/steps.json`
@@ -186,67 +186,67 @@ Transport/UI:
 - `storage/sessions/...`
 - `storage/telemetry/...`
 
-### Требования
+### Requirements
 
-Артефакты должны быть:
+The artifacts must be:
 
-- понятными;
-- согласованными с логами;
-- пригодными для ручной проверки;
-- безопасными по содержимому.
+- understandable;
+- consistent with logs;
+- suitable for manual inspection;
+- safe in their contents.
 
 ## 10. Authority model
 
-### Базовые режимы
+### Basic modes
 
 - `read-only`
 - `draft-only`
 - `execution-capable`
 
-### Правило
+### Rule
 
-По умолчанию всё должно быть `read-only` или `draft-only`.
+By default, everything must be `read-only` or `draft-only`.
 
-Если появляется execution-capable path, он должен быть:
+If execution-capable path appears, it must be:
 
-- явным;
-- ограниченным;
-- проверяемым;
-- видимым оператору;
-- не скрытым в prompt или случайном code path.
+- explicit;
+- bounded;
+- verifiable;
+- visible to the operator;
+- not hidden in prompt or accidental code path.
 
 ### Bitrix write-back v0 (ROP, Iteration 37)
 
-BeeAgent имеет disabled-by-default bounded Bitrix CRM write-back для ROP-событий.
+BeeAgent has disabled-by-default bounded Bitrix CRM write-back for ROP events.
 
-Поведение:
+Behavior:
 
-- каждое классифицированное событие (включая `irrelevant` и события с `should_rop_see=false`) попадает в delivery planning;
-- каждый processed event получает outcome `create_lead`, `attach_existing` или `deferred`;
-- новые eligible Lead создаются через `crm.item.add` с `entityTypeId=1` в configured customer `stageId` и с exact matched active responsible из `rop_recipient_routing.json`; optional `bitrix.writeback.user_id_fallback` (валидируемый положительный Bitrix user ID) назначается ответственным только при `responsible.status=not_found`; matched, ambiguous, `connector_degraded`, unresolved и not-attempted остаются deferred; optional config-driven `source_id` задаёт Lead `SOURCE_ID` (например `EMAIL` = «Входящее письмо»);
-- при `bitrix.writeback.email_attach: true` через официальный `crm.activity.add` прикрепляется email-активность (`TYPE_ID=4`) с bounded subject/body/отправителем; trusted exact thread target получает activity с existing target owner/responsible без reassignment CRM entity; `bitrix.writeback.email_completed` (boolean, валидируется fail-fast, по умолчанию `true`) задаёт, завершена ли создаваемая email-активность (`false` создаёт её незавершённой — заметнее в таймлайне);
+- Each classified event (including `irrelevant` and `should_rop_see=false`) falls into delivery planning;
+- Each processed event receives outcome `create_lead`, `attach_existing` or `deferred`;
+- new eligible Leads are created through `crm.item.add` with `entityTypeId=1` in the configured customer `stageId`, using the exact matched active responsible user from `rop_recipient_routing.json`; optional `bitrix.writeback.user_id_fallback` (a validated positive Bitrix user ID) is assigned as responsible only when `responsible.status=not_found`; matched, ambiguous, `connector_degraded`, unresolved and not-attempted remain deferred; optional config-driven `source_id` sets the Lead `SOURCE_ID` (for example, `EMAIL` = “Incoming email”);
+- when `bitrix.writeback.email_attach: true`, an email activity (`TYPE_ID=4`) with bounded subject/body/sender is attached through the official `crm.activity.add`; a trusted exact thread target receives the activity with the existing target owner/responsible user without reassigning the CRM entity; `bitrix.writeback.email_completed` (boolean, validated fail-fast, default `true`) determines whether the created email activity is completed (`false` creates it as incomplete, making it more visible in the timeline);
 - planned record snapshots whether email attachment is required. For `create_lead`, a created/recovered CRM entity is delivery-complete only after the required activity has a valid ID; pending, uncertain, exhausted, terminal or sender-unavailable attachment remains an explicit incomplete delivery state;
-- trusted exact thread target обрабатывается через idempotent attach-existing path без создания нового Lead; before every activity POST executor uses read-only `crm.activity.list` with the stable origin identity, including after timeout or malformed response, and persists the returned activity ID;
+- trusted exact thread target is processed through idempotent attach-existing path without creating a new Lead; before every activity POST executor uses read-only `crm.activity.list` with the stable origin identity, including after timeout or malformed response, and persists the returned activity ID;
 - exact sender email/phone may identify an existing Deal only through an exact matched Contact/Company and bounded read-only `crm.item.list` (`entityTypeId=2`) relation filter on `contactId`/`companyId`; identity evidence (sender email/phone, Contact/Company, related historical CRM relation) is never an executable target — an exact matched Lead/Deal, an exact Contact/Company and a related Deal stay identity/candidate evidence with `safe_to_use_as_target=false`, and title/subject similarity is never automatic Deal authority;
 - automatic existing-target attachment is allowed only for exact trusted thread evidence (Iteration 38): normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` resolve against canonical write-back state; all resolved exact referenced ancestors must agree on one trusted Lead/Deal; a confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is an authoritative thread root, a thread-resolved attachment (`target_provenance=thread_resolved`) propagates the target, legacy records without trusted provenance are never authority, and conflicting exact references fail closed to `ambiguous_thread_target` deferred with zero mutation;
 - an exact Contact/Company is identity evidence, not an executable target. Only after the bounded exact Lead search and related-Deal lookup complete without a target does `identity_only_no_target` with `suitable_target_search=completed_no_target` permit the normal configured `new_lead`/`irrelevant` create path. An independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review; run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment; existing target responsible is never reassigned;
-- email activity body preview является bounded readable plain text: `<!DOCTYPE ...>`, comments, script/style и HTML tags удаляются, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
-- `BitrixReadonlyClient` не содержит mutation methods; `crm.activity.list` остаётся read-only idempotency lookup, а `BitrixWriteClient` ограничен только `crm.item.add` и `crm.activity.add`;
-- при enabled write-back dedicated write credential обязан отличаться от read credential и по env name, и по normalized webhook URL;
-- unresolved `existing_deal`/`duplicate`, ambiguous/unsafe target и unresolved responsible fail closed в `deferred` без спекулятивного создания;
-- стабильная cross-run идентичность — `client_id + source_id + (message_id → x_email_id → event_id)`, `event_instance_id` не является remote business identity;
-- authoritative write-back intent durable сохраняется до mailbox checkpoint; ordering для poll: durable intent → checkpoint → external execution → original per-run projection refresh. Temporary reconciliation outage сохраняется как recoverable deferred state и повторно сверяется из retained run artifacts без mailbox re-ingestion.
+- the email activity body preview is bounded readable plain text: `<!DOCTYPE ...>`, comments, script/style and HTML tags are removed, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) become readable line breaks, plain-text line breaks are preserved, excessive whitespace is bounded, and the existing `rop.email_preview.body_chars_max` is preserved without a new parsing dependency;
+- `BitrixReadonlyClient` does not contain mutation methods; `crm.activity.list` remains read-only idempotency lookup, while `BitrixWriteClient` is limited only to `crm.item.add` and `crm.activity.add`;
+- when write-back is enabled, the dedicated write credential must differ from the read credential in both env name and normalized webhook URL;
+- unresolved `existing_deal`/`duplicate`, ambiguous/unsafe targets and unresolved responsible users fail closed to `deferred` without speculative creation;
+- the stable cross-run identity is `client_id + source_id + (message_id → x_email_id → event_id)`; `event_instance_id` is not a remote business identity;
+- authoritative write-back intent is durably persisted before the mailbox checkpoint; poll ordering is: durable intent → checkpoint → external execution → original per-run projection refresh. A temporary reconciliation outage is retained as recoverable deferred state and reconciled again from retained run artifacts without mailbox re-ingestion.
 
-Артефакты:
+Artifacts:
 
 - `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
 - `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed for each original affected run after execution/recovery.
 
 With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it can report success. A projection or post-persistence executor failure never erases canonical intent and remains recoverable through later run, poll or controlled manual execution.
 
-## 11. Стек
+## 11. Stack
 
-Текущий стек:
+Current stack:
 
 - Python 3.14+
 - `uv`
@@ -256,37 +256,37 @@ With write-back enabled, `rop run` must durably persist the reconciliation-backe
 - `langgraph`
 - `pytest`
 
-Дополнительные зависимости добавляются только по реальной необходимости.
+Additional dependencies are added only when actually needed.
 
-## 12. Запуск
+## 12. Launch
 
-### Основной запуск
+### Main launch
 
-`start.sh` запускает `uv sync` и затем `uv run python3 config/start.py`
+`start.sh` starts `uv sync` and then `uv run python3 config/start.py`
 
-### Правило
+### Rule
 
-- основной runtime запускается из репозитория `beeagent`
-- модули подключаются как локальные зависимости через `uv`
-- модуль не поднимает свой отдельный runtime по умолчанию
+- the primary runtime starts from the `beeagent` repository
+- modules are connected as local dependencies through `uv`
+- the module does not start its own separate runtime by default
 
-## 13. Критерии зрелости core
+## 13. Core maturity criteria
 
-BeeAgent считается развиваемым в правильную сторону, если:
+BeeAgent is developing in the right direction if:
 
-- transport слой тонкий;
-- core не захламляется клиентской логикой;
-- модули подключаются по стабильному контракту;
-- capability boundary явный;
-- artifacts и logs объясняют поведение;
-- AI не размывает deterministic path;
-- delivery нового модуля не требует переписывать core.
+- the transport layer is thin;
+- core is not cluttered with client-specific logic;
+- modules connect through a stable contract;
+- the capability boundary is explicit;
+- artifacts and logs explain the behavior;
+- AI does not blur the deterministic path;
+- delivering a new module does not require rewriting the core.
 
-## 14. Ближайшее направление
+## 14. Next direction
 
-Ближайшая цель:
+Immediate objective:
 
-- завершить module platform v0;
-- подключить `beeagent-rop` как первый реальный доменный модуль;
-- провести клиента через Discovery → MVP → Pilot;
-- не сломать универсальность core.
+- complete module platform v0;
+- connect `beeagent-rop` as the first real domain module;
+- guide the client through Discovery → MVP → Pilot;
+- do not break the universality of core.

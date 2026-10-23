@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 import logging
 import os
@@ -6,6 +7,7 @@ import ssl
 import subprocess
 import threading
 import time
+import tomllib
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
@@ -125,8 +127,11 @@ def investigation_lab(managed_lab, monkeypatch):
     raw = asdict(policy)
     for key in ("valid_from", "expires_at"):
         raw["transport"][key] = raw["transport"][key].isoformat()
+    source = tomllib.loads(Path("pyproject.toml").read_text())["tool"]["uv"]["sources"][
+        "beescan"
+    ]
     config["beescan"]["investigation"].update(
-        enabled=True, approval=raw, local_lab_enabled=True
+        enabled=True, approval=raw, local_lab_enabled="path" in source
     )
     for item in config["modules"]["registry"]:
         item["enabled"] = item["id"] == "beescan"
@@ -231,8 +236,17 @@ def test_real_investigation(investigation_lab, case):
         1 if case in {"ambiguous", "external", "framing"} else 3
     )
     if result["complete"]:
-        assert result["integration_status"] == "LABORATORY_ONLY"
-        assert result["dependency_revision"] == "editable:/home/bee/Pro/beescan"
+        local = lab[0]["beescan"]["investigation"]["local_lab_enabled"]
+        expected_status = "LABORATORY_ONLY" if local else "COMPLETE"
+        expected_revision = (
+            "editable:/home/bee/Pro/beescan"
+            if local
+            else json.loads(
+                importlib.metadata.distribution("beescan").read_text("direct_url.json")
+            )["vcs_info"]["commit_id"]
+        )
+        assert result["integration_status"] == expected_status
+        assert result["dependency_revision"] == expected_revision
         report = json.loads((directory / "report.json").read_text())
         assert report["status"] == expected.lower()
         sources = json.loads((directory / "investigation_sources.json").read_text())[
@@ -242,8 +256,8 @@ def test_real_investigation(investigation_lab, case):
         for source in sources:
             child = directory.parent.parent / source["run_id"] / "module-beescan"
             record = json.loads((child / "source.json").read_text())
-            assert record["integration_status"] == "LABORATORY_ONLY"
-            assert record["dependency_revision"] == "editable:/home/bee/Pro/beescan"
+            assert record["integration_status"] == expected_status
+            assert record["dependency_revision"] == expected_revision
             assert record["parent_run_id"] == result["run_id"]
             assert record["request_id"] == source["request_id"]
             assert record["response_id"] == source["response_id"]
@@ -424,7 +438,7 @@ def test_real_investigation_launcher(investigation_lab, case):
         case if case in {"patched", "ambiguous", "framing"} else "vulnerable"
     )
     if case == "refused":
-        config["beescan"]["investigation"]["local_lab_enabled"] = False
+        config["beescan"]["investigation"]["approval"]["mutation"] = False
     if case == "timeout":
         scenario["mode"] = "slow"
         config["beescan"]["investigation"]["approval"]["transport"][
@@ -541,7 +555,11 @@ def test_real_investigation_launcher(investigation_lab, case):
     assert json.loads((directory / "investigation_status.json").read_text()) == terminal
     if terminal["complete"]:
         assert terminal["status"] == ("MATCH" if case == "vulnerable" else "NO_MATCH")
-        assert terminal["integration_status"] == "LABORATORY_ONLY"
+        assert terminal["integration_status"] == (
+            "LABORATORY_ONLY"
+            if config["beescan"]["investigation"]["local_lab_enabled"]
+            else "COMPLETE"
+        )
         evidence = json.loads((directory / "egress_lifecycle.json").read_text())
         assert evidence["cleanup_verified"] and evidence["state"] == "closed"
         for key in ("helper_pid", "supervisor_pid"):

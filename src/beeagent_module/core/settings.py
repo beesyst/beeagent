@@ -4,6 +4,7 @@ from pathlib import Path
 
 import yaml
 
+from beeagent_module.core.ai_profiles import resolve_ai_profile, validate_ai_profiles
 from beeagent_module.core.authorization import SCOPE_WILDCARD
 from beeagent_module.core.document_extractors import validate_selected_extractor
 from beeagent_module.core.rop_sources import (
@@ -78,9 +79,6 @@ ROP_REQUIRED_KEYS = (
     ("rop", "dashboard", "default_period"),
     ("rop", "dashboard", "periods"),
     ("rop", "dashboard", "leaderboard", "plan_lead"),
-)
-_SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset(
-    {"openai_responses", "openai_compatible"}
 )
 _ROP_AI_ADJUDICATOR_ENV = "BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED"
 _ENV_TRUE_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on", "enabled"})
@@ -289,6 +287,7 @@ def validate_settings(
 
     from beeagent_module.integrations.beescan.policy import validate_beescan_settings
 
+    _validate_ai_profiles_settings(settings)
     validate_beescan_settings(settings, validate_contracts=not bootstrap)
 
     rop_enabled = _is_module_enabled(settings, "beeagent-rop")
@@ -297,7 +296,6 @@ def validate_settings(
         _validate_required_keys(settings, ROP_REQUIRED_KEYS)
 
     _validate_ai_prompts_settings(settings)
-    _validate_ai_profiles_settings(settings)
     if beedrill_enabled:
         _validate_beedrill_ai_assist_settings(settings)
     _validate_bitrix_settings(settings, require_writeback_credentials=rop_enabled)
@@ -720,37 +718,21 @@ def _validate_ai_prompts_settings(settings: dict) -> None:
 
 
 def _validate_ai_profiles_settings(settings: dict) -> None:
-    profiles_cfg = _get_nested_value(settings, ("ai", "profiles"))
-    if not isinstance(profiles_cfg, dict) or not profiles_cfg:
-        raise RuntimeError("Invalid or missing ai.profiles, expected non-empty mapping")
-
-    for profile_name, profile_cfg in profiles_cfg.items():
-        if not isinstance(profile_cfg, dict):
-            raise RuntimeError(
-                f"Invalid type for ai.profiles.{profile_name}, expected mapping"
-            )
-
-        if not isinstance(profile_cfg.get("enabled"), bool):
-            raise RuntimeError(
-                f"Invalid type for ai.profiles.{profile_name}.enabled, expected bool"
-            )
-
-        provider = profile_cfg.get("provider")
-        if not isinstance(provider, str) or not provider.strip():
-            raise RuntimeError(
-                f"Invalid or missing ai.profiles.{profile_name}.provider, expected non-empty string"
-            )
-        if provider not in _SUPPORTED_AI_PROVIDERS:
-            raise RuntimeError(
-                f"Unsupported ai.profiles.{profile_name}.provider '{provider}', expected one of: {sorted(_SUPPORTED_AI_PROVIDERS)}"
-            )
-
-        for key in ("api_key_env", "base_url", "model"):
-            value = profile_cfg.get(key)
-            if not isinstance(value, str):
-                raise RuntimeError(
-                    f"Invalid type for ai.profiles.{profile_name}.{key}, expected string"
-                )
+    validate_ai_profiles(settings)
+    for module, section in (
+        ("rop", "ai_assist"),
+        ("beedrill", "ai_assist"),
+        ("beescan", "investigation"),
+    ):
+        cfg = _get_nested_value(settings, (module, section))
+        if isinstance(cfg, dict) and "ai_profile" in cfg:
+            if cfg["ai_profile"] is None:
+                raise RuntimeError(f"Invalid {module}.{section}.ai_profile")
+            resolve_ai_profile(settings, cfg["ai_profile"])
+    rop_cfg = _get_nested_value(settings, ("rop", "ai_assist"))
+    if isinstance(rop_cfg, dict) and {"profile", "profiles"}.intersection(rop_cfg):
+        if "ai_profile" in rop_cfg or "default_profile" in settings["ai"]:
+            raise RuntimeError("Conflicting ROP AI selectors")
 
 
 def _require_one_enabled_ai_profile(
@@ -759,36 +741,8 @@ def _require_one_enabled_ai_profile(
     reason: str,
     require_api_key: bool,
 ) -> dict:
-    profiles_cfg = _get_nested_value(settings, ("ai", "profiles"))
-    if not isinstance(profiles_cfg, dict) or not profiles_cfg:
-        raise RuntimeError("Invalid or missing ai.profiles, expected non-empty mapping")
-
-    enabled_profiles = [
-        (profile_name, profile_cfg)
-        for profile_name, profile_cfg in profiles_cfg.items()
-        if isinstance(profile_cfg, dict) and profile_cfg.get("enabled") is True
-    ]
-    if len(enabled_profiles) != 1:
-        raise RuntimeError(
-            f"Exactly one ai.profiles.*.enabled must be true when {reason}"
-        )
-
-    profile_name, profile_cfg = enabled_profiles[0]
-    for key in ("provider", "api_key_env", "base_url", "model"):
-        value = profile_cfg.get(key)
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError(
-                f"Invalid or missing ai.profiles.{profile_name}.{key}, expected non-empty string when {reason}"
-            )
-
-    if require_api_key:
-        api_key_env = profile_cfg["api_key_env"]
-        if not os.getenv(api_key_env, "").strip():
-            raise RuntimeError(
-                f"Missing required env var '{api_key_env}' when {reason}"
-            )
-
-    return profile_cfg
+    _, profile = resolve_ai_profile(settings, require_api_key=require_api_key)
+    return profile
 
 
 def _validate_beedrill_ai_assist_settings(settings: dict) -> None:
@@ -808,6 +762,9 @@ def _validate_beedrill_ai_assist_settings(settings: dict) -> None:
         raise RuntimeError(
             "Invalid or missing beedrill.ai_assist.prompt_key, expected non-empty string"
         )
+
+    if cfg["enabled"]:
+        resolve_ai_profile(settings, cfg.get("ai_profile"))
 
 
 def _validate_rop_ai_assist_settings(settings: dict) -> None:
@@ -870,11 +827,13 @@ def _validate_rop_ai_assist_settings(settings: dict) -> None:
         and not adjudicator_state["yaml_enabled"]
     )
     if legacy_ai_assist_requested:
-        _require_one_enabled_ai_profile(
-            settings,
-            reason="rop.ai_assist.enabled=true",
-            require_api_key=not dry_run,
+        from beeagent_module.core.rop_ai_assist import (
+            resolve_ai_profile as resolve_rop_profile,
         )
+
+        profile = resolve_rop_profile(ai_cfg, settings["ai"])
+        if not dry_run and not os.getenv(profile["api_key_env"], "").strip():
+            raise RuntimeError(f"Missing required env var '{profile['api_key_env']}'")
 
 
 _ALLOWED_DASHBOARD_PERIODS: frozenset[str] = frozenset(
@@ -1375,15 +1334,11 @@ def _validate_rop_ai_adjudicator_settings(settings: dict) -> None:
         )
 
     if adj_cfg.get("enabled"):
-        profile_cfg = _require_one_enabled_ai_profile(
+        resolve_ai_profile(
             settings,
-            reason="rop.ai_assist.adjudicator.enabled=true",
+            ai_assist_cfg.get("ai_profile"),
             require_api_key=True,
         )
-        if profile_cfg.get("provider") not in _SUPPORTED_AI_PROVIDERS:
-            raise RuntimeError(
-                "Invalid ai.profiles config for rop.ai_assist.adjudicator.enabled=true"
-            )
 
 
 def _get_nested_value(settings: dict, key_path: tuple[str, ...]):

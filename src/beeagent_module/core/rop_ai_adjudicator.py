@@ -10,6 +10,7 @@ from urllib import request
 
 import yaml
 
+from beeagent_module.core.ai_profiles import resolve_ai_profile
 from beeagent_module.core.ai_transport import call_structured_ai
 from beeagent_module.core.paths import get_project_root
 from beeagent_module.core.rop_reason_contract import (
@@ -375,21 +376,6 @@ def _resolve_ai_prompts_cfg(settings: dict) -> dict[str, Any]:
     if not isinstance(prompts_cfg, dict):
         raise RuntimeError("Invalid ai.prompts config")
     return prompts_cfg
-
-
-def _resolve_active_ai_profile(settings: dict) -> tuple[str, dict[str, Any]]:
-    profiles = settings.get("ai", {}).get("profiles", {})
-    if not isinstance(profiles, dict):
-        raise RuntimeError("Invalid ai.profiles config")
-
-    enabled_profiles = [
-        (profile_name, profile_cfg)
-        for profile_name, profile_cfg in profiles.items()
-        if isinstance(profile_cfg, dict) and profile_cfg.get("enabled") is True
-    ]
-    if len(enabled_profiles) != 1:
-        raise RuntimeError("Exactly one ai.profiles.*.enabled must be true")
-    return enabled_profiles[0]
 
 
 def _sanitize_prompt_text(value: Any, max_chars: int) -> str:
@@ -1982,7 +1968,9 @@ def run_adjudicator_batch(
         logger.info("adjudicator disabled")
         return [], [], [], {"adjudicator_enabled": 0}
 
-    _, profile_cfg = _resolve_active_ai_profile(settings)
+    _, profile_cfg = resolve_ai_profile(
+        settings, settings["rop"]["ai_assist"].get("ai_profile")
+    )
     prompts_cfg = _resolve_ai_prompts_cfg(settings)
     email_preview = settings.get("rop", {}).get("email_preview", {})
     body_chars_max = int(email_preview.get("body_chars_max", 1600))

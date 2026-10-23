@@ -1,38 +1,38 @@
 # CONTRIBUTING
 
-Этот репозиторий использует Conventional Commits, чтобы release-please автоматически:
+This repository uses Conventional Commits so that release-please automatically:
 
-- повышал версию (SemVer)
-- генерировал Release Notes / CHANGELOG
-- создавал теги вида vX.Y.Z
+- increments the version (SemVer)
+- generates Release Notes / CHANGELOG
+- creates tags in the form vX.Y.Z
 
-Важно: версия повышается не на каждый коммит, а при выпуске релиза (через Release PR от release-please).
+Important: the version increases when a release is published (through a Release PR from release-please), rather than on every commit.
 
-Простой и дисциплинированный workflow:
+Simple and disciplined workflow:
 
 `ROADMAP → Issue → branch → code → tests → artifacts → PR → merge`
 
-Цель:
+Objective:
 
-- маленькие и понятные изменения;
-- воспроизводимые проверки;
-- минимальная бюрократия;
-- чистая история изменений;
-- безопасная работа с core platform.
+- Small and understandable changes;
+- Reproducible checks;
+- Minimum bureaucracy;
+- a clean change history;
+- Safe work with core platform.
 
-## Главные правила
+## Main rules
 
-- `main` — единственная стабильная ветка;
-- любая работа делается в отдельной ветке;
-- любые изменения закрываются через PR;
-- не смешивать несколько разных задач в одном PR;
-- не тащить клиентскую бизнес-логику в `beeagent` core;
-- если меняется runtime/config/module loading/capability boundary — это как минимум `runtime-risk`;
-- если меняются secrets, external connectors, file parsing, dependency surface или authority paths — это `security-sensitive`.
+- `main` is the only stable branch;
+- Any work is done in a separate branch;
+- all changes go through a PR;
+- Do not mix several different tasks in one PR;
+- keep client-specific business logic out of the `beeagent` core;
+- If runtime/config/module loading/capability boundary changes, it's at least `runtime-risk`;
+- changes to secrets, external connectors, file parsing, the dependency surface or authority paths are `security-sensitive`.
 
-## Что относится к beeagent
+## What belongs in beeagent
 
-В этом репозитории живёт только платформенный слой:
+This repository contains only the platform layer:
 
 - orchestration core;
 - module contract;
@@ -44,53 +44,53 @@
 - logging/observability;
 - config/settings validation.
 
-Клиентская доменная логика сюда не тащится.
+Client-specific domain logic does not belong here.
 
-## Ветки
+## Branches
 
-Правило: `main` — единственная стабильная/релизная ветка. Любые изменения делаем в отдельной ветке → PR → merge в `main` (желательно squash merge).
+Rule: `main` is the only stable/release branch. Make all changes in a separate branch → PR → merge into `main` (preferably squash merge).
 
-Именование веток (ветка = одна задача):
+Branch naming (one branch = one task):
 
-- `feat/<short-title>` — новая функциональность
-- `fix/<short-title>` — исправление бага
-- `docs/<short-title>` — документация
-- `chore/<short-title>` — обслуживание/инфра/настройки
-- `test/<short-title>` — тесты
+- `feat/<short-title>` — new functionality
+- `fix/<short-title>` — bug fix
+- `docs/<short-title>` — Documentation
+- `chore/<short-title>` — maintenance/infrastructure/configuration
+- `test/<short-title>` — Tests
 
-Если есть номер Issue, добавляй его:
+If an Issue number is available, include it:
 
 - `feat/12-module-registry-v0`
 - `fix/18-artifact-path-validation`
 
-Примеры команд:
+Examples of commands:
 
-- создать ветку: `git switch -c feat/config-schema`
-- отправить в origin: `git push -u origin HEAD`
+- Create a branch: `git switch -c feat/config-schema`
+- Send to origin: `git push -u origin HEAD`
 
-### Команды
+### Commands
 
-| Шаг | Цель (что делаем)                                        | Команда(ы)                                     | Что ты увидишь / как понять                                                                                                      |
-| --: | -------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-|   0 | Проверить, что рабочая папка чистая и ты на нужной ветке | `git status`                                   | `On branch main` (или другая) + `working tree clean` = всё ок. Если есть “Changes not staged…” — есть незакоммиченные изменения. |
-|   1 | Посмотреть локальные ветки и текущую ветку               | `git branch`                                   | Текущая ветка помечена `*` (например `* main`).                                                                                  |
-|   2 | Создать новую ветку под задачу и переключиться на неё    | `git switch -c docs/contributing`              | Git переключит тебя на новую ветку. Проверка: `git status` покажет `On branch docs/contributing`.                                |
-|   3 | Добавить нужный файл(ы) в индекс (staging)               | `git add docs/CONTRIBUTING.md`                 | После этого в `git status` файл будет в `Changes to be committed`.                                                               |
-|   4 | Создать коммит с правильным сообщением                   | `git commit -m "docs: add contributing guide"` | Git создаст коммит и покажет, сколько файлов изменено.                                                                           |
-|   5 | Запушить ветку на GitHub и “привязать” upstream          | `git push -u origin docs/contributing`         | Ветка появится на GitHub. `-u` позволит дальше пушить просто `git push`.                                                         |
-|   6 | Открыть PR на GitHub и влить в `main`                    | _(в браузере)_ PR → **Squash and merge**       | После мержа изменения окажутся в `main`. Обычно ветку можно удалить кнопкой “Delete branch”.                                     |
-|   7 | Обновить локальный `main` после мержа PR                 | `git switch main` + `git pull`                 | Локальный `main` подтянет изменения, которые ты влил через PR.                                                                   |
-|   8 | Посмотреть удалённые ветки (origin)                      | `git branch -r`                                | Список веток на сервере, например `origin/main`, `origin/docs/contributing`.                                                     |
-|   9 | Посмотреть все ветки (локальные + удалённые)             | `git branch -a`                                | Полный список: локальные + `remotes/origin/...`.                                                                                 |
-|  10 | (Опционально) Удалить локальную ветку после мержа        | `git branch -d docs/contributing`              | Удалит ветку локально, если она уже смержена. Если не даёт — значит не смержена.                                                 |
+| Step | Purpose (what we do)                                                        | Command(s)                                     | Expected output / interpretation                                                                                              |
+| ---: | --------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+|    0 | Verify that the working directory is clean and the correct branch is active | `git status`                                   | `On branch main` (or another branch) + `working tree clean` = all clear. “Changes not staged…” indicates uncommitted changes. |
+|    1 | View local branches and the current branch                                  | `git branch`                                   | The current branch is marked with `*` (for example, `* main`).                                                                |
+|    2 | Create and switch to a new task branch                                      | `git switch -c docs/contributing`              | Git switches to the new branch. Verify: `git status` shows `On branch docs/contributing`.                                     |
+|    3 | Stage the required file(s)                                                  | `git add docs/CONTRIBUTING.md`                 | `git status` lists the file under `Changes to be committed`.                                                                  |
+|    4 | Create a commit with the correct message                                    | `git commit -m "docs: add contributing guide"` | Git creates a commit and reports how many files changed.                                                                      |
+|    5 | Push the branch to GitHub and set upstream                                  | `git push -u origin docs/contributing`         | The branch appears on GitHub. `-u` allows subsequent pushes with just `git push`.                                             |
+|    6 | Open a PR on GitHub and merge into `main`                                   | _(in the browser)_ PR → **Squash and merge**   | After merging, the changes are in `main`. The branch can usually be deleted using “Delete branch”.                            |
+|    7 | Update local `main` after merging the PR                                    | `git switch main` + `git pull`                 | Local `main` receives the changes merged through the PR.                                                                      |
+|    8 | View remote branches (origin)                                               | `git branch -r`                                | Lists server branches, such as `origin/main`, `origin/docs/contributing`.                                                     |
+|    9 | View all branches (local + remote)                                          | `git branch -a`                                | Full list: local branches + `remotes/origin/...`.                                                                             |
+|   10 | (Optional) Delete the local branch after merging                            | `git branch -d docs/contributing`              | Deletes the local branch if already merged. Refusal means it has not been merged.                                             |
 
-Мини-цепочка на каждую задачу: status → checkout -b → add → commit → push → PR → checkout main → pull
+Mini-chain for each task: status → checkout -b → add → commit → push → PR → checkout main → pull
 
-## Процесс работы
+## Workflow
 
-### Tech Lead (мержит в main)
+### Tech Lead (merges into main)
 
-**Старт и создание новой ветки**
+**Start and creation of a new branch**
 
 ```
 git switch main
@@ -98,7 +98,7 @@ git pull --ff-only
 git switch -c feat/8-iteration-0-frame_and_launch
 ```
 
-**Коммит + пуш**
+**Commit + push**
 
 ```
 git add .
@@ -106,44 +106,44 @@ git commit -m "feat: iteration 0 fame and launch"
 git push -u origin HEAD
 ```
 
-**PR и для проверок соразработчика**
+**PR and collaborator reviews**
 
-1. Перейти в PR на GitHub, найти `feat/8-iteration-0-frame_and_launch` и нажать `Compare & pull request`.
-2. В `Add a description` внести `Fixes #8` (номер закрывающего ишью) и нажать `Create pull request`.
-3. `Squash and merge` → `Confirm squash and merge` в `main`.
+1. Go to PR on GitHub, find `feat/8-iteration-0-frame_and_launch` and press `Compare & pull request`.
+2. Enter `Fixes #8` (the Issue number to close) in `Add a description` and click `Create pull request`.
+3. `Squash and merge` → `Confirm squash and merge` into `main`.
 
-Правило:
+Rule:
 
-- `Squash and merge` выполняет только Tech Lead после проверки PR;
-- соразработчик PR не мержит самостоятельно.
+- only the Tech Lead performs `Squash and merge` after reviewing the PR;
+- collaborators do not merge PRs independently.
 
 4. `Delete branch`
-5. После мержа обновить локальный `main`:
+5. After merging, update local `main`:
 
 ```
 git switch main
 git pull --ff-only
 ```
 
-6. Удалить локальную ветку:
+6. Remove local branch:
 
 ```
 git branch -d feat/8-iteration-0-frame_and_launch
 ```
 
-или удалить ветку на origin:
+or remove the branch on origin:
 
 ```
 git push origin --delete feat/8-iteration-0-frame_and_launch
 ```
 
-и почистить локальные ссылки
+and prune local references
 
 ```
 git fetch -p
 ```
 
-**После обновления зависимости `beeui` в `beeagent`**
+**After `beeui` update in `beeagent`**
 
 ```
 uv lock --upgrade-package beeui
@@ -157,7 +157,7 @@ git push
 
 ### Production Deploy
 
-Каждый deploy создаёт новый release:
+Each deploy creates a new release:
 
 ```text
 /opt/beeagent/
@@ -176,7 +176,7 @@ git push
         └── beeagent-rop/
 ```
 
-Постоянные production-данные хранятся отдельно от release:
+Permanent production- data stored separately from release:
 
 ```text
 /var/lib/beeagent/
@@ -185,40 +185,40 @@ git push
 └── storage/
 ```
 
-`systemd` и VS Code используют стабильные пути:
+`systemd` and VS Code use stable paths:
 
 ```text
 /opt/beeagent/current/beeagent
 /opt/beeagent/current/beeagent-rop
 ```
 
-Поэтому при переключении release конфигурацию VS Code и systemd менять не нужно.
+Therefore, the release configuration of VS Code and systemd need not be changed.
 
-#### Первичная настройка persistent state
+#### Initial persistent state setup
 
-Выполняется **один раз на сервере**.
+Implemented **once on server**.
 
-Проверить:
+Check:
 
 ```bash
 sudo test -f /var/lib/beeagent/shared/.env && echo "shared env: OK" || echo "shared env: MISSING"
 sudo test -d /var/lib/beeagent/storage && echo "storage: OK" || echo "storage: MISSING"
 ```
 
-Создать persistent-каталоги:
+Create persistent directories:
 
 ```bash
 sudo install -d -o bee -g beeagent -m 2770 /var/lib/beeagent/shared
 sudo install -d -o beeagent -g beeagent -m 2770 /var/lib/beeagent/storage
 ```
 
-Если это **уже работающий сервер** и `/var/lib/beeagent/shared/.env` ещё отсутствует, скопировать текущий production `.env`:
+If this is an **existing server** and `/var/lib/beeagent/shared/.env` does not exist yet, copy the current production `.env`:
 
 ```bash
 sudo install -o bee -g beeagent -m 0660 /opt/beeagent/current/beeagent/.env /var/lib/beeagent/shared/.env
 ```
 
-После этого один раз перевести текущий active release на persistent `.env`:
+Then migrate the current active release to the persistent `.env` once:
 
 ```bash
 sudo systemctl stop beeagent-web
@@ -228,48 +228,48 @@ sudo ln -s /var/lib/beeagent/shared/.env .env
 sudo systemctl start beeagent-web
 ```
 
-Проверить:
+Check:
 
 ```bash
 readlink -f /opt/beeagent/current/beeagent/.env
 ```
 
-Ожидается:
+Expected:
 
 ```text
 /var/lib/beeagent/shared/.env
 ```
 
-Проверить возможность atomic write от пользователя `beeagent`:
+Verify atomic write access as the `beeagent` user:
 
 ```bash
 sudo -u beeagent -H sh -c 'TEST=/var/lib/beeagent/shared/.write-test-$$; : > "$TEST" || exit 1; rm -f "$TEST"; echo "shared env writable: OK"'
 ```
 
-Проверить сервис:
+Check service:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://rop.welding.kz/health
 ```
 
-Если это **новый сервер без `/opt/beeagent/current`**, создать пустой persistent `.env`:
+If this is a **new server without `/opt/beeagent/current`**, create an empty persistent `.env`:
 
 ```bash
 sudo install -o bee -g beeagent -m 0660 /dev/null /var/lib/beeagent/shared/.env
 ```
 
-Production-specific значения затем настраиваются в:
+Production-specific values are then configured in:
 
 ```text
 /var/lib/beeagent/shared/.env
 ```
 
-После первичной настройки `.env` между releases больше не копируется.
+After initial setup, `.env` is no longer copied between releases.
 
-#### Создание нового release
+#### Creation of a new release
 
-На VPS:
+On VPS:
 
 ```bash
 cd /opt/beeagent/releases
@@ -278,52 +278,52 @@ REL=20260930-016
 sudo install -d -o bee -g beeagent -m 0750 "$REL"
 ```
 
-Использовать новый уникальный `REL` для каждого deploy.
+Use a new unique `REL` for every deployment.
 
-#### Получить обновленный BeeAgent из GitHub
+#### Get an updated BeeAgent from GitHub
 
 ```bash
 git clone git@github-beeagent-prod:beesyst/beeagent.git "$REL/beeagent"
 grep '^version = ' "$REL/beeagent/pyproject.toml"
 ```
 
-#### Получить обновленный BeeSDK из GitHub
+#### Get an updated BeeSDK from GitHub
 
 ```bash
 git clone https://github.com/beesyst/beesdk.git "$REL/beesdk"
 grep '^version = ' "$REL/beesdk/pyproject.toml"
 ```
 
-#### Получить обновленный beeagent-rop из GitHub
+#### Get an updated beeagent-rop from GitHub
 
 ```bash
 git clone git@github-beeagent-rop-prod:beesyst/beeagent-rop.git "$REL/beeagent-rop"
 grep '^version = ' "$REL/beeagent-rop/pyproject.toml"
 ```
 
-#### Подключить persistent state
+#### Connect persistent state
 
-Перейти в новый BeeAgent:
+Enter the new BeeAgent directory:
 
 ```bash
 cd "/opt/beeagent/releases/$REL/beeagent"
 ```
 
-Подключить production `.env`:
+Connect production `.env`:
 
 ```bash
 rm -f .env
 ln -s /var/lib/beeagent/shared/.env .env
 ```
 
-Подключить persistent storage:
+Connect persistent storage:
 
 ```bash
 rm -rf storage
 ln -s /var/lib/beeagent/storage storage
 ```
 
-#### Подготовить logs
+#### Prepare logs
 
 ```bash
 sudo chown -R beeagent:beeagent logs
@@ -331,44 +331,44 @@ sudo chmod 2770 logs
 sudo install -o beeagent -g beeagent -m 0660 /dev/null logs/app.log
 ```
 
-#### Подготовить environment
+#### Prepare environment
 
 ```bash
 ./start.sh
 uv run --frozen --no-sync pytest -q
 ```
 
-Если тесты не проходят — release не активировать.
+If tests fail, do not activate the release.
 
-#### Активировать новый release
+#### Activate new release
 
 ```bash
 sudo ln -sfn "/opt/beeagent/releases/$REL" /opt/beeagent/current
 readlink -f /opt/beeagent/current
 ```
 
-#### Перезапустить BeeAgent
+#### Restart BeeAgent
 
 ```bash
 sudo systemctl restart beeagent-web
 sudo systemctl status beeagent-web --no-pager
 ```
 
-#### Проверить
+#### Verify
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://rop.welding.kz/health
 ```
 
-Проверить persistent state через активный release:
+Check persistent state with active release:
 
 ```bash
 cd /opt/beeagent/current/beeagent
 test "$(readlink -f .env)" = "/var/lib/beeagent/shared/.env" && test "$(readlink -f storage)" = "/var/lib/beeagent/storage" && echo "persistent state: OK" || exit 1
 ```
 
-В VS Code Remote SSH после переключения release рекомендуется:
+In VS Code Remote SSH, after switching releases, the following is recommended:
 
 ```text
 Developer: Reload Window
@@ -376,67 +376,67 @@ Developer: Reload Window
 
 #### Rollback
 
-Посмотреть текущий и доступные releases:
+Review current and accessible releases:
 
 ```bash
 readlink -f /opt/beeagent/current
 ls -lah /opt/beeagent/releases
 ```
 
-Перед rollback убедиться, что предыдущий release использует persistent `.env`:
+Before rollback, verify that the previous release uses the persistent `.env`:
 
 ```bash
 readlink -f /opt/beeagent/releases/<previous-release>/beeagent/.env
 ```
 
-Ожидается:
+Expected:
 
 ```text
 /var/lib/beeagent/shared/.env
 ```
 
-Переключить `current`:
+Switch `current`:
 
 ```bash
 sudo ln -sfn /opt/beeagent/releases/<previous-release> /opt/beeagent/current
 ```
 
-Перезапустить:
+Restart:
 
 ```bash
 sudo systemctl restart beeagent-web
 ```
 
-Проверить:
+Check:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://rop.welding.kz/health
 ```
 
-Rollback меняет только release. Persistent `.env` и `storage` остаются теми же.
+Rollback changes only the release. The persistent `.env` and `storage` remain the same.
 
-#### Очистка старых releases
+#### Clean up old releases
 
-Проверить текущий release:
+Check current release:
 
 ```bash
 readlink -f /opt/beeagent/current
 ```
 
-Посмотреть releases:
+See releases:
 
 ```bash
 ls -lah /opt/beeagent/releases
 ```
 
-Удалять только старые releases, которые точно не являются `current` и больше не нужны для rollback:
+Delete only old releases that are definitely not `current` and are no longer needed for rollback:
 
 ```bash
 sudo rm -rf /opt/beeagent/releases/20260904-013
 ```
 
-Проверить:
+Check:
 
 ```bash
 ls -lah /opt/beeagent/releases
@@ -444,64 +444,64 @@ ls -lah /opt/beeagent/releases
 
 #### ROP Web projection
 
-Обычный deploy **не требует** rebuild ROP Web projection.
+A normal deployment **does not require** rebuilding the ROP Web projection.
 
-ROP runtime state и Web projection находятся в persistent storage:
+ROP runtime state and the Web projection are in persistent storage:
 
 ```text
 /var/lib/beeagent/storage
 ```
 
-и сохраняются между releases.
+and persist across releases.
 
-Если после deploy `/rop` не открывается корректно, сначала открыть страницу без старого `run_id`, например:
+If `/rop` does not open correctly after deployment, first open the page without the old `run_id`, for example:
 
 ```text
 /rop?period=7d
 ```
 
-Если проблема остаётся, выполнить обычное обновление projection:
+If the problem persists, perform a normal projection refresh:
 
 ```bash
 cd /opt/beeagent/current/beeagent
 ./start.sh rop dashboard --period 7d
 ```
 
-Если команда явно сообщает:
+If the command explicitly reports:
 
 ```text
 ROP Web projection refresh skipped: explicit dashboard regeneration is required
 ```
 
-только тогда выполнить полный rebuild:
+only then perform a full rebuild:
 
 ```bash
 ./start.sh rop dashboard --period 7d --rebuild-web-projection
 ```
 
-Full rebuild может быть долгим и не является частью обычного deploy.
+A full rebuild can take a long time and is not part of normal deployment.
 
-Если rebuild сообщает:
+If the rebuild reports:
 
 ```text
 history preparation complete runs=0 anchors=0
 ```
 
-проверить persistent storage:
+check persistent storage:
 
 ```bash
 readlink -f storage
 ```
 
-Ожидается:
+Expected:
 
 ```text
 /var/lib/beeagent/storage
 ```
 
-### Проверка PR соразработчика
+### Reviewing a collaborator’s PR
 
-**Создать отдельную папку под PR, выполняется из основной папке проекта**
+**Create a separate directory for the PR; run from the main project directory**
 
 ```
 git fetch origin
@@ -512,33 +512,33 @@ git status
 git branch
 ```
 
-**Посмотреть, какие файлы изменил соразработчик относительно origin/main**
+**See which files the collaborator changed relative to origin/main**
 
 ```
 git fetch origin
 git diff --name-only origin/main...HEAD
 ```
 
-или посмотреть, что соразработчик изменил в конкретном файле
+or view the collaborator’s changes in a specific file
 
 ```
 git diff origin/main...HEAD -- config/start.py
 ```
 
-**Делай `git restore` только для тех файлов, которые не относятся к текущей задаче**
+**Use `git restore` only for files unrelated to the current task**
 
 ```
 git restore uv.lock docs/AUTH_LOGS.md
 git status
 ```
 
-**Наложить ветку помощника на свежий `origin/main`, но сначала убедись, что рабочее дерево чистое**
+**Rebase the collaborator’s branch onto the latest `origin/main`, first ensuring the working tree is clean**
 
 ```
 git status
 ```
 
-Если есть `Changes not staged / Changes to be committed`, то сделай коммит и `rebase`:
+If `Changes not staged / Changes to be committed` appears, create a commit and run `rebase`:
 
 ```
 git add .
@@ -547,34 +547,34 @@ git fetch origin
 git rebase origin/main
 ```
 
-Если нет изменений после `git status`, то:
+If `git status` shows no changes:
 
 ```
 git fetch origin
 git rebase origin/main
 ```
 
-**Если нет ошибок**
+**If there are no errors**
 
 ```
 uv run pytest -q
 ```
 
-**Запушить изменения в ветку соразработчика**
+**Push changes to the collaborator’s branch**
 
 ```
 git push --force-with-lease origin HEAD:feat/137-local_env_and_auth_diagnostics
 ```
 
-**Если всё ок**
+**If everything is correct**
 
-- обновить описание PR;
-- ппроверить вкладку Files changed;
-- выполнить Squash and merge;
-- удалить ветку на GitHub;
-- обновить локальный main.
+- Update PR description;
+- check the Files changed tab;
+- perform Squash and merge;
+- Remove the branch on GitHub;
+- update local main.
 
-**Из основной папки репо удалить worktree, ветку и обновить main**
+**From the main repository directory, remove the worktree and branch, then update main**
 
 ```
 cd ../beeagent
@@ -584,9 +584,9 @@ git switch main
 git pull --ff-only
 ```
 
-### Соразработчик (делает PR)
+### Collaborator (creates PR)
 
-**Перед началом задачи**
+**Front of task**
 
 ```
 git switch main
@@ -594,7 +594,7 @@ git pull --ff-only
 git switch -c feat/<short-title>
 ```
 
-**Коммит + пуш + PR**
+**Commit + push + PR**
 
 ```
 git add .
@@ -602,14 +602,14 @@ git commit -m "feat: <short>"
 git push -u origin feat/<short-title>
 ```
 
-В PR:
+In PR:
 
-- укажи Refs #<issue> пока PR на проверке;
-- не выполняй merge самостоятельно;
-- не нажимай Squash and merge;
-- после замечаний Tech Lead допушивай изменения в ту же ветку PR.
+- use Refs #<issue> while the PR is under review;
+- Do not perform merge yourself;
+- Do not press Squash and merge;
+- after Tech Lead feedback, push updates to the same PR branch.
 
-**Если пока соразработчик работает, в main вмержили новые изменения**
+**If new changes are merged into main while the collaborator is working**
 
 ```
 git fetch origin
@@ -617,48 +617,48 @@ git rebase origin/main
 git push --force-with-lease
 ```
 
-**После мержа PR**
+**After merging the PR**
 
 ```
 git switch main
 git pull --ff-only
 ```
 
-## Issues и Kanban
+## Issues and Kanban
 
-Любая работа и любая идея оформляется как Issue (не как отдельная карточка в Project). Project (Kanban) показывает статус Issues.
+Record every task and idea as an Issue (rather than a separate Project card). The Project (Kanban) shows Issue status.
 
-Правило:
+Rule:
 
-1. Создай Issue (таск = Issue).
-2. Создай ветку под Issue.
-3. Сделай PR в main.
-4. В описании PR используй:
+1. Create an Issue (task = Issue).
+2. Create a branch for the Issue.
+3. Open a PR into main.
+4. In the PR description, use:
 
-- `Refs #123` — если PR еще в работе или на ревью;
-- `Fixes #123` / `Closes #123` — когда PR подтвержден к merge.
+- `Refs #123` — while the PR is in progress or under review;
+- `Fixes #123` / `Closes #123` — when the PR is approved for merge.
 
-Важно:
+It's important:
 
-- `Fixes/Closes` в PR **не закрывает** Issue в момент создания PR;
-- Issue закроется **только после merge PR в `main`**;
-- по умолчанию для PR соразработчика лучше ставить `Refs #123`, а перед merge Tech Lead меняет на `Closes #123`.
+- `Fixes/Closes` in a PR **does not close** the Issue when the PR is created;
+- the Issue closes **only after the PR is merged into `main`**;
+- for a collaborator’s PR, prefer `Refs #123` by default; the Tech Lead changes it to `Closes #123` before merging.
 
-Лейблы:
+Labels:
 
 - prio:high/medium/low
-- (опционально) bug/enhancement/doc/idea
+- bug/enhancement/doc/idea (optimal)
 
-Используй:
+Use:
 
-- `Feature: <short title>` — новая функциональность
-- `Fix: <short title>` — исправление бага
-- `Bug: <short title>` — баг-репорт (ещё не факт что фиксишь прямо сейчас)
-- `Docs: <short title>` — документация
-- `Chore: <short title>` — обслуживание/инфра/рефактор без фич
-- `Idea: <short title>` — идея/набросок (потом можно превратить в Feature/Fix)
+- `Feature: <short title>` — new functionality
+- `Fix: <short title>` — bug fix
+- `Bug: <short title>` — bug report (does not necessarily imply an immediate fix)
+- `Docs: <short title>` — Documentation
+- `Chore: <short title>` — maintenance/infrastructure/refactoring without features
+- `Idea: <short title>` — idea/sketch (can later become a Feature/Fix)
 
-**Примеры:**
+**Examples:**
 
 - `Feature: add risk profiles (conservative/normal/aggressive)`
 - `Fix: prevent crash on empty candles`
@@ -667,31 +667,31 @@ git pull --ff-only
 - `Chore: add pre-commit formatting`
 - `Idea: capital allocation per strategy`
 
-## Коммиты
+## Commits
 
-Формат: <type>(<scope>)!: <кратко что сделано>
+Format: <type>(<scope>)!: <brief description of the change>
 
-scope — опционально (например: api, parser, docs, ci). ! — признак ломающего изменения (MAJOR).
+scope is optional (for example: api, parser, docs, ci). ! indicates a breaking change (MAJOR).
 
-Таблица типов (KISS):
+Type table (KISS):
 
-| Тип       | Когда использовать                          | Влияние на версию |
-| --------- | ------------------------------------------- | ----------------- |
-| feat:     | новая функциональность                      | +MINOR            |
-| fix:      | исправление бага                            | +PATCH            |
-| docs:     | изменения только в документации             | нет               |
-| refactor: | рефакторинг без изменения поведения         | нет               |
-| test:     | тесты                                       | нет               |
-| chore:    | обслуживание (deps, конфиги, мелкие правки) | нет               |
-| ci:       | GitHub Actions / CI/CD                      | нет               |
-| build:    | сборка/пакеты/докер/релиз-инструменты       | нет               |
+| Type      | When to use                                      | Version impact |
+| --------- | ------------------------------------------------ | -------------- |
+| feat:     | new functionality                                | +MINOR         |
+| fix:      | bug fix                                          | +PATCH         |
+| docs:     | documentation-only changes                       | none           |
+| refactor: | refactoring without behavior changes             | none           |
+| test:     | tests                                            | none           |
+| chore:    | maintenance (deps, configuration, minor changes) | none           |
+| ci:       | GitHub Actions / CI/CD                           | none           |
+| build:    | build/packages/Docker/release tools              | none           |
 
-MAJOR (ломающие изменения):
+MAJOR (breaking changes):
 
-- feat!: ... или fix!: ...
-- или футер в коммите: BREAKING CHANGE: ...
+- feat!: ... or fix!: ...
+- or a commit footer: BREAKING CHANGE: ...
 
-Примеры:
+Examples:
 
 - `feat(core): add module contract v0`
 - `feat(registry): add local module loading`
@@ -699,12 +699,12 @@ MAJOR (ломающие изменения):
 - `docs(roadmap): update stage 3 module platform`
 - `test(core): add artifact api smoke coverage`
 
-MINOR: feat(api): добавить эндпоинт поиска
+MINOR: feat(api): add search endpoint
 
-PATCH: fix(parser): не падать на пустом вводе
+PATCH: fix(parser): handle empty input without crashing
 
-NO VERSION: docs: обновить README chore: добавить базовые шаблоны refactor(parser): упростить разбор без изменения поведения
+NO VERSION: docs: update README chore: add basic templates refactor(parser): simplify parsing without changing behavior
 
-MAJOR (breaking): feat!: сменить формат конфигурации
+MAJOR (breaking): feat!: change configuration format
 
-BREAKING CHANGE: ключи settings.yml переименованы; обновите конфиг
+BREAKING CHANGE: settings.yml keys renamed; update the configuration

@@ -220,16 +220,16 @@ Return one consolidated report containing:
 Describe every correction in this format:
 
 ```text
-Файл:
+File:
 `path/to/file`
 
-Было:
+Before:
 <previous incorrect behavior>
 
-Стало:
+After:
 <implemented required behavior>
 
-Почему:
+Why:
 <current-Issue requirement and verification evidence>
 ```
 
@@ -238,7 +238,7 @@ Do not include a diff.
 When no correction was required, state:
 
 ```text
-Правки не потребовались.
+No corrections were required.
 ```
 
 End with:

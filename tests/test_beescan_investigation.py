@@ -30,8 +30,7 @@ def settings():
     return yaml.safe_load(Path("config/settings.yml").read_text())
 
 
-@pytest.fixture
-def approved(settings, monkeypatch):
+def configure_approved(settings, monkeypatch):
     now = datetime.now(UTC)
     transport = ProbePolicy(
         os.getuid(),
@@ -66,6 +65,11 @@ def approved(settings, monkeypatch):
     settings["beescan"]["investigation"].update(enabled=True, approval=raw)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-private-key")
     return policy
+
+
+@pytest.fixture
+def approved(settings, monkeypatch):
+    return configure_approved(settings, monkeypatch)
 
 
 def task_file(tmp_path, value=None):

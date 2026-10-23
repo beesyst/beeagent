@@ -1,13 +1,13 @@
 # BeeAgent planning
 
-Используй только BeeMCP.
+Use only BeeMCP.
 
-Прочитай:
+Read:
 
 - `AGENTS.md`
 - `.agents/skills/beeagent-plan-iteration/SKILL.md`
 
-## Основной проект
+## Main project
 
 - Project: `beeagent`
 - Worktree: `<MAIN_WORKTREE>`
@@ -16,31 +16,31 @@
 - Mode: `<MODE>`
 - Roadmap context: `<ROADMAP_CONTEXT>`
 
-## Предлагаемая задача
+## Proposed objective
 
 ```text
 <TASK_OR_IDEA>
 ```
 
-## Комментарии и ограничения
+## Comments and limitations
 
 ```text
 <CONTEXT_OR_NONE>
 ```
 
-## Дополнительные проекты
+## Supplementary projects
 
 ```text
 <ADDITIONAL_PROJECTS_OR_NONE>
 ```
 
-Проверь актуальную реализацию, ROADMAP, границы репозиториев и необходимость задачи.
+Check the current implementation, ROADMAP, repository boundaries and whether the task is needed.
 
-Если задача оправдана, подготовь:
+If the task is justified, prepare:
 
-1. формулировку итерации или standalone-задачи на русском;
-2. полный Issue на английском по repository Issue template;
-3. рекомендуемые branch и Conventional Commit;
-4. task-specific ограничения для реализации и проверки.
+1. iteration or standalone task wording in Russian;
+2. a complete Issue in English using the repository Issue template;
+3. a recommended branch name and Conventional Commit;
+4. task-specific implementation and verification constraints.
 
-Верни результат строго по planning skill.
+Return the result strictly in the format required by the planning skill.

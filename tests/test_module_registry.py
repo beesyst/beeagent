@@ -43,7 +43,7 @@ class _StubInvalidModule:
     def supported_case_types(self) -> list[str]:
         return []
 
-    def handle(self, context: ModuleContext) -> ModuleResult:  # type: ignore[return]
+    def handle(self, context: ModuleContext) -> ModuleResult:
         pass
 
 

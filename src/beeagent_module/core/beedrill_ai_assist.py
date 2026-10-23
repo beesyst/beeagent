@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from beeagent_module.core.ai_profiles import resolve_ai_profile
 from beeagent_module.core.ai_transport import call_structured_ai
 from beeagent_module.core.paths import get_project_root
 
@@ -35,7 +36,7 @@ def run_beedrill_ai_assist(
         artifact["reason"] = "completed_suite_missing_explanation_facts"
         return artifact
     try:
-        profile = _active_profile(settings)
+        _, profile = resolve_ai_profile(settings, cfg.get("ai_profile"))
         prompt = _prompt(settings, cfg["prompt_key"], facts, cfg["input_chars_max"])
         artifact["provider"] = profile["provider"]
         artifact["model"] = profile["model"]
@@ -63,17 +64,6 @@ def run_beedrill_ai_assist(
     artifact["status"] = "ok"
     artifact["response"] = response
     return artifact
-
-
-def _active_profile(settings: dict[str, Any]) -> dict[str, str]:
-    profiles = settings["ai"]["profiles"]
-    enabled = [profile for profile in profiles.values() if profile["enabled"] is True]
-    if len(enabled) != 1:
-        raise RuntimeError("exactly one AI profile must be enabled")
-    profile = enabled[0]
-    return {
-        key: profile[key] for key in ("provider", "model", "api_key_env", "base_url")
-    }
 
 
 def _prompt(

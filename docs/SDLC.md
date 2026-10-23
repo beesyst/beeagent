@@ -314,7 +314,7 @@ Usually check whether these files need updates:
 - `docs/ROADMAP.md`
 - `docs/DEV_GUIDE.md`
 - `docs/SECURITY.md`
-- `README.ru.md`
+- `README.md`
 
 Update them if one of the following changed:
 

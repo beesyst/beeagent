@@ -148,7 +148,7 @@ class LocalCapabilityRuntime:
                 summary="Capability call timed out",
                 diagnostics={"reason": "timeout"},
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._logger.exception(
                 "capability call error: capability=%s module_id=%s run_id=%s error_type=%s",
                 request.capability_name,

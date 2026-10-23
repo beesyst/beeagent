@@ -86,7 +86,7 @@ If the initial GitHub tool response is truncated by the response/output budget, 
 Return:
 
 ```text
-ПРОВЕРКА НЕ ЗАВЕРШЕНА
+REVIEW INCOMPLETE
 ```
 
 ## Phase 1 — Resolve the exact target
@@ -102,7 +102,7 @@ Return:
    - HEAD;
    - dirty state.
 
-If the exact path or mandatory metadata is unavailable, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
+If the exact path or mandatory metadata is unavailable, return `REVIEW INCOMPLETE`.
 
 If the project or branch differs from the expected value, report expected and actual values and do not issue a code verdict.
 
@@ -149,7 +149,7 @@ Verify:
 
 Do not use compatibility `get_review_bundle` as a substitute.
 
-If pagination fails, the snapshot changes or the diff is truncated, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
+If pagination fails, the snapshot changes or the diff is truncated, return `REVIEW INCOMPLETE`.
 
 The manifest is the authoritative file inventory. The complete diff is evidence of the changes.
 
@@ -205,7 +205,7 @@ For renamed files:
 - read the destination file completely;
 - verify updated references.
 
-If a required relevant file is omitted, redacted or unreadable through the available safe MCP interface, return `ПРОВЕРКА НЕ ЗАВЕРШЕНА`.
+If a required relevant file is omitted, redacted or unreadable through the available safe MCP interface, return `REVIEW INCOMPLETE`.
 
 Do not issue a verdict from partial file content.
 
@@ -319,7 +319,7 @@ Before issuing a code verdict, confirm:
 If any mandatory inspection remains incomplete, return:
 
 ```text
-ПРОВЕРКА НЕ ЗАВЕРШЕНА
+REVIEW INCOMPLETE
 ```
 
 Include:
@@ -340,23 +340,23 @@ Do not include:
 Return exactly one completed-review verdict:
 
 ```text
-ОДОБРЕНО ДЛЯ PR
+APPROVED FOR PR
 ```
 
 or:
 
 ```text
-ТРЕБУЮТСЯ ИЗМЕНЕНИЯ
+CHANGES REQUIRED
 ```
 
-### ОДОБРЕНО ДЛЯ PR
+### APPROVED FOR PR
 
 Use only when no blockers remain.
 
 State exactly:
 
 ```text
-Правки не нужны.
+No changes are needed.
 ```
 
 Then provide:
@@ -373,33 +373,33 @@ Then provide:
 
 Do not claim MCP ran tests.
 
-### ТРЕБУЮТСЯ ИЗМЕНЕНИЯ
+### CHANGES REQUIRED
 
 Provide every blocker in this format:
 
 ### <Finding title>
 
-Файл:
+File:
 
 `path/to/file`
 
-Точное место:
+Exact location:
 
 <existing function, class, template block or configuration section>
 
-Было:
+Before:
 
 ```<language>
 <exact bounded current code, configuration or template fragment>
 ```
 
-Стало:
+After:
 
 ```<language>
 <complete bounded replacement or insertion>
 ```
 
-Почему:
+Why:
 
 <Acceptance Criterion, existing contract and concrete blocking impact>
 
@@ -460,19 +460,19 @@ For every blocker use:
 
 ### <Finding title>
 
-Файл:
+File:
 `<path>`
 
-Точное место:
+Exact location:
 <existing function, class, template block or configuration section>
 
-Было:
+Before:
 <exact bounded current fragment or observed behavior>
 
-Стало:
+After:
 <complete bounded replacement, insertion or required behavior>
 
-Почему:
+Why:
 <acceptance criterion, contract violation or concrete impact>
 
 For code, configuration or template blockers, include the bounded current fragment and complete replacement or insertion supplied by the review.
@@ -493,7 +493,7 @@ Return one consolidated report according to `beeagent-verify-and-correct`.
 
 For every implemented correction report:
 
-Файл → Было → Стало → Почему
+File → Before → After → Why
 
 Include exact changed files, commands and results, security review, dependency status, artifact/storage impact and known limitations.
 
@@ -519,7 +519,7 @@ For re-review:
 3. verify every previous blocker;
 4. evaluate the original acceptance criteria again;
 5. inspect regressions introduced by corrections;
-6. return `ОДОБРЕНО ДЛЯ PR` or only the remaining blockers.
+6. return `APPROVED FOR PR` or only the remaining blockers.
 
 Do not introduce unrelated optional findings.
 
@@ -539,7 +539,7 @@ For a completed review:
 
 For incomplete inspection:
 
-1. `ПРОВЕРКА НЕ ЗАВЕРШЕНА`
+1. `REVIEW INCOMPLETE`
 2. `Completed inspection`
 3. `Missing inspection data`
 4. `Reason no code verdict was issued`

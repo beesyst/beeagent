@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 import yaml
 
+from beeagent_module.core.ai_profiles import resolve_ai_profile
 from beeagent_module.core.ai_transport import call_structured_ai
 from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.module_contract import AuthorityLevel
@@ -72,15 +73,12 @@ class InvestigationPolicy:
 
 def named_ai_profile(settings, *, require_key=True):
     config = settings["beescan"]["investigation"]
-    profile = settings.get("ai", {}).get("profiles", {}).get(config["ai_profile"])
-    if type(profile) is not dict:
+    if "ai_profile" in config and config["ai_profile"] is None:
         raise ValueError("invalid_investigation_ai_profile")
-    selected = {}
-    for key in ("provider", "model", "api_key_env", "base_url"):
-        value = profile.get(key)
-        if type(value) is not str or not value.strip() or len(value) > 256:
-            raise ValueError("invalid_investigation_ai_profile")
-        selected[key] = value
+    try:
+        _, selected = resolve_ai_profile(settings, config.get("ai_profile"))
+    except RuntimeError:
+        raise ValueError("invalid_investigation_ai_profile") from None
     parsed = urlsplit(selected["base_url"])
     if (
         selected["provider"] not in {"openai_responses", "openai_compatible"}
@@ -116,12 +114,10 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
     }
     if (
         type(config) is not dict
-        or set(config) - {"local_lab_enabled"}
-        != {"enabled", "approval", "ai_profile", *limits}
+        or set(config) - {"local_lab_enabled", "ai_profile"}
+        != {"enabled", "approval", *limits}
         or type(config["enabled"]) is not bool
         or type(config.get("local_lab_enabled", False)) is not bool
-        or type(config["ai_profile"]) is not str
-        or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", config["ai_profile"])
     ):
         raise RuntimeError("Invalid beescan.investigation settings")
     for key, (low, high) in limits.items():
@@ -869,6 +865,7 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
     snapshot = AssessmentSnapshot(storage_dir)
     session = policy = intent = None
     analysis = explanation = None
+    ai_profile = None
     started = time.monotonic()
     deadline = None
 
@@ -1088,6 +1085,7 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
                     status="ERROR",
                 )
                 authorize()
+                ai_profile = named_ai_profile(settings)
                 classify_task(settings, task["task"], logger, deadline=deadline)
                 authorize()
                 intent = _prepare_intent(domain, policy, run_id)
@@ -1158,6 +1156,8 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
         accepted = analysis if status["reason"] == "ok" else None
         result = {
             **status,
+            "ai_provider": ai_profile["provider"] if ai_profile else None,
+            "ai_model": ai_profile["model"] if ai_profile else None,
             "framework": accepted.framework if accepted is not None else None,
             "version": accepted.version if accepted is not None else None,
             "findings": [asdict(accepted.candidate)]

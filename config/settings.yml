@@ -1,14 +1,14 @@
 app:
-  name: "BeeAgent" # название приложения
-  env: "dev" # окружение (dev/prod)
+  name: "BeeAgent"
+  env: "dev"
 
 run:
-  mode: "telegram" # режим запуска UI/transport
+  mode: "telegram"
 
 web:
-  host: "127.0.0.1" # bind host for read-only operator web shell
-  port: 8000 # bind port for read-only operator web shell
-  open_browser: true # true/false - auto-open browser in web mode
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: true
   auth:
     enabled: true
     mode: beeui_session
@@ -40,47 +40,47 @@ web:
         token_env: BEEAGENT_WEB_OPERATOR_TOKEN
 
 telegram:
-  enabled: false # true/false - включить/выключить интеграцию с Telegram
-  bot_token_env: "TELEGRAM_BOT_TOKEN" # название переменной окружения, в которой хранится токен бота
-  chat_id_env: "CHAT_ID" # название переменной окружения, в которой хранится ID чата для отправки сообщений
-  telemetry_enabled: true # true/false - включить/выключить запись телеметрии апдейтов в storage/telemetry (jsonl)
+  enabled: false
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  chat_id_env: "CHAT_ID"
+  telemetry_enabled: true
 
 logging:
-  clear_logs: true # true/false - очищать ли логи при каждом запуске приложения
-  utc: true # true/false - использовать ли UTC для отметок времени в логах
-  level: "INFO" # уровень логирования (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+  clear_logs: true
+  utc: true
+  level: "INFO"
 
 mock:
-  seed: 42 # начальное значение для генератора случайных чисел (целое число)
-  weeks: 4 # количество недель для генерации данных (целое число)
-  stores: 3 # количество магазинов для генерации данных (целое число)
-  skus: 12 # количество товаров для генерации данных (целое число)
-  category: "Vitamins" # категория товаров для генерации данных (строка)
+  seed: 42
+  weeks: 4
+  stores: 3
+  skus: 12
+  category: "Vitamins"
 
 data:
-  adapter: "mock" # адаптер для получения данных (mock/real)
+  adapter: "mock"
   mock:
-    dataset_id: null # идентификатор набора данных для генерации (строка или null)
+    dataset_id: null
 
 scheduler:
-  enabled: false # true/false
-  interval: 100 # интервал в секундах между запусками scheduled-run (сек)
-  start_run: true # true/false - запускать scheduled-run при старте приложения
+  enabled: false
+  interval: 100
+  start_run: true
 
 approval:
-  reject_reason: "Rejected by operator" # причина отклонения заявки
+  reject_reason: "Rejected by operator"
 
 promo:
-  stock_min: 10 # минимальный остаток для promo-кандидатов
-  units_max: 2 # максимальные продажи за период
+  stock_min: 10
+  units_max: 2
 
 i18n:
-  lang: "ru" # язык локализации
-  path: "config/i18n/ru.yml" # путь к YAML с переводами
+  lang: "ru"
+  path: "config/i18n/ru.yml"
 
 quiz:
-  enabled: false # true/false - включить/выключить режим квиза
-  path: "config/quiz/pharmacy_quiz.json" # путь к JSON с контентом квиза (относительно корня проекта)
+  enabled: false
+  path: "config/quiz/pharmacy_quiz.json"
 
 modules:
   registry:
@@ -151,10 +151,10 @@ rop:
       events_max: 100
       attachment_chars_max: 2000
       prompt_key: "rop.ai_adjudicator"
-  attachments: # настройки для извлечения вложений из событий ROP
-    enabled: true # true/false - включить/выключить local document extraction вложений (не влияет на retention/download/Bitrix delivery)
-    chars_max: 1000 # макс. число символов preview для извлечения из одного вложения
-    size_max: 1048576 # макс. размер вложения в байтах для попытки извлечения (пример: 1 МБ = 1048576 байт)
+  attachments:
+    enabled: true
+    chars_max: 1000
+    size_max: 1048576
     types:
       - "text/plain"
       - "text/csv"
@@ -163,17 +163,17 @@ rop:
       - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       - "image/jpeg"
       - "image/png"
-    storage: # bounded opaque retention policy (independent from extraction)
-      enabled: true # true/false - сохранять accepted attachment blobs как opaque files
-      file_max: 10485760 # макс. размер одного сохраняемого вложения в байтах (10 МБ)
-      message_max: 20971520 # макс. суммарный размер вложений одного письма в байтах (20 МБ)
-      files_message_max: 20 # макс. число сохраняемых вложений на одно письмо
-    extraction: # canonical local Docling extraction policy (replaces provider-based analysis)
-      engine: "docling" # canonical local document engine (only supported engine v1); OCR backend is RapidOCR on onnxruntime
-      chars_max: 3000 # макс. число символов bounded extracted text контекста из одного вложения
-      pages_max: 20 # bounded page limit на один документ (docling max_num_pages)
-      timeout_seconds: 60 # bounded local worker timeout на один документ (сек)
-      ocr_enabled: true # true/false - использовать local RapidOCR
+    storage:
+      enabled: true
+      file_max: 10485760
+      message_max: 20971520
+      files_message_max: 20
+    extraction:
+      engine: "docling"
+      chars_max: 3000
+      pages_max: 20
+      timeout_seconds: 60
+      ocr_enabled: true
   dashboard:
     default_period: "7d"
     periods:
@@ -188,39 +188,39 @@ rop:
       plan_lead: 20
 
 bitrix:
-  enabled: true # true/false - включить/выключить Bitrix connector
-  webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
-  timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
-  page_size: 50 # размер страницы для Bitrix list-запросов
-  pages_max: 15 # максимальное число страниц пагинации (557 users on portal)
-  types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
+  enabled: true
+  webhook_env: "BITRIX_WEBHOOK_URL"
+  timeout: 10
+  page_size: 50
+  pages_max: 15
+  types_entity:
     - 1
     - 2
     - 3
     - 4
   reconciliation:
-    enabled: true # true/false - включить/выключить reconciliation по умолчанию
-    candidate_limit: 20 # максимальное число кандидатов на одно событие
-    window_date: 180 # окно поиска по дате события (дней назад)
+    enabled: true
+    candidate_limit: 20
+    window_date: 180
     correlation:
-      enabled: true # true/false - read-only проверка exact outbound email correlation (crm.activity.list, Message-ID bridge)
-      window_days: 180 # окно поиска outbound email-активностей (дней назад)
+      enabled: true
+      window_days: 180
   writeback:
-    enabled: true # true/false - включить/выключить Bitrix write-back
-    webhook_env: "BITRIX_WRITEBACK_WEBHOOK_URL" # имя env переменной с отдельным write credential (https URL)
-    timeout: 10 # таймаут HTTP-запроса для write-back (сек)
-    attempts_retry_max: 3 # максимум bounded попыток для retryable failures
-    dry_run: false # true/false - планировать без реальных write-операций (zero writes)
-    email_attach: true # true/false - прикреплять email-активность (crm.activity.add) к созданному или trusted exact thread CRM target
-    email_completed: false # true/false - состояние COMPLETED создаваемой email-активности (false = письмо заметнее в таймлайне как незавершённое; true = завершённое)
-    file_attach: true # true/false - отдельный switch физической доставки сохранённых attachment files в Bitrix email activity (crm.activity.update, FILES/fileData)
-    source_id: "EMAIL" # Bitrix lead SOURCE_ID для создаваемых лидов (например EMAIL = "Входящее письмо"); пусто = не задавать
-    user_id_fallback: 167 # Bitrix user ID назначается ответственным за новый лид, когда routing не нашёл активного пользователя (null = отключено)
+    enabled: true
+    webhook_env: "BITRIX_WRITEBACK_WEBHOOK_URL"
+    timeout: 10
+    attempts_retry_max: 3
+    dry_run: false
+    email_attach: true
+    email_completed: false
+    file_attach: true
+    source_id: "EMAIL"
+    user_id_fallback: 167
     user_name_fallback: "ROBOT WG"
-    stages: # customer Lead stageId mapping (configurable, validated against Bitrix before POST when enabled)
-      new_lead: "NEW" # Bitrix stageId for new_lead with fallback responsible (required when enabled)
-      new_lead_assigned: "2" # Bitrix stageId for new_lead with exact matched responsible (required when enabled; verified read-only: STATUS_ID "2" = «Лид назначен»)
-      irrelevant: "JUNK" # Bitrix stageId for irrelevant classification (required when enabled)
+    stages:
+      new_lead: "NEW"
+      new_lead_assigned: "2"
+      irrelevant: "JUNK"
   widget:
     enabled: false
     token_env: BITRIX_ROP_WIDGET_TOKEN
@@ -239,36 +239,32 @@ bitrix:
     request_timeout: 10
 
 ai:
+  default_profile: openrouter
   prompts:
     path: "config/prompts.yml"
     store: false
   profiles:
     openai:
-      enabled: false
       provider: openai_responses
       api_key_env: OPENAI_API_KEY
       base_url: "https://api.openai.com/v1"
       model: "gpt-5.4-nano"
     deepseek:
-      enabled: false
       provider: openai_compatible
       api_key_env: DEEPSEEK_API_KEY
       base_url: "https://api.deepseek.com/v1"
       model: "deepseek-chat"
     lmstudio:
-      enabled: false
       provider: openai_compatible
       api_key_env: LMSTUDIO_API_KEY
       base_url: "http://127.0.0.1:1234/v1"
       model: "local-model"
     openrouter:
-      enabled: true
       provider: openai_compatible
       api_key_env: OPENROUTER_API_KEY
       base_url: "https://openrouter.ai/api/v1"
       model: "deepseek/deepseek-v4.1-flash"
     custom:
-      enabled: false
       provider: openai_compatible
       api_key_env: CUSTOM_AI_API_KEY
       base_url: ""

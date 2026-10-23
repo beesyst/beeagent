@@ -157,7 +157,7 @@ Fill only if relevant for this PR:
 - [ ] change stays within current iteration scope
 - [ ] issue, code, tests, artifacts, and PR are aligned
 - [ ] docs/ROADMAP updated if behavior/contract/artifacts changed
-- [ ] related docs updated if needed (`DEV_GUIDE`, `README.ru.md`, `SDLC`, `SECURITY`, `ARCHITECTURE`)
+- [ ] related docs updated if needed (`DEV_GUIDE`, `README.md`, `SDLC`, `SECURITY`, `ARCHITECTURE`)
 
 #### Config / runtime / contracts
 

@@ -100,7 +100,7 @@ class ModuleRegistry:
 
             try:
                 instance = attr() if callable(attr) else attr
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error = f"failed to instantiate entry '{entry}' from '{package}': {exc}"
                 self._entries.append(
                     ModuleEntry(

@@ -140,7 +140,7 @@ Common documents include:
 - `docs/SDLC.md`;
 - `docs/SECURITY.md`;
 - `docs/DEV_GUIDE.md`;
-- `README.ru.md`.
+- `README.md`.
 
 When relevant, also read:
 
