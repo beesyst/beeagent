@@ -564,7 +564,7 @@ def extract_rop_query_params(
     if period and period not in ALLOWED_PERIODS:
         errors.append(f"Invalid period '{period}'")
 
-    # ── Filter params ──
+
     allowed_filter_keys = frozenset(
         {
             "date_from",
@@ -589,15 +589,15 @@ def extract_rop_query_params(
         raw = query.get(key)
         if raw is not None and isinstance(raw, str) and raw.strip():
             filter_params[key] = raw.strip()
-    # Map legacy key
+
     if "classification" in filter_params and "case_type" not in filter_params:
         filter_params["case_type"] = filter_params.pop("classification")
 
-    # Validate filter params
+
     filter_errors = validate_filter_params(filter_params)
     errors.extend(filter_errors)
 
-    # ── Pagination params ──
+
     page_raw = query.get("page")
     page_size_raw = query.get("page_size")
     sort_raw = query.get("sort")
@@ -608,7 +608,7 @@ def extract_rop_query_params(
     )
     errors.extend(pag_errors)
 
-    # Parse pagination with safe defaults (only if no validation errors)
+
     if not any("page" in e for e in pag_errors):
         try:
             page = max(1, int(page_raw or "1"))
@@ -1542,8 +1542,8 @@ class BeeAgentUiAdapter:
                 run_id = query.get("run_id")
                 period = query.get("period")
                 if tab == "queue":
-                    # Queue always starts from the full dataset; its validated
-                    # date range is the only time constraint for operator work.
+
+
                     period = "all"
                 if run_id is not None:
                     try:
@@ -1551,7 +1551,7 @@ class BeeAgentUiAdapter:
                     except Exception:
                         return error_result("invalid_run_id", "Invalid run_id")
 
-                # Extract and validate filter + pagination + sort params atomically
+
                 filter_params, pagination_params, param_errors = (
                     extract_rop_query_params(query)
                 )

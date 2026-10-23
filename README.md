@@ -1,82 +1,65 @@
-# BeeAgent — Modular Agent Runtime
+# BeeAgent
 
-**Build AI-assisted workflows with explicit boundaries, bounded capabilities, and reproducible evidence.**
+**A modular Python runtime for automation, AI-assisted workflows, and domain-specific agents.**
 
-BeeAgent is a modular, stateful Python runtime for building explainable automation and AI-assisted systems. It separates orchestration, domain logic, external execution, and user interfaces.
+BeeAgent provides the shared infrastructure for running independent modules with consistent configuration, execution controls, state management, and structured results.
 
-BeeAgent is not a collection of unrestricted AI tools. The host controls what modules can access and execute.
-
-## Why BeeAgent
-
-Real-world automation combines state, business rules, credentials, external APIs, AI models, approvals, user interfaces, and persistent artifacts.
-
-BeeAgent separates these concerns so domain modules can focus on their own logic without owning the underlying runtime or its security boundaries.
-
-The core principle is:
-
-**Module intent does not equal execution authority.**
-
-A module can request an approved operation through a scoped capability. The host validates that request and controls execution.
+Instead of building a separate application for every use case, you build a domain module and run it through BeeAgent.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    UI["Telegram / Web / CLI"] --> CORE["BeeAgent Core"]
-    CORE --> MODULES["Domain Modules"]
-    MODULES --> CAP["Scoped Capabilities"]
-    CAP --> EXT["External Systems"]
-    CORE --> ART["State, Logs and Artifacts"]
-    MODULES --> ART
-    CORE --> AI["Optional AI Providers"]
+```text
+CLI / Web / Telegram
+         |
+    BeeAgent Core
+         |
+    Domain Modules
+         |
+  Scoped Capabilities
+         |
+ External Systems
 ```
 
-### BeeAgent Core
+**BeeAgent Core** handles orchestration, configuration, module loading, authorization, AI providers, logging, and artifacts.
 
-The runtime owns:
+**Domain modules** implement business or security-specific logic.
 
-- Configuration, validation, and policy
-- Runs, sessions, and state
-- Module registry and dispatch
-- Execution authority and capability boundaries
-- Artifact storage and observability
-- Authentication and authorization
-- Timeouts, resource limits, and cleanup
-- User interfaces and transport integration
+**Capabilities** provide controlled access to external APIs, tools, and isolated execution environments.
 
-### Domain Modules
+A module can request an operation, but it does not automatically receive permission to execute it.
 
-Modules implement product or business-specific behavior, such as classification, analysis, evaluation, recommendations, and workflow decisions.
+## Modules
 
-Modules are independent Python packages loaded through a configuration-driven registry. They can be open source or private.
+BeeAgent currently integrates three domain modules:
 
-A domain module does not need to implement its own process manager, credential store, transport, or generic execution engine.
+| Module                                                      | Description                                                                                                                       |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **[BeeScan](https://github.com/beesyst/beescan)**           | Authorized web security assessments, reconnaissance, vulnerability detection, evidence collection, and AI-assisted investigation. |
+| **[BeeDrill](https://github.com/beesyst/beedrill)**         | Solana security testing, isolated execution scenarios, and regression analysis.                                                   |
+| **[BeeAgent ROP](https://github.com/beesyst/beeagent-rop)** | Sales workflow automation, inbound lead classification, duplicate detection, CRM reconciliation, and AI-assisted triage.          |
 
-### Capabilities
+Each module is a separate Python package. Modules can be installed and enabled independently through the runtime configuration.
 
-Capabilities are narrowly scoped interfaces to approved external operations, including APIs, MCP tools, workflows, document processing, and isolated execution.
-
-A capability request is validated by the host. It does not automatically provide shell, filesystem, credential, RPC, or network authority.
+BeeAgent can support additional modules without moving their domain logic into the core.
 
 ## Quick Start
 
 ### Requirements
 
-- Linux or another supported Python development environment
 - Python 3.14+
+- Linux (recommended for native security workflows)
 - Git
-- Internet access for initial dependency installation
+- `uv` (automatically bootstrapped by `start.sh` if missing)
+- Access to the configured module dependencies
 
-BeeAgent uses `uv` and a locked dependency environment. The startup script can bootstrap `uv` when necessary.
-
-### Install
+### Installation
 
 ```bash
 git clone https://github.com/beesyst/beeagent.git
 cd beeagent
 ```
 
-The canonical entrypoint is `./start.sh`. It prepares the runtime environment, loads the configured modules, and starts the selected workflow.
+Configure the required settings and credentials. The startup script creates `.env` from `.env.example` when needed. External API keys must be provided separately.
 
 ### Start the Web Console
 
@@ -84,219 +67,163 @@ The canonical entrypoint is `./start.sh`. It prepares the runtime environment, l
 ./start.sh web
 ```
 
-By default, the web server binds to `127.0.0.1:8000`. Open the local address in your browser and use the configured authentication credentials.
+Default local address: `http://127.0.0.1:8000`
 
-### Start Telegram Transport
+The console provides authenticated access to runtime information, modules, runs, and artifacts.
+
+### Start Telegram
 
 ```bash
 ./start.sh telegram
 ```
 
-Telegram must first be enabled and configured in `config/settings.yml`, with the required credentials supplied through environment variables.
+Telegram requires the appropriate bot configuration and credentials.
 
-### Additional Commands
+## CLI
+
+All workflows use the same entrypoint:
 
 ```bash
-./start.sh web --host 127.0.0.1 --port 8780 --no-open
+./start.sh <command>
+```
+
+Common commands:
+
+```bash
+./start.sh web
+./start.sh telegram
 ./start.sh routes
-./start.sh docling-assets-prepare
-./start.sh auth rotate all
 ```
 
-Some commands require their corresponding modules, integrations, or optional dependency profiles to be enabled.
+Module-specific examples:
 
-## Module System
+```bash
+# Sales workflows
+./start.sh rop poll
 
-BeeAgent uses a package-based module contract provided through BeeSDK.
+# Solana security regression
+./start.sh beedrill check
 
-A module declares:
+# Web security assessment
+./start.sh beescan bootstrap
+./start.sh beescan assess
 
-- Its module identifier
-- Its authority level
-- Its supported case types
-- A handler that receives a bounded execution context and returns a structured result
-
-The runtime provides run and session identity, validated payloads, an artifact API, and access to explicitly allowed capabilities.
-
-Conceptually:
-
-```text
-BeeAgent Host
-    ↓
-Module Registry
-    ↓
-Module Context
-    ↓
-Domain Module
-    ↓
-Scoped Capability Request
-    ↓
-Host Validation and Execution
-    ↓
-Bounded Result and Artifacts
+# AI-assisted web investigation
+./start.sh beescan investigate TASK.json
 ```
 
-### Authority Levels
+Module commands require their corresponding modules to be enabled. Security assessments and external operations also require explicit authorization and valid execution prerequisites.
 
-The module model supports explicit authority declarations:
-
-- `read_only`
-- `draft_only`
-- `execution_capable`
-
-Authority is enforced at the host boundary. A read-only module may use a narrowly approved host capability without receiving unrestricted execution access.
-
-### Adding a Module
-
-Create a separate Python package that implements the BeeSDK module contract, register it in `config/settings.yml`, and declare the required optional dependency profile if applicable.
-
-Domain-specific rules belong in the module. Generic execution, authentication, policy, and artifact infrastructure belong in BeeAgent.
-
-See the [Developer Guide](docs/DEV_GUIDE.md) and [Architecture](docs/ARCHITECTURE.md) for integration details.
-
-## Interfaces
-
-### Operator Web Console
-
-BeeAgent includes a BeeUI-backed web interface for authenticated operator access.
-
-The console provides:
-
-- Dashboard and runtime overview
-- Run history and run details
-- Module diagnostics
-- Bounded artifact views
-- JSON API endpoints
-
-Web authentication supports configured principals, roles, scopes, and signed sessions.
-
-The default local bind does not make the application production-ready for public exposure. Internet-facing deployments require appropriate TLS, authentication, reverse-proxy configuration, and operational hardening.
-
-### Telegram
-
-Telegram provides an interactive transport for configured agent workflows. Enable it in the runtime configuration and supply the necessary bot credentials.
-
-### CLI
-
-The CLI supports runtime operations and module-specific workflows. Each domain module may expose additional commands without changing the shared module contract.
+See the module-specific guides for configuration and supported operations.
 
 ## Configuration
 
-The primary configuration file is:
+The main configuration file is:
 
 ```text
 config/settings.yml
 ```
 
-Configuration controls runtime mode, enabled modules, integration profiles, authentication, logging, and feature-specific behavior.
+It controls module registration, runtime settings, integrations, execution policies, and AI profiles.
 
-Secrets and external credentials belong in environment variables or `.env`, not in the YAML configuration.
+Secrets belong in environment variables or `.env`, not in the YAML configuration.
 
-During startup, BeeAgent can create `.env` from `.env.example`, synchronize missing environment keys, generate approved internal secrets, validate configuration, and resolve required dependency profiles.
+### AI Providers
 
-External API credentials must be supplied by the operator.
+BeeAgent supports OpenAI Responses and OpenAI-compatible providers, including OpenRouter and DeepSeek.
 
-## AI Assistance
+A shared AI profile resolver allows different modules to select different providers:
 
-BeeAgent supports configurable AI providers and bounded provider calls.
+```yaml
+ai:
+  default_profile: openrouter
+```
 
-AI assistance is optional. Deterministic module logic does not inherently require a model or an API key.
+Individual modules can override the default using their `ai_profile` setting.
 
-AI-generated output must be validated before affecting application state or triggering host-approved operations.
+AI assistance is optional. Model output is validated and does not grant additional execution authority.
 
-An AI model does not automatically receive authority to mutate external systems, access credentials, or execute arbitrary tools.
+## Module Development
 
-## Document Processing
+Modules implement a small contract defined by BeeSDK:
 
-BeeAgent supports bounded local document extraction through an optional Docling-based processing path with RapidOCR and ONNX Runtime.
+```python
+class ModuleContract(Protocol):
+    @property
+    def module_id(self) -> str: ...
 
-Supported document formats include text, CSV, PDF, DOCX, XLSX, JPEG, and PNG.
+    @property
+    def authority(self) -> AuthorityLevel: ...
 
-Document contents are treated as untrusted input. Processing is subject to configured limits, timeouts, and explicit failure handling.
+    def supported_case_types(self) -> list[str]: ...
 
-Optional model assets and dependencies must be prepared through the approved runtime profile.
+    def handle(self, context: ModuleContext) -> ModuleResult: ...
+```
 
-## Artifacts and Observability
+BeeAgent supplies runtime context, artifact access, and approved capabilities.
 
-BeeAgent keeps execution evidence and structured output under `storage/`.
+Domain models, rules, classification, and recommendations belong in the module. Shared infrastructure belongs in BeeAgent Core.
+
+See [Architecture](docs/ARCHITECTURE.md) for details.
+
+## Artifacts
+
+Runs produce structured evidence under `storage/`, including execution results, reports, logs, and module-specific artifacts.
 
 ```text
 storage/
 ├── runs/
 ├── artifacts/
 ├── reports/
-├── interfaces/
-├── sessions/
-└── telemetry/
+└── interfaces/
 ```
 
-Artifacts support debugging, reproducibility, operator review, integration evidence, and audit-friendly execution records.
+Artifacts support debugging, reproducibility, and operator review. Sensitive credentials and unrestricted external data must not be included in public outputs.
 
-Important behavior should be explainable through configuration, logs, and bounded artifacts.
+## Development
 
-Raw secrets and unrestricted external content must not enter public artifacts.
+Run the test suite from a prepared development environment:
 
-## Security Model
+```bash
+uv run --frozen --no-sync pytest -q
+```
 
-BeeAgent uses explicit host-controlled boundaries:
+The full development profile requires its configured dependencies, including the local `beeagent-rop` checkout.
 
-- Configuration is validated before sensitive execution.
-- Modules request capabilities rather than unrestricted host access.
-- Credential access is controlled by the host.
-- Untrusted paths and external payloads are validated.
-- Sensitive operations are scoped and subject to policy.
-- Isolation-dependent operations fail closed when isolation is unavailable.
-- Runtime failures are not silently converted into success.
-- Artifacts and logs must exclude secrets and private credentials.
+Development follows a simple workflow:
 
-The runtime is a security boundary, not a replacement for production deployment controls.
-
-See the [Security Model](docs/SECURITY.md) for detailed engineering requirements.
+`Roadmap → Issue → Code → Tests → Review → PR → Merge`
 
 ## Project Structure
 
 ```text
 beeagent/
-├── config/
-│   ├── start.py
-│   ├── settings.yml
-│   └── ...
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DEV_GUIDE.md
-│   ├── SECURITY.md
-│   ├── SPEC.md
-│   └── ...
-├── src/
-│   └── beeagent_module/
-├── storage/
+├── config/                 # Settings and startup
+├── docs/                   # Architecture and guides
+├── src/beeagent_module/
+│   ├── core/               # Runtime and shared services
+│   ├── integrations/       # Module integrations
+│   ├── cases/              # Application workflows
+│   ├── cli/                # Commands
+│   └── interfaces/         # User-facing adapters
 ├── tests/
-├── pyproject.toml
+├── integration_tests/
+├── storage/
 ├── start.sh
+├── pyproject.toml
 └── uv.lock
 ```
-
-## Development
-
-For development environments with the required optional dependency sources available:
-
-```bash
-uv run --frozen pytest -q
-```
-
-For user-facing runtime installation, use `./start.sh`; a separate manual installation of every enabled module is not required.
-
-The platform is designed for small, reviewable changes with explicit scope, clear ownership, and minimal public contracts.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [Specification](docs/SPEC.md)
 - [Developer Guide](docs/DEV_GUIDE.md)
-- [Security Model](docs/SECURITY.md)
-- [Roadmap](docs/ROADMAP.md)
-- [BeeScan host operating guide](docs/product/beescan_guide.md)
+- [Security](docs/SECURITY.md)
 - [Web Console](docs/WEB_UI.md)
+- [BeeScan Operations](docs/product/beescan_guide.md)
+- [Roadmap](docs/ROADMAP.md)
 - [BeeSDK](https://github.com/beesyst/beesdk)
 
-**BeeAgent provides the runtime. Domain modules provide the product logic. Capabilities connect them to the outside world.**
+---
+
+**BeeAgent runs the workflows. Modules provide the domain logic. Capabilities connect them to external systems.**

@@ -301,11 +301,11 @@ _LABELS_EN: dict[str, str] = {
     "Sender blacklisted": "Sender blacklisted",
     "Automation allowed": "Automation allowed",
     "Bitrix write allowed": "Bitrix write allowed",
-    # ── Queue page labels ───────────────────────────────────────────────
+
     "ROP Work Queue": "ROP Work Queue",
     "Search": "Search",
     "Search by sender or subject...": "Search by sender or subject...",
-    # ── Modules page labels ──────────────────────────────────────────────
+
     "No modules": "No modules",
     "No modules registered.": "No modules registered.",
     "ID": "ID",
@@ -313,7 +313,7 @@ _LABELS_EN: dict[str, str] = {
     "Entry": "Entry",
     "State": "State",
     "Error": "Error",
-    # ── AI status / decision source labels (from title()) ────────────────
+
     "Ok": "Ok",
     "Used": "Used",
     "Unknown": "Unknown",
@@ -358,7 +358,7 @@ _LABELS_EN: dict[str, str] = {
     "Fallback Policy": "Fallback Policy",
     "Low Confidence": "Low Confidence",
     "Review Reason": "Review Reason",
-    # ── Source health labels ─────────────────────────────────────────────
+
     "Source Health Details": "Source Health Details",
     "No sources": "No sources",
     "No source data available": "No source data available",
@@ -367,7 +367,7 @@ _LABELS_EN: dict[str, str] = {
     "Loaded": "Loaded",
     "Malformed": "Malformed",
     "Classified": "Classified",
-    # ── Attachment processing labels ─────────────────────────────────────
+
     "Total Attachments": "Total Attachments",
     "Preview Available": "Preview Available",
     "Refused": "Refused",
@@ -376,7 +376,7 @@ _LABELS_EN: dict[str, str] = {
     "Extraction Errors": "Extraction Errors",
     "No attachments": "No attachments",
     "No attachment data available": "No attachment data available",
-    # ── Bitrix board labels ──────────────────────────────────────────────
+
     "Bitrix Evidence Board": "Bitrix Evidence Board",
     "Bitrix Status": "Bitrix Status",
     "Matched": "Matched",
@@ -385,7 +385,7 @@ _LABELS_EN: dict[str, str] = {
     "Unreconciled": "Unreconciled",
     "Case Type": "Case Type",
     "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.": "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.",
-    # ── Event detail field labels ─────────────────────────────────────────
+
     "Source type": "Source type",
     "Source role": "Source role",
     "Subtype": "Subtype",
@@ -438,7 +438,7 @@ _LABELS_EN: dict[str, str] = {
     "Found": "Found",
     "Not found": "Not found",
     "Not checked": "Not checked",
-    # ── Filter labels ──────────────────────────────────────────────────────
+
     "Filters": "Filters",
     "Date range": "Date range",
     "Sender": "Sender",
@@ -770,11 +770,11 @@ _LABELS_RU: dict[str, str] = {
     "Sender blacklisted": "Отправитель в чёрном списке",
     "Automation allowed": "Автоматизация разрешена",
     "Bitrix write allowed": "Запись в Bitrix разрешена",
-    # ── Queue page labels ───────────────────────────────────────────────
+
     "ROP Work Queue": "Очередь работы РОП",
     "Search": "Поиск",
     "Search by sender or subject...": "Поиск по отправителю или теме...",
-    # ── Modules page labels ──────────────────────────────────────────────
+
     "No modules": "Нет модулей",
     "No modules registered.": "Модули не зарегистрированы.",
     "ID": "ID",
@@ -782,7 +782,7 @@ _LABELS_RU: dict[str, str] = {
     "Entry": "Точка входа",
     "State": "Состояние",
     "Error": "Ошибка",
-    # ── AI status / decision source labels (from title()) ────────────────
+
     "Ok": "Ок",
     "Used": "Использовано",
     "Unknown": "Неизвестно",
@@ -827,7 +827,7 @@ _LABELS_RU: dict[str, str] = {
     "Fallback Policy": "Политика запасного варианта",
     "Low Confidence": "Низкая уверенность",
     "Review Reason": "Причина проверки",
-    # ── Source health labels ─────────────────────────────────────────────
+
     "Source Health Details": "Детали состояния источников",
     "No sources": "Нет источников",
     "No source data available": "Нет данных об источниках",
@@ -836,7 +836,7 @@ _LABELS_RU: dict[str, str] = {
     "Loaded": "Загружено",
     "Malformed": "Повреждено",
     "Classified": "Классифицировано",
-    # ── Attachment processing labels ─────────────────────────────────────
+
     "Total Attachments": "Всего вложений",
     "Preview Available": "Доступен просмотр",
     "Refused": "Отказано",
@@ -845,7 +845,7 @@ _LABELS_RU: dict[str, str] = {
     "Extraction Errors": "Ошибки извлечения",
     "No attachments": "Нет вложений",
     "No attachment data available": "Нет данных о вложениях",
-    # ── Bitrix board labels ──────────────────────────────────────────────
+
     "Bitrix Evidence Board": "Доска доказательств Битрикс",
     "Bitrix Status": "Статус Битрикс",
     "Matched": "Сопоставлено",
@@ -854,7 +854,7 @@ _LABELS_RU: dict[str, str] = {
     "Unreconciled": "Не сверено",
     "Case Type": "Тип обращения",
     "Bitrix reconciliation artifact is not available for this run. Run read-only reconcile-bitrix to create CRM evidence.": "Артефакт сверки с Битрикс недоступен для этого запуска. Запустите read-only reconcile-bitrix для создания CRM-доказательств.",
-    # ── Event detail field labels ─────────────────────────────────────────
+
     "Source type": "Тип источника",
     "Source role": "Роль источника",
     "Subtype": "Подтип",
@@ -907,7 +907,7 @@ _LABELS_RU: dict[str, str] = {
     "Found": "Найден",
     "Not found": "Не найден",
     "Not checked": "Не проверялся",
-    # ── Filter labels ──────────────────────────────────────────────────────
+
     "Filters": "Фильтры",
     "Date range": "Диапазон дат",
     "Sender": "Отправитель",

@@ -1,10 +1,10 @@
 # ARCHITECTURE — BeeAgent (KISS, modular, stateful)
 
-## Идея
+## Concept
 
-Есть **ядро оркестрации** (`beeagent`) и **подключаемые доменные модули** (`beeagent-rop`, в будущем `beescan`, `merch`).
+There is an **orchestration core** (`beeagent`) and **pluggable domain modules** (`beeagent-rop`, with `beescan` and `merch` planned).
 
-`beeagent` не должен содержать клиентскую бизнес-логику. Его задача — держать:
+`beeagent` must not contain client-specific business logic. It manages:
 
 - runtime state;
 - run/session/job context;
@@ -14,64 +14,64 @@
 - capability boundary;
 - transport/UI integration.
 
-Доменные модули не должны становиться “вторым ядром”. Их задача — решать свой бизнес-кейс внутри contracts, которые даёт BeeAgent.
+Domain modules must not become a “second core”. They handle their business cases within the contracts provided by BeeAgent.
 
-## Основной принцип
+## Basic principle
 
-Правильная схема такая:
+The correct arrangement is:
 
 `UI/transport → BeeAgent core → module → capability/MCP/n8n → systems`
 
-Где:
+Where:
 
-- **UI/transport** — Telegram, позже web/Bitrix/другой интерфейс;
+- **UI/transport** — Telegram, with web/Bitrix/other interfaces planned;
 - **BeeAgent core** — orchestration, state, approvals, artifacts, policy;
-- **module** — доменная логика (`ROP`, позже другие);
+- **module** — domain logic (`ROP`, later others);
 - **capability/MCP/n8n** — execution/integration layer;
-- **systems** — Bitrix, 1С, email, внешние сервисы и т.д.
+- **systems** — Bitrix, 1C, email, external services, etc.
 
-## Что живёт в BeeAgent
+## What lives in BeeAgent
 
-В `beeagent` живёт только платформенный слой:
+`beeagent` contains only the platform layer:
 
-- загрузка config и fail-fast validation;
+- loading config and fail-fast validation;
 - run/session/job context;
 - stateful orchestration;
 - case dispatch;
-- module contract и registry;
+- module contract and registry;
 - artifact API;
 - capability boundary;
 - transport/UI layer;
 - observability/logging;
-- approvals и bounded execution semantics.
+- approvals and bounded execution semantics.
 
 ## Bitrix write-back execution boundary (Iteration 37)
 
-BeeAgent владеет bounded execution-capable Bitrix write-back path для ROP-событий:
+BeeAgent owns the bounded execution-capable Bitrix write-back path for ROP events:
 
-- `BitrixReadonlyClient` остаётся строго read-only; `crm.activity.list` используется только для idempotency reconciliation и не даёт mutation capability;
-- отдельный `BitrixWriteClient` — bounded execution boundary с собственным allowlist точных mutation methods (`crm.item.add`, `crm.activity.add`, и, только для физической доставки attachment files It40, `crm.activity.update`) и отдельным env-backed write credential;
-- attachment lifecycle (It40) — BeeAgent-owned bounded opaque store `storage/attachments/<run_id>/` + per-run manifest, authenticated download и physical-file Bitrix delivery; `beeagent-rop` потребляет только bounded attachment extraction contract;
-- authoritative write-back state живёт в `storage/interfaces/rop_writeback_state.json` (durable, cross-run, idempotent), per-run операторская проекция — `rop_writeback_summary.json`;
-- `beeagent-rop` остаётся источником классификационной семантики и не меняется; write-back authority находится в BeeAgent server-side policy, а не в AI/final decision/`should_rop_see`.
+- `BitrixReadonlyClient` remains strictly read-only; `crm.activity.list` is used only for idempotency reconciliation and does not give mutation capability;
+- a separate `BitrixWriteClient` provides a bounded execution boundary with its own allowlist of exact mutation methods (`crm.item.add`, `crm.activity.add`, and, only for physical attachment file delivery in It40, `crm.activity.update`) and a separate env-backed write credential;
+- attachment lifecycle (It40) — a BeeAgent-owned bounded opaque store `storage/attachments/<run_id>/` + per-run manifest, authenticated download and physical-file Bitrix delivery; `beeagent-rop` consumes only the bounded attachment extraction contract;
+- authoritative write-back state lives in `storage/interfaces/rop_writeback_state.json` (durable, cross-run, idempotent); the per-run operator projection is `rop_writeback_summary.json`;
+- `beeagent-rop` remains the source of the classification semantics and does not change; write-back authority is located in BeeAgent server-side policy, not AI/final decision/`should_rop_see`.
 
 BeeScan-specific host integration lives in `beeagent_module.integrations.beescan`: `assessment`, `probe`, `policy`, `http_runner`, `detection`, `detection_policy`, `detection_runner`, `capture_worker`, `git_exposure` and `providers`. The detection runner loads its adjacent `capture_worker.py`; Git HEAD signature parsing remains in the installed BeeScan domain package. Generic host infrastructure stays in `core/`, including the existing `beedrill_toolchain` downloader used by provider provisioning.
 
-## Что НЕ живёт в BeeAgent
+## What does not belong in BeeAgent
 
-В `beeagent` не должна жить клиентская логика вида:
+`beeagent` must not contain client-specific logic such as:
 
-- как определять новый лид;
-- как искать дубли;
-- как строить ROP summary;
-- как читать attachment в контексте Welding;
-- как интерпретировать входящий поток конкретного клиента.
+- how to identify a new lead;
+- how to find duplicates;
+- how to build a ROP summary;
+- how to read an attachment in the Welding context;
+- how to interpret a particular client’s incoming stream.
 
-Это должно жить в модуле.
+This belongs in the module.
 
-## Что живёт в модуле
+## What lives in the module
 
-В модуле живёт доменная логика:
+The module contains domain logic:
 
 - domain models;
 - rules;
@@ -81,38 +81,38 @@ BeeScan-specific host integration lives in `beeagent_module.integrations.beescan
 - recommendation building;
 - client-specific case semantics.
 
-## Что НЕ живёт в модуле
+## What does not belong in a module
 
-В модуле не должны жить:
+The module must not contain:
 
 - transport handlers;
-- собственный orchestrator;
-- собственный runtime state engine;
-- собственное storage ядро;
-- хаотичные прямые вызовы в UI;
-- хаотичные прямые вызовы в systems, если для этого уже есть capability boundary.
+- its own orchestrator;
+- its own runtime state engine;
+- own storage core;
+- ad hoc direct UI calls;
+- ad hoc direct system calls when a capability boundary already exists for them.
 
-## Поток данных (целевая схема)
+## Data flow (target scheme)
 
-1. Пользователь или оператор запускает сценарий через UI/transport.
-2. UI вызывает case/entrypoint внутри BeeAgent.
-3. BeeAgent определяет:
+1. A user or operator starts a scenario through UI/transport.
+2. UI calls case/entrypoint inside BeeAgent.
+3. BeeAgent defines:
    - `run_id`
    - `session_id`
    - `module_id`
    - `case_type`
-4. BeeAgent через registry выбирает нужный модуль.
-5. Модуль получает `ModuleContext`.
-6. Модуль выполняет свою доменную логику.
-7. Если нужны внешние действия или данные, модуль идёт через capability layer.
-8. Результат сохраняется в artifacts через BeeAgent artifact API.
-9. UI/transport показывает summary / next action / diagnostics.
+4. BeeAgent through registry selects the appropriate module.
+5. The module receives `ModuleContext`.
+6. The module performs its domain logic.
+7. If external actions or data are needed, the module goes through capability layer.
+8. The result is stored in artifacts via BeeAgent artifact API.
+9. UI/transport shows summary / next action / diagnostics.
 
-## Поток для длинной задачи
+## Flow for a Long Task
 
-Длинная задача должна жить в BeeAgent, а не внутри одного tool/MCP вызова.
+The long task must live in BeeAgent, not within one tool/MCP call.
 
-То есть:
+That is:
 
 - job state;
 - checkpoints;
@@ -121,13 +121,13 @@ BeeScan-specific host integration lives in `beeagent_module.integrations.beescan
 - approval state;
 - intermediate artifacts
 
-должны жить в BeeAgent runtime.
+must live in BeeAgent runtime.
 
-MCP/n8n — это execution/integration layer, а не место хранения job state.
+MCP/n8n is an execution/integration layer, not a place to store job state.
 
-## Каталоги проекта (beeagent)
+## Project directories (beeagent)
 
-Рекомендуемая структура:
+Recommended structure:
 
 ```
 repo/
@@ -175,74 +175,74 @@ repo/
 └── tests/
 ```
 
-## Что такое module contract у нас
+## Our module contract
 
-Модуль — это обычный Python package, который подключается к BeeAgent как локальная зависимость.
+A module is a regular Python package connected to BeeAgent as a local dependency.
 
-Минимально модуль должен иметь:
+The minimum module must have:
 
 - `module_id`
 - `supported_case_types()`
 - `handle(context)`
 
-Где `context` содержит минимум:
+Where `context` contains a minimum:
 
 - `run_id`
 - `session_id`
 - `module_id`
 - `case_type`
 - input payload
-- доступ к artifacts/capabilities через bounded API
+- access to artifacts/capabilities via bounded API
 
-Без “сложной” системы плагинов. Без remote marketplace. Без dynamic install на старте.
+No complex plugin system, remote marketplace or dynamic installation at startup.
 
-## Что такое capability у нас
+## Our capability contract
 
-Capability — это bounded способ сходить наружу:
+Capability is a bounded way to reach external systems:
 
-- в MCP;
-- в n8n;
-- в другой integration layer;
-- в system connector.
+- MCP;
+- n8n;
+- in another integration layer;
+- in system connector.
 
-Модуль не должен знать все детали transport/execution слоя.
+The module must not need to know every detail of the transport/execution layer.
 
-Он должен говорить примерно так:
+It must express something like:
 
-- “получи данные”
-- “вызови workflow”
-- “сделай bounded action”
+- “retrieve data”
+- “call workflow”
+- “perform bounded action”
 
-А уже BeeAgent capability layer решает, как именно это происходит.
+The BeeAgent capability layer decides exactly how this happens.
 
-## Где должны жить клиентские модули
+## Where customer modules must live
 
-Отдельными репозиториями:
+In separate repositories:
 
 - `beeagent-rop`
 - `beescan`
 - `beeagent-merch`
 
-И подключаться к `beeagent` как локальные/editable зависимости.
+And connect to `beeagent` as local/editable dependencies.
 
-## Что такое UI у нас
+## Our UI contract
 
-UI — это тонкий слой.
+UI is a thin layer.
 
-Он не должен:
+It must not:
 
-- содержать клиентскую бизнес-логику;
-- читать storage напрямую;
-- решать, как работает модуль;
-- подменять orchestration core.
+- Contain client-specific business logic;
+- Read storage directly;
+- decide how the module works;
+- replace orchestration core.
 
-UI должен:
+UI must:
 
-- принимать команду/событие;
-- вызвать case/module flow;
-- показать результат.
+- accept a command/event;
+- invoke a case/module flow;
+- Show the result.
 
-## Mermaid-схема
+## Mermaid diagram
 
 ```mermaid
 flowchart TD

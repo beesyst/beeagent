@@ -4,28 +4,28 @@ ROP sender blacklist uses a bounded management table with Name, Title, Email and
 
 ROP Sources uses a canonical `data_table` backed by the checked-in `config/rop/sources.yml` seed and, after the first mutation, the authoritative persistent runtime registry `storage/config/rop/sources.yml`, not operational artifacts. It shows every configured source and its `Processed total` from the materialized all-time canonical source-contribution projection; an unavailable or malformed projection is an em dash, while a source absent from a valid projection is zero. `enabled` is configuration state, separate from last verified mailbox access evidence in `storage/interfaces/rop_source_connection_health.json`. A mailbox Check performs only connect, login and readonly folder select; green means that latest check succeeded, not that a socket is held open. Add and mailbox Edit check after durable persistence, while a remote failure preserves valid configuration and records safe failed evidence. Real ROP run and poll access also refresh this evidence. Overview `Available sources` counts enabled configured sources whose latest check is connected; Source contribution remains period event analytics. The health artifact contains no credentials. Its protected Add/Edit/Delete, Enable/Disable and Check actions require an operator or admin principal with both `rop` and `rop.sources.write`; an admin principal with `*` remains the global wildcard exception. Mailbox Edit uses generic cell-inline controls; Delete uses one concise direct confirmation. The bounded mailbox credential path is part of `rop.sources.write` and updates only the selected source's username/password environment references in `.env`; new generated references are placed in the `# ROP mailbox` section. It grants no Dashboard, Runs, Modules, global auth/settings or unrelated execution authority. Values never enter YAML. Username is visible only to a principal with this source-management capability, while password is always `********` when present or `—` when absent. Edit starts with an empty password: blank preserves it and a nonblank value replaces it. `/rop/sources.csv`, JSON APIs, audit, logs and artifacts exclude usernames, passwords and environment references and use `nosniff` and `no-store`.
 
-## Назначение
+## Purpose
 
-Этот документ фиксирует актуальный реализованный контракт для BeeUI-backed Operator Web Console в BeeAgent.
+This document records the currently implemented contract for the BeeUI-backed Operator Web Console in BeeAgent.
 
-Он описывает:
+It describes:
 
 - HTML routes;
 - JSON API routes;
-- source of truth для web runtime и read-model данных;
+- source of truth for web runtime and read-model data;
 - read-only/security rules;
-- whitelisted artifacts, которые разрешено отдавать через UI.
+- whitelisted artifacts permitted to be delivered through UI.
 
-Документ не заменяет:
+Document does not replace:
 
 - `docs/ROADMAP.md` — iteration/status;
 - `docs/product/ui_roadmap.md` — UI track planning;
 - `docs/SDLC.md` — required checks;
 - `docs/SECURITY.md` — secure development rules.
 
-## Источники правды
+## Sources of truth
 
-Источник правды для bind/runtime web режима:
+Source of truth for bind/runtime web mode:
 
 - `config/settings.yml`
   - `web.host`
@@ -33,16 +33,16 @@ ROP Sources uses a canonical `data_table` backed by the checked-in `config/rop/s
   - `web.open_browser`
   - `web.auth`
 
-Источник правды для auth-конфига:
+Source of truth for auth-config:
 
 - `config/settings.yml`
   - `web.auth`
 - `.env` / runtime env
   - actual auth secrets
 
-Источник правды для UI read-model данных:
+Source of truth for UI read-model data:
 
-- existing artifacts в `storage/`
+- existing artifacts in `storage/`
   - `storage/runs/<run_id>/...`
   - `storage/interfaces/modules.json`
 - `config/settings.yml`
@@ -72,39 +72,39 @@ ROP Sources uses a canonical `data_table` backed by the checked-in `config/rop/s
 - missing or malformed manifest or requested view fails explicitly and recoverably through the supported `rop dashboard` regeneration path;
 - canonical ROP run artifacts remain the business source of truth.
 
-UI не хранит отдельный runtime state и не создаёт второй source of truth.
+UI does not store a separate runtime state or create a second source of truth.
 
 ## Runtime foundation
 
-Текущий реализованный контракт:
+Current contract implemented:
 
 - UI-6 = enriched ROP dashboard/read-model;
 - UI-7 = BeeUI-backed auth boundary.
 
-- **BeeUI** — canonical web layer для BeeAgent;
-- BeeAgent UI code находится в `src/beeagent_module/interfaces/ui/`;
-- `app.py` создаёт embedded BeeUI app и BeeAgent read-only API routes;
-- `adapter.py` содержит adapter methods, custom pages и artifact access;
-- `read_model.py` содержит read-model и BeeUI `layout[]`;
-- `artifacts.py` содержит artifact allowlist;
-- `bounded_read.py` отвечает за bounded/redacted previews;
-- `locale.py` содержит locale helper;
-- thin CLI entrypoint в `src/beeagent_module/cli/web.py`;
-- `config/beeui.yml` — источник правды для navigation/pages/tabs/locale/component seed;
-- ROP block composition пока задаётся в BeeAgent read-model layout builders, а не полностью через config;
-- `config/start.py` вызывает `beeagent_module.cli.web.run_web`;
-- legacy `src/beeagent_module/web` заморожен;
-- auth boundary реализован через BeeUI session/role layer;
+- **BeeUI** – canonical web layer for BeeAgent;
+- BeeAgent UI code is located in `src/beeagent_module/interfaces/ui/`;
+- `app.py` creates embedded BeeUI app and BeeAgent read-only API routes;
+- `adapter.py` contains adapter methods, custom pages and artifact access;
+- `read_model.py` contains read-model and BeeUI `layout[]`;
+- `artifacts.py` contains artifact allowlist;
+- `bounded_read.py` is responsible for bounded/redacted previews;
+- `locale.py` contains locale helper;
+- thin CLI entrypoint in `src/beeagent_module/cli/web.py`;
+- `config/beeui.yml` is a source of truth for navigation/pages/tabs/locale/component seed;
+- ROP block composition is still in BeeAgent read-model layout builders and not fully in config;
+- `config/start.py` calls `beeagent_module.cli.web.run_web`;
+- legacy `src/beeagent_module/web` frozen;
+- auth boundary implemented through BeeUI session/role layer;
 - GET/read surfaces remain read-only by default; UI-8.8 blacklist Add/Update/Delete are explicit protected bounded POST exceptions, not runtime control endpoints;
-- Queue `date_range` filter (UI-8.2) использует generic BeeUI Tabler Datepicker contract (Iteration 13.10) через `beeui>=0.23.0`;
-- Queue toolbar (UI-8.3) использует canonical BeeUI Tabler toolbar contract (Iteration 13.11) через `beeui>=0.24.0`;
+- Queue `date_range` filter (UI-8.2) uses generic BeeUI Tabler Datepicker contract (Iteration 13.10) via `beeui>=0.23.0`;
+- Queue toolbar (UI-8.3) uses canonical BeeUI Tabler toolbar contract (Iteration 13.11) via `beeui>=0.24.0`;
 - ROP dashboard: KPI cards, processing funnel, source health, classification distribution, deterministic recommendations, attention events, attachment summary, evidence links;
-- локализация UI: en по умолчанию, ru через `?lang=ru` или persistent cookie `beeui_lang` (query параметр имеет приоритет), конфигурация в `config/beeui.yml`;
-- product dashboard (`/`) с customer-facing KPI, summary, quick links и Technical details под катом;
-- `/rop` рендерится как BeeUI generic adapter custom page;
+- localization of UI: en default, ru via `?lang=ru` or persistent cookie `beeui_lang` (query parameter has priority), configuration in `config/beeui.yml`;
+- the product dashboard (`/`) has customer-facing KPIs, a summary, quick links and Technical details in a collapsible section;
+- `/rop` is rendered as a BeeUI generic adapter custom page;
 - ROP page tabs use BeeUI progressive navigation with canonical SSR `href` values and controlled BeeUI icons; BeeAgent does not add tab-navigation JavaScript;
-- browser artifact routes и shell принадлежат BeeUI;
-- `/api/runs/{run_id}/artifacts/{artifact_id}` остаётся JSON envelope.
+- browser artifact routes and shell belong to BeeUI;
+- `/api/runs/{run_id}/artifacts/{artifact_id}` remains JSON envelope.
 
 Entrypoint:
 
@@ -118,7 +118,7 @@ CLI overrides:
 ./start.sh web --host 127.0.0.1 --port 8780 --no-open
 ```
 
-Диагностика маршрутов:
+Diagnostics of routes:
 
 ```bash
 ./start.sh routes
@@ -126,9 +126,9 @@ CLI overrides:
 
 ## HTML routes (BeeUI-backed)
 
-Реализованные HTML routes (через BeeUI product console + custom BeeAgent routes):
+Implemented HTML routes (through the BeeUI product console + custom BeeAgent routes):
 
-Основные product console pages поддерживают `?lang=ru`:
+The main product console pages supports `?lang=ru`:
 
 - `/` — dashboard
 - `/health` — health check
@@ -142,7 +142,7 @@ CLI overrides:
 
 ## HTML routes (event detail)
 
-Реализованные event detail HTML routes:
+Implemented event detail HTML routes:
 
 - `/rop/events/{event_id}` — ROP event detail review page (read-only)
 
@@ -150,7 +150,7 @@ Query parameters:
 
 - `run_id` (required): run identifier
 - `event_instance_id` (optional): additive run-local selector for a distinct processing occurrence when several items share the same public `event_id`; omitted for old runs and unique event ids.
-- `lang` (optional, `en`/`ru`): locale override; при отсутствии параметра используется значение cookie `beeui_lang` (сохраняется BeeUI при выборе языка через `?lang=`), иначе default из `config/beeui.yml`
+- `lang` (optional, `en`/`ru`): locale override; In the absence of a parameter, the value cookie `beeui_lang` must be used (saved by BeeUI when selecting language through `?lang=`), otherwise default from `config/beeui.yml` must be used.
 
 ## Attachment download route (It40)
 
@@ -163,16 +163,16 @@ Query parameters:
 
 Behavior:
 
-- lookup только по safe manifest attachment id (никогда по произвольному filesystem path);
-- invalid/unknown run/event/attachment ids и path traversal fail closed;
+- lookup only for safe manifest attachment id (never arbitrary filesystem path);
+- invalid/unknown run/event/attachment ids and path traversal fail closed;
 - response: forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `application/octet-stream` (no inline render);
-- route защищён существующей BeeUI session auth + resource authorization (ROP scope); ROP-scoped principal не может использовать его для чтения unrelated surfaces;
+- route is protected by the existing BeeUI session auth + resource authorization (ROP scope); ROP-scoped principal cannot use it to read unrelated surfaces;
 - Event Detail retains stored attachment metadata and this download action when `rop.attachments.enabled:false`; that switch disables semantic analysis only;
-- raw attachment bytes никогда не отдаются через JSON API/HTML контент.
+- raw attachment bytes is never released through JSON API/HTML content.
 
 ## JSON API routes
 
-Реализованные JSON API routes (через BeeUI product console + custom BeeAgent routes):
+Implemented JSON API routes (through the BeeUI product console + custom BeeAgent routes):
 
 - `/api/dashboard`
 - `/api/runs`
@@ -215,9 +215,9 @@ Widget API response fields (MVP):
 
 ### ROP final decisions read-model contract
 
-Источник: `storage/runs/<run_id>/rop_final_decisions.json`
+Source: `storage/runs/<run_id>/rop_final_decisions.json`
 
-Структура:
+Structure:
 
 ```json
 {
@@ -278,7 +278,7 @@ Additive It35 fields (backward-compatible):
 
 ### ROP duplicate classification contract (It35)
 
-Источник: module-returned `base_classification` / `duplicate` blocks в `classified_events.json` и `rop_final_decisions.json`.
+Source: module-returned `base_classification` / `duplicate` blocks in `classified_events.json` and `rop_final_decisions.json`.
 
 Event Detail classification (additive, backward-compatible):
 
@@ -400,21 +400,21 @@ Locale switching remains a read-only artifact projection and does not call the A
 Auth:
 
 - route-level `Authorization: Bearer <token>`;
-- token value читается из env variable, имя которой задаётся через `bitrix.widget.token_env`;
-- widget routes не защищаются BeeUI session auth, потому что это integration boundary для Bitrix embedding;
-- при `bitrix.widget.enabled=true` routes всё равно защищены widget Bearer token.
+- token value is read from env variable, whose name is given through `bitrix.widget.token_env`;
+- widget routes is not protected by BeeUI session auth, because it's integration boundary for Bitrix embedding;
+- at `bitrix.widget.enabled=true` routes still protected widget Bearer token.
 
 Behavior:
 
 - read-only;
 - artifact-backed;
-- читает final decisions read-model;
-- не вызывает Bitrix REST;
-- не делает CRM/Bitrix/mailbox/module/capability mutations;
-- summary/list route при `bitrix.widget.enabled=false` возвращает safe disabled envelope;
-- detail route при disabled widget возвращает unavailable/error envelope.
+- Read final decisions read-model;
+- does not call Bitrix REST;
+- does not make CRM/Bitrix/mailbox/module/capability mutations;
+- summary/list route at `bitrix.widget.enabled=false` returns safe disabled envelope;
+- detail route at disabled widget returns unavailable/error envelope.
 
-List/detail payload в текущем scope должен включать:
+List/detail payload in the current scope must include:
 
 - `title`
 - `priority`
@@ -435,7 +435,7 @@ List/detail payload в текущем scope должен включать:
 
 ## Bitrix embedded app (UI-8.5)
 
-BeeAgent ROP Web Console может открываться внутри Bitrix24 как **Server-Side Local Application with User Interface**. Разрешённый Bitrix24 пользователь открывает приложение из портала и без отдельного BeeAgent login получает существующую read-only `/rop` console внутри iframe. Отдельный frontend и permanent URL credentials не вводятся.
+BeeAgent ROP Web Console can open inside Bitrix24 as a **Server-Side Local Application with User Interface**. An authorized Bitrix24 user opens the application from the portal and receives the existing read-only `/rop` console inside an iframe without a separate BeeAgent login. No separate frontend or persistent URL credentials are introduced.
 
 ### Config
 
@@ -445,75 +445,75 @@ Source of truth: `config/settings.yml` → `bitrix.embedded_app`:
 bitrix:
   embedded_app:
     enabled: false
-    portal_origin: "" # exact HTTPS origin, обязателен при enabled=true
-    default_role: "viewer" # least-privileged BeeUI role (в текущем scope только viewer)
-    request_timeout: 10 # bounded таймаут (сек) для Bitrix current-user REST verification
+    portal_origin: ""
+    default_role: "viewer"
+    request_timeout: 10
 ```
 
-Правила:
+Rules:
 
-- `bitrix.embedded_app.enabled=true` требует `web.auth.enabled=true`;
-- `portal_origin` — точный HTTPS origin (без path, query, trailing slash);
-- launch input не выбирает role: verified Bitrix user получает configured `default_role` (`viewer` by default; configured `operator` is limited to a trusted Local App audience; embedded `admin` is not allowed);
-- при `enabled=true` BeeUI получает `security.frame_ancestors=[portal_origin]`, `auth.cookie_samesite="none"`, `auth.cookie_secure=true` и canonical `auth.session_age_max`;
-- BeeAgent не содержит Bitrix user-ID allowlist: доступ управляется Bitrix24.
+- `bitrix.embedded_app.enabled=true` requires `web.auth.enabled=true`;
+- `portal_origin` is the exact HTTPS origin (without path, query, trailing slash);
+- launch input does not choose role: verified Bitrix user to receive configured `default_role` (`viewer` by default; configured `operator` is limited to a trusted Local App audience; embedded `admin` is not allowed);
+- At `enabled=true` BeeUI receives `security.frame_ancestors=[portal_origin]`, `auth.cookie_samesite="none"`, `auth.cookie_secure=true` and canonical `auth.session_age_max`;
+- BeeAgent does not contain Bitrix user-ID allowlist: access controlled by Bitrix24.
 
 ### Routes
 
-Реальный Bitrix24 Local Application payload (проверено в production): `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` — поле `DOMAIN` Bitrix **не шлёт**. Привязка идёт по `member_id`, домен всегда берётся из configured `portal_origin` (outbound никогда не строится из данных запроса).
+Actual Bitrix24 Local Application payload (verified in production): `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` — Bitrix **does not send** the `DOMAIN` field. Binding uses `member_id`; the domain always comes from the configured `portal_origin` (outbound requests are never constructed from request data).
 
 #### `POST /bitrix/rop/install`
 
-One-time handler для привязки одного deployment к одному Bitrix portal.
+One-time handler for linking one deployment to one Bitrix portal.
 
-- принимает bounded `application/x-www-form-urlencoded` form; обязательные поля — `member_id`, `AUTH_ID`, `AUTH_EXPIRES`; `PROTOCOL` (опционально, `https` или `1`), `DOMAIN` (опционально);
-- `AUTH_ID` и `AUTH_EXPIRES` обязательны для первого install и reinstall: до любой записи state проверяются expiry (`AUTH_EXPIRES`) и active Bitrix current user через `user.current`; invalid/inactive/expired/rejected install не создаёт artifact;
-- если `DOMAIN` передан — defense-in-depth: origin из `DOMAIN` должен совпадать с configured `portal_origin`, иначе `403 portal_mismatch`; проверка выполняется до любого outbound запроса;
-- хранящийся state обязан соответствовать configured `portal_origin`/`portal_domain`, иначе `409 installation_portal_mismatch`;
-- дополнительные поля Bitrix (`PLACEMENT`, `PLACEMENT_OPTIONS`, `REFRESH_ID`, `status`, `APP_SID`, `LANG` и любые другие) игнорируются — не хранятся, не логируются;
-- body bounded (жёсткий лимит размера при стриминге, лимит числа полей, запрет дублирующихся ключей, лимит длины значений используемых полей);
-- требует HTTPS request (HTTPS определяется по scheme ASGI запроса; trusted reverse proxy настраивает scheme, заголовок `X-Forwarded-Proto` от клиента не доверяется);
-- привязка: после успешной verification первый `member_id` сохраняется атомарно (exclusive create) в фиксированный artifact `storage/interfaces/bitrix_rop_app.json` (только normalized `portal_domain`/`portal_origin` из config, `member_id`, `installed_at`, `contract_version`); при гонке state перечитывается и сверяется binding; другой `member_id` → `409 conflicting_installation`;
-- install выполняет полный launch flow: создание viewer session и `303` на `/rop` (Bitrix реально доставляет open-контекст на install URL);
-- не хранит и не логирует OAuth credentials;
-- ответы `no-store` с `Referrer-Policy: no-referrer`.
+- accepts a bounded `application/x-www-form-urlencoded` form; required fields are `member_id`, `AUTH_ID`, `AUTH_EXPIRES`; `PROTOCOL` (optional, `https` or `1`), `DOMAIN` (optional);
+- `AUTH_ID` and `AUTH_EXPIRES` are required for initial installation and reinstallation: expiry (`AUTH_EXPIRES`) and the active Bitrix current user are checked through `user.current` before any state write; invalid/inactive/expired/rejected installation creates no artifact;
+- if `DOMAIN` is supplied, defense in depth requires the origin from `DOMAIN` to match the configured `portal_origin`, otherwise `403 portal_mismatch`; this check precedes any outbound request;
+- stored state must match the configured `portal_origin`/`portal_domain`, otherwise `409 installation_portal_mismatch`;
+- Additional Bitrix fields (`PLACEMENT`, `PLACEMENT_OPTIONS`, `REFRESH_ID`, `status`, `APP_SID`, `LANG` and any others) are ignored — not stored, not logged;
+- the body is bounded (a strict streaming size limit, field count limit, duplicate key rejection and value length limits for used fields);
+- requires an HTTPS request (HTTPS is determined by the ASGI request scheme; a trusted reverse proxy sets the scheme, while the client’s `X-Forwarded-Proto` header is not trusted);
+- binding: after successful verification, the first `member_id` is saved atomically (exclusive create) in the fixed artifact `storage/interfaces/bitrix_rop_app.json` (only normalized `portal_domain`/`portal_origin` from config, `member_id`, `installed_at`, `contract_version`); on a race, state is reread and the binding checked; a different `member_id` → `409 conflicting_installation`;
+- install performs the complete launch flow: creation of viewer session and `303` on `/rop` (Bitrix actually delivers open-context on install URL);
+- does not store or log OAuth credentials;
+- `no-store` responses with `Referrer-Policy: no-referrer`.
 
 #### `POST /bitrix/rop/launch`
 
-Launch handler для application open context. Только POST; GET на `/bitrix/rop/launch` возвращает `405` и никогда не обрабатывает OAuth значения (query-параметры не используются).
+Launch handler for application open context. Only POST; GET on `/bitrix/rop/launch` returns `405` and never processes OAuth values (query- parameters are not used).
 
-- принимает bounded `application/x-www-form-urlencoded` form; используются только bounded `AUTH_ID`, `AUTH_EXPIRES` (обязательные), `member_id` (обязательный) и optional `REFRESH_ID`; `DOMAIN` не требуется (Bitrix его не шлёт), но при наличии проверяется против configured `portal_origin`;
-- `AUTH_EXPIRES` принимается как unix timestamp или как число секунд жизни (TTL), например `3600`;
-- дополнительные поля Bitrix (`PLACEMENT`, `PLACEMENT_OPTIONS`, `APP_SID`, `status`, `LANG` и любые другие) игнорируются — не хранятся и не логируются;
-- body bounded (жёсткий лимит размера при стриминге, лимит числа полей, запрет дублирующихся ключей, лимит длины значений используемых полей);
-- требует HTTPS request (scheme ASGI запроса);
-- до любого outbound request: хранящийся `portal_origin`/`portal_domain` обязан совпадать с configured origin, optional `DOMAIN` при наличии обязан совпадать с configured origin, затем сверяется `member_id` с installation state; outbound REST call всегда идёт на configured `portal_origin` (`https://<portal_origin>/rest/user.current`) и никогда не строится из данных запроса;
-- отклоняет malformed и expired launch;
-- проверяет текущего пользователя официальным Bitrix REST `user.current` только против configured portal; для этого у приложения в Bitrix должно быть право **`user`** (Пользователи) — иначе Bitrix отклоняет вызов с `insufficient_scope`;
-- отклоняет invalid/rejected token, inactive user, timeout и malformed REST response; при отказе возвращается `reason` (например `token_rejected`) и bounded `bitrix_error` (например `insufficient_scope`, `invalid_token`) без значений токена;
-- не сохраняет и не логирует `AUTH_ID`/`REFRESH_ID`;
-- создаёт BeeUI principal session для verified Bitrix user с configured `viewer` or `operator` role; browser input cannot select the role and embedded `admin` is not allowed;
-- устанавливает `HttpOnly; Secure; SameSite=None` cookie через BeeUI public helper;
-- возвращает `303 See Other` на `/rop` с `no-store` и `Referrer-Policy: no-referrer`.
+- accepts bounded `application/x-www-form-urlencoded` form; Only bounded `AUTH_ID`, `AUTH_EXPIRES` (mandatory), `member_id` (mandatory) and optional `REFRESH_ID` are used; `DOMAIN` is not required (Bitrix does not send it), but if available is checked against configured `portal_origin`;
+- `AUTH_EXPIRES` is taken as unix timestamp or as the number of seconds of life (TTL), e.g. `3600`;
+- Additional Bitrix fields (`PLACEMENT`, `PLACEMENT_OPTIONS`, `APP_SID`, `status`, `LANG` and any other) are ignored — not stored or logged;
+- the body is bounded (a strict streaming size limit, field count limit, duplicate key rejection and value length limits for used fields);
+- Demands HTTPS request (scheme ASGI request);
+- before any outbound request: stored `portal_origin`/`portal_domain` must match the configured origin, optional `DOMAIN` must also match it when present, then `member_id` is checked against installation state; the outbound REST call always uses the configured `portal_origin` (`https://<portal_origin>/rest/user.current`) and is never constructed from request data;
+- Rejects malformed and expired launch;
+- checks the current user through the official Bitrix REST `user.current` only against the configured portal; the Bitrix application requires the **`user`** (Users) permission, otherwise Bitrix rejects the call with `insufficient_scope`;
+- rejects invalid/rejected tokens, inactive users, timeouts and malformed REST responses; refusal returns `reason` (for example, `token_rejected`) and bounded `bitrix_error` (for example, `insufficient_scope`, `invalid_token`) without token values;
+- neither stores nor logs `AUTH_ID`/`REFRESH_ID`;
+- Creates BeeUI principal session for verified Bitrix user with configured `viewer` or `operator` role; browser input cannot select the role and embedded `admin` is not allowed;
+- Sets `HttpOnly; Secure; SameSite=None` cookie through BeeUI public helper;
+- Returns `303 See Other` to `/rop` with `no-store` and `Referrer-Policy: no-referrer`.
 
 ### Session / iframe policy
 
-- при `embedded_app.enabled=true` framing разрешён только configured portal через BeeUI `frame-ancestors` CSP (вместо `X-Frame-Options: DENY`);
-- session cookie остаётся `HttpOnly` и `Secure`;
-- `AUTH_ID`, `REFRESH_ID` и session secrets отсутствуют в URL, HTML, JS, logs и artifacts;
-- существующий local BeeAgent login через `/auth/login` сохраняется.
+- At `embedded_app.enabled=true` framing, only configured portal is permitted via BeeUI `frame-ancestors` CSP (instead of `X-Frame-Options: DENY`);
+- session cookie remains `HttpOnly` and `Secure`;
+- `AUTH_ID`, `REFRESH_ID` and session secrets are not available in URL, HTML, JS, logs and artifacts;
+- The existing local BeeAgent login through `/auth/login` is retained.
 
 ### Backward compatibility
 
-- `/api/bitrix/rop/widget*` остаются совместимыми и защищаются widget Bearer token;
-- `GET /rop` без valid BeeUI session остаётся закрытым (redirect на `/auth/login` или `401`);
-- GET routes остаются read-only.
+- `/api/bitrix/rop/widget*` remains compatible and protected widget Bearer token;
+- `GET /rop` without valid BeeUI session remains closed (redirect on `/auth/login` or `401`);
+- GET routes remains read-only.
 
 ## Auth mode (UI-7)
 
-BeeAgent Web Console поддерживает config-driven auth boundary через BeeUI session/role layer. BeeUI владеет login/logout/session/CSRF. BeeAgent владеет config/env policy, bootstrap, CLI rotation, route protection и server-side resource authorization.
+BeeAgent Web Console supports a config-driven auth boundary through the BeeUI session/role layer. BeeUI owns login/logout/session/CSRF. BeeAgent owns config/env policy, bootstrap, CLI rotation, route protection and server-side resource authorization.
 
-Auth настройки живут в `config/settings.yml` → `web.auth`:
+Auth settings live in `config/settings.yml` → `web.auth`:
 
 ```yaml
 web:
@@ -529,12 +529,12 @@ web:
         token_env: BEEAGENT_WEB_ADMIN1_TOKEN
 ```
 
-Реальные secrets живут только в env:
+The real secrets only lives in env:
 
-- `BEEAGENT_WEB_SESSION_SECRET` — secret для HMAC-подписи session cookie
-- `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` — token для аутентификации
+- `BEEAGENT_WEB_SESSION_SECRET` – secret for HMAC- signatures session cookie
+- `BEEAGENT_WEB_ADMIN1_TOKEN`, `BEEAGENT_WEB_ADMIN2_TOKEN` – token for authentication
 
-Secrets никогда не хранятся в `settings.yml`.
+Secrets is never stored in `settings.yml`.
 
 ### Principal model (UI-8.6)
 
@@ -544,24 +544,24 @@ authority = role
 resource access = scopes
 ```
 
-- local login привязывается к exact configured `username + token` паре;
-- successful session получает canonical configured principal `id` (не произвольный browser `user_id`);
-- `role` остаётся только authority level: `viewer` / `operator` / `admin`;
-- `scopes` определяют resource access: `*` (full access), `dashboard`, `rop`, `runs`, `modules`;
-- `scopes` обязательны для каждого principal и валидируются fail-fast;
-- `["*"]` — единственный допустимый wildcard: wildcard не комбинируется с другими scopes;
-- разные principals с одинаковым resolved token value отклоняются на startup без раскрытия secret;
-- generic auth failure не раскрывает, какой credential неверен.
+- local login is attached to exact configured `username + token` pair;
+- successful session receives canonical configured principal `id` (not arbitrary browser `user_id`);
+- `role` remains only authority level: `viewer` / `operator` / `admin`;
+- `scopes` defines resource access: `*` (full access), `dashboard`, `rop`, `runs`, `modules`;
+- `scopes` is mandatory for each principal and is validated by fail-fast;
+- `["*"]` is the only permissible wildcard: wildcard that is not combined with other scopes;
+- Different principals with the same resolved token value are rejected on startup without secret;
+- generic auth failure does not reveal which credential is incorrect.
 
 ### Bootstrap
 
-- `ensure_web_auth_env(...)` выполняется до `load_settings(...)`;
-- при `web.auth.enabled=true` отсутствующие или пустые auth env values генерируются автоматически;
-- пустые ключи в `.env` обновляются in-place;
-- отсутствующие ключи дописываются в `.env`;
-- значения выставляются в `os.environ` для текущего процесса;
-- новый `.env` на POSIX получает `0600`; bootstrap и rotation сохраняют режим и группу существующего `.env`;
-- в stdout печатается только `KEY=<generated>`.
+- `ensure_web_auth_env(...)` runs before `load_settings(...)`;
+- at `web.auth.enabled=true` missing or empty auth env values must be generated automatically;
+- `.env` empty keys are updated in-place;
+- missing keys are appended to `.env`;
+- values are set in `os.environ` for the current process;
+- a new `.env` receives `0600` on POSIX; bootstrap and rotation preserve the existing `.env` mode and group;
+- in stdout only `KEY=<generated>` is printed.
 
 ### Rotation CLI
 
@@ -572,13 +572,13 @@ resource access = scopes
 ./start.sh auth rotate session
 ```
 
-После rotation нужен restart web app. Session secret не печатается.
+rotation requires restart web app. Session secret not to be printed.
 
-### Поведение
+### Behavior
 
-- `web.auth.enabled: false` (default): текущее local/dev поведение без auth.
-- `web.auth.enabled: true`: включена session-based auth через BeeUI c server-side authorization.
-- external exposure с `web.auth.enabled=false` должна считаться rejected/fail-fast по settings policy.
+- `web.auth.enabled: false` (default): Current local/dev behaviour without auth.
+- `web.auth.enabled: true`: session-based auth is enabled through BeeUI with server-side authorization;
+- external exposure with `web.auth.enabled=false` must be considered rejected/fail-fast under settings policy.
 
 ### Protected routes (when enabled)
 
@@ -590,29 +590,29 @@ API routes:
 
 - `/api/*`
 
-Любой не-public путь (включая неизвестные/future protected surfaces) является protected: default-deny для non-wildcard principals. Даже неизвестный `/api/...` путь при включённом auth требует аутентификации до возврата route-level результата.
+Any non-public path (including unknown/future protected surfaces) is protected: default-deny for non-wildcard principals. even the unknown `/api/...` path with auth required authentication before route-level returns.
 
 ### Public routes
 
-- `/health` — public sanitized health check (без details runtime state)
+- `/health` – public sanitized health check (without details runtime state)
 - `/static/*` — public static assets
 - `/auth/*` — auth routes owned by BeeUI (login/logout/CSRF)
-- `/api/bitrix/rop/widget*` — integration boundary, не требует BeeUI session cookie, но при enabled widget требует route-level Bearer token
-- `/bitrix/rop/install`, `/bitrix/rop/launch` — Bitrix embedded app entry points (требуют HTTPS и `bitrix.embedded_app.enabled=true`; при disabled возвращают bounded error)
+- `/api/bitrix/rop/widget*` – integration boundary, does not require BeeUI session cookie, but at enabled widget requires route-level Bearer token
+- `/bitrix/rop/install`, `/bitrix/rop/launch` - Bitrix embedded app entry points (required HTTPS and `bitrix.embedded_app.enabled=true`; at disabled return bounded error)
 
 ### Resource authorization (UI-8.6)
 
-Server-side authorization выполняется центральным BeeAgent policy по canonical session identity + текущему config:
+Server-side authorization is performed by the central BeeAgent policy at canonical session identity + the current config:
 
-- `admin + scopes=["*"]` сохраняет полный доступ ко всем HTML/API/resource routes;
-- `viewer + scopes=["rop"]` (и любой другой non-wildcard principal с `rop`) получает:
+- `admin + scopes=["*"]` retains full access to all HTML/API/resource routes;
+- `viewer + scopes=["rop"]` (and any other non-wildcard principal with `rop`) receives:
   - `/rop`, Event Detail, `/api/rop/*`;
-  - bounded ROP-owned evidence artifacts из allowlist (`/runs/{run_id}/artifacts/{allowlisted_id}`);
-  - запрещены Dashboard, Runs, Modules, unrelated runs/artifacts/API;
+  - bounded ROP-owned evidence artifacts of allowlist (`/runs/{run_id}/artifacts/{allowlisted_id}`);
+  - Dashboard, Runs, Modules, unrelated runs/artifacts/API;
 - unknown protected surface → default-deny;
-- navigation visibility отражает authorization, но не заменяет server-side enforcement;
-- ROP-only principal после login попадает на `/rop` (landing redirect);
-- verified Bitrix external principal (user_id не в `web.auth.principals`) remains bounded ROP-only with its configured `viewer` or trusted Local App `operator` role; embedded `admin` is not allowed.
+- navigation visibility reflects authorization, but does not replace server-side enforcement;
+- ROP-only principal after login reaches `/rop` (landing redirect);
+- verified Bitrix external principal (user_id not in `web.auth.principals`) remains bounded ROP-only with its configured `viewer` or trusted Local App `operator` role; embedded `admin` is not allowed.
 
 ### Unauthenticated / forbidden response
 
@@ -632,46 +632,46 @@ Server-side authorization выполняется центральным BeeAgent
 
 ### Session
 
-Session управляется BeeUI через подписанную cookie `beeui_session`. Session secret читается из env по `web.auth.session_secret_env`. Session хранит canonical principal `user_id` (идентифицирует principal в `web.auth.principals`) и `role`.
+Session is controlled by BeeUI through the signed cookie `beeui_session`. Session secret is read from env on `web.auth.session_secret_env`. Session stores canonical principal `user_id` (identifies principal in `web.auth.principals`) and `role`.
 
-### Роли
+### Roles
 
-- `viewer` — просмотр dashboard/run/ROP (read-only)
-- `operator` — operator-level доступ (future)
-- `admin` — admin-level доступ (future config/actions)
+- `viewer` – dashboard/run/ROP (read-only) view
+- `operator` – operator-level access (future)
+- `admin` – admin-level access (future config/actions)
 
-Поддерживаются `viewer` / `operator` / `admin`. Role не определяет resource scope: resource access определяется только `scopes`. GET/read routes остаются read-only; UI-8.8 blacklist actions являются explicit bounded POST exception с server-side authority, CSRF, validation и audit.
+Supported by `viewer` / `operator` / `admin`. Role does not define resource scope: resource access only `scopes`. GET/read routes remains read-only; UI-8.8 blacklist actions are explicit bounded POST exception with server-side authority, CSRF, validation and audit.
 
 ### Rollout
 
-При rollout UI-8.6 обязательна invalidation/rotation старых sessions и credentials:
+rollout UI-8.6 mandatory invalidation/rotation old sessions and credentials:
 
-- session secret rotation (`./start.sh auth rotate all --logout-all` или `session`) аннулирует все существующие signed cookies;
-- principal token rotation (`./start.sh auth rotate <principal-id-or-username>`) требует повторного входа;
-- в `web.auth.principals[]` для каждого principal обязателен явный `scopes`.
+- session secret rotation (`./start.sh auth rotate all --logout-all` or `session`) cancels all existing signed cookies;
+- principal token rotation (`./start.sh auth rotate <principal-id-or-username>`) requires re-entry;
+- in `web.auth.principals[]` for each principal the explicit `scopes` is mandatory.
 
 ## Artifact routes
 
-Реализованные artifact routes:
+Implemented artifact routes:
 
 - `/runs/{run_id}/artifacts` — browser HTML route
 - `/runs/{run_id}/artifacts/{artifact_id}` — browser HTML route
-- `/api/runs/{run_id}/artifacts` — JSON (список доступных артефактов)
+- `/api/runs/{run_id}/artifacts` – JSON (List of access artifacts)
 - `/api/runs/{run_id}/artifacts/{artifact_id}` — JSON envelope (machine-readable)
 
-Правила:
+Rules:
 
-- доступ к артефактам идёт по allowlisted `artifact_id`, а не по произвольному имени файла;
-- browser-routes (`/runs/...`) возвращают BeeUI HTML;
-- API-route (`/api/runs/...`) возвращает bounded/redacted JSON envelope;
-- произвольные имена файлов и path-like значения отклоняются;
-- raw `.eml` и attachment content не отдаются.
+- Access to artifacts is based on allowlisted `artifact_id`, not on the arbitrary file name;
+- browser-routes (`/runs/...`) returns BeeUI HTML;
+- API-route (`/api/runs/...`) returns bounded/redacted JSON envelope;
+- Arbitrary file names and path-like values are rejected;
+- raw `.eml` and attachment content are not surrendered.
 
 ### Artifact viewer (browser route)
 
-Browser route показывает bounded/redacted artifact preview через BeeUI. Внутренняя HTML-структура viewer не фиксируется этим документом.
+Browser route shows bounded/redacted artifact preview through BeeUI. The HTML- Inner Structure viewer is not fixed by this document.
 
-### Примеры ответов
+### Examples of responses
 
 `GET /api/runs/{run_id}`
 
@@ -840,7 +840,7 @@ Browser route показывает bounded/redacted artifact preview через 
 }
 ```
 
-Пример ответа для несуществующего события:
+Example of response for a non-existent event:
 
 ```json
 {
@@ -855,7 +855,7 @@ Browser route показывает bounded/redacted artifact preview через 
 }
 ```
 
-Пример ответа для non-allowlisted artifact:
+Example of response for non-allowlisted artifact:
 
 ```json
 {
@@ -872,7 +872,7 @@ Browser route показывает bounded/redacted artifact preview через 
 
 ## Artifact allowlist (UI-4 BeeUI-backed)
 
-Разрешённые artifact ID и их fixed mapping внутри run directory:
+Permitted artifact ID and their fixed mapping inside run directory:
 
 | ID                                | Relative path                                         |
 | --------------------------------- | ----------------------------------------------------- |
@@ -901,33 +901,33 @@ Browser route показывает bounded/redacted artifact preview через 
 | `rop_final_decisions_json`        | `rop_final_decisions.json`                            |
 | `rop_writeback_summary_json`      | `rop_writeback_summary.json`                          |
 
-UI не отдаёт произвольные файлы из `storage/`. `artifact_id` маппится на фиксированный allowlisted relative path. `rop_evaluation.json` в текущей реализации не входит в generic artifact allowlist.
+UI does not serve arbitrary files from `storage/`. `artifact_id` maps to a fixed allowlisted relative path. The current implementation excludes `rop_evaluation.json` from the generic artifact allowlist.
 
-`rop_writeback_summary.json` — read-only per-run projection операторского write-back state (Iteration 37): bounded outcome/status per event (`create_lead` / `attach_existing` / `deferred`), source of truth — `storage/interfaces/rop_writeback_state.json`. Проекция не содержит credentials, raw `.eml` и raw attachment content.
+`rop_writeback_summary.json` – read-only per-run projection of write-back state (Iteration 37): bounded outcome/status per event (`create_lead` / `attach_existing` / `deferred`), source of truth — `storage/interfaces/rop_writeback_state.json`. The projection does not contain credentials, raw `.eml` and raw attachment content.
 
-ROP dashboard поддерживает period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. Default period берётся из `config/settings.yml` → `rop.dashboard.default_period` (по умолчанию `7d`). Period фильтрует classified events по `event_date`/`received_at`/`timestamp`. Period `all` отключает фильтрацию.
+ROP dashboard supports the period query parameter: `?period=today`, `?period=yesterday`, `?period=7d`, `?period=30d`, `?period=90d`, `?period=365d`, `?period=all`. The default period comes from `config/settings.yml` → `rop.dashboard.default_period` (default `7d`). The period filters classified events by `event_date`/`received_at`/`timestamp`. Period `all` disables filtering.
 
 ### Cross-run period aggregation (ROP dashboard)
 
-ROP dashboard агрегирует события по периоду для выбранного клиента:
+ROP dashboard aggregates events by period for the selected client:
 
-- `run_id` — anchor run и client scope для выбранного-run operational evidence;
-- `business_kpi`, `series` и period queues агрегируют уникальные same-client события по релевантным успешным run'ам (degraded/error run'ы исключаются с bounded warning `incomplete_run_skipped`);
-- stable base identity события: `client_id + source_id + (message_id → x_email_id → event_id)`;
-- внутри одного run повторяющиеся occurrences одного stable base (например, одно письмо с одним `message_id`, попавшее в батч несколько раз) различаются deterministic occurrence slot (по source timestamp order, `event_id`/`event_instance_id` tie-break) и сохраняются раздельно;
-- cross-run canonical winner — newest run per `(client_id, source_id, stable base, occurrence slot)`, поэтому одно и то же письмо в нескольких mailbox polls/runs не умножается в `7d/30d/all`; `run_id + event_instance_id` не является cross-run business identity;
-- `event_instance_id` — BeeAgent-owned run-local processing occurrence selector: используется только для ordering/disambiguation внутри run и artifact/UI lookup, не передаётся как domain matching signal и не заменяет public `event_id`;
-- identity очередей — `(origin_run_id, source_id, event_id, event_instance_id)` с legacy-safe fallback (пустой selector для старых run'ов); разные source события с одинаковым `event_id` не схлопываются; разные occurrence одного `event_id` внутри run сохраняются отдельно;
-- attachment items (`attachment_extraction.json`) несут аддитивное поле `event_instance_id`, чтобы привязывать каждый item к своему run-local occurrence; повторные occurrences одного `event_id` получают только свои attachment items; legacy item без `event_instance_id` привязывается только когда соответствие однозначно (одно occurrence), иначе не приписывается ни одному из повторных occurrences; `attachment_refused` KPI считается по occurrence-aware identity;
-- `latest_selection`, threads, AI evidence, evidence links и source health остаются anchor-run specific;
-- queue/detail links используют origin `run_id` события;
-- period filtering применяется к агрегированному business view;
-- опциональные malformed артефакты (`bitrix_reconciliation.json`, `attachment_extraction.json`) игнорируются с bounded warning `malformed_optional_artifact`; aggregate-only attachment counters не приписываются событиям (warning `attachment_aggregate_unscoped`).
-- `team_leaderboard` в materialized Overview projection — monthly top-5 canonical `case_type == new_lead` events с safe effective responsible assignment. Это exact `matched` recipient routing либо configured write-back fallback только при routing `not_found` и authoritative `rop_writeback_state.json` fallback assignment. Текущий UTC calendar month сравнивается с `rop.dashboard.leaderboard.plan_lead`; fallback display name задаётся `bitrix.writeback.user_name_fallback`. Ambiguous, degraded и unsafe routing не переводится в fallback. Поэтому `business_kpi.new_leads` может отличаться от суммы leaderboard rows, если у classified lead нет safe effective responsible. Percentage может превышать 100%, а visual progress ограничен 100%; leaderboard не является deal/revenue KPI.
+- `run_id` is anchor run and client scope for the chosen run operational evidence;
+- `business_kpi`, `series` and period queues aggregate unique same-client events from relevant successful runs (degraded/error runs are excluded with the bounded warning `incomplete_run_skipped`);
+- stable base identity Events: `client_id + source_id + (message_id → x_email_id → event_id)`;
+- within one run, repeated occurrences of the same stable base (for example, one email with the same `message_id` appearing multiple times) receive distinct deterministic occurrence slots (ordered by source timestamp, with `event_id`/`event_instance_id` as tie-breakers) and remain separate;
+- the cross-run canonical winner is the newest run per `(client_id, source_id, stable base, occurrence slot)`, so the same email across mailbox polls/runs does not multiply in `7d/30d/all`; `run_id + event_instance_id` is not a cross-run business identity;
+- `event_instance_id` - BeeAgent-owned run-local processing occurrence selector: is used only for ordering/disambiguation inside run and artifact/UI lookup, is not transferred as domain matching signal and does not replace public `event_id`;
+- queue identity is `(origin_run_id, source_id, event_id, event_instance_id)` with legacy-safe fallback (empty selector for old run runs); Different source events with the same `event_id` do not collide; The different occurrence of one `event_id` inside run must be kept separately;
+- attachment items (`attachment_extraction.json`) carry the additive `event_instance_id` field to bind each item to its run-local occurrence; an occurrence of one `event_id` receives only its own attachment items; a legacy item without `event_instance_id` is bound only when exactly one occurrence matches, otherwise it is attributed to none of the repeated occurrences; the `attachment_refused` KPI uses occurrence-aware identity;
+- `latest_selection`, threads, AI evidence, evidence links and source health remain anchor-run specific;
+- queue/detail links uses origin `run_id` events;
+- period filtering applies to the aggregated business view;
+- malformed optional artifacts (`bitrix_reconciliation.json`, `attachment_extraction.json`) are ignored with the bounded warning `malformed_optional_artifact`; aggregate-only attachment counters are not attributed to events (warning `attachment_aggregate_unscoped`).
+- `team_leaderboard` in materialized Overview projection - monthly top-5 canonical `case_type == new_lead` events with safe effective responsible assignment. This exact `matched` recipient routing or configured write-back fallback only with routing `not_found` and authoritative `rop_writeback_state.json` fallback assignment. Current UTC calendar month is compared to `rop.dashboard.leaderboard.plan_lead`; fallback display name is set to `bitrix.writeback.user_name_fallback`. Ambiguous, degraded and unsafe routing are not translated into fallback. so `business_kpi.new_leads` may differ from the sum of leaderboard rows if classified lead does not have safe effective responsible. Percentage may exceed 100% and visual progress is limited to 100%; leaderboard is not deal/revenue KPI.
 
-ROP Queue поддерживает фильтр `bitrix_status` для artifact-backed CRM статусов (`matched`, `lost`, `ambiguous`, `degraded`, `unreconciled`) и ведёт на Event Detail. Current-state projection (`rop_current_state.json`) и optional `bitrix_reconciliation.json` остаются read-only evidence без POST actions или write-back.
+ROP Queue supports the `bitrix_status` filter for artifact-backed CRM status (`matched`, `lost`, `ambiguous`, `degraded`, `unreconciled`) and leads to Event Detail. Current-state projection (`rop_current_state.json`) and optional `bitrix_reconciliation.json` remain read-only evidence without POST actions or write-back.
 
-Отклоняются:
+Rejected:
 
 - raw `.eml`
 - raw attachments
@@ -940,22 +940,22 @@ ROP Queue поддерживает фильтр `bitrix_status` для artifact-
 
 ### ROP dashboard contract (UI-6 — enriched)
 
-`GET /api/rop/dashboard` возвращает source-aware ROP dashboard read-model с расширенными полями.
+`GET /api/rop/dashboard` returns source-aware ROP dashboard read-model with extended fields.
 
-Поддерживаемые query parameters:
+Supported query parameters:
 
-- `run_id` — optional explicit run selection; если параметр не передан, используется latest run;
-- `period` — period filter для dashboard data: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all` (default определяется `config/settings.yml` → `rop.dashboard.default_period`);
-- `tab` — HTML page tab selector для `/rop`;
-- `lang` — HTML page locale selector для `/rop`.
+- `run_id` — optional explicit run selection; If the parameter is not transmitted, latest run must be used;
+- `period` — dashboard period filter: `today`, `yesterday`, `7d`, `30d`, `90d`, `365d`, `all` (default defined by `config/settings.yml` → `rop.dashboard.default_period`);
+- `tab` – HTML page tab selector for `/rop`;
+- `lang` is HTML page locale selector for `/rop`.
 
-`/api/rop/dashboard` принимает `run_id` и `period`.
+`/api/rop/dashboard` takes `run_id` and `period`.
 
-Existing UI-5 fields сохранены (backward-compatible).
+Existing UI-5 fields retained (backward-compatible).
 
-Новые поля в UI-6 enriched payload (It30):
+New fields in UI-6 enriched payload (It30):
 
-- `business_kpi` — бизнес-метрики:
+- `business_kpi` – Business metrics:
   - `processed_events`, `processed_emails`;
   - `new_leads`, `existing_clients`, `follow_ups`;
   - `high_priority`, `needs_review`;
@@ -966,11 +966,11 @@ Existing UI-5 fields сохранены (backward-compatible).
   - `classification_distribution` — case type distribution;
   - `bitrix_distribution` — matched/lost/ambiguous/unreconciled;
   - `source_contribution` — events per source;
-- `period` — текущий период;
-- `period_start_utc`, `period_end_utc` — границы периода;
+- `period` — current period;
+- `period_start_utc`, `period_end_utc` is the boundary of the period;
 - `time_basis` — basis used: `event_timestamp`, `run_generated_at`, `run_mtime_fallback`, `mixed`, `unknown`.
 
-UI-6 добавляет поля:
+UI-6 adds fields:
 
 - `latest_selection` — latest/N selection evidence:
   - `selected_count`, `strategy`, `source_count`, `sources[]`;
@@ -989,20 +989,20 @@ UI-6 добавляет поля:
   - `low_confidence_count`, `status_counts{}`;
 - `ai_assist_events[]` — per-event AI assist status.
 
-HTML `/rop` использует BeeUI tabs:
+HTML `/rop` uses BeeUI tabs:
 
 - `overview`
 - `queue`
 - `sources`
 - `blacklist`
 
-Возвращаемые данные (UI-6 enriched payload):
+Returned data (UI-6 enriched payload):
 
-- `selected_run_id` — выбранный run ID;
-- `available_runs` — bounded recent run-id window из validated `rop_web_projection_v2.json` manifest (`run_ids`, фиксированный bound), не результат сканирования `storage/runs` при GET;
-- `total_runs` — scalar materialized total run count из validated projection v2 manifest (не длина `available_runs`);
-- `kpis` — сводные KPI:
-  - `total_runs` — scalar materialized total run count из projection index;
+- `selected_run_id` is the chosen run ID;
+- `available_runs` – bounded recent run-id window of validated `rop_web_projection_v2.json` manifest (`run_ids`, fixed bound), is not the result of a `storage/runs` scan at GET;
+- `total_runs` - scalar materialized total run count of validated projection v2 manifest (not `available_runs`);
+- `kpis` - Combined KPI:
+  - `total_runs` – scalar materialized total run count of projection index;
   - `source_count`, `loaded_source_count`, `degraded_source_count`;
   - `fetched_count`, `loaded_count`, `malformed_count`;
   - `normalized_count`, `classified_count`, `classification_failed_count`, `fallback_count`;
@@ -1012,18 +1012,18 @@ HTML `/rop` использует BeeUI tabs:
 - `funnel` — processing funnel stages;
 - `source_health` — per-source health with `reason`, `fetched_count`, `loaded_count`, `malformed_count`, `classified_count`, `fallback_count`;
 - `classification_distribution` — `case_type_counts`, `priority_counts`, `reason_code_counts`, `fallback_count`;
-- `attachment_summary` — aggregate counts без raw content;
+- `attachment_summary` – aggregate counts without raw content;
 - `recommendations` — deterministic operator recommendations;
 - `attention_events` — priority-ordered classified events (max 500);
 - `evidence_links` — allowlisted artifact links with availability flag;
 - `warnings` — missing/malformed/degraded warnings.
 
-Backward-compatible поля сохранены:
+Backward-compatible fields retained:
 
 - `run_id`, `summary`, `source_diagnostics`, `intake_metadata`;
 - `sources[]`, `classified_count`, `case_type_counts`, `priority_counts`, `fallback_count`, `normalized_count`, `has_attachment_extraction`.
 
-### Пример ответа (UI-6 /api/rop/dashboard)
+### Example of response (UI-6 /api/rop/dashboard)
 
 ```json
 {
@@ -1150,35 +1150,35 @@ Backward-compatible поля сохранены:
 
 ### HTML route /rop (UI-6)
 
-`GET /rop` рендерит BeeUI generic adapter custom page для rich ROP dashboard.
+`GET /rop` renders a BeeUI generic adapter custom page for the rich ROP dashboard.
 
-Поддерживаемые query parameters:
+Supported query parameters:
 
 - `run_id` — optional explicit run selection;
 - `tab` — tab selector;
 - `period` — period selector;
-- `lang` — locale override (`en` или `ru`), fallback на `en`.
+- `lang` – locale override (`en` or `ru`), fallback on `en`.
 
-Источник данных: `BeeAgentUiAdapter.get_page("rop_dashboard", query)`.
+Data source: `BeeAgentUiAdapter.get_page("rop_dashboard", query)`.
 
-Источник layout: `build_rop_page_layout(...)`.
+Source layout: `build_rop_page_layout(...)`.
 
-Секции страницы:
+Page sections:
 
-- `overview`: верхний ряд с `Run Overview` (`state_grid`, `width: 8`) и `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings идут после верхнего ряда; Overview использует period dropdown;
+- `overview`: `Run Overview` (`state_grid`, `width: 8`) and `Key Metrics` (`kpi_grid`, `width: 4`, `columns: 2`), warnings follow the top row; Overview uses period dropdown;
 - `queue`: attention events;
 - `sources`: source health details;
 - `blacklist`: protected sender blacklist management;
 
-BeeAgent не держит manual HTML builders/templates для `/rop`.
+BeeAgent does not hold manual HTML builders/templates for `/rop`.
 
 ## Read-only and security rules
 
-Web Console должен соблюдать:
+Web Console must comply with:
 
 - no GET mutation;
 - no non-auth operator POST/write actions except explicit UI-8.8 protected blacklist mutations;
-- BeeUI auth POST endpoints допустимы только для authentication/session flow;
+- BeeUI auth POST endpoints is only allowed for authentication/session flow;
 - no mailbox/CRM/module/capability execution from GET routes;
 - no web-triggered module/capability/mailbox/CRM execution;
 - no web-triggered `rop run`;
@@ -1189,21 +1189,21 @@ Web Console должен соблюдать:
 - path traversal blocked for `run_id`/path-sensitive routes;
 - artifact access only by allowlisted IDs;
 - missing/malformed artifacts handled gracefully and degrade into warnings/errors, not crashes;
-- cache-control требования должны соблюдаться на route layer, но их фактический enforcement нужно подтверждать отдельно.
+- cache-control requirements must be met on route layer, but their actual enforcement must be confirmed separately.
 
 ### UI-6 evidence sections (latest-N, threads, AI assist)
 
-Backward-compatible API/read-model evidence на основе It30 артефактов сохраняется в текущем контракте:
+Backward-compatible API/read-model evidence on the basis of It30 artifacts is retained in the current contract:
 
 - `latest_selection` — selection evidence;
-- `thread_summary` и `threads[]` — thread evidence;
-- `ai_assist_summary` и `ai_assist_events[]` — AI assist evidence.
+- `thread_summary` and `threads[]` - thread evidence;
+- `ai_assist_summary` and `ai_assist_events[]` - AI assist evidence.
 
-Отдельных Latest-N / Threads / AI Assist tabs или blocks в текущем `/rop` нет. Event Detail может использовать соответствующее bounded evidence там, где это предусмотрено текущим контрактом.
+Individual Latest-N / Threads / AI Assist tabs or blocks are not in the current `/rop`. Event Detail may use the corresponding bounded evidence where the current contract so provides.
 
-### UI-6 — Артефакты It30 в allowlist
+### UI-6 – It30 artifacts in allowlist
 
-Добавлены в `ARTIFACT_ALLOWLIST`:
+Added to `ARTIFACT_ALLOWLIST`:
 
 | ID                             | Relative path                  |
 | ------------------------------ | ------------------------------ |
@@ -1214,7 +1214,7 @@ Backward-compatible API/read-model evidence на основе It30 артефа�
 | `rop_ai_assist_decisions_json` | `rop_ai_assist_decisions.json` |
 | `rop_ai_assist_results_json`   | `rop_ai_assist_results.json`   |
 
-### UI-6 — Новые поля `/api/rop/dashboard`
+### UI-6 – New `/api/rop/dashboard` fields
 
 ```json
 {
@@ -1253,18 +1253,18 @@ Backward-compatible API/read-model evidence на основе It30 артефа�
 }
 ```
 
-Existing UI-5 поля сохраняются.
+Existing UI-5 fields retained.
 
 ### HTML route `/rop` — current tabs
 
-Текущие вкладки:
+Current tabs:
 
 - `overview` — dashboard;
-- `queue` — очередь событий;
-- `sources` — состояние источников;
-- `blacklist` — чёрный список отправителей.
+- `queue` — event queue;
+- `sources` is the state of the sources;
+- `blacklist` is a black list of senders.
 
-Поддерживается `?lang=ru` для русских меток во всех новых секциях.
+Supported by `?lang=ru` for Russian tags in all new sections.
 
 Sanitization rules:
 
@@ -1274,7 +1274,7 @@ Sanitization rules:
 
 ## Out of scope
 
-Текущий контракт intentionally does not include:
+Current contract intentionally does not include:
 
 - per-role RBAC enforcement;
 - UI settings/config editing;
@@ -1303,23 +1303,23 @@ Queue tab renders as one `data_table` with a functional `toolbar`. No standalone
 
 ### Query parameters
 
-Все параметры Queue tab передаются через query string в `/rop?tab=queue`.
+All Queue tab parameters are transmitted via query string to `/rop?tab=queue`.
 
 #### Filter params
 
 | Param            | Type    | Description                                             | Validation                                                                                 |
 | ---------------- | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `q`              | string  | Full-text search across sender and subject              | Любое строковое значение                                                                   |
-| `sender`         | string  | Filter by sender (legacy, use `q` for combined search)  | Любое строковое значение                                                                   |
-| `subject`        | string  | Filter by subject (legacy, use `q` for combined search) | Любое строковое значение                                                                   |
-| `case_type`      | string  | Comma-separated classification values                   | Должен быть одним из: `new_lead`, `existing_client`, `existing_deal`, …                    |
-| `classification` | string  | Legacy alias for `case_type` (mapped to `case_type`)    | То же, что `case_type`                                                                     |
+| `q`              | string  | Full-text search across sender and subject              | Any string value                                                                           |
+| `sender`         | string  | Filter by sender (legacy, use `q` for combined search)  | Any string value                                                                           |
+| `subject`        | string  | Filter by subject (legacy, use `q` for combined search) | Any string value                                                                           |
+| `case_type`      | string  | Comma-separated classification values                   | Shall be one of: `new_lead`, `existing_client`, `existing_deal`, …                         |
+| `classification` | string  | Legacy alias for `case_type` (mapped to `case_type`)    | Same as `case_type`                                                                        |
 | `priority`       | string  | Comma-separated priority values                         | `low`, `medium`, `high`, `critical`                                                        |
 | `bitrix_status`  | string  | Comma-separated Bitrix reconciliation status values     | `not_found`, `weak_match`, `ambiguous`, `duplicate_candidate`, …                           |
-| `is_fallback`    | boolean | Filter by fallback classification (`true`/`false`)      | `true` или `false`                                                                         |
+| `is_fallback`    | boolean | Filter by fallback classification (`true`/`false`)      | `true` or `false`                                                                          |
 | `queue`          | string  | Filter by operator queue bucket name                    | `high_priority`, `needs_review`, `lost_in_bitrix`, `ambiguous`, `degraded`, `unreconciled` |
-| `date_from`      | date    | Start of date range (inclusive, YYYY-MM-DD)             | Должен быть корректной датой; не позже `date_to`                                           |
-| `date_to`        | date    | End of date range (inclusive, YYYY-MM-DD)               | Должен быть корректной датой; не раньше `date_from`                                        |
+| `date_from`      | date    | Start of date range (inclusive, YYYY-MM-DD)             | must be the correct date; not later than `date_to`                                         |
+| `date_to`        | date    | End of date range (inclusive, YYYY-MM-DD)               | must be the correct date; not before `date_from`                                           |
 
 #### Column params
 
@@ -1334,11 +1334,11 @@ Column visibility is managed through the toolbar ellipsis action (column chooser
 | Param       | Type    | Default       | Description           | Validation                                                                                         |
 | ----------- | ------- | ------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
 | `page`      | integer | `1`           | Page number (1-based) | `>= 1`                                                                                             |
-| `page_size` | integer | `25`          | Items per page        | `25`, `50`, или `100`                                                                              |
+| `page_size` | integer | `25`          | Items per page        | `25`, `50`, or `100`                                                                               |
 | `sort`      | string  | `received_at` | Sort field            | `received_at`, `date`, `event_date`, `sender`, `subject`, `case_type`, `priority`, `bitrix_status` |
-| `order`     | string  | `desc`        | Sort direction        | `asc` или `desc`                                                                                   |
+| `order`     | string  | `desc`        | Sort direction        | `asc` or `desc`                                                                                    |
 
-`sort` и `order` образуют атомарную пару: URL содержит оба параметра или не содержит ни одного для default `received_at` / `desc`.
+`sort` and `order` form an atomic pair: the URL contains both parameters, or neither for the default `received_at` / `desc`.
 
 #### Canonical params preserved in all ROP links
 
@@ -1352,12 +1352,12 @@ Column visibility is managed through the toolbar ellipsis action (column chooser
 Queue toolbar contains:
 
 - `fields`: date_range (no visible label, accessible via `from_label`/`to_label`), `q` text input (no visible label, accessible via `placeholder`), checkboxes dropdowns for Classification (`case_type`), Priority (`priority`), Bitrix Status (`bitrix_status`)
-- `hidden`: preserves `tab`, `run_id`, `period`, `lang`, `page`, `page_size`, `sort`, `order`, а также активные `case_type`, `priority`, `bitrix_status`, `columns` — чтобы GET submission поиска или дат не сбрасывал dropdown filters и column visibility
+- `hidden`: preserves `tab`, `run_id`, `period`, `lang`, `page`, `page_size`, `sort`, `order`, as well as active `case_type`, `priority`, `bitrix_status`, `columns` — so that GET submission does not drop dropdown filters and column visibility searches or dates
 - `column_toggles`: column visibility toggles rendered under the ellipsis action
 - `reset`: resets all filter params preserving `tab`, `run_id`, `period`, `lang`
 - No `apply` — datepicker auto-submits on select/clear; text/date input submits on GET
 
-`columns_open` и `open_dropdowns` не являются частью canonical toolbar contract. Они поддерживаются только в legacy accepted inputs adapter contract для обратной совместимости с существующими ссылками и bookmark.
+`columns_open` and `open_dropdowns` are not part of canonical toolbar contract. They are supported only in legacy accepted inputs adapter contract for backward compatibility with existing links and bookmark.
 
 Queue sets the stable `data_table.id` value `rop-queue` and supplies the released BeeUI 0.26.4 pagination/page-size payload. This opts the table into BeeUI's generic progressive same-origin GET replacement while keeping BeeAgent's server-side query semantics authoritative. BeeAgent supplies safe navigation hrefs and the product-owned page-size choices `25`, `50`, and `100`; BeeUI owns the live interaction and compact pagination presentation.
 
@@ -1365,23 +1365,23 @@ Other BeeAgent adapter-backed tables use the canonical `data_table` presentation
 
 ### Adapter-level validation contract
 
-Все filter/pagination/sort параметры валидируются в одном adapter-level contract в `BeeAgentUiAdapter.get_page()`. Процесс:
+All filter/pagination/sort parameters are validated in one adapter-level contract in `BeeAgentUiAdapter.get_page()`. Process:
 
-1. `_extract_and_validate_params(query)` — единая функция, извлекающая и валидирующая filter + pagination + sort параметры
-2. Валидация проверяет: queue, columns, dropdown state, booleans, dates, enums, page/page_size, sort/order
-3. Невалидные значения возвращают `invalid_params` error вместо молчаливого расширения выборки
-4. `validate_filter_params()` — проверяет filter-специфичные значения
-5. `validate_pagination_params()` — проверяет page/page_size/sort/order
-6. Каноническая страница из `paginate_items()` используется во всех rows, labels, links и API metadata
+1. `_extract_and_validate_params(query)` is a single function that extracts and validates filter + pagination + sort parameters
+2. Validation checks: queue, columns, dropdown state, booleans, dates, enums, page/page_size, sort/order
+3. Invalid values return an `invalid_params` error instead of silently expanding the selection
+4. `validate_filter_params()` checks filter-specific values
+5. `validate_pagination_params()` — Checks page/page_size/sort/order
+6. `paginate_items()` returns a canonical page used in all rows, labels, links and API metadata
 
 ### Date sorting semantics
 
-- Valid ISO dates (`2026-06-15T00:00:00Z`) группируются перед invalid/missing
-- Missing/malformed dates (`""`, `null`, `"invalid"`) всегда после валидных — как при asc, так и при desc
-- Asc: валидные даты по возрастанию, затем missing
-- Desc: валидные даты по убыванию, затем missing
+- valid ISO dates (`2026-06-15T00:00:00Z`) are grouped before invalid/missing dates
+- missing/malformed dates (`""`, `null`, `"invalid"`) always follow valid dates in both asc and desc order
+- Asc: valid dates in ascending order, then missing dates
+- Desc: valid dates in descending order, then missing dates
 
 ### Attention cap
 
-- `ATTENTION_EVENTS_MAX = 500` — максимальное количество событий в attention events
-- Queue tab показывает все события из `queues[]` buckets, capped per period filtering
+- `ATTENTION_EVENTS_MAX = 500` is the maximum number of events in attention events
+- Queue tab shows all events from `queues[]` buckets, capped per period filtering

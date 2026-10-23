@@ -1,98 +1,98 @@
-# ROADMAP — beeagent (SDLC-light, итерации разработки)
+# ROADMAP – beeagent (SDLC-light, iteration development)
 
 ## Purpose
 
-Этот документ фиксирует маршрут разработки `beeagent` по этапам и итерациям.
+This document records the development route of `beeagent` by stages and iterations.
 
-ROADMAP в проекте используется как lightweight SDLC-артефакт:
+ROADMAP in the project is used as lightweight SDLC-artifact:
 
-- задаёт направление разработки;
-- фиксирует цель каждой итерации;
-- определяет ожидаемое поведение, артефакты и проверки;
-- помогает связывать Issue → Code → Tests → Artifacts → PR → Merge.
+- Sets the direction of development;
+- Notes the purpose of each iteration;
+- Determines expected behaviour, artifacts and checks;
+- helps link Issue → Code → Tests → Artifacts → PR → Merge.
 
-ROADMAP не заменяет Issue и PR:
+ROADMAP does not replace Issue and PR:
 
-- **Issue** объясняет, что именно нужно сделать в рамках задачи;
-- **PR** фиксирует, что реально было сделано и как это проверялось;
-- **ROADMAP** показывает, куда идёт проект и что считается готовностью по итерациям.
+- **Issue** explains exactly what needs to be done in the task;
+- **PR** records what was actually done and how it was verified;
+- **ROADMAP** shows where the project is going and what is considered ready by iteration.
 
-Итерация закрывается через PR: именно PR является основным местом, где фиксируются verification evidence, checks, artifacts и ограничения реализации.
+Iteration closes through PR: and PR is the main location where verification evidence, checks, artifacts and limits of implementation are recorded.
 
-ROADMAP не дублирует полные правила процесса и безопасности:
+ROADMAP does not duplicate complete process and safety rules:
 
-- процесс разработки и критерии прохождения изменений описываются в `docs/SDLC.md`;
-- secure development rules и security checks описываются в `docs/SECURITY.md`.
+- The development process and the criteria for change are described in `docs/SDLC.md`;
+- secure development rules and security checks are described in `docs/SECURITY.md`.
 
 ## Vision
 
 | Block                          | Statement                                                                                                                                                                                                   |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Product identity**           | `beeagent` развивается как explainable, stateful, modular AI orchestration system с явными operator / interface layers, module contracts и reproducible runtime artifacts.                                  |
-| **Primary objective**          | Цель проекта — быть не “чат-ботом с тулзами”, а управляемым агентным ядром, которое оркестрирует задачи, модули, approvals, artifacts и внешние workflow/capabilities.                                      |
-| **Execution philosophy**       | Длинная задача, state, batching, retry, checkpoints и policy должны жить в `beeagent`, а не внутри одного MCP/tool вызова.                                                                                  |
-| **Source of truth**            | Runtime behavior должен определяться через `config/settings.yml`, явную валидацию, stable contracts и воспроизводимые artifacts.                                                                            |
-| **Decision quality principle** | Любое значимое решение или действие должно быть объяснимо по логам, config и artifacts.                                                                                                                     |
-| **Module principle**           | Бизнес-логика должна жить в отдельных доменных модулях (`beeagent-rop`, будущие `beescan`, `merch`), а core должен оставаться универсальным.                                                                |
-| **Capability principle**       | MCP / n8n / внешние systems — это execution/integration layer, а не место, где живёт доменная логика.                                                                                                       |
-| **Operator principle**         | Система должна быть удобна для безопасной эксплуатации через простые UI/transport слои и не требовать скрытого знания кода.                                                                                 |
-| **Product direction**          | Развитие идёт по траектории: demo skeleton → reusable orchestration core → module platform → first real client module → pilot-ready operator shell → scalable multi-module platform.                        |
-| **AI direction**               | AI допускается только как bounded assistive layer: classification, summarization, recommendation, intent drafting. AI не должен подменять deterministic contracts, policy, approval и authority boundaries. |
-| **KISS rule**                  | Новые возможности добавляются только если они усиливают orchestrator, explainability, reusability, module integration или operator usability без раздувания core.                                           |
-| **Security rule**              | Secrets, connectors, file parsing, capability execution и artifact contracts развиваются только через explicit config, fail-fast validation и proportional checks по `docs/SDLC.md` и `docs/SECURITY.md`.   |
-| **Interface rule**             | Любой agent-facing / operator-facing surface должен быть read-only или draft-only по умолчанию, а execution-capable path должен быть explicit и bounded.                                                    |
-| **Execution authority rule**   | Любой execution-capable path должен развиваться через минимально необходимые права, capability-scoped boundaries и явный operator-visible contract.                                                         |
+| **Product identity**           | `beeagent` is developed as explainable, stateful, modular AI orchestration system with visible operator / interface layers, module contracts and reproducible runtime artifacts.                                  |
+| **Primary objective**          | The objective of the project is not to be a chit-bot with tulus, but to be managed by a core agent who outlines tasks, modules, approvals, artifacts and external workflow/capabilities.                                      |
+| **Execution philosophy**       | The long task, state, batching, retry, checkpoints and policy must live in `beeagent`, not within one MCP/tool call.                                                                                  |
+| **Source of truth**            | Runtime behavior must be determined through `config/settings.yml`, clear validation, stable contracts and reproducible artifacts.                                                                            |
+| **Decision quality principle** | Any meaningful decision or action must be explained by the logs, config and artifacts.                                                                                                                     |
+| **Module principle**           | Business logic must live in separate domain modules (`beeagent-rop`, future `beescan`, `merch`), and core must remain universal.                                                                |
+| **Capability principle**       | MCP / n8n / external systems is execution/integration layer rather than domain logic.                                                                                                       |
+| **Operator principle**         | The system must be suitable for safe operation through simple UI/transport layers and must not require hidden knowledge of the code.                                                                                 |
+| **Product direction**          | Development follows a trajectory: demo skeleton → reusable orchestration core → module platform → first real client module → pilot-ready operator shell → scalable multi-module platform.                        |
+| **AI direction**               | AI is allowed only as bounded assistive layer: classification, summarization, recommendation, intent drafting. AI must not replace deterministic contracts, policy, approval and authority boundaries. |
+| **KISS rule**                  | New possibilities are added only if they reinforce orchestrator, explainability, reusability, module integration or operator usability without swelling core.                                           |
+| **Security rule**              | Secrets, connectors, file parsing, capability execution and artifact contracts only develop through explicit config, fail-fast validation and proportional checks under `docs/SDLC.md` and `docs/SECURITY.md`.   |
+| **Interface rule**             | Any agent-facing / operator-facing surface must be read-only or draft-only by default, and execution-capable path must be explicit and bounded.                                                    |
+| **Execution authority rule**   | Any execution-capable path must develop through the minimum necessary rights, capability-scoped boundaries and the explicit operator-visible contract.                                                         |
 
 ## Development principles
 
-Делаем маленькие итерации. Каждая итерация должна:
+Make small iteration. Each iteration must:
 
-- запускаться через `start.sh` или соответствующий CLI entrypoint;
-- писать понятные логи;
-- оставлять воспроизводимые артефакты в `storage/`, если это предполагается задачей;
-- не ломать структуру пакета `beeagent_module`;
-- использовать `config/settings.yml` как источник правды;
-- валидировать новые обязательные ключи fail-fast;
-- закрываться через Issue / PR / tests / artifacts;
-- проходить required quality/security checks из `docs/SDLC.md` и `docs/SECURITY.md` в зависимости от типа изменения;
-- сохранять explicit authority boundary: read-only, draft-only и execution-capable пути должны быть разделены явно и проверяемо.
+- start with `start.sh` or the corresponding CLI entrypoint;
+- write understandable logs;
+- Leave the reproducible artifacts in `storage/`, if the task is to do so;
+- Do not break the `beeagent_module` package structure;
+- Use `config/settings.yml` as a source of truth;
+- Validate new mandatory fail-fast keys;
+- close through Issue / PR / tests / artifacts;
+- pass required quality/security checks from `docs/SDLC.md` and `docs/SECURITY.md`, depending on the type of change;
+- Save explicit authority boundary: read-only, draft-only and execution-capable tracks must be clearly separated and verified.
 
-Для `beeagent` это означает:
+For `beeagent`, this means:
 
-- low-risk изменения проходят базовые checks;
-- runtime-risk и security-sensitive изменения требуют усиленной проверки;
-- уровень проверки определяется по `docs/SDLC.md` и `docs/SECURITY.md`, а не ad hoc.
+- low-risk changes are made to the basic checks;
+- runtime-risk and security-sensitive modifications require enhanced verification;
+- The verification level is defined by `docs/SDLC.md` and `docs/SECURITY.md`, rather than ad hoc.
 
 ## SDLC workflow for roadmap items
 
-Каждая итерация проходит по упрощённому циклу:
+Each iteration must be run over a simplified cycle:
 
-1. **Planning** Итерация описана в ROADMAP и оформлена как Issue.
+1. **Planning** Iteration described in ROADMAP and described as Issue.
 
-2. **Requirements** Для итерации определены scope, deliverable, артефакты, проверки и DoD.
+2. **Requirements** For iteration scope, deliverable, artifacts, checks and DoD.
 
-3. **Implementation** Изменения вносятся в отдельной ветке и только в рамках текущей итерации.
+3. **Implementation** Changes are made in a separate branch and only within the current iteration.
 
-4. **Verification** Выполняются тесты, smoke-check, проверка логов и артефактов, а также required quality/security checks для данного типа изменения.
+4. **Verification** Tests, smoke-check, lair and artifacts, as well as required quality/security checks for the type of change are performed.
 
-5. **Review / PR** В PR фиксируются изменения, тесты, артефакты и ограничения.
+5. **Review / PR** PR records changes, tests, artifacts and restrictions.
 
-6. **Merge** Итерация считается завершённой после выполнения DoD.
+6. **Merge** Iteration is considered completed after DoD.
 
 ## Status values
 
-Допустимые статусы итераций:
+Allowable iteration status:
 
-- **PLANNED** — запланировано
-- **IN PROGRESS** — в работе
-- **DONE** — завершено
-- **DONE (partial)** — завершено частично, есть осознанные ограничения
+- **PLANNED** — planned
+- **IN PROGRESS** - Work
+- **DONE** Completed
+- **DONE (partial)** partially completed, there are conscious restrictions
 
 ## Roadmap item format
 
-Исторические итерации со статусом `DONE` сохраняют существующую структуру и не переписываются задним числом только ради форматирования.
+The historical iteration status `DONE` preserves the existing structure and does not rewrite it in the back for formatting purposes only.
 
-Новые итерации и materially refined незавершённые итерации используют компактную структуру:
+The new iteration and materially refined uncompleted iteration use a compact structure:
 
 - `Goal`
 - `Scope`
@@ -102,34 +102,34 @@ ROADMAP не дублирует полные правила процесса и 
 - `Checks`
 - `DoD`
 
-ROADMAP фиксирует iteration-level contract.
+ROADMAP captures iteration-level contract.
 
-Подробные implementation requirements, конкретные файлы, полные payload examples, расширенные test matrices и verification evidence принадлежат Issue, implementation handoff и PR.
+Detailed implementation requirements, specific files complete payload examples, extended test matrices and verification evidence owned by Issue, implementation handoff and PR.
 
 ## Global Definition of Done
 
-Итерация считается завершённой, если:
+Iteration must be considered completed if:
 
-- поведение реализовано в рамках заявленного scope;
-- новые обязательные ключи читаются из `config/settings.yml`;
-- валидация для новых обязательных ключей добавлена в `src/beeagent_module/core/settings.py`;
-- feature работает через ожидаемый entrypoint;
-- логи записываются;
-- артефакты создаются там, где это ожидается;
-- тесты и ручные проверки выполнены;
-- required quality/security checks из `docs/SDLC.md` и `docs/SECURITY.md` выполнены;
-- секреты не попадают в логи и артефакты;
-- ROADMAP / docs обновлены, если менялся контракт, поведение или артефакты.
+- behavior was verified within the declared scope;
+- The new mandatory keys are read from `config/settings.yml`;
+- Validation for new mandatory keys added to `src/beeagent_module/core/settings.py`;
+- feature operates through the expected entrypoint;
+- The logs are recorded;
+- artifacts is created where it is expected;
+- The tests and manual checks have been carried out;
+- required quality/security checks of `docs/SDLC.md` and `docs/SECURITY.md` have been completed;
+- Secrets do not enter the logs and artifacts;
+- ROADMAP / docs updated when the contract, behavior or artifacts. changed
 
 ## Change levels for verification
 
-Для lightweight SDLC в проекте используются три уровня изменений:
+For lightweight SDLC, the project uses three levels of change:
 
-- **low-risk** — docs, локальные тесты, косметические и безопасные изменения без влияния на runtime-контракт;
-- **runtime-risk** — изменения orchestrator/runtime/config validation/artifacts/reporting/CLI/module loading/case dispatch, влияющие на runtime behavior или воспроизводимость артефактов;
-- **security-sensitive** — изменения secrets/env handling, external capabilities, MCP/tool boundaries, file parsing, dependency surface, serialization/deserialization, file/path handling, authority paths и другие изменения на trust boundary.
+- **low-risk** — docs, local tests, cosmetics and safe changes without affecting runtime- contract;
+- **runtime-risk** — changes in orchestrator/runtime/config validation/artifacts/reporting/CLI/module loading/case dispatch affecting runtime behavior or reproducibility artifacts;
+- **security-sensitive** – secrets/env handling, external capabilities, MCP/tool boundaries, file parsing, dependency surface, serialization/deserialization, file/path handling, authority paths and other changes to trust boundary.
 
-Для каждого уровня обязательность quality/security checks определяется в:
+For each level, the obligation quality/security checks is defined in:
 
 - `docs/SDLC.md`
 - `docs/SECURITY.md`
@@ -138,63 +138,63 @@ ROADMAP фиксирует iteration-level contract.
 
 | Phase                                     | Status      | What it means                                                                                                                                                                                |
 | ----------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase A — Demo skeleton**               | DONE        | Сформирован демонстрационный runtime: Telegram transport, mock data, базовые agents/cases, run artifacts, approval, export.                                                                  |
-| **Phase B — Reusable orchestration core** | DONE        | BeeAgent перестал быть только демо-кейсом и получил reusable cases/adapters/scheduler/observability/multi-agent baseline.                                                                    |
-| **Phase C — Module platform**             | DONE        | Вводится явный module contract, registry, runtime context, artifact API и bounded capability layer для внешних доменных модулей.                                                             |
-| **Phase D — First real client delivery**  | DONE        | Первый реальный доменный модуль (`beeagent-rop`) интегрирован; реализованы controlled source flow, operator artifacts, read-only Bitrix evidence и bounded AI adjudication для ROP MVP.      |
-| **Phase E — Operator / product shell**    | IN PROGRESS | Read-only BeeUI-backed operator shell, auth boundary, ROP dashboard и widget payload baseline реализованы; stable API, legacy web removal и bounded operator controls остаются в UI roadmap. |
-| **Phase F — Multi-module platform**       | FUTURE      | BeeAgent становится базой для нескольких доменных модулей (`ROP`, `BeeScan`, `Merch` и др.) с единым runtime и reusable contracts.                                                           |
+| **Phase A — Demo skeleton**               | DONE        | A demonstration runtime: Telegram transport, mock data and basic agents/cases, run artifacts, approval, export. have been created                                                                  |
+| **Phase B — Reusable orchestration core** | DONE        | BeeAgent stopped being just a demo and got reusable cases/adapters/scheduler/observability/multi-agent baseline.                                                                    |
+| **Phase C — Module platform**             | DONE        | Introducing the explicit module contract, registry, runtime context, artifact API and bounded capability layer for external domain modules.                                                             |
+| **Phase D — First real client delivery**  | DONE        | The first real domain module (`beeagent-rop`) is integrated; implemented by controlled source flow, operator artifacts, read-only Bitrix evidence and bounded AI adjudication for ROP MVP.      |
+| **Phase E — Operator / product shell**    | IN PROGRESS | Read-only BeeUI-backed operator shell, auth boundary, ROP dashboard and widget payload baseline have been implemented; stable API, legacy web removal and bounded operator controls remain in UI roadmap. |
+| **Phase F — Multi-module platform**       | FUTURE      | BeeAgent becomes the base for several domain modules (`ROP`, `BeeScan`, `Merch`, etc.) with a single runtime and reusable contracts.                                                           |
 
 ## Stages
 
-- **Этап 1 (Итерации 0–4):** pre-MVP каркас + запуск + transport + mock/demo flow.
-- **Этап 2 (Итерации 5–10):** reusable core: cases/adapters/scheduler/observability/multi-agent + quiz + explainable recommendations.
-- **Этап 3 (Итерации 11–14):** module platform v0 (module contract, registry, context, artifact API, capability boundary).
-- **Этап 4 (Итерации 15–36):** интеграция первого реального доменного модуля (`beeagent-rop`) и развитие ROP flow до read-only customer-delivery MVP с source ingestion, artifacts, Bitrix evidence и bounded AI adjudication.
-- **Этап 5 (ориентир):** оставшиеся core-side operator/product contracts; подробное развитие Web Console и operator UI ведётся в `docs/product/ui_roadmap.md`.
-- **Этап 6 (ориентир):** multi-module scaling (`beescan`, `merch`, другие модули).
+- **Stage 1 (Iterations 0-4)** pre-MVP framework + launch + transport + mock/demo flow.
+- **Stage 2 (Iterations 5-10)** reusable core: cases/adapters/scheduler/observability/multi-agent + quiz + explainable recommendations.
+- **Stage 3 (Iterations of 11-14)** module platform v0 (module contract, registry, context, artifact API, capability boundary).
+- **Stage 4 (Iterations 15-36)** Integration of the first real domain module (`beeagent-rop`) and development of ROP flow to read-only customer-delivery MVP with source ingestion, artifacts, Bitrix evidence and bounded AI adjudication.
+- **Stage 5 (reference):** remaining core-side operator/product contracts; The detailed development of Web Console and operator UI is carried out in `docs/product/ui_roadmap.md`.
+- **Stage 6 (reference):** multi-module scaling (`beescan`, `merch`, other modules).
 
 ---
 
-## Этап 1 — Pre-MVP (итерации 0–4)
+## Stage 1 — Pre-MVP (iteration 0–4)
 
-### Итерация 0 — Каркас и запуск (skeleton)
+### Iteration 0 — Skeleton and startup (skeleton)
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Поднять минимальный каркас проекта и единый entrypoint запуска.
+Raise the minimum design frame and the single entrypoint launch.
 
 #### Scope
 
-Включено:
+Includes:
 
-- базовая структура проекта;
-- запуск через `start.sh`;
-- загрузка env и settings;
-- базовое логирование;
-- создание `logs/` и `storage/`.
+- Basic structure of the project;
+- Launch through `start.sh`;
+- loading env and settings;
+- basic logging;
+- The creation of `logs/` and `storage/`.
 
-Не включено:
+Not included:
 
-- реальные данные;
-- сложная orchestration logic;
-- модульная платформа.
+- Real data;
+- complex orchestration logic;
+- The modular platform.
 
-#### Реализовано
+#### Implemented
 
-- `start.sh` → запускает `python3 config/start.py`
-- `config/start.py` → загрузка env + settings + запуск одного режима (`telegram`)
-- `src/beeagent_module/` → создан пакет со структурой проекта
-- `beeagent_module/core/log.py` → логирование (`stdout + logs/app.log`)
-- `beeagent_module/core/paths.py` → пути к `logs/` и `storage/`
-- `beeagent_module/core/settings.py` → загрузка `settings.yml` + fail-fast валидация
-- `storage/` и `logs/` создаются автоматически
+- `start.sh` → starts `python3 config/start.py`
+- `config/start.py` → upload env + settings + single mode launch (`telegram`)
+- `src/beeagent_module/` → a package with the project structure was created
+- `beeagent_module/core/log.py` → logging (`stdout + logs/app.log`)
+- `beeagent_module/core/paths.py` → paths to `logs/` and `storage/`
+- `beeagent_module/core/settings.py` → loading `settings.yml` + fail-fast validation
+- `storage/` and `logs/` are created automatically
 
 #### Deliverable
 
-Проект запускается через единый entrypoint и пишет базовые логи.
+The project is launched through a single entrypoint and writes basic logs.
 
 #### Artifacts
 
@@ -208,40 +208,40 @@ ROADMAP фиксирует iteration-level contract.
 
 #### DoD
 
-- проект стартует без падения;
-- логирование включено;
-- директории создаются автоматически.
+- the project starts without crashing;
+- Logging included;
+- The directory is created automatically.
 
-### Итерация 1 — Telegram bot v0 (UX скелет)
+### Iteration 1 - Telegram bot v0 (UX skeleton)
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Дать минимальный transport/UI слой через Telegram.
+Give minimum transport/UI layer through Telegram.
 
 #### Scope
 
-Включено:
+Includes:
 
-- команды `/start`, `/help`, plus legacy demo report commands;
-- inline-кнопки;
+- `/start`, `/help`, plus legacy demo report commands command;
+- inline- buttons;
 - allowlist.
 
-Не включено:
+Not included:
 
 - multi-channel UI;
-- сложная session routing logic.
+- complex session routing logic.
 
-#### Реализовано
+#### Implemented
 
-- команды: `/start`, `/help`, plus legacy demo report commands
-- inline-кнопки: `Run OOS Scan`, `Show Report`
-- allowlist (один `chat_id` в config)
+- Commands: `/start`, `/help`, plus legacy demo report commands
+- inline- buttons: `Run OOS Scan`, `Show Report`
+- allowlist (one `chat_id` in config)
 
 #### Deliverable
 
-Telegram transport работает как thin demo/operator layer.
+Telegram transport operates as thin demo/operator layer.
 
 #### Artifacts
 
@@ -250,49 +250,49 @@ Telegram transport работает как thin demo/operator layer.
 #### Checks
 
 - `bash start.sh`
-- smoke в Telegram
+- smoke in Telegram
 
 #### DoD
 
-- бот запускается и отвечает;
-- меню и кнопки работают;
-- неизвестная команда не валит runtime.
+- the bot starts and responds;
+- The menu and buttons are working;
+- an unknown command does not crash runtime.
 
-### Итерация 2 — Mock data v0 + доменная модель
+### Iteration 2 - Mock data v0 + domain model
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Подготовить воспроизводимый mock dataset и базовые доменные модели.
+Prepare reproducible mock dataset and basic domain models.
 
 #### Scope
 
-Включено:
+Includes:
 
-- `domain/` модели;
-- генератор mock data;
-- параметры mock dataset в `config/settings.yml`.
+- `domain/` models;
+- mock data generator;
+- mock dataset parameters in `config/settings.yml`.
 
-Не включено:
+Not included:
 
-- реальные интеграции;
-- клиентские доменные модули.
+- Real integration;
+- customer domain modules.
 
-#### Реализовано
+#### Implemented
 
-- доменные модели для demo flow
-- генератор mock dataset:
+- demo flow domain models
+- mock dataset: generator
   - 3 stores
   - 1 category
   - 10–30 SKU
-  - 4–12 недель данных
+  - 4-12 data weeks
   - forced anomalies
-- конфиг параметров mock dataset в `config/settings.yml`
+- mock dataset in `config/settings.yml`
 
 #### Deliverable
 
-Demo-агенты могут работать на воспроизводимых данных.
+Demo- agents can work on reproducible data.
 
 #### Artifacts
 
@@ -305,21 +305,21 @@ Demo-агенты могут работать на воспроизводимы�
 
 #### DoD
 
-- одинаковый seed даёт одинаковый результат;
-- mock dataset создаётся и читается одной функцией;
-- demo scan command создаёт dataset artifact.
+- The same seed gives the same result;
+- mock dataset is created and read by one function;
+- demo scan command creates dataset artifact.
 
-### Итерация 3 — LangGraph workflow v0 (OOS detector, dry-run)
+### Iteration 3 — LangGraph workflow v0 (OOS detector, dry-run)
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Запустить end-to-end workflow через LangGraph и отчёт в Telegram.
+Start end-to-end workflow via LangGraph and Telegram. report
 
 #### Scope
 
-Включено:
+Includes:
 
 - collect_input
 - load_data
@@ -328,20 +328,20 @@ Demo-агенты могут работать на воспроизводимы�
 - render_report
 - persist_run
 
-Не включено:
+Not included:
 
 - reusable module platform;
 - real data integrations.
 
-#### Реализовано
+#### Implemented
 
-- end-to-end OOS workflow через LangGraph
+- end-to-end OOS workflow through LangGraph
 - run persistence
 - Telegram report output
 
 #### Deliverable
 
-Есть end-to-end run path с artifacts.
+There's end-to-end run path with artifacts.
 
 #### Artifacts
 
@@ -357,41 +357,41 @@ Demo-агенты могут работать на воспроизводимы�
 
 #### DoD
 
-- demo scan command создаёт `run_id`, пишет артефакты и возвращает отчёт;
-- empty data scenario обрабатывается без падения.
+- demo scan command creates `run_id`, writes artifacts and returns the report;
+- empty data scenario must be processed without falling.
 
-### Итерация 4 — Approval v0 + export
+### Iteration 4 — Approval v0 + export
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить approval path и экспорт отчёта.
+Add approval path and export report.
 
 #### Scope
 
-Включено:
+Includes:
 
 - approve / reject;
-- draft/approved/rejected статусы;
+- draft/approved/rejected status;
 - report export.
 
-Не включено:
+Not included:
 
 - execution authority beyond demo tasks;
 - operator shell.
 
-#### Реализовано
+#### Implemented
 
-- кнопки `Approve Tasks` / `Reject`
-- статусы задач: `draft / approved / rejected`
-- экспорт отчёта:
+- `Approve Tasks` / `Reject` buttons
+- Status of tasks: `draft / approved / rejected`
+- export report:
   - `report.md`
   - `report.html`
 
 #### Deliverable
 
-Есть минимальный operator loop: draft → approve/reject → export artifacts.
+There's a minimum operator loop: draft → approve/reject → export artifacts.
 
 #### Artifacts
 
@@ -406,71 +406,71 @@ Demo-агенты могут работать на воспроизводимы�
 
 #### DoD
 
-- approve/reject сохраняются и видны через `/last`;
-- без approve задачи не считаются готовыми.
+- approve/reject retained and visible through `/last`;
+- without approve the tasks are not considered ready.
 
 ---
 
-## Этап 2 — Reusable core (итерации 5–10)
+## Stage 2 — Reusable core (iteration 5–10)
 
 ### Purpose of stage
 
-Этап 2 делает `beeagent` не просто demo-ботом, а reusable orchestration core с отделением UI, case-слоя, adapter boundary, observability и несколькими агентными сценариями.
+Stage 2 makes `beeagent` not just demo-bot, but reusable orchestration core with UI, case- layers, adapter boundary, observability and several agency scenarios.
 
-Фокус этапа:
+Stage focus:
 
-- `cases/*` как application layer;
-- `adapters/*` как data boundary;
+- `cases/*` as application layer;
+- `adapters/*` as data boundary;
 - scheduler;
 - basic observability;
 - multi-agent baseline;
 - richer user-facing demo paths (`quiz`, explainable recommendations).
 
-Изменения этого этапа по умолчанию:
+By default, this step changes:
 
-- в основном `runtime-risk`;
-- transport / file / state handling changes могут быть `security-sensitive`.
+- mainly `runtime-risk`;
+- transport / file / state handling changes may be `security-sensitive`.
 
-### Итерация 5 — Cases layer v0 + Data Adapter v0
+### Iteration 5 — Cases layer v0 + Data Adapter v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Отвязать UI от деталей storage и graph. UI вызывает `cases/*`, граф читает данные только через `adapter`.
+Unlink UI from storage and graph. UI parts to `cases/*`, the graph reads the data via `adapter` only.
 
 #### Scope
 
-Включено:
+Includes:
 
 - `cases/*`;
 - `DataAdapter`;
 - `MockAdapter`;
 - graph uses adapter;
-- `data.adapter` в config.
+- `data.adapter` in config.
 
-Не включено:
+Not included:
 
 - external modules;
 - real data integrations.
 
-#### Реализовано
+#### Implemented
 
 - `src/beeagent_module/cases/`
 - `cases/oos.py`
-- UI больше не читает `storage/runs/*` напрямую
-- `DataAdapter` интерфейс
+- UI no longer reads `storage/runs/*` directly
+- `DataAdapter` interface
 - `MockAdapter`
-- `load_data` node переведён на `adapter.*`
-- `data.adapter: "mock"` в config
+- `load_data` node transferred to `adapter.*`
+- `data.adapter: "mock"` in config
 
 #### Deliverable
 
-Cases становятся стабильным application layer, а data boundary становится явной.
+Cases becomes stable application layer, and data boundary becomes apparent.
 
 #### Artifacts
 
-- `storage/runs/<run_id>/run.json` с `adapter` и `trigger`
+- `storage/runs/<run_id>/run.json` with `adapter` and `trigger`
 
 #### Checks
 
@@ -480,46 +480,46 @@ Cases становятся стабильным application layer, а data bound
 
 #### DoD
 
-- Telegram-бот работает как раньше, но не читает storage напрямую;
-- граф получает данные через adapter;
-- один ключ `data.adapter` выбирает адаптер.
+- Telegram-bot works as it used to, but does not read storage directly;
+- The graph receives the data via adapter;
+- One key `data.adapter` selects the adapter.
 
-### Итерация 6 — Scheduler v0 + Approval gate “обязателен”
+### Iteration 6 — Scheduler v0 + mandatory Approval gate
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить controlled periodic run path.
+Add controlled periodic run path.
 
 #### Scope
 
-Включено:
+Includes:
 
-- простой scheduler loop;
+- simple scheduler loop;
 - scheduled runs;
 - mandatory approval gate.
 
-Не включено:
+Not included:
 
 - cron/apscheduler;
 - distributed background jobs.
 
-#### Реализовано
+#### Implemented
 
 - `scheduler.enabled`
 - `scheduler.interval`
 - `scheduler.start_run`
-- scheduled-run задачи всегда остаются `draft`
-- бот отправляет сообщение на approve/reject
+- scheduled-run tasks always remain `draft`
+- The bot sends a message to approve/reject
 
 #### Deliverable
 
-Есть автозапуск без обхода approval boundary.
+There's an auto launch without bypassing approval boundary.
 
 #### Artifacts
 
-- `storage/runs/<run_id>/run.json` с `trigger=scheduled|manual`
+- `storage/runs/<run_id>/run.json` with `trigger=scheduled|manual`
 
 #### Checks
 
@@ -529,39 +529,39 @@ Cases становятся стабильным application layer, а data bound
 
 #### DoD
 
-- при `scheduler.enabled` бот создаёт run по интервалу;
-- без approve задачи остаются draft;
-- approve/reject работает для последнего run.
+- At `scheduler.enabled` the bot creates run at intervals;
+- without approve, tasks remain draft;
+- approve/reject works for the last run.
 
-### Итерация 7 — Mini-observability v0 (timing шагов)
+### Iteration 7 – Mini-observability v0 (timing steps)
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Видеть длительность каждого node и сохранять trace.
+See the length of each node and save trace.
 
 #### Scope
 
-Включено:
+Includes:
 
 - `duration_ms` per step;
 - step logs;
 - `steps.json`.
 
-Не включено:
+Not included:
 
 - external tracing platform;
 - distributed tracing.
 
-#### Реализовано
+#### Implemented
 
-- step timing в логах
+- step timing in logs
 - `storage/runs/<run_id>/steps.json`
 
 #### Deliverable
 
-Есть базовая observability по шагам workflow.
+There's a base observability on workflow. steps.
 
 #### Artifacts
 
@@ -574,42 +574,42 @@ Cases становятся стабильным application layer, а data bound
 
 #### DoD
 
-- после run появляется `steps.json`;
-- timing шагов воспроизводим.
+- after run appears `steps.json`;
+- timing steps are being reproduced.
 
-### Итерация 8 — 2-й агент v0 + multi-channel UI readiness
+### Iteration 8 – 2- agent v0 + multi-channel UI readiness
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Показать расширяемость платформы: новый агент = новый `cases/*` + `agents/*` + кнопка/команда в UI.
+Show platform expansion: new agent = new `cases/*` + `agents/*` + button/team in UI.
 
 #### Scope
 
-Включено:
+Includes:
 
-- второй агент (`promo`);
-- тот же run/artifact pattern;
+- Second agent (`promo`);
+- Same run/artifact pattern;
 - UI readiness docs / stubs.
 
-Не включено:
+Not included:
 
 - real second transport integration;
 - external modules.
 
-#### Реализовано
+#### Implemented
 
 - `agents/promo/graph.py`
 - `cases/promo.py`
 - `/run_promo`
-- кнопка `Run Promo Scan`
+- `Run Promo Scan` button
 - `ui/slack_stub.py`
 - doc contract `UI → cases → agents/adapter/storage`
 
 #### Deliverable
 
-BeeAgent показывает reusable multi-agent pattern.
+BeeAgent shows reusable multi-agent pattern.
 
 #### Artifacts
 
@@ -622,21 +622,21 @@ BeeAgent показывает reusable multi-agent pattern.
 
 #### DoD
 
-- второй агент запускается end-to-end;
-- артефакты создаются по тому же стандарту;
-- transport/case/agent boundary зафиксирован в docs.
+- The second agent starts end-to-end;
+- artifacts is created by the same standard;
+- transport/case/agent boundary recorded in docs.
 
-### Итерация 9 — Quiz Agent v0 (Pharmacy demo) + WOW UX
+### Iteration 9 — Quiz Agent v0 (Pharmacy demo) + WOW UX
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать более интерактивный demo-case: user input → quiz flow → result → artifacts.
+Make demo-case: user input → quiz flow → result → artifacts. more interactive
 
 #### Scope
 
-Включено:
+Includes:
 
 - quiz case;
 - quiz graph;
@@ -644,12 +644,12 @@ BeeAgent показывает reusable multi-agent pattern.
 - Telegram quiz UX;
 - quiz artifacts.
 
-Не включено:
+Not included:
 
 - product-grade survey engine;
 - multi-tenant quiz platform.
 
-#### Реализовано
+#### Implemented
 
 - `cases/quiz.py`
 - `agents/quiz/graph.py`
@@ -661,7 +661,7 @@ BeeAgent показывает reusable multi-agent pattern.
 
 #### Deliverable
 
-Есть stateful interactive scenario внутри BeeAgent runtime.
+There's stateful interactive scenario inside BeeAgent runtime.
 
 #### Artifacts
 
@@ -680,33 +680,33 @@ BeeAgent показывает reusable multi-agent pattern.
 
 #### DoD
 
-- `/quiz_pharmacy` запускает квиз и проходит до результата;
-- сессии и run artifacts сохраняются;
-- `/last_quiz` показывает последний результат.
+- `/quiz_pharmacy` triggers the quiz and passes to the result;
+- sessions and run artifacts retained;
+- `/last_quiz` shows the last result.
 
-### Итерация 10 — Explainable Recommendations v0 + LLM summary
+### Iteration 10 — Explainable Recommendations v0 + LLM summary
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Показать “реального AI-агента” на минимальном объёме: объяснимые рекомендации + optional LLM summary.
+Demonstrate a “real AI- agent” with minimal scope: Explainable Recommendations + optional LLM summary.
 
 #### Scope
 
-Включено:
+Includes:
 
 - deterministic recommendation engine;
 - LLM summary only for text;
 - trace extension;
 - recommendation artifacts.
 
-Не включено:
+Not included:
 
 - AI-driven execution;
 - black-box decision making.
 
-#### Реализовано
+#### Implemented
 
 - recommendation engine over OOS results
 - structured recommendations:
@@ -723,7 +723,7 @@ BeeAgent показывает reusable multi-agent pattern.
 
 #### Deliverable
 
-BeeAgent умеет выдавать explainable recommendation output поверх deterministic core.
+BeeAgent can deliver explainable recommendation output over deterministic core.
 
 #### Artifacts
 
@@ -741,72 +741,72 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 
 #### DoD
 
-- demo scan command выдаёт отчёт с рекомендациями;
-- recommendation artifacts создаются;
-- trace и logs расширены под recommendation path.
+- demo scan command reports with recommendations;
+- recommendation artifacts is created;
+- trace and logs are extended to recommendation path.
 
 ---
 
-## Этап 3 — Module platform v0 (итерации 11–14)
+## Stage 3 — Module platform v0 (iteration 11–14)
 
 ### Purpose of stage
 
-Этап 3 переводит `beeagent` из demo/core-каркаса в модульную платформу, к которой можно подключать клиентские доменные пакеты как отдельные репозитории.
+Stage 3 turns `beeagent` from a demo/core- skeleton into a modular platform that accepts client domain packages as separate repositories.
 
-Фокус этапа:
+Stage focus:
 
-- явный module contract;
+- Visible module contract;
 - module registry;
 - runtime context/artifact API;
 - capability boundary;
-- подготовка к `beeagent-rop`.
+- Preparation for `beeagent-rop`.
 
-Изменения этого этапа по умолчанию:
+By default, this step changes:
 
-- в основном `runtime-risk`;
+- mainly `runtime-risk`;
 - module loading / capability / file boundary changes — `security-sensitive`.
 
-### Итерация 11 — Module contract v0
+### Iteration 11 — Module contract v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Зафиксировать минимальный внутренний контракт модуля, через который BeeAgent core сможет безопасно и предсказуемо работать с внешними доменными пакетами вроде `beeagent-rop`.
+Record the minimum internal contract of a module through which BeeAgent core can operate safely and predictably with external domain packages such as `beeagent-rop`.
 
 #### Scope
 
-Включено:
+Includes:
 
-- `ModuleContract` / protocol как internal reusable contract;
-- обязательный `module_id`;
+- `ModuleContract` / protocol as internal reusable contract;
+- Mandatory `module_id`;
 - `supported_case_types()`;
-- `handle(context)` с минимальным contract-level context shape;
-- bounded result shapes для ответа модуля;
-- явные contract metadata для `read-only / draft-only / execution-capable` semantics;
-- import / dispatch smoke на contract уровне;
-- docs update по module boundary и contract expectations.
+- `handle(context)` with minimum contract-level context shape;
+- bounded result shapes for the response of the module;
+- Visible contract metadata for `read-only / draft-only / execution-capable` semantics;
+- import / dispatch smoke at contract level;
+- docs update on module boundary and contract expectations.
 
-Не включено:
+Not included:
 
 - module registry / discovery;
 - remote loading;
 - marketplace;
 - hot reload;
-- полноценный runtime context API;
+- A full runtime context API;
 - artifact API;
 - capability execution layer;
-- реальная интеграция `beeagent-rop`.
+- Real integration of `beeagent-rop`.
 
 #### Deliverable
 
-В `beeagent` появляется явный и тестируемый внутренний контракт модуля, независимый от одного клиента и достаточный для следующих итераций registry/context/integration.
+`beeagent` provides a clear and tested internal contract for a module independent of one customer and sufficient for the following registry/context/integration. iterations.
 
 #### Artifacts
 
 - docs
 - tests
-- optional contract diagnostics artifact only if действительно нужен
+- optional contract diagnostics artifact only if is really needed.
 
 #### Checks
 
@@ -817,35 +817,35 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 
 #### DoD
 
-- core явно знает, как выглядит модульный contract;
-- contract не завязан на `beeagent-rop` или другого одного клиента;
-- authority semantics (`read-only / draft-only / execution-capable`) выражены явно;
-- bounded result shape проверяется тестами;
-- transport/case/core paths не ломаются.
+- core clearly knows what the contract modular looks like;
+- contract is not tied to `beeagent-rop` or another one customer;
+- authority semantics (`read-only / draft-only / execution-capable`) is clearly expressed;
+- bounded result shape must be tested;
+- transport/case/core paths does not break.
 
-### Итерация 12 — Module registry v0
+### Iteration 12 — Module registry v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить минимальный локальный registry, через который BeeAgent сможет явно и предсказуемо находить, валидировать и подключать установленные package-based модули вроде `beeagent-rop`.
+Add a minimum local registry through which BeeAgent can clearly and predict the location, validation and connection of package-based modules such as `beeagent-rop`.
 
 #### Scope
 
-Включено:
+Includes:
 
-- local registry для installed python packages;
+- local registry for installed python packages;
 - config-driven module declaration;
 - config-driven enable/disable modules;
 - deterministic active module resolution;
 - import + contract validation against `ModuleContract`;
 - explicit refusal for missing / disabled / invalid modules;
-- diagnostics по loaded / disabled / missing / invalid modules;
+- diagnostics at loaded / disabled / missing / invalid modules;
 - conflict handling for ambiguous module ownership if applicable;
 - optional registry diagnostics artifact.
 
-Не включено:
+Not included:
 
 - remote registry;
 - dynamic marketplace;
@@ -855,20 +855,20 @@ BeeAgent умеет выдавать explainable recommendation output пове�
 - runtime context API;
 - artifact API;
 - capability boundary;
-- реальный client flow dispatch beyond registry-level smoke.
+- real client flow dispatch beyond registry-level smoke.
 
-#### Реализовано
+#### Implemented
 
 - `src/beeagent_module/core/module_registry.py` — `ModuleRegistry`, `ModuleEntry`, `ModuleState`, `build_registry`
-- `config/settings.yml` — блок `modules.registry` (config-driven declaration)
-- `src/beeagent_module/core/settings.py` — fail-fast валидация `modules.*` и каждого элемента registry
-- `src/beeagent_module/core/app.py` — вызов `build_registry` при старте
-- `tests/test_module_registry.py` — сценарии: loaded, missing, disabled, invalid, diagnostics artifact, mixed
-- `beeagent-rop` объявлен в registry; текущий `RopModule` не удовлетворяет `ModuleContract` (нет `authority`) → state=invalid (ожидаемо до итерации 15)
+- `config/settings.yml` – `modules.registry` (config-driven declaration) block
+- `src/beeagent_module/core/settings.py` - fail-fast validation of `modules.*` and each registry element
+- `src/beeagent_module/core/app.py` – `build_registry` call at launch
+- `tests/test_module_registry.py` – Scenarios: loaded, missing, disabled, invalid, diagnostics artifact, mixed
+- `beeagent-rop` announced in registry; the current `RopModule` does not satisfy `ModuleContract` (no `authority`) → state=invalid (expected until iteration 15)
 
 #### Deliverable
 
-BeeAgent умеет по конфигу явно определить локально установленные модули, загрузить валидный модуль, отказать explainably в случае missing/disabled/invalid module и показать registry diagnostics.
+BeeAgent can clearly identify locally installed modules, load the valide module, fail explainably in the case of missing/disabled/invalid module and show registry diagnostics.
 
 #### Artifacts
 
@@ -888,25 +888,25 @@ BeeAgent умеет по конфигу явно определить локал
 
 #### DoD
 
-- активный модуль определяется явно и предсказуемо;
-- module loading не опирается на hidden defaults или ad hoc imports;
-- missing / disabled / invalid module дают explainable error/diagnostics;
-- registry semantics не завязаны на одного клиента;
-- BeeAgent подготовлен к следующей итерации runtime context и к интеграции `beeagent-rop`.
+- The active module is clearly and predictable;
+- module loading is not based on hidden defaults or ad hoc imports;
+- missing / disabled / invalid module give explainable error/diagnostics;
+- registry semantics is not tied to one customer;
+- BeeAgent is prepared for the following iteration runtime context and `beeagent-rop` integration.
 
-### Итерация 13 — Runtime context + artifact API v0
+### Iteration 13 — Runtime context + artifact API v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Дать модулю минимальный безопасный runtime context и стандартный core-managed способ писать module-linked artifacts без прямой зависимости от private internals BeeAgent.
+Give the module the minimum safe runtime context and the standard core-managed method to write module-linked artifacts without direct dependence on private internals BeeAgent.
 
 #### Scope
 
-Включено:
+Includes:
 
-- minimal runtime context envelope для module execution;
+- minimal runtime context envelope for module execution;
 - `run_id`, `session_id`, `case_type`, `module_id`, `authority`, input payload;
 - explicit context propagation from core to module;
 - minimal artifact write/read API under core control;
@@ -915,7 +915,7 @@ BeeAgent умеет по конфигу явно определить локал
 - predictable module artifact location and naming rules;
 - tests for context propagation and artifact API behavior.
 
-Не включено:
+Not included:
 
 - distributed state store;
 - queue framework;
@@ -927,7 +927,7 @@ BeeAgent умеет по конфигу явно определить локал
 
 #### Deliverable
 
-Модуль может выполняться внутри BeeAgent runtime с platform-owned context и писать module-linked artifacts через explicit core API, не зная private storage internals.
+The module can be run inside BeeAgent runtime with platform-owned context and write module-linked artifacts via explicit core API, without knowing private storage internals.
 
 #### Artifacts
 
@@ -945,24 +945,24 @@ BeeAgent умеет по конфигу явно определить локал
 
 #### DoD
 
-- модуль получает explicit runtime context от core;
-- модуль пишет artifacts через core-managed API, а не напрямую в произвольные пути;
-- linkage `run_id -> module artifacts` воспроизводимо и понятно по logs/artifacts;
-- решение не завязано на одного клиента и не тащит capability logic раньше времени.
+- The module receives explicit runtime context from core;
+- The module writes artifacts through core-managed API, not directly into arbitrary routes;
+- linkage `run_id -> module artifacts` is reproducible and understandable by logs/artifacts;
+- The decision is not tied to one client and does not carry capability logic before the time.
 
-### Итерация 14 — Capability boundary v0
+### Iteration 14 — Capability boundary v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Разделить module logic и внешние data/action calls через единый capability layer, чтобы доменные модули вроде `beeagent-rop` могли запрашивать email / Bitrix / parser / attachment capabilities без прямой зависимости от transport details, MCP/n8n/system clients и без размывания authority boundaries.
+Segregate module logic and external data/action calls through a single capability layer so that domain modules like `beeagent-rop` can request email / Bitrix / parser / attachment capabilities without direct dependence on transport details, MCP/n8n/system clients and without dilution authority boundaries.
 
 #### Scope
 
-Включено:
+Includes:
 
-- capability call abstraction в core;
+- capability call abstraction in core;
 - minimal capability request / response contract v0;
 - clear boundary `module → capability → MCP/n8n/system`;
 - mock/local capability provider for tests;
@@ -983,11 +983,11 @@ BeeAgent умеет по конфигу явно определить локал
   - `bitrix.read_timeline`
   - `parser.lookup_email`
   - `attachment.extract_text`
-- запрет на hidden fallback execution path;
-- принцип: long-running state, retry, batching, checkpoints и policy остаются в BeeAgent;
-- logs / optional diagnostics для explainability.
+- Prohibition of hidden fallback execution path;
+- principle: long-running state, retry, batching, checkpoints and policy remain in BeeAgent;
+- logs / optional diagnostics for explainability.
 
-Не включено:
+Not included:
 
 - production Email connector;
 - production Bitrix connector;
@@ -995,13 +995,13 @@ BeeAgent умеет по конфигу явно определить локал
 - production attachment reader/OCR;
 - full MCP/n8n transport implementation;
 - full workflow engine rewrite;
-- перенос long-running state в n8n/MCP/tool layer;
-- ad hoc tool/API calls прямо из client module logic;
-- client-specific ROP business rules в BeeAgent core.
+- Transport long-running state to n8n/MCP/tool layer;
+- ad hoc tool/API calls directly from client module logic;
+- client-specific ROP business rules in BeeAgent core.
 
 #### Deliverable
 
-BeeAgent получает минимальный capability boundary v0: модуль может вызвать capability через core-owned abstraction и получить explainable `ok/refused/timeout/error` result без знания transport details и без прямого доступа к внешним systems.
+BeeAgent receives the minimum capability boundary v0: module can call capability through core-owned abstraction and receive explainable `ok/refused/timeout/error` result without transport details knowledge and without direct access to the outer systems.
 
 #### Artifacts
 
@@ -1024,55 +1024,55 @@ BeeAgent получает минимальный capability boundary v0: мод�
 
 #### DoD
 
-- module code не завязан напрямую на случайный tool transport;
-- capability calls проходят только через explicit core abstraction;
-- refusal / timeout / error paths explainable по logs/tests;
-- hidden fallback execution path отсутствует;
-- long-running state не уезжает в n8n/MCP/tool layer;
-- решение не завязано на `beeagent-rop`, но покрывает будущие ROP capability needs.
+- module code is not tied directly to the random tool transport;
+- capability calls only passes through explicit core abstraction;
+- refusal / timeout / error paths explainable on logs/tests;
+- hidden fallback execution path is missing;
+- long-running state does not leave in n8n/MCP/tool layer;
+- The decision is not tied to `beeagent-rop`, but covers future ROP capability needs.
 
 ---
 
-## Этап 4 — First real client module integration
+## Stage 4 — First real client module integration
 
 ### Purpose of stage
 
-Этап 4 подключает первый реальный клиентский модуль `beeagent-rop` и доводит BeeAgent до состояния, пригодного для Discovery → MVP → Pilot под конкретного клиента.
+Stage 4 connects the first real client module `beeagent-rop` and brings BeeAgent to a condition suitable for Discovery → MVP → Pilot to a particular client.
 
-Фокус этапа:
+Stage focus:
 
 - integration of `beeagent-rop`;
 - run/session/artifact linkage;
 - bounded operator flow;
 - client delivery readiness.
 
-Изменения этого этапа по умолчанию:
+By default, this step changes:
 
-- в основном `runtime-risk`;
+- mainly `runtime-risk`;
 - capability/file/integration boundaries — `security-sensitive`.
 
-### Итерация 15 — `beeagent-rop` integration smoke v0
+### Iteration 15 — `beeagent-rop` integration smoke v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Подключить установленный `beeagent-rop` к BeeAgent core как первый реальный внешний доменный модуль и подтвердить end-to-end dispatch через registry, runtime context и artifact API.
+Connect `beeagent-rop` to BeeAgent core as the first real external domain module and confirm end-to-end dispatch via registry, runtime context and artifact API.
 
 #### Scope
 
-Включено:
+Includes:
 
-- загрузка `beeagent-rop` через `modules.registry`;
-- проверка, что registry больше не помечает `beeagent-rop` как `invalid`;
-- ROP module dispatch через existing core runtime path;
+- loading `beeagent-rop` via `modules.registry`;
+- Check that registry no longer marks `beeagent-rop` as `invalid`;
+- ROP module dispatch through existing core runtime path;
 - context passing: `run_id`, `session_id`, `case_type`, `module_id`, `authority`, `payload`;
-- artifact linkage через `ArtifactAPI`;
-- integration smoke с установленным local package;
-- registry/runtime diagnostics в logs/artifacts;
-- минимальный sample payload для `lead_classification` или `duplicate_resolution`.
+- artifact linkage through `ArtifactAPI`;
+- integration smoke with local package installed;
+- registry/runtime diagnostics in logs/artifacts;
+- The minimum sample payload for `lead_classification` or `duplicate_resolution`.
 
-Не включено:
+Not included:
 
 - production Bitrix connector;
 - production email connector;
@@ -1080,12 +1080,12 @@ BeeAgent получает минимальный capability boundary v0: мод�
 - attachment deep parsing;
 - ROP summary/operator UX;
 - pilot hardening;
-- изменение бизнес-логики `beeagent-rop`;
-- client-specific rules в BeeAgent core.
+- Change in business logic `beeagent-rop`;
+- client-specific rules in BeeAgent core.
 
 #### Deliverable
 
-BeeAgent умеет загрузить и вызвать `beeagent-rop` как first real module через стандартный registry/runtime path, а результат вызова воспроизводимо связан с `run_id` в module-linked artifacts.
+BeeAgent can load and call `beeagent-rop` as first real module through the standard registry/runtime path and the result of the call is reproduciblely linked to `run_id` in module-linked artifacts.
 
 #### Artifacts
 
@@ -1105,56 +1105,56 @@ BeeAgent умеет загрузить и вызвать `beeagent-rop` как f
 
 #### DoD
 
-- `beeagent-rop` загружается как valid module через registry;
-- BeeAgent вызывает `beeagent-rop` end-to-end без ручных костылей;
-- `ModuleResult` проходит consistency checks в `execute_module_case`;
-- linkage `run_id -> module-beeagent-rop -> module_result.json` видна в artifacts;
-- BeeAgent core не содержит ROP-specific business logic;
-- production connectors не подключены и не вызываются.
+- `beeagent-rop` is loaded as valid module through registry;
+- BeeAgent calls `beeagent-rop` end-to-end without hand crutches;
+- `ModuleResult` passes through consistency checks in `execute_module_case`;
+- linkage `run_id -> module-beeagent-rop -> module_result.json` is visible in artifacts;
+- BeeAgent core does not contain ROP-specific business logic;
+- production connectors is not connected or summoned.
 
-### Итерация 16 — ROP operator run flow v0
+### Iteration 16 — ROP operator run flow v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Собрать первый понятный operator-facing flow для запуска `beeagent-rop` через BeeAgent core: оператор должен видеть не только raw module artifacts, но и краткий explainable результат запуска без чтения исходников или внутренних JSON.
+Gather the first comprehensible operator-facing flow for `beeagent-rop` launch through BeeAgent core: the operator must not only see raw module artifacts but also the short explainable output without reading the originals or the inside JSON.
 
 #### Scope
 
-Включено:
+Includes:
 
-- core/case-level запуск ROP module через существующий registry/runtime path;
-- operator-facing wrapper над `execute_module_case(...)`;
-- bounded input payload для первого ROP case smoke, без production connectors;
-- readable summary output на основе `ModuleResult`;
+- core/case-level launch ROP module through the existing registry/runtime path;
+- operator-facing wrapper over `execute_module_case(...)`;
+- bounded input payload for the first ROP case smoke, without production connectors;
+- readable summary output based on `ModuleResult`;
 - artifact linkage:
   - `run_id`;
   - `module_result.json`;
   - operator summary artifact;
-- basic degraded output, если модуль не загружен, case unsupported или module result не `ok`;
-- минимальная интеграция с текущим UI/transport path там, где это уже естественно для проекта;
-- tests на successful run и degraded/refusal scenario.
+- basic degraded output if the module is not loaded, case unsupported or module result is not `ok`;
+- Minimum integration with the current UI/transport path where it is already natural for the project;
+- tests on successful run and degraded/refusal scenario.
 
-Не включено:
+Not included:
 
 - final UI;
 - production Email/Bitrix/parser/attachment connectors;
-- auto actions в CRM;
-- полноценная ROP business summary;
+- auto actions in CRM;
+- Full ROP business summary;
 - recommendation builder;
 - manager scoring;
-- перенос ROP business logic в BeeAgent core.
+- transport ROP business logic to BeeAgent core.
 
 #### Deliverable
 
-BeeAgent получает первый operator-ready ROP run flow: установленный `beeagent-rop` можно запустить через core-level path, получить readable summary и воспроизводимые artifacts, достаточные для демонстрации клиентского MVP path.
+BeeAgent gains its first operator-ready ROP run flow: the installed `beeagent-rop` can run through a core-level path, returning a readable summary and reproducible artifacts sufficient to demonstrate the MVP path to the customer.
 
 #### Artifacts
 
 - `storage/runs/<run_id>/module-beeagent-rop/module_result.json`
-- `storage/runs/<run_id>/module-beeagent-rop/<case_type>_result.json`, если модуль пишет case artifact
-- `storage/runs/<run_id>/operator_summary.json` или аналогичный operator-facing artifact
+- `storage/runs/<run_id>/module-beeagent-rop/<case_type>_result.json`, if the module writes case artifact
+- `storage/runs/<run_id>/operator_summary.json` or similar to operator-facing artifact
 - logs
 
 #### Checks
@@ -1168,23 +1168,23 @@ BeeAgent получает первый operator-ready ROP run flow: устано
 
 #### DoD
 
-- ROP flow запускается через BeeAgent-owned path, а не ad hoc script;
-- operator-facing summary объясняет, что произошло, какой модуль/case был вызван, какой статус получен и где лежат artifacts;
-- linkage `run_id -> module result -> operator summary` воспроизводимо;
-- BeeAgent core не содержит ROP business rules;
-- production connectors и CRM actions не добавлены.
+- ROP flow is launched through BeeAgent-owned path, not ad hoc script;
+- operator-facing summary explains what happened, what module/case was caused, what status was received and where artifacts is located;
+- linkage `run_id -> module result -> operator summary` reproducible;
+- BeeAgent core does not contain ROP business rules;
+- production connectors and CRM actions are not added.
 
-### Итерация 17 — ROP input source contract and batch handoff v0
+### Iteration 17 — ROP input source contract and batch handoff v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить в BeeAgent первый platform-level контракт ROP input source и batch/operator handoff flow, чтобы `beeagent-rop` запускался через core на controlled batch input, а не на одиночном demo payload.
+Add to BeeAgent the first platform-level contract ROP input source and batch/operator handoff flow so that `beeagent-rop` will run through core on controlled batch input instead of on demo payload. single.
 
 #### Scope
 
-Включено:
+Includes:
 
 - config-driven ROP input source contract:
   - `rop.sources`;
@@ -1193,20 +1193,20 @@ BeeAgent получает первый operator-ready ROP run flow: устано
   - `enabled`;
   - `authority`;
   - `items_max`;
-  - source-specific settings без secrets;
-- первый безопасный source type:
+  - source-specific settings without secrets;
+- First safe source type:
   - `json_batch` (source_type value);
-- controlled sample batch file для dev/smoke;
-- загрузка batch payload из configured source;
-- валидация batch shape;
-- нормализация batch items в payload, совместимый с `beeagent-rop`;
-- запуск `beeagent-rop` через существующий `ModuleRegistry` / `execute_module_case`;
-- основной MVP case:
-  - `rop_summary`, если модуль поддерживает;
+- controlled sample batch file for dev/smoke;
+- loading batch payload from configured source;
+- validation of batch shape;
+- Normalization of batch items in payload, compatible with `beeagent-rop`;
+- Launch `beeagent-rop` through the existing `ModuleRegistry` / `execute_module_case`;
+- Main MVP case:
+  - `rop_summary` if the module supports;
 - fallback/degraded behavior:
   - missing source;
   - no enabled source;
-  - multiple enabled sources, если v0 разрешает только один;
+  - multiple enabled sources if v0 allows only one;
   - disabled source;
   - invalid source config;
   - missing batch file;
@@ -1219,10 +1219,10 @@ BeeAgent получает первый operator-ready ROP run flow: устано
   - `normalized_events.json`;
   - module artifacts;
   - `operator_summary.json`;
-- Telegram command или dev/operator path, если это минимально и не раздувает scope;
+- Telegram command or dev/operator path, if this is minimal and does not blow scope up;
 - README / DEV_GUIDE / ROADMAP update.
 
-#### Не включено:
+#### Not included:
 
 - IMAP/live mailbox connector;
 - `hotline@welding.kz` live access;
@@ -1231,13 +1231,13 @@ BeeAgent получает первый operator-ready ROP run flow: устано
 - CRM write-back;
 - OCR;
 - attachment deep parsing;
-- ROP classification/summary/recommendation rules в BeeAgent;
+- ROP classification/summary/recommendation rules in BeeAgent;
 - hardcoded client mailbox;
 - broad multi-client abstractions.
 
 #### Deliverable
 
-BeeAgent умеет запускать ROP flow через configurable batch input source и выдавать operator-facing summary с reproducible artifacts без live mailbox dependency.
+BeeAgent can launch ROP flow through configurable batch input source and release operator-facing summary with reproducible artifacts without live mailbox dependency.
 
 #### Artifacts
 
@@ -1261,33 +1261,33 @@ BeeAgent умеет запускать ROP flow через configurable batch in
 
 #### DoD
 
-- source не захардкожен;
-- BeeAgent не содержит ROP classification/summary/recommendation rules;
-- source contract читается из config и валидируется fail-fast;
-- module вызывается через existing module runtime path;
-- `rop_summary` batch smoke проходит;
-- artifacts воспроизводимы и понятны;
+- source is not studded;
+- BeeAgent does not contain ROP classification/summary/recommendation rules;
+- source contract is read from config and validated by fail-fast;
+- module is called through existing module runtime path;
+- `rop_summary` batch smoke passes;
+- artifacts is reproducible and understandable;
 - degraded paths explainable;
-- logs/artifacts не содержат secrets;
-- production connectors не добавлены.
+- logs/artifacts does not contain secrets;
+- production connectors not added.
 
-### Итерация 18 — ROP mailbox_readonly source and hotline smoke v0
+### Iteration 18 — ROP mailbox_readonly source and hotline smoke v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить в BeeAgent source type `mailbox_readonly` и использовать `hotline@welding.kz` как первый configurable read-only mailbox source для ROP MVP smoke: BeeAgent должен получить последние N писем, безопасно нормализовать их в events, вызвать `beeagent-rop` через existing module runtime path и записать operator-facing artifacts без destructive mailbox actions и без CRM write-back.
+Add to BeeAgent source type `mailbox_readonly` and use `hotline@welding.kz` as the first configurable read-only mailbox source for ROP MVP smoke: BeeAgent must receive the last N letters, safely normalize them into events, call `beeagent-rop` via existing module runtime path and write operator-facing artifacts without destructive mailbox actions and without CRM write-back.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- новый source type:
+- new source type:
   - `mailbox_readonly`;
-- config-driven source declaration в `rop.sources`;
-- `hotline` только как `source_id` / config entry, без хардкода в runtime logic;
-- mailbox config без secrets:
+- config-driven source declaration in `rop.sources`;
+- `hotline` only as `source_id` / config entry, without a hard code in runtime logic;
+- mailbox config without secrets:
   - `host`;
   - `port`;
   - `use_ssl`;
@@ -1295,24 +1295,24 @@ BeeAgent умеет запускать ROP flow через configurable batch in
   - `username_env`;
   - `password_env`;
   - `items_max`;
-- credentials только через env;
-- read-only fetch последних N сообщений;
+- credentials only after env;
+- read-only fetch of the last N messages;
 - no delete/archive/reply/mark-as-read;
-- minimal mailbox adapter с fake mailbox tests;
+- minimal mailbox adapter with fake mailbox tests;
 - normalizer:
   - sender;
-  - recipients / cc, если безопасно;
+  - recipients / cc, if safe;
   - subject;
   - date/message_id;
-  - text/plain или safe text body preview;
-  - attachment metadata только без чтения content;
+  - text/plain or safe text body preview;
+  - attachment metadata only without reading content;
 - sanitized artifacts:
   - `source_diagnostics.json`;
   - `intake_metadata.json`;
   - `normalized_events.json`;
   - module artifacts;
   - `operator_summary.json`;
-- dispatch в `beeagent-rop` через `execute_module_case(...)`;
+- dispatch in `beeagent-rop` through `execute_module_case(...)`;
 - degraded behavior:
   - missing credentials;
   - invalid source config;
@@ -1324,10 +1324,10 @@ BeeAgent умеет запускать ROP flow через configurable batch in
   - module non-ok result;
 - docs update.
 
-#### Не включено:
+#### Not included:
 
 - continuous stream/listener/polling;
-- checkpoint/seen-message persistence, если это не минимально и безопасно;
+- checkpoint/seen-message persistence if this is not minimal and safe;
 - multi-mailbox routing;
 - full source-of-truth mapping;
 - employee mailbox ingestion;
@@ -1338,11 +1338,11 @@ BeeAgent умеет запускать ROP flow через configurable batch in
 - saving raw `.eml`;
 - automatic mailbox actions;
 - n8n/MCP implementation;
-- ROP business rules в BeeAgent.
+- ROP business rules in BeeAgent.
 
 #### Deliverable
 
-BeeAgent умеет выполнить controlled read-only smoke на mailbox source: получить последние N писем из configured mailbox, нормализовать их в ROP-compatible events, вызвать `beeagent-rop` и показать operator summary с воспроизводимыми artifacts.
+BeeAgent can perform controlled read-only smoke on mailbox source: receive the last N letters from configured mailbox, normalize them to ROP-compatible events, call `beeagent-rop` and show operator summary with reproducible artifacts.
 
 #### Artifacts
 
@@ -1363,7 +1363,7 @@ BeeAgent умеет выполнить controlled read-only smoke на mailbox s
 - mailbox unavailable scenario
 - empty inbox scenario
 - malformed message scenario
-- live smoke with `items_max`, если реальные credentials доступны
+- live smoke with `items_max`, if actual credentials is available
 - manual artifact inspection
 - log verification
 - secret leakage check
@@ -1383,46 +1383,46 @@ BeeAgent умеет выполнить controlled read-only smoke на mailbox s
 - no destructive mailbox/CRM actions exist;
 - BeeAgent core contains no ROP classification/summary/recommendation rules.
 
-### Итерация 19 — ROP live batch classification handoff v0
+### Iteration 19 — ROP live batch classification handoff v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать live ROP batch flow семантически полезным: после загрузки `json_batch` или `mailbox_readonly` BeeAgent должен сначала вызвать `beeagent-rop` case `lead_classification` для каждого normalized event, сохранить `classified_events.json`, а затем вызвать `beeagent-rop` case `rop_summary` уже по classified events.
+Make live ROP batch flow semantically useful: After loading `json_batch` or `mailbox_readonly` BeeAgent must first call `beeagent-rop` case `lead_classification` for each normalized event, retain `classified_events.json`, and then call `beeagent-rop` case `rop_summary` already on classified events.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- batch classification handoff внутри existing ROP source flow;
-- вызов `beeagent-rop` `lead_classification` для каждого normalized event через existing module runtime path;
-- сбор classified events без добавления ROP business rules в BeeAgent;
+- batch classification handoff inside existing ROP source flow;
+- `beeagent-rop` `lead_classification` call for each normalized event via existing module runtime path;
+- classified events collection without adding ROP business rules to BeeAgent;
 - artifact:
   - `classified_events.json`;
-- передача в `rop_summary` не raw normalized events, а classified events;
-- operator summary с classification diagnostics:
+- Transfer to `rop_summary` is not raw normalized events, but classified events;
+- operator summary with classification diagnostics:
   - normalized count;
   - classified count;
   - classification failed count;
   - summary status;
   - artifact refs;
 - degraded behavior:
-  - per-event classification failure не валит весь batch;
-  - failed event получает controlled fallback item:
+  - per-event classification failure doesn't roll the whole batch;
+  - failed event receives controlled fallback item:
     - `case_type: "unknown"`;
     - `priority: "medium"`;
     - `reason_code: "classification_error"`;
     - `confidence: 0.0`;
     - `is_fallback: true`;
-- tests на successful handoff и degraded per-event classification;
-- repeated live smoke на `folder=welding`, если credentials доступны;
+- tests on successful handoff and degraded per-event classification;
+- repeated live smoke on `folder=welding`, if credentials is available;
 - docs update.
 
-#### Не включено:
+#### Not included:
 
-- ROP business rules в BeeAgent;
-- изменение логики классификации в `beeagent-rop`;
+- ROP business rules in BeeAgent;
+- Change of classification logic in `beeagent-rop`;
 - AI classification;
 - Bitrix/1C connectors;
 - CRM write-back;
@@ -1435,7 +1435,7 @@ BeeAgent умеет выполнить controlled read-only smoke на mailbox s
 
 #### Deliverable
 
-BeeAgent live source flow вызывает `beeagent-rop` в правильной последовательности: normalized events → lead classification → classified events → ROP summary. `rop_summary` получает classified events, а не raw mailbox events.
+BeeAgent live source flow calls `beeagent-rop` in the correct sequence: normalized events → lead classification → classified events → ROP summary. `rop_summary` receives classified events rather than raw mailbox events.
 
 #### Artifacts
 
@@ -1475,43 +1475,43 @@ BeeAgent live source flow вызывает `beeagent-rop` в правильно�
 - no destructive mailbox/CRM actions exist;
 - secrets do not appear in logs/artifacts.
 
-### Итерация 20 — ROP CLI and review export v1
+### Iteration 20 — ROP CLI and review export v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать нормальный operator/dev CLI для ROP MVP flow, чтобы оператор мог запускать BeeAgent ROP pipeline через `./start.sh rop ...` без Telegram, без `test.py` и без ручного Python-скрипта.
+Make the normal operator/dev CLI for ROP MVP flow, so that the operator can run BeeAgent ROP pipeline via `./start.sh rop ...` without Telegram, without `test.py` and without the Python- script.
 
-BeeAgent должен уметь одной командой:
+BeeAgent must be capable of one command:
 
-- запустить configured ROP source flow;
-- получить последние N событий из `json_batch` или `mailbox_readonly`;
-- прогнать события через `beeagent-rop` `lead_classification`;
-- собрать `classified_events.json`;
-- вызвать `rop_summary`;
-- записать standard artifacts;
-- вывести понятный terminal summary;
-- экспортировать review TSV для сверки с человеком / заказчиком.
+- Start configured ROP source flow;
+- receive the last N events from `json_batch` or `mailbox_readonly`;
+- Run events through `beeagent-rop` `lead_classification`;
+- collect `classified_events.json`;
+- Call `rop_summary`;
+- Write standard artifacts;
+- display a clear terminal summary;
+- Export review TSV for reconciliation with person/employer.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- CLI entrypoint через existing `start.sh`:
+- CLI entrypoint through existing `start.sh`:
   - `./start.sh rop run`;
   - `./start.sh rop summary`;
   - `./start.sh rop export-review`;
-- проброс аргументов из `start.sh` в `config/start.py`;
-- CLI dispatch в BeeAgent app/start layer без отдельного сервиса;
-- сохранение backward compatibility:
-  - `./start.sh` работает как раньше через `run.mode`;
-  - `./start.sh telegram` явно запускает Telegram mode;
-- запуск existing `run_rop_batch_case(...)`;
-- чтение `rop.sources` из `config/settings.yml`;
-- выбор source через `--source-id`;
-- override `items_max` через `--items-max` без изменения `settings.yml`;
-- override `period` через `--period` без изменения `settings.yml`;
+- passing arguments from `start.sh` to `config/start.py`;
+- CLI dispatch in BeeAgent app/start layer without separate service;
+- Save backward compatibility:
+  - `./start.sh` operates as it used to be with `run.mode`;
+  - `./start.sh telegram` is clearly launching Telegram mode;
+- Launch existing `run_rop_batch_case(...)`;
+- Read `rop.sources` from `config/settings.yml`;
+- source selection through `--source-id`;
+- override `items_max` through `--items-max` without change `settings.yml`;
+- override `period` through `--period` without change `settings.yml`;
 - explicit `--run-id`;
 - terminal output:
   - `run_id`;
@@ -1520,14 +1520,14 @@ BeeAgent должен уметь одной командой:
   - module status;
   - summary;
   - artifact paths;
-- команда `summary`:
-  - читает `storage/runs/<run_id>/operator_summary.json`;
-  - выводит краткий readable summary;
-- команда `export-review`:
-  - читает `normalized_events.json`;
-  - читает `classified_events.json`;
-  - создаёт `rop_review_table.tsv`;
-- TSV columns для human review:
+- `summary` command:
+  - Read `storage/runs/<run_id>/operator_summary.json`;
+  - outputs a brief readable summary;
+- `export-review` command:
+  - Read `normalized_events.json`;
+  - Read `classified_events.json`;
+  - Creates `rop_review_table.tsv`;
+- TSV columns for human review:
   - `event_id`;
   - `source_id`;
   - `sender`;
@@ -1552,13 +1552,13 @@ BeeAgent должен уметь одной командой:
   - missing run artifacts for `summary` / `export-review`;
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`.
 
-**Не включено:**
+**Excluded:**
 
 - Telegram requirement for ROP CLI;
-- Telegram UI changes, кроме сохранения существующего поведения;
+- Telegram UI changes except to maintain existing behaviour;
 - web UI;
 - scheduler / listener / polling daemon;
 - Bitrix API;
@@ -1568,21 +1568,21 @@ BeeAgent должен уметь одной командой:
 - OCR;
 - attachment deep parsing;
 - AI classification;
-- ROP business rules в BeeAgent;
-- изменения classification logic в `beeagent-rop`;
+- ROP business rules in BeeAgent;
+- classification logic changes to `beeagent-rop`;
 - multi-mailbox routing beyond existing `source_id`.
 
-#### Реализовано
+#### Implemented
 
-- `src/beeagent_module/core/cli.py` — CLI handler module с тремя командами:
-  - `handle_rop_run()` — запуск ROP batch с in-memory overrides;
-  - `handle_rop_summary()` — показ operator summary;
-  - `handle_rop_export_review()` — генерация TSV;
-- `config/start.py` — обновлен для парсинга CLI args и dispatch:
+- `src/beeagent_module/core/cli.py` – CLI handler module with three commands:
+  - `handle_rop_run()` – ROP batch launch with in-memory overrides;
+  - `handle_rop_summary()` – Show operator summary;
+  - `handle_rop_export_review()` is a generation of TSV;
+- `config/start.py` is updated for CLI args and dispatch: parsing.
   - `./start.sh` → use `run.mode` from settings;
   - `./start.sh telegram` → explicit Telegram;
   - `./start.sh rop run/summary/export-review` → dispatch to CLI handler;
-- `_apply_source_overrides()` — in-memory source override logic для CLI args;
+- `_apply_source_overrides()` – in-memory source override logic for CLI args;
 - `_build_review_tsv_rows()` — TSV generation from normalized + classified events;
 - `tests/test_cli_rop_commands.py` — targeted tests:
   - backward compat (no args, telegram);
@@ -1590,11 +1590,11 @@ BeeAgent должен уметь одной командой:
   - rop summary with valid artifact;
   - rop export-review with TSV creation;
   - error scenarios (missing source, disabled source, missing artifacts);
-- docs update в DEV_GUIDE, README, ROADMAP.
+- docs update in DEV_GUIDE, README, ROADMAP.
 
 #### Deliverable
 
-Оператор может выполнить ROP MVP flow без Telegram и без `test.py`:
+The operator may perform ROP MVP flow without Telegram and without `test.py`:
 
 ```bash
 ./start.sh rop run \
@@ -1640,41 +1640,41 @@ Artifacts:
 
 #### DoD
 
-- `./start.sh` работает как раньше (no args → `run.mode` from settings);
-- `./start.sh telegram` явно запускает Telegram mode;
-- `./start.sh rop run [args]` запускает ROP batch без Telegram;
-- CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) применяются in-memory только;
-- disabled source не включается silent CLI, вернёт fail-fast error;
-- source not found вернёт fail-fast error;
-- `rop summary` читает `operator_summary.json` и выводит readable summary;
-- `rop run` автоматически создаёт `rop_review_table.tsv` для текущего run;
-- `rop export-review` остаётся ручным повторным экспортом `rop_review_table.tsv` для уже существующего run;
-- последние 5 TSV колонок пусты для оператора заполнять вручную;
-- CLI использует existing `run_rop_batch_case()`, не дублирует orchestration;
-- `rop.sources` остаётся source of truth для источников;
-- BeeAgent core не содержит ROP business rules;
-- artifacts создаются воспроизводимо и консистентны с логами;
-- secrets не попадают в logs/artifacts;
-- docs обновлены.
+- `./start.sh` works as it did before (no args → `run.mode` from settings);
+- `./start.sh telegram` is clearly launching Telegram mode;
+- `./start.sh rop run [args]` starts ROP batch without Telegram;
+- CLI overrides (`--source-id`, `--items-max`, `--period`, `--run-id`) applies to in-memory only;
+- a disabled source does not silently disable the CLI; it returns a fail-fast error;
+- source not found returns fail-fast error;
+- `rop summary` reads `operator_summary.json` and releases readable summary;
+- `rop run` automatically creates `rop_review_table.tsv` for the current run;
+- `rop export-review` remains a manual re-export of `rop_review_table.tsv` for the already existing run;
+- The last 5 TSV columns are empty for the operator to be filled in manually;
+- CLI uses existing `run_rop_batch_case()`, does not duplicate orchestration;
+- `rop.sources` remains source of truth for sources;
+- BeeAgent core does not contain ROP business rules;
+- artifacts is reproducible and conservative with logs;
+- secrets does not enter logs/artifacts;
+- docs updated.
 
-### Итерация 21 — Enriched ROP review TSV v1
+### Iteration 21 — Enriched ROP review TSV v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать `rop_review_table.tsv` пригодным для быстрой human review / customer validation без ручного открытия `normalized_events.json` и `classified_events.json`.
+Make `rop_review_table.tsv` suitable for quick human review / customer validation without the manual opening of `normalized_events.json` and `classified_events.json`.
 
-После `./start.sh rop run` оператор должен получить TSV, который можно сразу вставить в Google Sheets и разметить: видно письмо, краткий контекст, вложения, решение бота, объяснение и пустые поля для human/Bitrix сверки.
+After `./start.sh rop run`, the operator must receive TSV, which can be inserted immediately into Google Sheets and marked: the email, brief context, attachments, bot decision, explanation and empty fields for human/Bitrix comparison are visible.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- расширить `rop_review_table.tsv`;
-- сохранить автоматический экспорт TSV после `./start.sh rop run`;
-- сохранить ручной повторный экспорт через `./start.sh rop export-review`;
-- добавить review-useful columns:
+- Increase `rop_review_table.tsv`;
+- Save the automatic export of TSV after `./start.sh rop run`;
+- Save manual re-export through `./start.sh rop export-review`;
+- Add review-useful columns:
   - `body_short`;
   - `attachments`;
   - `bot_priority`;
@@ -1684,7 +1684,7 @@ Artifacts:
   - `bitrix_responsible`;
   - `is_duplicate`;
   - `duplicate_of`;
-- сохранить текущие колонки:
+- Save the current columns:
   - `event_id`;
   - `source_id`;
   - `sender`;
@@ -1698,39 +1698,39 @@ Artifacts:
   - `bitrix_status`;
   - `notes`;
   - `correct_action`;
-- `body_short` должен быть bounded/sanitized preview, а не полный raw body;
-- `attachments` должны быть metadata-only:
+- `body_short` must be bounded/sanitized preview, not the complete raw body;
+- `attachments` must be metadata-only:
   - filename;
   - content_type;
-  - size_bytes, если есть;
-- пустые/отсутствующие поля должны экспортироваться как пустые ячейки;
-- TSV должен оставаться tab-separated и pasteable в Google Sheets;
-- обновить tests на header/order/row values;
-- обновить README.ru.md / DEV_GUIDE / ROADMAP по новому TSV contract.
+  - size_bytes, if any;
+- empty/missing fields must be exported as empty cells;
+- TSV must remain tab-separated and pasteable in Google Sheets;
+- Update tests on header/order/row values;
+- Update README.md / DEV_GUIDE / ROADMAP on the new TSV contract.
 
-**Не включено:**
+**Excluded:**
 
-- изменения классификации в `beeagent-rop`;
-- новые reason codes;
+- Changes in classification in `beeagent-rop`;
+- New reason codes;
 - Bitrix API;
 - CRM write-back;
 - OCR;
 - attachment content parsing;
-- экспорт raw `.eml`;
-- экспорт full raw headers;
+- Export raw `.eml`;
+- full raw headers export;
 - web UI;
 - mailbox cursor/pagination;
-- config toggle для отключения TSV.
+- config toggle for deactivation of TSV.
 
 #### Deliverable
 
-`./start.sh rop run` создаёт расширенный:
+`./start.sh rop run` creates an extended:
 
 ```text
 storage/runs/<run_id>/rop_review_table.tsv
 ```
 
-TSV содержит достаточно контекста для ручной разметки 20–50 писем без открытия JSON artifacts.
+TSV contains sufficient context for hand-marking 20-50 letters without opening JSON artifacts.
 
 #### Expected TSV columns
 
@@ -1789,63 +1789,63 @@ correct_action
 
 #### DoD
 
-- `rop_review_table.tsv` содержит расширенные review columns;
-- TSV остаётся валидным tab-separated файлом;
-- `body_short` bounded и не экспортирует полный сырой body бесконтрольно;
-- `attachments` metadata-only, без content;
-- пустые optional fields экспортируются как пустые ячейки;
-- автоматический TSV export после `rop run` не сломан;
-- ручной `export-review` не сломан;
-- BeeAgent core не содержит ROP business rules;
-- `beeagent-rop` не меняется;
-- secrets/raw `.eml` не попадают в artifacts/logs;
-- docs обновлены.
+- `rop_review_table.tsv` contains extended review columns;
+- TSV remains a valide tab-separated file;
+- `body_short` bounded and does not export complete raw body uncontrollably;
+- `attachments` metadata-only, without content;
+- empty optional fields are exported as empty cells;
+- Automatic TSV export after `rop run` is not broken;
+- Manual `export-review` is not broken;
+- BeeAgent core does not contain ROP business rules;
+- `beeagent-rop` does not change;
+- secrets/raw `.eml` does not enter artifacts/logs;
+- docs updated.
 
-### Итерация 22 — Operator Web Shell v0 with ROP dashboard
+### Iteration 22 — Operator Web Shell v0 with ROP dashboard
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить в BeeAgent минимальную read-only операторскую web-панель поверх существующих runtime artifacts, чтобы оператор/заказчик мог смотреть runs, summary, module outputs и ROP review table без чтения JSON/TSV вручную.
+Add to BeeAgent the minimum read-only operator web-panel above the existing runtime artifacts so that the operator/contractor can view runs, summary, module outputs and ROP review table without reading JSON/TSV manually.
 
-Итерация должна заложить reusable web shell для будущих модулей (`beeagent-rop`, `beescan`, `merch`), но первым рабочим module-specific экраном будет ROP dashboard.
+Iteration must lay reusable web shell for future modules (`beeagent-rop`, `beescan`, `merch`), but module-specific will be the first working screen to be used by ROP dashboard.
 
-#### Почему это нужно
+#### Why this is needed
 
-После итераций 18–21 ROP backend path уже работает:
+After iterations, 18-21 ROP backend path is already operational:
 
 ```text
 mailbox/json_batch → normalized_events → beeagent-rop classification → classified_events → rop_summary → operator_summary → rop_review_table.tsv
 ```
 
-Но текущий результат остаётся CLI/artifact-oriented:
+But the current result is CLI/artifact-oriented:.
 
-- оператору нужно открывать JSON/TSV вручную;
-- заказчику сложно показать MVP как продукт;
-- нет единого run overview;
-- нет web-поверхности, которая потом переиспользуется для BeeScan/Merch.
+- The operator needs to open JSON/TSV manually;
+- It is difficult for the customer to show MVP as a product;
+- No single run overview;
+- no web- surface, which is then reused for BeeScan/Merch.
 
-Следующий MVP-инкремент — сделать видимую operator surface, не добавляя CRM write-back, Bitrix, OCR или AI.
+The next MVP- is to make the visible operator surface, without adding CRM write-back, Bitrix, OCR or AI.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- новый web entrypoint:
+- new web entrypoint:
   - `./start.sh web`;
 
-- минимальный web server внутри BeeAgent;
+- Minimum web server inside BeeAgent;
 - read-only operator web shell;
-- server-side HTML templates или простая HTML-rendering реализация без React/Vue/Next;
-- страницы:
+- server-side HTML templates or simple HTML-rendering implementation without React/Vue/Next;
+- Pages:
   - `/` — landing / operator home;
-  - `/runs` — список run директории из `storage/runs`;
-  - `/runs/<run_id>` — общий run overview;
-  - `/runs/<run_id>/rop` — ROP-specific dashboard по existing artifacts;
-  - `/modules` — список известных модулей/registry diagnostics, если artifact доступен;
+  - `/runs` is a run directory of `storage/runs`;
+  - `/runs/<run_id>` is a common run overview;
+  - `/runs/<run_id>/rop` – ROP-specific dashboard on existing artifacts;
+  - `/modules` is a list of known modules/registry diagnostics, if artifact is available;
 
-- чтение только existing artifacts:
+- Read only existing artifacts:
   - `operator_summary.json`;
   - `source_diagnostics.json`;
   - `intake_metadata.json`;
@@ -1855,15 +1855,15 @@ mailbox/json_batch → normalized_events → beeagent-rop classification → cla
   - `module-beeagent-rop/module_result.json`;
   - `module-beeagent-rop/rop_summary_result.json`;
 
-- ROP dashboard показывает:
+- ROP dashboard shows:
   - `run_id`;
   - source id/type;
   - loaded/classified/failed counts;
-  - counts по `case_type`;
-  - counts по `priority`;
+  - counts to `case_type`;
+  - counts to `priority`;
   - fallback count;
   - reason_code distribution;
-  - таблицу писем;
+  - an email table;
   - `sender`;
   - `subject`;
   - `body_short`;
@@ -1875,16 +1875,16 @@ mailbox/json_batch → normalized_events → beeagent-rop classification → cla
   - `bot_reasoning`;
   - `bot_is_fallback`;
 
-- query filters на `/runs/<run_id>/rop`:
+- query filters on `/runs/<run_id>/rop`:
   - `case_type`;
   - `priority`;
   - `fallback`;
   - `reason_code`;
 
-- ссылка скачать/открыть TSV:
+- TSV: download/open link
   - `storage/runs/<run_id>/rop_review_table.tsv`;
 
-- ссылки на основные artifacts;
+- References to the main artifacts;
 - graceful degraded UI:
   - missing run;
   - missing artifact;
@@ -1892,13 +1892,13 @@ mailbox/json_batch → normalized_events → beeagent-rop classification → cla
   - empty runs;
   - non-ROP run;
 
-- tests на route handlers / HTML content / artifact parsing;
+- tests on route handlers / HTML content / artifact parsing;
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`.
 
-**Не включено:**
+**Excluded:**
 
 - login/auth;
 - multi-user access control;
@@ -1908,32 +1908,32 @@ mailbox/json_batch → normalized_events → beeagent-rop classification → cla
 - 1C;
 - OCR;
 - attachment content parsing;
-- редактирование human labels в UI;
-- сохранение review правок из UI;
-- сложный frontend framework;
+- Editing of human labels in UI;
+- Save review corrections from UI;
+- Complex frontend framework;
 - websocket/live updates;
 - scheduler/listener;
 - production deployment hardening;
 - nginx/basic-auth setup automation;
 - BeeScan UI;
-- ROP business rules в BeeAgent core;
-- изменения в `beeagent-rop`.
+- ROP business rules in BeeAgent core;
+- Change in `beeagent-rop`.
 
 #### Deliverable
 
-Оператор может запустить:
+The operator may start:
 
 ```bash
 ./start.sh web
 ```
 
-И открыть web-панель, где видны существующие BeeAgent runs и первый ROP dashboard по artifacts:
+And open web-panel where you can see the existing BeeAgent runs and the first ROP dashboard on artifacts:
 
 ```text
 storage/runs/<run_id>/...
 ```
 
-Dashboard не выполняет действий, не меняет данные и не пишет в CRM. Он только читает и отображает существующие artifacts.
+The dashboard performs no actions, changes no data and writes nothing to CRM. It only reads and displays existing artifacts.
 
 #### Expected routes
 
@@ -1998,25 +1998,25 @@ logs/app.log
 - `beeagent-rop` is not changed;
 - docs are updated.
 
-### Итерация 23 — ROP source profile hardening v0
+### Iteration 23 — ROP source profile hardening v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Усилить config-driven source contract для ROP pipeline, чтобы каждый источник входящих данных имел явный business/profile контекст и этот контекст воспроизводимо попадал в runtime artifacts, dashboard и downstream flow без изменения `beeagent-rop`.
+Strengthen config-driven source contract for ROP pipeline so that each input source has a clear business/profile context and this context is reproducible to runtime artifacts, dashboard and downstream flow without changing `beeagent-rop`.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It18–22 BeeAgent умеет читать `mailbox_readonly`, классифицировать события через `beeagent-rop`, создавать TSV и показывать ROP dashboard.
+After It18-22 BeeAgent can read `mailbox_readonly`, classify events through `beeagent-rop`, create TSV and display ROP dashboard.
 
-Но текущий source contract недостаточен для перехода к multi-source:
+But the current source contract isn't enough to go to multi-source:
 
 ```text
 hotline + sales + online + parsales
 ```
 
-Сейчас источник описывает технический доступ, но не фиксирует его роль:
+The source now describes technical access, but does not record its role:
 
 ```text
 technical aggregator
@@ -2026,45 +2026,45 @@ employee mailbox
 regional mailbox
 ```
 
-Без этого It24 приведёт к неясным artifacts, слабой дедупликации и ручным правкам кода при замене источника.
+Without this, It24 will lead to unclear artifacts, weak deduplication and manual code corrections when replacing the source.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- расширить `rop.sources[]` contract:
+- expand `rop.sources[]` contract:
   - `source_role`;
   - `client_id`;
   - `display_name`;
 
-- добавить fail-fast validation в `src/beeagent_module/core/settings.py`;
-- обновить `config/settings.yml` для существующих sources;
-- протянуть source profile metadata в artifacts:
+- Add fail-fast validation to `src/beeagent_module/core/settings.py`;
+- Update `config/settings.yml` for existing sources;
+- hold source profile metadata in artifacts:
   - `source_diagnostics.json`;
   - `intake_metadata.json`;
   - `operator_summary.json`;
 
-- для `mailbox_readonly` явно фиксировать:
+- for `mailbox_readonly` clearly record:
   - `mailbox_folder`;
   - `items_max`;
   - `fetched_count`;
   - `loaded_count`;
-  - `malformed_count`, если уже есть такой счётчик или его можно добавить минимально;
+  - `malformed_count`, if there is already such a counter or it can be added as a minimum;
 
-- сохранить совместимость с текущим ROP pipeline:
+- maintain compatibility with the current ROP pipeline:
   - `./start.sh rop run`;
   - `./start.sh rop summary`;
   - `./start.sh rop export-review`;
   - `./start.sh web`;
 
-- обновить web/dashboard только минимально, если новые source fields не отображаются существующим generic rendering;
-- добавить tests для config validation, source metadata propagation и degraded scenarios;
-- обновить docs:
+- Update web/dashboard only to the minimum if new source fields is not displayed by the existing generic rendering;
+- Add tests for config validation, source metadata propagation and degraded scenarios;
+- Update docs:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`.
 
-**Не включено:**
+**Excluded:**
 
 - web-triggered `rop run`;
 - multi-source ingestion;
@@ -2075,12 +2075,12 @@ regional mailbox
 - 1C;
 - CRM write-back;
 - mailbox listener/polling;
-- изменение `beeagent-rop`;
-- ROP business rules в BeeAgent core.
+- Change `beeagent-rop`;
+- ROP business rules in BeeAgent core.
 
 #### Deliverable
 
-Один ROP source всё ещё запускается как раньше, но теперь source profile является явным runtime contract:
+One ROP source is still running as it was before, but now source profile is a clear runtime contract:
 
 ```yaml
 source_id: "hotline_mailbox"
@@ -2093,7 +2093,7 @@ authority: "read_only"
 items_max: 20
 ```
 
-Artifacts содержат business-readable source metadata и готовы к It24 multi-source flow.
+Artifacts contains business-readable source metadata and is ready for It24 multi-source flow.
 
 #### Expected artifact fields
 
@@ -2117,23 +2117,23 @@ malformed_count
 runtime-risk
 ```
 
-Если затрагивается mailbox parsing/path/security-sensitive handling глубже обычной metadata propagation — поднять до:
+If mailbox parsing/path/security-sensitive handling is affected deeper than the normal metadata propagation, raise to:
 
 ```text
 security-sensitive
 ```
 
-### Итерация 24 — ROP multi-source ingestion artifacts v0
+### Iteration 24 — ROP multi-source ingestion artifacts v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Расширить BeeAgent ROP source flow с single active source до controlled multi-source ingestion: BeeAgent должен уметь за один run загрузить несколько configured `rop.sources`, сохранить per-source diagnostics, объединить normalized events, прогнать классификацию через `beeagent-rop`, построить `rop_summary` и записать source-aware artifacts без переноса ROP business logic в BeeAgent core.
+Expand the BeeAgent ROP source flow from one active source to controlled multi-source ingestion: in a single run, BeeAgent must load multiple configured `rop.sources`, preserve per-source diagnostics, combine normalized events, run classification through `beeagent-rop`, build `rop_summary` and write source-aware artifacts without moving ROP business logic into BeeAgent core.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It18–23 BeeAgent умеет работать с одним активным source (`hotline_mailbox`) и уже имеет source profile contract:
+After It18–23, BeeAgent can work with one active source (`hotline_mailbox`) and already has a source profile contract:
 
 ```text
 source_id
@@ -2145,74 +2145,74 @@ authority
 items_max
 ```
 
-Но реальный ROP поток будет состоять из нескольких источников: `hotline`, `sales`, `online`, `parsales`, региональные/сотруднические mailbox sources. Без multi-source artifacts следующие UI/attachment/Bitrix итерации будут завязаны на single-source модель и потребуют переделки.
+But the real ROP flow will consist of several sources: `hotline`, `sales`, `online`, `parsales`, regional/cooperative mailbox sources. without multi-source artifacts, the following UI/attachment/Bitrix iteration will be tied to the single-source model and will require remodeling.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- расширить ROP source flow для multi-source run;
-- поддержать загрузку нескольких enabled `rop.sources`;
-- сохранить explicit `--source-id` для single-source run;
-- добавить CLI режим выбора всех enabled sources, например:
+- expand ROP source flow for multi-source run;
+- Support loading of several enabled `rop.sources`;
+- Save explicit `--source-id` for single-source run;
+- Add CLI to the selection mode of all enabled sources, e.g.:
   - `./start.sh rop run --all-sources`;
 
-- сохранить backward compatibility:
-  - если `--source-id` указан — запускать один source;
-  - если `--all-sources` указан — запускать все enabled sources;
-  - без `--source-id` и без `--all-sources` сохранить текущую single active source семантику или явно documented behavior;
+- Save backward compatibility:
+  - If `--source-id` is specified, launch one source;
+  - if `--all-sources` is specified to launch all enabled sources;
+  - without `--source-id` and without `--all-sources` save the current single active source semantic or clearly documented behavior;
 
-- для каждого source писать diagnostics;
-- добавить source-aware artifacts:
-  - `source_diagnostics.json` как aggregate summary;
-  - optional `source_diagnostics/<source_id>.json` или equivalent per-source section;
-  - `intake_metadata.json` с per-source rollup;
-  - `normalized_events.json` с `source_id`, `source_role`, `client_id`, `source_display_name`;
-  - `classified_events.json` с preserved source metadata;
-  - `operator_summary.json` с aggregate and per-source metrics;
-  - `rop_review_table.tsv` с source columns;
+- For each source write diagnostics;
+- Add source-aware artifacts:
+  - `source_diagnostics.json` as aggregate summary;
+  - optional `source_diagnostics/<source_id>.json` or equivalent per-source section;
+  - `intake_metadata.json` with per-source rollup;
+  - `normalized_events.json` with `source_id`, `source_role`, `client_id`, `source_display_name`;
+  - `classified_events.json` with preserved source metadata;
+  - `operator_summary.json` with aggregate and per-source metrics;
+  - `rop_review_table.tsv` with source columns;
 
 - graceful degraded behavior:
-  - один source упал, остальные обработались;
+  - One source fell, the others were treated;
   - source disabled;
   - source not found;
   - no enabled sources;
   - malformed source diagnostics;
   - partial classification failure;
 
-- tests на single-source compatibility и multi-source flow;
+- tests on single-source compatibility and multi-source flow;
 - docs update.
 
-**Не включено:**
+**Excluded:**
 
-- новые production mailbox credentials;
+- New production mailbox credentials;
 - mailbox listener / polling daemon;
 - source-aware dedup logic;
 - Bitrix / 1C;
 - CRM write-back;
 - attachment extraction;
 - OCR;
-- изменение `beeagent-rop`;
-- ROP business rules в BeeAgent core;
+- Change `beeagent-rop`;
+- ROP business rules in BeeAgent core;
 - web-triggered run;
 - auth/control panel.
 
 #### Deliverable
 
-BeeAgent может создать один ROP run из нескольких configured sources, сохранить source-aware artifacts и дать operator/web layer достаточно данных для UI-2.
+BeeAgent can create one ROP run from several configured sources, save source-aware artifacts and give operator/web layer enough data for UI-2.
 
-#### Реализовано
+#### Implemented
 
-- canonical path `run_rop_batch_case(...)` расширен до multi-source ingestion без parallel orchestrator path;
-- CLI поддерживает `./start.sh rop run --all-sources`;
-- `--source-id` сохраняет explicit single-source запуск;
-- без `--source-id` и без `--all-sources` сохранена legacy single-active semantics;
-- `source_diagnostics.json` содержит aggregate блок + `sources[]`;
-- `intake_metadata.json` содержит aggregate counts + per-source rollup в `sources[]`;
-- `normalized_events.json` сохраняет source metadata (`source_id`, `source_type`, `source_role`, `source_display_name`, `client_id`) для каждого события;
-- `classified_events.json` сохраняет source traceability fields;
-- one degraded source не блокирует общий run, если есть хотя бы один успешно загруженный source;
-- `rop_review_table.tsv` расширен source-aware колонками.
+- canonical path `run_rop_batch_case(...)` is extended to multi-source ingestion without parallel orchestrator path;
+- CLI supports `./start.sh rop run --all-sources`;
+- `--source-id` saves explicit single-source launch;
+- legacy single-active semantics is preserved without `--source-id` or `--all-sources`;
+- `source_diagnostics.json` contains aggregate block + `sources[]`;
+- `intake_metadata.json` contains aggregate counts + per-source rollup in `sources[]`;
+- `normalized_events.json` stores source metadata (`source_id`, `source_type`, `source_role`, `source_display_name`, `client_id`) for each event;
+- `classified_events.json` retains source traceability fields;
+- one degraded source does not block the total run if there is at least one successfully loaded source;
+- `rop_review_table.tsv` is extended by source-aware columns.
 
 #### Expected artifacts
 
@@ -2241,17 +2241,17 @@ runtime-risk
 
 Escalate to `security-sensitive` only if the PR changes mailbox parsing/security-sensitive file/path handling or adds dependencies.
 
-### Итерация 25 — ROP attachment extraction artifacts v0
+### Iteration 25 — ROP attachment extraction artifacts v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить controlled attachment extraction artifact layer для ROP source flow: BeeAgent должен безопасно обработать attachment metadata из входящих событий, создать bounded extraction/refusal evidence artifacts и передать в downstream flow только safe preview/status fields, не сохраняя raw attachment content и не добавляя ROP business logic в core.
+Add controlled attachment extraction artifact layer for ROP source flow: BeeAgent must safely process attachment metadata of the incoming events, create bounded extraction/refusal evidence artifacts and transfer to downstream flow only safe preview/status fields, without saving raw attachment content or adding ROP business logic to core.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It24 BeeAgent умеет собирать multi-source ROP run и сохранять source-aware artifacts:
+After It24 BeeAgent can collect multi-source ROP run and save source-aware artifacts:
 
 ```text
 source_diagnostics.json
@@ -2262,7 +2262,7 @@ operator_summary.json
 rop_review_table.tsv
 ```
 
-Но вложения пока представлены только как metadata. Для следующего шага `beeagent-rop It15 — Attachment preview classification hardening` модулю нужен стабильный BeeAgent-owned artifact contract:
+But the attachments are currently only presented as metadata. For the next step `beeagent-rop It15 — Attachment preview classification hardening` the module needs a stable BeeAgent-owned artifact contract:
 
 ```text
 attachment metadata
@@ -2273,7 +2273,7 @@ refusal_reason / reason_code
 source artifact reference
 ```
 
-Если пропустить It25, attachment parsing и refusal semantics начнут расползаться в `beeagent-rop` или UI, что нарушит границу:
+If you skip It25, attachment parsing and refusal semantics, you're going to spread into `beeagent-rop` or UI, which would break the border:
 
 ```text
 BeeAgent core = source/orchestration/artifacts/safety boundary
@@ -2283,15 +2283,15 @@ UI = read-only presentation over artifacts
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- добавить BeeAgent-owned attachment extraction artifact layer внутри existing ROP batch/source flow;
-- сохранить canonical path:
+- Add BeeAgent-owned attachment extraction artifact layer inside existing ROP batch/source flow;
+- Save canonical path:
   - `run_rop_batch_case(...)`;
 
-- обработать attachment metadata из `normalized_events.json`;
-- добавить bounded extraction result contract для каждого attachment:
-  - `attachment_id` или deterministic local id;
+- Process attachment metadata from `normalized_events.json`;
+- Add bounded extraction result contract for each attachment:
+  - `attachment_id` or deterministic local id;
   - `event_id`;
   - `source_id`;
   - `filename`;
@@ -2307,28 +2307,28 @@ UI = read-only presentation over artifacts
   - `is_refused`;
   - `is_truncated`;
 
-- добавить safe extraction policy v0:
-  - поддерживать только явно безопасные/простые текстовые attachment inputs, если content уже доступен в controlled normalized test/source payload;
-  - для unsupported/binary/pdf/docx/xlsx/image formats в v0 возвращать explicit `unsupported` или `metadata_only`, если нет безопасного extractor;
-  - oversized attachments возвращают `refused`;
-  - `.eml` и `message/rfc822` остаются blocked;
+- Add safe extraction policy v0:
+  - maintain only the clearly safe/simple text attachment inputs if content is already available in controlled normalized test/source payload;
+  - For unsupported/binary/pdf/docx/xlsx/image formats in v0, return explicit `unsupported` or `metadata_only` unless extractor is safe;
+  - oversized attachments returns `refused`;
+  - `.eml` and `message/rfc822` remain blocked;
 
-- добавить config-driven limits, если текущих лимитов недостаточно:
+- Add config-driven limits if the current limits are not sufficient:
   - `rop.attachments.enabled`;
   - `rop.attachments.chars_max`;
   - `rop.attachments.size_max`;
   - `rop.attachments.types`.
 
-- новые обязательные config keys валидировать fail-fast в `src/beeagent_module/core/settings.py`;
-- создать новый artifact:
+- the new mandatory config keys to validate fail-fast into `src/beeagent_module/core/settings.py`;
+- create a new artifact:
   - `storage/runs/<run_id>/attachment_extraction.json`;
 
-- добавить attachment summary/refs в:
+- Add attachment summary/refs to:
   - `operator_summary.json`;
-  - `rop_review_table.tsv`, если это не ломает текущий TSV contract;
+  - `rop_review_table.tsv` if it does not break the current TSV contract;
 
-- добавить safe attachment preview fields в normalized/classified downstream payload only as bounded metadata/preview, не raw content;
-- сохранить source traceability:
+- Add safe attachment preview fields to normalized/classified downstream payload only as bounded metadata/preview, not raw content;
+- Save source traceability:
   - `source_id`;
   - `source_type`;
   - `source_role`;
@@ -2355,14 +2355,14 @@ UI = read-only presentation over artifacts
 
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`;
-  - `docs/WEB_UI.md`, если API/dashboard/read-model начинает ссылаться на новый artifact.
+  - `docs/WEB_UI.md` if API/dashboard/read-model refers to a new artifact.
 
-**Не включено:**
+**Excluded:**
 
 - OCR;
-- full PDF/DOCX/XLSX parsing, если это требует новой heavy dependency или отдельной parser policy;
+- full PDF/DOCX/XLSX parsing if this requires a new heavy dependency or a separate parser policy;
 - arbitrary file execution;
 - saving raw attachments;
 - serving raw attachments from web;
@@ -2380,13 +2380,13 @@ UI = read-only presentation over artifacts
 
 #### Deliverable
 
-После ROP run BeeAgent создаёт attachment extraction evidence artifact:
+After ROP run BeeAgent creates attachment extraction evidence artifact:
 
 ```text
 storage/runs/<run_id>/attachment_extraction.json
 ```
 
-Artifact показывает по каждому event/attachment:
+Artifact shows for each event/attachment:
 
 ```text
 what was seen
@@ -2396,7 +2396,7 @@ why it was refused
 which source/event it belongs to
 ```
 
-Downstream `beeagent-rop` получает только bounded attachment preview/status fields, если они доступны, и не получает raw attachment content.
+Downstream `beeagent-rop` only receives bounded attachment preview/status fields, if available, and does not receive raw attachment content.
 
 #### Expected artifact
 
@@ -2551,17 +2551,17 @@ Reason:
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 26 — Bitrix read-only reconciliation artifacts v0
+### Iteration 26 — Bitrix read-only reconciliation artifacts v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить controlled read-only Bitrix reconciliation layer для ROP source flow: BeeAgent должен уметь сверять уже полученные и классифицированные входящие события с текущим состоянием Bitrix CRM, создавать воспроизводимый artifact `bitrix_reconciliation.json` и показывать, найден ли соответствующий lead/deal/contact/company, не выполняя никаких CRM write-back действий.
+Add controlled read-only Bitrix reconciliation layer for ROP source flow: BeeAgent must be able to check already obtained and classified input events with the current state of Bitrix CRM, create a reproducible artifact `bitrix_reconciliation.json` and show whether the corresponding lead/deal/contact/company has been found without performing any CRM write-back actions.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It24/It25 BeeAgent уже умеет собирать multi-source ROP run и сохранять source-aware / attachment-aware artifacts:
+After It24/It25 BeeAgent already can collect multi-source ROP run and save source-aware / attachment-aware artifacts:
 
 ```text
 source_diagnostics.json
@@ -2573,31 +2573,31 @@ operator_summary.json
 rop_review_table.tsv
 ```
 
-После `beeagent-rop It15` доменный модуль умеет использовать BeeAgent attachment extraction contract при classification.
+After `beeagent-rop It15` domain module can use BeeAgent attachment extraction contract at classification.
 
-Но для MVP заказчику нужно видеть не только:
-
-```text
-письмо пришло
-→ бот классифицировал обращение
-→ есть summary/review table
-```
-
-а полный read-only evidence chain:
+But for MVP, the customer needs to see more than just:
 
 ```text
-письмо пришло
-→ бот понял, что это
-→ видно, есть ли это в Bitrix
-→ видно, lead/deal/contact/company найден или нет
-→ видно, кто ответственный
-→ видно, какая стадия/статус в CRM
-→ видно, где потеря, дубль, ambiguity или manual review
+email received
+→ The bot classified the circulation
+→ summary/review table is available
 ```
 
-Bitrix в этой итерации **не является source of truth для входящего email-потока**. Источник истины по входящим обращениям — BeeAgent source artifacts из mailbox/json_batch ingestion. Bitrix является CRM-state system, с которой BeeAgent сверяется.
+a full read-only evidence chain:
 
-Поэтому `not_found` в Bitrix — это не ошибка BeeAgent, а важный MVP-сигнал:
+```text
+email received
+→ the bot identified what it is
+→ whether this is present in Bitrix is visible
+→ whether lead/deal/contact/company was found is visible
+→ the responsible person is visible
+→ the stage/status in CRM is visible
+→ You can see where the loss, take, ambiguity or manual review is.
+```
+
+Bitrix in this iteration **is not source of truth for the incoming email- flow**. The source of truth for inbound inquiries is BeeAgent source artifacts from mailbox/json_batch ingestion. Bitrix, which is the CRM-state system against which BeeAgent is checked.
+
+Therefore, `not_found` in Bitrix is not an error of BeeAgent, but an important MVP signal:
 
 ```text
 important email exists
@@ -2605,64 +2605,64 @@ but Bitrix entity not found
 → possible lost lead / CRM gap / manual review
 ```
 
-Если пропустить эту итерацию, дальнейшая полировка `beeagent-rop` будет выполняться без CRM evidence, а UI будет показывать только классификацию без ответа на главный вопрос РОПа:
+If you miss this iteration, `beeagent-rop` will be further polished without CRM evidence, and UI will show only classification without answering ROP:'s main question.
 
 ```text
-Что с этим обращением в Bitrix?
+What about this Bitrix treatment?
 ```
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- добавить BeeAgent-owned Bitrix read-only reconciliation layer;
-- сохранить canonical ROP artifact pipeline;
-- добавить config-driven Bitrix connector contract в `config/settings.yml`;
-- читать Bitrix webhook URL только из env;
-- добавить fail-fast validation в `src/beeagent_module/core/settings.py` для обязательных Bitrix config keys;
-- Bitrix config не должен требовать secret/env при `bitrix.enabled: false`;
-- при явном запуске reconciliation без нужного env — понятный fail-fast error;
-- добавить минимальный Bitrix REST client / adapter для read-only вызовов;
-- использовать только allowlisted read-only Bitrix methods:
+- Add BeeAgent-owned Bitrix read-only reconciliation layer;
+- Save canonical ROP artifact pipeline;
+- Add config-driven Bitrix connector contract to `config/settings.yml`;
+- Read Bitrix webhook URL from env only;
+- Add fail-fast validation to `src/beeagent_module/core/settings.py` for mandatory Bitrix config keys;
+- Bitrix config must not require secret/env at `bitrix.enabled: false`;
+- When reconciliation is clearly launched without env is understood by fail-fast error;
+- Add a minimum Bitrix REST client / adapter for read-only calls;
+- use only allowlisted read-only Bitrix methods:
   - `crm.item.list`;
-  - `crm.item.fields`, если нужно для диагностики/fields discovery;
-  - `crm.status.list`, если нужно для статусов/stages;
-  - `crm.category.list`, если нужно для deal categories;
+  - `crm.item.fields` if necessary for diagnosis/fields discovery;
+  - `crm.status.list` if required for status/stages;
+  - `crm.category.list` if required for deal categories;
 
-- поддержать системные CRM entity types:
+- Support system CRM entity types:
   - `1` — lead;
   - `2` — deal;
   - `3` — contact;
   - `4` — company;
 
-- добавить CLI/runtime path для reconciliation существующего ROP run, например:
+- Add CLI/runtime path for reconciliation of the existing ROP run, for example:
 
 ```bash
 ./start.sh rop reconcile-bitrix --run-id <run_id>
 ```
 
-- читать existing run artifacts:
+- Read existing run artifacts:
   - `normalized_events.json`;
   - `classified_events.json`;
   - optional `attachment_extraction.json`;
   - optional `operator_summary.json`;
 
-- выполнять candidate lookup в Bitrix по доступным безопасным сигналам:
+- perform candidate lookup on Bitrix on accessible safe signals:
   - sender email;
-  - phone, если уже есть в normalized event;
+  - phone, if already available in normalized event;
   - subject/title;
-  - company/client hints, если уже есть в event;
+  - company/client hints, if already available in event;
   - source_id/source_role;
-  - event date, если есть;
+  - event date, if any;
   - bot_case_type;
 
-- создавать artifact:
+- Create artifact:
 
 ```text
 storage/runs/<run_id>/bitrix_reconciliation.json
 ```
 
-- добавить per-event reconciliation result:
+- Add per-event reconciliation result:
   - `event_id`;
   - `source_id`;
   - `sender`;
@@ -2682,7 +2682,7 @@ storage/runs/<run_id>/bitrix_reconciliation.json
   - `needs_manual_review`;
   - `reconciliation_reason`;
 
-- поддержать статусы reconciliation:
+- Support the status of reconciliation:
   - `matched_lead`;
   - `matched_deal`;
   - `matched_contact`;
@@ -2694,7 +2694,7 @@ storage/runs/<run_id>/bitrix_reconciliation.json
   - `connector_degraded`;
   - `error`;
 
-- добавить aggregate counts:
+- Add aggregate counts:
   - `event_count`;
   - `matched_count`;
   - `not_found_count`;
@@ -2703,7 +2703,7 @@ storage/runs/<run_id>/bitrix_reconciliation.json
   - `skipped_count`;
   - `connector_error_count`;
 
-- добавить degraded behavior:
+- Add degraded behavior:
   - missing Bitrix env;
   - invalid config;
   - Bitrix auth/permission error;
@@ -2713,28 +2713,28 @@ storage/runs/<run_id>/bitrix_reconciliation.json
   - pagination failure;
   - partial candidate lookup failure;
 
-- не ломать existing ROP artifacts при connector failure;
-- обогатить `rop_review_table.tsv` Bitrix fields, если `bitrix_reconciliation.json` существует и `export-review` запускается повторно;
-- добавить tests с fake Bitrix responses;
-- обновить docs:
+- do not break existing ROP artifacts at connector failure;
+- Enrich `rop_review_table.tsv` Bitrix fields, if `bitrix_reconciliation.json` exists and `export-review` is restarted;
+- Add tests with fake Bitrix responses;
+- Update docs:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`;
-  - `docs/SECURITY.md`, если меняется security contract.
+  - `docs/SECURITY.md` if security contract. changes
 
-**Не включено:**
+**Excluded:**
 
 - `crm.item.add`;
 - `crm.item.update`;
 - `crm.item.delete`;
-- создание лидов;
-- создание сделок;
-- создание контактов/компаний;
-- изменение стадий/категорий;
-- назначение ответственных;
-- создание задач;
-- комментарии в timeline;
-- автоматический merge/dedup в Bitrix;
+- creating leads;
+- creating deals;
+- Contacts/companies;
+- Change of stages/categories;
+- Designation of those responsible;
+- Creation of tasks;
+- Comments in timeline;
+- Automatic merge/dedup in Bitrix;
 - CRM write-back;
 - Bitrix OAuth application flow;
 - Bitrix marketplace/app install flow;
@@ -2745,44 +2745,44 @@ storage/runs/<run_id>/bitrix_reconciliation.json
 - operator control panel;
 - 1C integration;
 - manager scoring;
-- изменение classification logic в `beeagent-rop`;
-- ROP business rules в BeeAgent core.
+- classification logic change to `beeagent-rop`;
+- ROP business rules in BeeAgent core.
 
 #### Deliverable
 
-BeeAgent умеет выполнить read-only reconciliation для существующего ROP run:
+BeeAgent can perform read-only reconciliation for the existing ROP run:
 
 ```bash
 ./start.sh rop reconcile-bitrix --run-id <run_id>
 ```
 
-После выполнения появляется artifact:
+After execution, artifact: appears
 
 ```text
 storage/runs/<run_id>/bitrix_reconciliation.json
 ```
 
-Artifact показывает по каждому classified event:
+Artifact shows for each classified event:
 
 ```text
-что пришло
-как бот классифицировал событие
-какой candidate найден в Bitrix
-какой entity type найден
-какая стадия/статус
-кто ответственный
-есть ли дубль/ambiguity
-нужно ли manual review
-почему принято reconciliation decision
+what arrived
+As the bot classified the event
+which candidate is found in Bitrix
+which entity type is found
+What stage/status
+Who's responsible
+Is there a take/ambiguity
+Do you need manual review
+Why reconciliation decision is accepted
 ```
 
-После повторного export-review:
+After repeated export-review:
 
 ```bash
 ./start.sh rop export-review --run-id <run_id> --format tsv
 ```
 
-`rop_review_table.tsv` может заполнять Bitrix columns на основе `bitrix_reconciliation.json`.
+`rop_review_table.tsv` may fill in Bitrix columns on the basis of `bitrix_reconciliation.json`.
 
 #### Expected config contract
 
@@ -2796,20 +2796,20 @@ Expected config block:
 
 ```yaml
 bitrix:
-  enabled: false # true/false - включить/выключить Bitrix connector
-  webhook_env: "BITRIX_WEBHOOK_URL" # имя env переменной с полным HTTPS URL входящего Bitrix webhook
-  timeout: 10 # таймаут HTTP-запроса к Bitrix REST API (сек)
-  page_size: 50 # размер страницы для Bitrix list-запросов
-  pages_max: 3 # максимальное число страниц пагинации
-  types_entity: # типы сущностей Bitrix для поиска (1=lead,2=deal,3=contact,4=company)
+  enabled: false
+  webhook_env: "BITRIX_WEBHOOK_URL"
+  timeout: 10
+  page_size: 50
+  pages_max: 3
+  types_entity:
     - 1
     - 2
     - 3
     - 4
   reconciliation:
-    enabled: false # true/false - включить/выключить reconciliation по умолчанию
-    candidate_limit: 20 # максимальное число кандидатов на одно событие
-    window_date: 180 # окно поиска по дате события (дней назад)
+    enabled: false
+    candidate_limit: 20
+    window_date: 180
 ```
 
 Rules:
@@ -2878,7 +2878,7 @@ Example shape:
       "event_id": "evt-002",
       "source_id": "online_mailbox",
       "sender": "buyer@example.com",
-      "subject": "КП на сварочные электроды",
+      "subject": "KP for welding electrodes",
       "bot_case_type": "new_lead",
       "bitrix_match_status": "not_found",
       "bitrix_entity_type": "",
@@ -3002,7 +3002,7 @@ Docs:
 
 ```text
 docs/ROADMAP.md
-README.ru.md
+README.md
 docs/DEV_GUIDE.md
 docs/SECURITY.md
 ```
@@ -3119,15 +3119,15 @@ Live Bitrix smoke is optional and must only be run if credentials are available 
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 27 — ROP MVP Current State Index + Bitrix Evidence Board v0
+### Iteration 27 — ROP MVP Current State Index + Bitrix Evidence Board v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить BeeAgent-owned current-state/index слой для ROP MVP: система должна уметь собрать текущую операторскую картину по последнему или явно выбранному ROP run, объединить source/classification/attachment/Bitrix evidence в один стабильный read-model artifact и отдать его Web Console / BeeUI без необходимости вручную открывать несколько JSON/TSV файлов.
+Add BeeAgent-owned current-state/index layer for ROP MVP: the system must be able to collect the current operator painting for the last or clearly selected ROP run, combine source/classification/attachment/Bitrix evidence into one stable read-model artifact and give it to Web Console / BeeUI without the need to manually open several JSON/TSV files.
 
-Итерация должна превратить набор run artifacts:
+The iteration must turn the set of run artifacts:
 
 ```text
 source_diagnostics.json
@@ -3140,57 +3140,57 @@ operator_summary.json
 rop_review_table.tsv
 ```
 
-в понятный current-state snapshot:
+to comprehensible current-state snapshot:
 
 ```text
-что пришло
-что классифицировано
-что важно
-что найдено в Bitrix
-что потеряно в Bitrix
-что ambiguous/duplicate
-что требует ручного разбора
-какие evidence artifacts открыть
+what arrived
+which is classified
+What's important
+What was found in Bitrix
+What's lost in Bitrix
+that ambiguous/duplicate
+which requires a manual review
+which evidence artifacts to open
 ```
 
-#### Почему это нужно
+#### Why this is needed
 
-После It26 BeeAgent уже умеет выполнять Bitrix read-only reconciliation и создавать `bitrix_reconciliation.json`.
+After It26, BeeAgent can already perform Bitrix read-only reconciliation and create `bitrix_reconciliation.json`.
 
-Но результат всё ещё run/artifact-oriented:
+But the result is still run/artifact-oriented:.
 
-- оператор должен знать `run_id`;
-- UI зависит от scattered artifacts;
-- нет единого latest/current alias;
-- нет стабильного read-model для MVP demo;
-- optional artifacts вроде `bitrix_reconciliation.json` могут быть missing/stale/degraded;
-- Bitrix evidence пока не превращено в рабочие очереди РОПа.
+- The operator must know `run_id`;
+- UI depends on scattered artifacts;
+- No single latest/current alias;
+- no stable read-model for MVP demo;
+- optional artifacts like `bitrix_reconciliation.json` could be missing/stale/degraded;
+- Bitrix evidence has not yet been turned into ROP. work queues
 
-Для MVP заказчику нужно видеть не “JSON артефакты”, а компактную операционную картину:
+For MVP, the customer needs a compact operational view rather than “JSON artifacts”:
 
 ```text
-важные обращения
-потерянные в Bitrix лиды
+important inquiries
+leads lost in Bitrix
 ambiguous/dedup candidates
-ручная проверка
+manual verification
 evidence links
 ```
 
-Итерация нужна, потому что она закрывает разрыв между backend artifacts и customer-visible MVP dashboard.
+Iteration is needed because it closes the gap between backend artifacts and customer-visible MVP dashboard.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- добавить BeeAgent-owned current-state builder для ROP run;
-- читать только existing ROP artifacts из `storage/runs/<run_id>/...`;
-- создать per-run artifact:
+- Add BeeAgent-owned current-state builder for ROP run;
+- Read only existing ROP artifacts of `storage/runs/<run_id>/...`;
+- create per-run artifact:
 
 ```text
 storage/runs/<run_id>/rop_current_state.json
 ```
 
-- создать/update interface artifacts:
+- Create/update interface artifacts:
 
 ```text
 storage/interfaces/rop_current.json
@@ -3198,25 +3198,25 @@ storage/interfaces/rop_latest.json
 storage/interfaces/rop_index.json
 ```
 
-- добавить CLI command:
+- Add CLI command:
 
 ```bash
 ./start.sh rop current --run-id <run_id>
 ```
 
-- обновлять current-state после successful `rop run`;
+- Update current-state after successful `rop run`;
 
-- обновлять current-state после successful `reconcile-bitrix`;
+- Update current-state after successful `reconcile-bitrix`;
 
-- не создавать ложный success state после failed `reconcile-bitrix`;
+- do not create a false success state after failed `reconcile-bitrix`;
 
-- добавить latest/current alias semantics:
+- Add latest/current alias semantics:
   - latest ROP run;
   - selected/current run;
   - current client/source context;
   - technical `run_id` as evidence, not primary operator concept;
 
-- построить KPI/read-model:
+- build KPI/read-model:
   - total events;
   - normalized events;
   - classified events;
@@ -3230,7 +3230,7 @@ storage/interfaces/rop_index.json
   - Bitrix connector degraded;
   - unreconciled/no Bitrix artifact;
 
-- построить operator queues:
+- build operator queues:
   - `lost_in_bitrix`;
   - `needs_review`;
   - `high_priority`;
@@ -3239,7 +3239,7 @@ storage/interfaces/rop_index.json
   - `unreconciled`;
   - `degraded`;
 
-- добавить evidence references:
+- Add evidence references:
   - normalized event;
   - classified event;
   - attachment extraction;
@@ -3247,22 +3247,22 @@ storage/interfaces/rop_index.json
   - TSV review artifact;
   - operator summary;
 
-- фиксировать artifact availability/freshness:
+- read artifact availability/freshness:
   - artifact exists/missing;
   - artifact malformed;
   - artifact run_id mismatch;
   - optional artifact older than primary classification/operator artifacts, if detectable;
   - warning for stale optional Bitrix evidence;
 
-- обновить BeeAgent UI adapter/read-model:
+- Update BeeAgent UI adapter/read-model:
   - `/rop`;
   - `/api/rop/dashboard`;
   - `/runs/<run_id>`;
   - artifact links where applicable;
 
-- включить Bitrix tab/section in ROP dashboard read-model, если current-state содержит Bitrix evidence;
+- Insert Bitrix tab/section in ROP dashboard read-model if current-state contains Bitrix evidence;
 
-- добавить artifact allowlist entries:
+- Add artifact allowlist entries:
   - `rop_current_state_json`;
   - `bitrix_reconciliation_json`;
 
@@ -3280,11 +3280,11 @@ storage/interfaces/rop_index.json
 
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/WEB_UI.md`;
   - `docs/DEV_GUIDE.md`, if command/API behavior changes.
 
-**Не включено:**
+**Excluded:**
 
 - Bitrix write-back;
 - `crm.item.add`;
@@ -3578,15 +3578,15 @@ Security checks:
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 27.1 — ROP Business Dashboard UX + Period Analytics v0
+### Iteration 27.1 — ROP Business Dashboard UX + Period Analytics v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать ROP dashboard в BeeAgent продуктово полезным для РОПа: заменить технический run/artifact overview на business-facing dashboard с периодами, бизнес-метриками, chart-ready series, Bitrix evidence, operator queues и deterministic рекомендациями на основе existing ROP artifacts/current-state.
+Make ROP dashboard in BeeAgent a product for ROP: replace technical run/artifact overview by business-facing dashboard with periods, business metrics, chart-ready series, Bitrix evidence, operator queues and deterministic recommendations based on existing ROP artifacts/current-state.
 
-Итерация должна использовать уже закрытый BeeUI It13.6:
+Iteration must use the already closed BeeUI It13.6:
 
 ```text
 chart
@@ -3599,18 +3599,18 @@ group
 degraded
 ```
 
-BeeUI остаётся generic renderer:
+BeeUI remains generic renderer:
 
 ```text
 BeeUI renders.
 BeeAgent adapter decides.
 ```
 
-BeeAgent должен отдавать нормализованный ROP dashboard read-model и `layout[]`, но не должен переносить в core классификацию, клиентские правила или Bitrix write-back.
+BeeAgent must give normalized ROP dashboard read-model and `layout[]` but must not transfer classification, customer rules or Bitrix write-back. to core
 
-#### Почему это нужно
+#### Why this is needed
 
-После It27 BeeAgent создаёт current-state artifacts:
+After It27 BeeAgent creates current-state artifacts:
 
 ```text
 storage/runs/<run_id>/rop_current_state.json
@@ -3619,7 +3619,7 @@ storage/interfaces/rop_latest.json
 storage/interfaces/rop_index.json
 ```
 
-Но текущий `/rop` UI всё ещё выглядит как debug/interface layer:
+But the current `/rop` UI still looks like debug/interface layer:
 
 ```text
 run_id list
@@ -3628,35 +3628,35 @@ generic metrics
 empty Bitrix unavailable card
 ```
 
-Для MVP заказчику и РОПу нужен не список технических run_id, а операционная картина:
+For MVP the customer and the OPP need not a list of technical run_id but an operating painting:
 
 ```text
-что пришло за период
-сколько лидов обработано
-какие источники работают
-какие обращения важные
-какие обращения не найдены в Bitrix
-где ambiguous / duplicates
-что РОП должен проверить первым
-какие evidence artifacts открыть
+what arrived during the period
+how many leads were processed
+What sources are working?
+What are the important messages
+What addresses are not found in Bitrix
+where ambiguous / duplicates
+That ROP must be tested first.
+which evidence artifacts to open
 ```
 
-Итерация закрывает разрыв между backend current-state artifacts и customer-facing ROP dashboard.
+Iteration closes the gap between backend current-state artifacts and customer-facing ROP dashboard.
 
 #### Scope
 
-**Включено**
+**Included**
 
-- добавить BeeAgent-owned ROP dashboard read-model builder поверх existing It27 artifacts;
-- использовать `rop_current_state.json`, `rop_index.json`, `rop_latest.json`, `operator_summary.json`, `classified_events.json`, `bitrix_reconciliation.json`, `attachment_extraction.json`, `rop_review_table.tsv`;
-- добавить period support:
+- Add BeeAgent-owned ROP dashboard read-model builder above existing It27 artifacts;
+- Use `rop_current_state.json`, `rop_index.json`, `rop_latest.json`, `operator_summary.json`, `classified_events.json`, `bitrix_reconciliation.json`, `attachment_extraction.json`, `rop_review_table.tsv`;
+- Add period support:
   - `today`;
   - `yesterday`;
   - `7d`;
   - `30d`;
   - `365d`;
   - `all`;
-- добавить config/source-of-truth для dashboard period behavior в `config/settings.yml`, если такого блока ещё нет:
+- Add config/source-of-truth for dashboard period behavior in `config/settings.yml`, if no such block is available:
 
 ```yaml
 rop:
@@ -3671,32 +3671,32 @@ rop:
       - all
 ```
 
-- валидировать новые keys fail-fast в `src/beeagent_module/core/settings.py`;
-- default period должен быть явно задан в config, а не скрыт в коде;
-- добавить CLI command для явной генерации dashboard read-model:
+- Validate the new keys fail-fast in `src/beeagent_module/core/settings.py`;
+- default period must be clearly specified in config and not hidden in the code;
+- Add CLI command for the explicit generation of dashboard read-model:
 
 ```bash
 ./start.sh rop dashboard --period 7d
 ```
 
-- после successful `rop run` / `rop current` обновлять dashboard artifact для default period;
-- после successful `reconcile-bitrix` обновлять dashboard artifact;
-- failed `reconcile-bitrix` не должен создавать ложный Bitrix success state;
-- создать/update interface artifact:
+- After successful `rop run` / `rop current` update dashboard artifact for default period;
+- after successful `reconcile-bitrix` update dashboard artifact;
+- failed `reconcile-bitrix` must not create a false Bitrix success state;
+- Create/update interface artifact:
 
 ```text
 storage/interfaces/rop_dashboard.json
 ```
 
-- artifact должен содержать dashboard payload по supported periods или по default period с явным `period`;
-- GET routes не должны мутировать storage;
-- `/rop` должен читать prepared dashboard/current-state artifacts и рендерить business dashboard;
-- `/api/rop/dashboard?period=7d` должен отдавать read-only payload;
-- сохранить backward compatibility старых API fields, если они уже используются тестами/UI.
+- artifact must contain dashboard payload on supported periods or default period on the explicit `period`;
+- GET routes must not mutate storage;
+- `/rop` must read prepared dashboard/current-state artifacts and the business dashboard list;
+- `/api/rop/dashboard?period=7d` must give read-only payload;
+- Save backward compatibility old API fields if they are already used by tests/UI.
 
 #### Business KPI
 
-ROP dashboard должен показывать business-facing KPI:
+ROP dashboard must display business-facing KPI:
 
 ```text
 processed_events
@@ -3714,7 +3714,7 @@ attachment_refused
 bitrix_errors
 ```
 
-Если часть полей невозможно получить из текущих artifacts, поле должно быть явно `0` или `n/a` с warning, но не должно маскироваться под полноценную аналитику.
+If part of the fields cannot be obtained from the current artifacts, the field must be clearly `0` or `n/a` with warning, but must not mask itself as a full-fledged analyst.
 
 #### Time period behavior
 
@@ -3729,7 +3729,7 @@ period=365d
 period=all
 ```
 
-Dashboard payload должен содержать:
+Dashboard payload must contain:
 
 ```json
 {
@@ -3769,7 +3769,7 @@ missing time basis
 
 #### Charts / series
 
-Если BeeUI It13.6 chart block доступен, BeeAgent adapter должен отдавать chart blocks в `layout[]`.
+If BeeUI It13.6 chart block is available, BeeAgent adapter must give chart blocks to `layout[]`.
 
 Expected chart blocks:
 
@@ -3806,7 +3806,7 @@ Example chart-ready API shape:
 
 #### Data tables / queues
 
-Использовать BeeUI `data_table` для operator queues:
+Use BeeUI `data_table` for operator queues:
 
 - High-priority queue;
 - Needs review queue;
@@ -3835,9 +3835,9 @@ evidence_href
 
 #### ROP recommendations
 
-Добавить deterministic ROP recommendations на основе existing artifacts/current-state.
+Add deterministic ROP recommendations based on existing artifacts/current-state.
 
-Это не AI-рекомендации и не client-specific classification logic.
+It's not AI- recommendations or client-specific classification logic.
 
 Rules:
 
@@ -4026,7 +4026,7 @@ Expected:
 - UI adapter/read-model behavior change;
 - docs update required.
 
-#### Не включено
+#### Excluded
 
 - Bitrix write-back;
 - `crm.item.add`;
@@ -4178,40 +4178,40 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-#### Реализовано
+#### Implemented
 
-- `src/beeagent_module/cases/rop_dashboard.py` — новый модуль:
-  - `ALLOWED_PERIODS` — константа с поддерживаемыми периодами;
-  - `parse_period(period)` — парсинг периода в `{period, period_start_utc, period_end_utc, time_basis}`;
-  - `validate_period(period)` — валидация периода против ALLOWED_PERIODS;
-  - `build_rop_dashboard(storage_dir, period, logger, run_id=None)` — построение dashboard read-model;
-  - `write_rop_dashboard(storage_dir, dashboard, logger)` — запись артефакта `storage/interfaces/rop_dashboard.json`;
-- `config/settings.yml` — добавлен блок `rop.dashboard`:
+- `src/beeagent_module/cases/rop_dashboard.py` is a new module:
+  - `ALLOWED_PERIODS` is a constant with supported periods;
+  - `parse_period(period)` is a period parsing in `{period, period_start_utc, period_end_utc, time_basis}`;
+  - `validate_period(period)` is the period validation against ALLOWED_PERIODS;
+  - `build_rop_dashboard(storage_dir, period, logger, run_id=None)` is the construction of dashboard read-model;
+  - `write_rop_dashboard(storage_dir, dashboard, logger)` is a record of the `storage/interfaces/rop_dashboard.json` artifact;
+- `config/settings.yml` – `rop.dashboard` unit added:
   - `default_period: "7d"`;
   - `periods: [today, yesterday, 7d, 30d, 365d, all]`;
 - `src/beeagent_module/core/settings.py`:
-  - добавлены обязательные ключи `rop.dashboard.default_period` и `rop.dashboard.periods`;
-  - добавлена `_validate_rop_dashboard_settings()` — fail-fast валидация:
+  - Mandatory `rop.dashboard.default_period` and `rop.dashboard.periods` keys added;
+  - `_validate_rop_dashboard_settings()` - fail-fast validation:
     - `default_period` — non-empty string, must be in allowlist;
-    - `periods` — non-empty list, каждый элемент в allowlist;
+    - `periods` is non-empty list, each element in allowlist;
     - `default_period` must be in `periods`;
 - `src/beeagent_module/core/cli.py`:
-  - добавлен `handle_rop_dashboard(args, settings, logger)` — CLI handler;
-  - добавлен `dashboard` subparser с `--period` и `--run-id`;
-  - после успешного `rop run` автоматически строится dashboard для default period;
-  - после успешного `rop current` автоматически строится dashboard;
-  - после успешного `reconcile-bitrix` автоматически строится dashboard;
-- Dashboard read-model содержит:
+  - `handle_rop_dashboard(args, settings, logger)` - CLI handler added;
+  - `dashboard` subparser with `--period` and `--run-id`;
+  - after the successful `rop run` is automatically built dashboard for default period;
+  - after successful `rop current` is automatically built dashboard;
+  - after successful `reconcile-bitrix` is automatically built dashboard;
+- Dashboard read-model contains:
   - `business_kpi` — processed_events, new_leads, existing_clients, follow_ups, high_priority, needs_review, lost_in_bitrix, ambiguous_or_duplicate, unreconciled, source_degraded, attachment_refused;
   - `series` — processed_by_day, classification_distribution, bitrix_distribution, source_contribution;
   - `queues` — high_priority, needs_review, lost_in_bitrix, unreconciled;
-  - `rop_recommendations` — deterministic рекомендации по high_priority, lost_in_bitrix, ambiguous/duplicate, unreconciled, source_degraded, attachment_refused;
-  - `evidence_links` — ссылки на все allowlisted artifact_id для данного run;
-- Dashboard поддерживает period filtering: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`;
+  - `rop_recommendations` - deterministic Recommendations on high_priority, lost_in_bitrix, ambiguous/duplicate, unreconciled, source_degraded, attachment_refused;
+  - `evidence_links` is a reference to all allowlisted artifact_id for this run;
+- Dashboard supports period filtering: `today`, `yesterday`, `7d`, `30d`, `365d`, `all`;
 - `src/beeagent_module/interfaces/ui/read_model.py`:
-  - `build_rop_dashboard_read_model` уже использует `beeagent_module.cases.rop_dashboard.parse_period/validate_period`;
-  - `/api/rop/dashboard?period=7d` отдаёт `business_kpi`, `series`, `queues`, `rop_recommendations`;
-  - `/rop` Overview — business KPI cards, charts, рекомендации, compact run selector;
+  - `build_rop_dashboard_read_model` already uses `beeagent_module.cases.rop_dashboard.parse_period/validate_period`;
+  - `/api/rop/dashboard?period=7d` gives `business_kpi`, `series`, `queues`, `rop_recommendations`;
+  - `/rop` Overview – business KPI cards, charts, recommendations, compact run selector;
 - CLI entrypoint:
 
 ```bash
@@ -4220,23 +4220,23 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 ./start.sh rop dashboard --period all
 ```
 
-- Артефакт: `storage/interfaces/rop_dashboard.json`;
-- Dashboard автоматически обновляется после `rop run`, `rop current` и `reconcile-bitrix`;
-- `./start.sh web` — `/rop` и `/api/rop/dashboard` поддерживают `period` query parameter;
-- Тесты: `tests/test_rop_dashboard.py` — period parsing, build, write, no-bitrix, empty, settings validation;
-- Docs: `docs/ROADMAP.md`, `README.ru.md`, `docs/WEB_UI.md`, `docs/DEV_GUIDE.md` обновлены.
+- Artifact: `storage/interfaces/rop_dashboard.json`;
+- Dashboard is automatically updated after `rop run`, `rop current` and `reconcile-bitrix`;
+- `./start.sh web` – `/rop` and `/api/rop/dashboard` support `period` query parameter;
+- Tests: `tests/test_rop_dashboard.py` — period parsing, build, write, no-bitrix, empty, settings validation;
+- Docs: `docs/ROADMAP.md`, `README.md`, `docs/WEB_UI.md`, `docs/DEV_GUIDE.md` updated.
 
-### Итерация 28 — ROP MVP handoff / readiness pack v0
+### Iteration 28 — ROP MVP handoff / readiness pack v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Собрать текущий ROP MVP evidence chain в один сдаваемый handoff/readiness pack для демонстрации заказчику: BeeAgent должен сформировать customer/demo-ready artifacts, которые объясняют, что было обработано, что классифицировано, что найдено/не найдено в Bitrix, какие очереди требуют внимания РОПа, какие ограничения остаются и какие evidence artifacts подтверждают вывод.
+Gather the current ROP MVP evidence chain in a single-sell handoff/readiness pack to demonstrate to the customer: BeeAgent must produce customer/demo-ready artifacts explaining what was processed and classified, what was found/not found in Bitrix, which queues require ROP attention, what limitations remain and which evidence artifacts support the conclusion.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It24–It27.1 BeeAgent уже умеет:
+After It24-It27.1 BeeAgent can already:
 
 ```text
 multi-source ingestion
@@ -4247,7 +4247,7 @@ multi-source ingestion
 → business dashboard with periods/queues/recommendations
 ```
 
-Но результат всё ещё распределён по множеству artifacts и UI-секций:
+But the result is still distributed by the number of artifacts and UI- sections:
 
 ```text
 classified_events.json
@@ -4260,28 +4260,28 @@ operator_summary.json
 /rop dashboard
 ```
 
-Для MVP заказчику нужен не набор технических JSON, а единый handoff artifact:
+For MVP the customer needs a single handoff artifact: instead of a technical JSON set.
 
 ```text
-вот текущая картина
-вот что бот нашёл
-вот что не попало в Bitrix
-вот кому нужно заняться
-вот evidence
-вот ограничения
-вот что готово к demo
-вот что не является production/write-back
+Here's the current picture.
+That's what the bot found.
+That's what didn't get into Bitrix.
+here is who needs to take action
+Here's evidence
+here are the constraints
+Here's what's ready for demo.
+That's what's not production/write-back.
 ```
 
-Эта итерация закрывает слой сдачи MVP без добавления CRM write-back, новых connectors, AI-рекомендаций или доменных правил в BeeAgent core.
+This iteration closes the MVP handoff layer without adding CRM write-back, new connectors, AI- recommendations or domain rules to BeeAgent core.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- добавить BeeAgent-owned MVP pack builder поверх existing ROP artifacts;
+- Add BeeAgent-owned MVP pack builder above existing ROP artifacts;
 
-- читать только existing artifacts:
+- read only existing artifacts:
   - `operator_summary.json`;
   - `source_diagnostics.json`;
   - `intake_metadata.json`;
@@ -4293,26 +4293,26 @@ operator_summary.json
   - `rop_review_table.tsv`;
   - `storage/interfaces/rop_dashboard.json`;
 
-- добавить CLI command:
+- Add CLI command:
 
 ```bash
 ./start.sh rop mvp-pack --run-id <run_id> --period 7d
 ```
 
-- создать per-run artifacts:
+- create per-run artifacts:
 
 ```text
 storage/runs/<run_id>/rop_mvp_pack.json
 storage/runs/<run_id>/rop_mvp_report.md
 ```
 
-- создать/update interface artifact:
+- Create/update interface artifact:
 
 ```text
 storage/interfaces/rop_mvp_latest.json
 ```
 
-- включить в pack:
+- include in pack:
   - run identity;
   - selected period;
   - source coverage;
@@ -4333,15 +4333,15 @@ storage/interfaces/rop_mvp_latest.json
   - known limitations;
   - explicit non-production/write-back status;
 
-- использовать existing `rop.sources[]` as source of truth for configured source coverage;
+- Use existing `rop.sources[]` as source of truth for configured source coverage;
 
-- не хардкодить Welding mailbox names;
+- Do not hard-code Welding mailbox names;
 
-- если expected source coverage не задана в config, не выводить выдуманные missing sources, а показать только configured/enabled/loaded/degraded coverage;
+- if expected source coverage is not given in config, not to make up missing sources, but to show only configured/enabled/loaded/degraded coverage;
 
-- добавить safe artifact links for MVP pack/report in UI Evidence area if available;
+- Add safe artifact links for MVP pack/report in UI Evidence area if available;
 
-- добавить artifacts allowlist entries if needed;
+- Add artifacts allowlist entries if needed;
 
 - graceful degraded behavior:
   - missing dashboard artifact;
@@ -4356,11 +4356,11 @@ storage/interfaces/rop_mvp_latest.json
 
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`;
   - `docs/WEB_UI.md`, if UI/API/artifact links change.
 
-**Не включено:**
+**Excluded:**
 
 - Bitrix write-back;
 - `crm.item.add`;
@@ -4611,17 +4611,17 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 29 — ROP Bitrix match quality gate and action drafts v0
+### Iteration 29 — ROP Bitrix match quality gate and action drafts v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать Bitrix reconciliation безопасным для MVP: weak/ambiguous Bitrix candidates не должны считаться успешным match, `not_found` должен быть отделён от connector failure, а BeeAgent должен формировать read-only action drafts для РОПа поверх existing classification + Bitrix evidence.
+Make Bitrix reconciliation safe for MVP: weak/ambiguous Bitrix candidates must not be considered successful match, `not_found` must be separated from connector failure, and BeeAgent must form read-only action drafts for ROP above existing classification + Bitrix evidence.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It26–It28 BeeAgent уже умеет строить полный ROP evidence chain:
+After It26-It28 BeeAgent already knows how to build a full ROP evidence chain:
 
 ```text
 mailbox/json_batch
@@ -4633,22 +4633,22 @@ mailbox/json_batch
 → current-state/dashboard/MVP pack
 ```
 
-Ручная проверка live batch показала, что classification path уже достаточно полезен для MVP, но Bitrix evidence остаётся рискованной зоной:
+A manual test of live batch showed that classification path is already useful enough for MVP, but Bitrix evidence remains a risky area:
 
 ```text
 weak/wrong Bitrix candidate
-→ выглядит как found/matched
-→ РОП может уйти в неправильный lead/deal
+→ It looks like found/matched.
+→ ROP may go to the wrong lead/deal
 ```
 
-Для MVP это хуже, чем `not_found`:
+For MVP this is worse than `not_found`:
 
 ```text
-not_found = честный CRM gap
-wrong/weak match = опасная ложная уверенность
+not_found = honest CRM gap
+wrong/weak match = dangerous false confidence
 ```
 
-Поэтому перед AI assist и перед любым Bitrix write-back нужно ввести explicit match quality gate:
+So before AI assist and before any Bitrix write-back, you have to enter explicit match quality gate:
 
 ```text
 strong evidence only → matched_*
@@ -4657,16 +4657,16 @@ connector failure → connector_degraded / error
 no candidate → not_found
 ```
 
-Эта итерация остаётся в `beeagent`, потому что Bitrix connector, reconciliation artifacts, dashboard/current-state/MVP pack и action drafts принадлежат BeeAgent orchestration layer. `beeagent-rop` продолжает отвечать за доменную classification semantics.
+This iteration remains in `beeagent`, because Bitrix connector, reconciliation artifacts, dashboard/current-state/MVP pack and action drafts belong to BeeAgent orchestration layer. `beeagent-rop` continues to be responsible for the classification semantics. domain.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- усилить BeeAgent-owned Bitrix reconciliation quality gate;
-- сохранить read-only Bitrix boundary;
-- не считать weak/subject-only/random candidate успешным match;
-- добавить/уточнить reconciliation status:
+- Strengthen BeeAgent-owned Bitrix reconciliation quality gate;
+- Save read-only Bitrix boundary;
+- do not count weak/subject-only/random candidate as successful match;
+- Add/specify reconciliation status:
 
 ```text
 matched_lead
@@ -4682,7 +4682,7 @@ connector_degraded
 error
 ```
 
-- добавить explicit match quality fields в `bitrix_reconciliation.json`:
+- Add explicit match quality fields to `bitrix_reconciliation.json`:
 
 ```text
 bitrix_match_status
@@ -4696,7 +4696,7 @@ candidate_count
 candidate_summary
 ```
 
-- правило:
+- Rule:
 
 ```text
 weak subject/title-only match
@@ -4708,7 +4708,7 @@ or multiple weak candidates
 → not counted as successful matched
 ```
 
-- сохранить invariant:
+- Save invariant:
 
 ```text
 not_found != connector failure
@@ -4717,7 +4717,7 @@ weak_match != matched
 ambiguous != matched
 ```
 
-- добавить aggregate counts в `bitrix_reconciliation.json`:
+- Add aggregate counts to `bitrix_reconciliation.json`:
 
 ```text
 event_count
@@ -4733,22 +4733,22 @@ error_count
 manual_review_count
 ```
 
-- добавить BeeAgent-owned action draft artifact:
+- Add BeeAgent-owned action draft artifact:
 
 ```text
 storage/runs/<run_id>/rop_action_drafts.json
 ```
 
-- action drafts строятся только из existing artifacts:
+- action drafts is built only from existing artifacts:
   - `normalized_events.json`;
   - `classified_events.json`;
   - `bitrix_reconciliation.json`;
   - optional `attachment_extraction.json`;
   - optional `rop_current_state.json`;
 
-- action draft должен быть read-only/draft-only и не выполнять CRM write-back;
+- action draft must be read-only/draft-only and not CRM write-back;
 
-- action draft item должен содержать:
+- action draft item must contain:
 
 ```text
 action_draft_id
@@ -4798,17 +4798,17 @@ missing Bitrix evidence
 → run read-only reconciliation
 ```
 
-- добавить CLI command:
+- Add CLI command:
 
 ```bash
 ./start.sh rop action-drafts --run-id <run_id>
 ```
 
-- автоматически обновлять `rop_action_drafts.json` после successful `reconcile-bitrix`;
-- не создавать ложный success state после failed `reconcile-bitrix`;
-- `rop export-review` должен обогащать TSV, если существуют `bitrix_reconciliation.json` и/или `rop_action_drafts.json`;
-- сохранить backward compatibility старых TSV колонок;
-- добавить новые TSV columns, если они ещё отсутствуют:
+- automatically update `rop_action_drafts.json` after successful `reconcile-bitrix`;
+- do not create a false success state after failed `reconcile-bitrix`;
+- `rop export-review` must enrich TSV, if there are `bitrix_reconciliation.json` and/or `rop_action_drafts.json`;
+- Save backward compatibility old TSV columns;
+- Add new TSV columns if not yet available:
 
 ```text
 bitrix_match_status
@@ -4822,13 +4822,13 @@ action_queue
 action_draft_id
 ```
 
-- обновить current-state/dashboard/MVP pack read-model минимально:
-  - `weak_match` виден как manual-review/ambiguous risk;
-  - `safe_matched_count` отделён от просто `matched_count`;
-  - action drafts доступны в Evidence / First actions;
-  - `lost_in_bitrix` считается только по valid `not_found`, не по missing/degraded Bitrix evidence;
+- Update current-state/dashboard/MVP pack read-model minimum:
+  - `weak_match` is visible as manual-review/ambiguous risk;
+  - `safe_matched_count` is separated from just `matched_count`;
+  - action drafts is available on Evidence / First actions;
+  - `lost_in_bitrix` is considered only for valid `not_found`, not for missing/degraded Bitrix evidence;
 
-- добавить artifact allowlist entry, если UI/Evidence links начинают ссылаться на новый artifact:
+- Add artifact allowlist entry if UI/Evidence links refers to a new artifact:
 
 ```text
 rop_action_drafts_json
@@ -4847,11 +4847,11 @@ rop_action_drafts_json
 
 - docs update:
   - `docs/ROADMAP.md`;
-  - `README.ru.md`;
+  - `README.md`;
   - `docs/DEV_GUIDE.md`;
-  - `docs/WEB_UI.md`, если UI/API artifact links меняются.
+  - `docs/WEB_UI.md` if UI/API artifact links changes.
 
-**Не включено:**
+**Excluded:**
 
 - Bitrix write-back;
 - `crm.item.add`;
@@ -5238,15 +5238,15 @@ grep -R "https://.*bitrix\|/rest/[0-9]\|password\|secret\|token\|raw_eml\|messag
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 30 — ROP execution MVP: latest-N, thread artifacts and bounded AI assist execution v0
+### Iteration 30 — ROP execution MVP: latest-N, thread artifacts and bounded AI assist execution v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Довести BeeAgent ROP flow до execution-level MVP после закрытия `beeagent-rop It19.1`: BeeAgent должен корректно выбирать последние N сообщений, строить bounded thread artifacts, передавать `thread_context` в `beeagent-rop`, сохранять subtype/queue/action enrichment в batch artifacts и добавить BeeAgent-owned bounded AI assist execution path для спорных событий.
+Bring BeeAgent ROP flow to execution-level MVP after `beeagent-rop It19.1` is closed: BeeAgent must correctly select the last N messages, build bounded thread artifacts, transfer `thread_context` to `beeagent-rop`, store subtype/queue/action enrichment in batch artifacts and add BeeAgent-owned bounded AI assist execution path for controversial events.
 
-Итерация должна связать уже готовые domain contracts `beeagent-rop` с реальным BeeAgent runtime:
+Iteration must connect the already ready domain contracts `beeagent-rop` to the real BeeAgent runtime:
 
 ```text
 mailbox/json sources
@@ -5260,9 +5260,9 @@ mailbox/json sources
 → operator/current/dashboard/MVP artifacts updated where existing builders support it
 ```
 
-#### Почему это нужно
+#### Why this is needed
 
-После It29 BeeAgent уже умеет строить ROP evidence chain до Bitrix match quality gate и read-only action drafts:
+After It29, BeeAgent can build the ROP evidence chain through the Bitrix match quality gate and read-only action drafts:
 
 ```text
 source ingestion
@@ -5273,7 +5273,7 @@ source ingestion
 → action drafts
 ```
 
-После `beeagent-rop It19` модуль возвращает более полезную доменную семантику:
+After `beeagent-rop It19` the module returns the more useful domain semantics:
 
 ```text
 case_subtype
@@ -5282,9 +5282,9 @@ should_rop_see
 correct_action
 ```
 
-После `beeagent-rop It19.1` публичный module path больше не теряет `thread_context`.
+After `beeagent-rop It19.1` public module path no longer loses `thread_context`.
 
-Но BeeAgent всё ещё должен закрыть runtime gap:
+But BeeAgent still has to close runtime gap:
 
 ```text
 latest mailbox batch
@@ -5294,7 +5294,7 @@ latest mailbox batch
 → reproducible AI/thread artifacts
 ```
 
-Без It30 BeeAgent не сможет уверенно двигаться к customer-facing MVP, потому что РОП будет видеть классификацию и Bitrix evidence без thread-aware context и без controlled AI-assist для ambiguous/fallback cases.
+Without It30 BeeAgent can't move on to customer-facing MVP, because ROP will see classification and Bitrix evidence without thread-aware context and without controlled AI-assist for ambiguous/fallback cases.
 
 #### Depends on
 
@@ -5327,7 +5327,7 @@ no private imports
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
 ##### 1. Correct latest-N mailbox selection
 
@@ -5687,7 +5687,7 @@ Rules:
 - do not add Bitrix write-back;
 - preserve existing dashboard/API behavior.
 
-**Не включено:**
+**Excluded:**
 
 - changes to `beeagent-rop`;
 - new ROP business rules in BeeAgent;
@@ -5909,15 +5909,15 @@ fuzzing optional for malformed AI decision / thread context payloads
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 31 — ROP Review Workbench v0
+### Iteration 31 — ROP Review Workbench v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать BeeUI-backed ROP console пригодной для ручной проверки конкретного письма: оператор должен открыть событие из Queue и увидеть sender, subject, bounded body preview, attachments metadata, classification evidence, thread context, AI assist evidence, Bitrix evidence, action draft evidence и evidence links по одному `event_id`.
+Make BeeUI-backed ROP console suitable for manual verification of a specific email: The operator must open the Queue event and see sender, subject, bounded body preview, attachments metadata, classification evidence, thread context, AI assist evidence, Bitrix evidence, action draft evidence and evidence links each `event_id`.
 
-Целевой flow:
+Target flow:
 
 ```text
 /rop?tab=queue
@@ -5926,9 +5926,9 @@ fuzzing optional for malformed AI decision / thread context payloads
 → read-only review card
 ```
 
-#### Почему это нужно
+#### Why this is needed
 
-После It30 и UI-6 BeeAgent уже показывает aggregate evidence:
+After It30 and UI-6 BeeAgent already shows aggregate evidence:
 
 ```text
 latest-N
@@ -5938,17 +5938,17 @@ Bitrix/current-state
 operator recommendations
 ```
 
-Но MVP review loop всё ещё неполный:
+But MVP review loop is still incomplete:
 
 ```text
-бот классифицировал письмо
-→ РОП не может удобно открыть конкретное письмо
-→ не видит нормальный sender/subject/body preview
-→ не может сверить classification/thread/AI/Bitrix/action evidence в одном месте
-→ невозможно быстро понять, ошибка в классификации, thread context, AI assist или Bitrix matching
+the bot classified the email
+→ ROP cannot conveniently open a specific email
+→ cannot see a proper sender/subject/body preview
+→ cannot cross-check classification/thread/AI/Bitrix/action evidence in one place
+→ It's impossible to understand quickly, classification error, thread context, AI assist or Bitrix matching
 ```
 
-Без event-level review бессмысленно делать Bitrix write-back, operator POST actions или большую AI provider platform: сначала нужен безопасный read-only workbench для проверки решений.
+Without event-level review, it is pointless to make Bitrix write-back, operator POST actions or the large AI provider platform: first need a safe read-only workbench to test the solutions.
 
 #### Depends on
 
@@ -5987,11 +5987,11 @@ SCA is not required unless dependencies change.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
 ##### 1. Fix Queue sender/subject mapping
 
-Починить ROP Queue read-model so Queue rows do not show `Unknown Sender` / `n/a` when normalized/classified artifacts contain real values.
+Fix ROP Queue read-model so Queue rows do not show `Unknown Sender` / `n/a` when normalized/classified artifacts contain real values.
 
 Sender fallback order:
 
@@ -6258,24 +6258,24 @@ Also add `detail_href` to `/api/rop/dashboard` rows where practical:
 Add RU labels through existing BeeAgent locale helper:
 
 ```text
-Sender / Client          → Отправитель / клиент
-Subject / Request        → Тема / запрос
-View details             → Открыть письмо
-Message body             → Тело письма
-Body preview             → Предпросмотр письма
-Classification           → Классификация
-Thread context           → Контекст цепочки
-AI Assist                → AI-помощник
-Bitrix evidence          → Данные Bitrix
-Action draft             → Черновик действия
-Recommended queue        → Рекомендуемая очередь
-Correct action           → Правильное действие
-Should ROP see           → Показать РОПу
-Match quality            → Качество совпадения
-Safe target              → Безопасная цель
-Manual review required   → Нужна ручная проверка
-Evidence artifacts       → Артефакты evidence
-Back to queue            → Назад к очереди
+Sender / Client          → Sender / client
+Subject / Request → Subject / Request
+View details             → Open email
+Message body             → Email body
+Body preview             → Email preview
+Classification → Classification
+Thread context           → Thread context
+AI Assist                → AI- assistant
+Bitrix evidence          → Bitrix data
+Action draft             → Action draft
+Recommended queue        → Recommended queue
+Correct action           → Correct action
+Should ROP see           → Show to the sales manager
+Match quality            → Match quality
+Safe target              → Safe target
+Manual review required   → Manual review required
+Evidence artifacts → Artifacts evidence
+Back to queue            → Back to queue
 ```
 
 Rules:
@@ -6303,7 +6303,7 @@ Rules:
 - no arbitrary artifact browsing;
 - no secrets in HTML/API/logs/artifacts.
 
-**Не включено:**
+**Excluded:**
 
 - Bitrix write-back;
 - `crm.item.add`;
@@ -6519,15 +6519,15 @@ SCA is not required unless dependencies change.
 - `pyproject.toml.version` unchanged;
 - `beeagent-rop` unchanged.
 
-### Итерация 32 — ROP Customer Delivery MVP: evaluation gate, routing map, recommendations and Bitrix widget API
+### Iteration 32 — ROP Customer Delivery MVP: evaluation gate, routing map, recommendations and Bitrix widget API
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Собрать финальный customer-delivery слой для ROP MVP: BeeAgent должен уметь оценить качество классификации по reviewed TSV, построить context/routing evidence, сформировать read-only/draft-only рекомендации, показать их в Web UI и отдать через защищённый Bitrix widget API без CRM/mailbox write-back.
+Collect the final customer-delivery layer for ROP MVP: BeeAgent must be able to evaluate the quality of the reviewed TSV classification, build context/routing evidence, form read-only/draft-only recommendations, show them to Web UI and pass them through the Bitrix widget API protected without CRM/mailbox write-back.
 
-Целевой flow:
+Target flow:
 
 ```text
 ROP run artifacts
@@ -6541,9 +6541,9 @@ ROP run artifacts
 → customer acceptance / real-mail review
 ```
 
-#### Почему это нужно
+#### Why this is needed
 
-После It31 BeeAgent уже умеет:
+After It31, BeeAgent can already:
 
 ```text
 mailbox/json source
@@ -6557,33 +6557,33 @@ mailbox/json source
 → event-level review workbench
 ```
 
-Но для сдачи заказчику всё ещё не хватает delivery layer:
+But the customer still lacks delivery layer: to deliver.
 
-- нет формального quality gate по reviewed TSV;
-- нет отдельного `rop_evaluation.json`, который показывает, достигли ли мы acceptance targets;
-- existing-deal письма при слабом контексте могут выглядеть как `irrelevant/ignore`, хотя должны уходить в `manual_review` или AI fallback;
-- Bitrix matching всё ещё требует финального scoring/threshold contract, чтобы один sender с несколькими лидами/сделками не превращал всё в `ambiguous`;
-- нет единого routing map:
+- No formal quality gate for reviewed TSV;
+- There is no separate `rop_evaluation.json` that shows whether we have reached acceptance targets;
+- existing-deal emails in a weak context may look like `irrelevant/ignore`, although they must go to `manual_review` or AI fallback;
+- Bitrix matching still requires the final scoring/threshold contract so that one sender with multiple leads/deals doesn't turn everything into `ambiguous`;
+- no single routing map:
 
 ```text
 case_type + case_subtype + recommended_queue + correct_action + bitrix_match_status
 → queue/category/action draft/recommendation
 ```
 
-- нет customer-facing recommendations artifact;
-- Web UI показывает evidence, но не имеет отдельной вкладки с ценными рекомендациями;
-- Bitrix пока не получает read-only widget payload с рекомендациями.
+- No customer-facing recommendations artifact;
+- Web UI shows evidence, but does not have a separate tab with valuable recommendations;
+- Bitrix does not yet receive read-only widget payload with recommendations.
 
-Итерация закрывает именно сдачный слой:
+Iteration specifically covers the handoff layer:
 
 ```text
-что обработано
-что классифицировано
-что спорно
-что нужно проверить РОПу
-куда это должно попасть как draft routing
-что видно в Web UI
-что видно в Bitrix widget API
+What has been processed
+which is classified
+what remains debatable
+what the sales manager needs to review
+Where it must go like draft routing
+as seen in Web UI
+as seen in Bitrix widget API
 ```
 
 #### Change level
@@ -6603,29 +6603,29 @@ Reason:
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
 ##### 1. Classification evaluation gate
 
-Добавить CLI command:
+Add CLI command:
 
 ```bash
 ./start.sh rop evaluate-review --run-id <run_id>
 ```
 
-и/или:
+and/or:
 
 ```bash
 ./start.sh rop evaluate-review --tsv storage/runs/<run_id>/rop_review_table.tsv
 ```
 
-Создать artifact:
+Create artifact:
 
 ```text
 storage/runs/<run_id>/rop_evaluation.json
 ```
 
-Метрики:
+metrics:
 
 ```text
 case_type_accuracy
@@ -6659,13 +6659,13 @@ existing_deal_as_irrelevant_count == 0
 
 ##### 2. Context enrichment artifact
 
-Добавить artifact:
+Add artifact:
 
 ```text
 storage/runs/<run_id>/rop_context_enrichment.json
 ```
 
-Он должен объединять safe evidence:
+It must combine safe evidence:
 
 ```text
 event
@@ -6686,7 +6686,7 @@ Rules:
 
 ##### 3. Bitrix ambiguity scoring hardening
 
-Усилить existing Bitrix reconciliation scoring so `ambiguous` is not the default for all emails from one sender.
+Strengthen existing Bitrix reconciliation scoring so `ambiguous` is not the default for all emails from one sender.
 
 Allowed scoring signals:
 
@@ -6794,7 +6794,7 @@ Rules:
 
 ##### 5. ROP routing map
 
-Добавить config/artifact-backed routing map.
+Add config/artifact-backed routing map.
 
 Source of truth:
 
@@ -6874,7 +6874,7 @@ Rules:
 
 ##### 6. Recommendations artifact
 
-Создать artifact:
+Create artifact:
 
 ```text
 storage/runs/<run_id>/rop_recommendations.json
@@ -6932,7 +6932,7 @@ Rules:
 
 ##### 7. Bitrix widget API
 
-Добавить read-only endpoints:
+Add read-only endpoints:
 
 ```text
 GET /api/bitrix/rop/widget
@@ -7002,7 +7002,7 @@ Expected widget payload:
 
 ##### 8. Web UI recommendations parity
 
-Добавить вкладку:
+Add the following tab:
 
 ```text
 /rop?tab=recommendations
@@ -7038,9 +7038,9 @@ Rules:
 - no raw `.eml`;
 - no raw attachment content.
 
-#### Не включено
+#### Excluded
 
-Не делать в It32:
+Do not do in It32:
 
 ```text
 automatic crm.item.add
@@ -7312,15 +7312,15 @@ Fuzzing optional for malformed reviewed TSV / malformed recommendation artifacts
 - tests and required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 33 — ROP real-mail normalization and classification polish for forwarded mailbox traffic
+### Iteration 33 — ROP real-mail normalization and classification polish for forwarded mailbox traffic
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Исправить pilot-blocking ошибки на реальном mailbox traffic: BeeAgent должен нормализовать forwarded/spam/reply mailbox wrappers в явные transport/evidence fields, а `beeagent-rop` должен использовать эти поля как weak transport signals, не путая технические почтовые labels с бизнес-классификацией.
+Correct pilot-blocking errors on real mailbox traffic: BeeAgent must normalize forwarded/spam/reply mailbox wrappers into clear transport/evidence fields, and `beeagent-rop` must use these fields as weak transport signals, without confusing labels technical mailboxes with business classification.
 
-Целевой flow:
+Target flow:
 
 ```text
 mailbox/json source
@@ -7333,9 +7333,9 @@ mailbox/json source
 → recommendations/current/dashboard remain delivery layer
 ```
 
-#### Почему это нужно
+#### Why this is needed
 
-После It32 BeeAgent уже имеет customer-delivery слой:
+After It32 BeeAgent already has customer-delivery layer:
 
 ```text
 evaluation gate
@@ -7346,13 +7346,13 @@ Bitrix widget API
 Web UI recommendations tab
 ```
 
-Но real-mail pilot batch показал системную проблему ниже delivery layer:
+But real-mail pilot batch showed the system problem below delivery layer:
 
 ```text
 [AUTO-FWD] / FWD / RE / *** SPAM ***
 ```
 
-сейчас могут ошибочно восприниматься как business evidence:
+Now they may be mistaken for business evidence:.
 
 ```text
 FWD → reply/existing-deal/manual-review
@@ -7360,22 +7360,22 @@ SPAM → ignore
 AUTO-FWD → business signal
 ```
 
-Это неправильно.
+It's not right.
 
-Нужная модель:
+Model required:
 
 ```text
 AUTO-FWD / FWD / RE / SPAM = transport labels
 clean_subject + original_sender + body + attachments + Bitrix/thread evidence = business evidence
 ```
 
-Без этой итерации MVP будет давать ошибки на реальных пересланных письмах из агрегирующего mailbox:
+Without this, iteration MVP will make mistakes on real emails sent from the aggregation mailbox:
 
-- хорошие тендеры могут уйти не в tender queue;
-- SPAM-marked business письма могут быть проигнорированы;
-- supplier/marketing рассылки могут попасть в manual_review;
-- слабые FWD/RE признаки могут создавать ложные existing_deal;
-- РОП будет видеть шум вместо полезной очереди.
+- Good tenders may not go to tender queue;
+- SPAM-marked business emails may be ignored;
+- supplier/marketing distributions can reach manual_review;
+- Weak FWD/RE signs can create false existing_deal;
+- ROP will see noise instead of a useful queue.
 
 #### Depends on
 
@@ -7402,7 +7402,7 @@ BeeAgent delivery layer may route weak/conflicting evidence to manual_review but
 
 #### Scope
 
-**Включено в BeeAgent:**
+**Includes in BeeAgent:**
 
 ##### 1. Forwarded wrapper normalization
 
@@ -7410,9 +7410,9 @@ Extract safe original forwarded headers from email body when present:
 
 ```text
 Email:
-Оригинальный отправитель:
-Оригинальный адрес получения:
-Дата:
+Original sender:
+Original address of receipt:
+Date:
 X-Email-ID:
 ```
 
@@ -7481,7 +7481,7 @@ Rules:
 If forwarded body contains original date:
 
 ```text
-Дата: Tue, 9 Jun 2026 11:54:27 +0800
+Date: Tue, 9 Jun 2026 11:54:27 +0800
 ```
 
 write:
@@ -7585,7 +7585,7 @@ Rules:
 - do not implement ROP tender/supplier/logistics/finance rules in BeeAgent;
 - routing/recommendations stay read-only/draft-only.
 
-**Включено в companion `beeagent-rop` work:**
+**Included in companion `beeagent-rop` work:**
 
 - use `clean_subject` instead of raw `subject` for semantic classification when available;
 - use `original_sender` instead of wrapper sender when available;
@@ -7598,7 +7598,7 @@ Rules:
 - reduce existing_deal false positives;
 - require stronger evidence for `existing_deal`.
 
-**Не включено:**
+**Excluded:**
 
 - CRM/Bitrix write-back;
 - mailbox delete/archive/reply/mark-as-read;
@@ -7840,30 +7840,30 @@ Fuzzing optional for forwarded-wrapper/date/subject parsing if parser complexity
 - required security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 34 — ROP OpenAI adjudicator execution v0
+### Iteration 34 — ROP OpenAI adjudicator execution v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить в BeeAgent реальный AI adjudication execution layer для спорных ROP classifications: BeeAgent должен вызывать OpenAI только для ambiguous/fallback/low-confidence событий, получать strict structured JSON, валидировать результат, безопасно merge/degrade final decision и записывать воспроизводимые AI evidence artifacts без CRM/mailbox/Bitrix write-back.
+Add to BeeAgent the real AI adjudication execution layer for disputed ROP classifications: BeeAgent must only call OpenAI for ambiguous/fallback/low-confidence events, receive strict structured JSON, validate the result, safe merge/degrade final decision and record the reproducible AI evidence artifacts without CRM/mailbox/Bitrix write-back.
 
-#### Почему это нужно
+#### Why this is needed
 
-После It33 real-mail normalization улучшила качество входных mailbox artifacts, но pilot traffic показал предел deterministic rules:
+After It33 real-mail normalization improved the quality of mailbox artifacts, but pilot traffic showed the limit deterministic rules:
 
 ```text
 deterministic classifier
-→ хорошо работает на очевидных RFQ/tender/finance/noise cases
-→ ломается на серой зоне: supplier promo vs existing deal, newsletter vs business thread, spam label + RFQ, logistics reply hidden as ignore
+→ It works well on the obvious RFQ/tender/finance/noise cases
+→ It breaks into the grey area: supplier promo vs existing deal, newsletter vs business thread, spam label + RFQ, logistics reply hidden as ignore
 ```
 
-Дальше нельзя бесконечно добавлять `if/else` под каждое письмо. Для MVP нужен bounded AI adjudicator:
+You can't add `if/else` to every email forever. MVP requires bounded AI adjudicator:
 
 ```text
-deterministic rules ловят очевидное
-conflict/eligibility gate выбирает серую зону
-OpenAI adjudicator решает только спорные случаи
+deterministic rules captures the obvious
+conflict/eligibility gate selects the grey area
+OpenAI adjudicator only resolves disputed cases
 invalid/low-confidence AI → manual_review or deterministic fallback
 all outputs are visible in TSV/artifacts
 no automatic CRM actions
@@ -7871,9 +7871,9 @@ no automatic CRM actions
 
 #### Scope
 
-**Включено в BeeAgent**
+**Includes in BeeAgent**
 
-- OpenAI provider execution через BeeAgent-owned provider layer;
+- OpenAI provider execution through BeeAgent-owned provider layer;
 - Responses API / structured JSON output;
 - config-driven AI adjudicator settings;
 - env/secret handling;
@@ -7893,7 +7893,7 @@ no automatic CRM actions
 - smoke with AI disabled and fake AI enabled;
 - docs update.
 
-**Не включено**
+**Excluded**
 
 - changes to `beeagent-rop`, unless a public contract is already available and can be used without private imports;
 - private imports from `beeagent-rop`;
@@ -7919,7 +7919,7 @@ uv run python config/start.py rop run \
   --run-id mvp-ai-smoke-001-20
 ```
 
-Перед run:
+Before run:
 
 ```text
 1. Set OPENAI_API_KEY in .env
@@ -8010,103 +8010,103 @@ Reason:
 
 Config:
 
-- `rop.ai_assist.adjudicator` — config block внутри существующего `rop.ai_assist`, не создаёт второй source of truth;
-- `ai.prompts` и `ai.profiles` — shared BeeAgent AI source of truth для prompt/provider/model config;
+- `rop.ai_assist.adjudicator` – config block inside the existing `rop.ai_assist` does not create the second source of truth;
+- `ai.prompts` and `ai.profiles` are shared BeeAgent AI source of truth for prompt/provider/model config;
 - AI disabled by default.
 
 New module:
 
 - `src/beeagent_module/core/rop_ai_adjudicator.py` — OpenAI Responses API execution, bounded payload, JSON schema validation, deterministic fallback, safe artifacts;
-- `call_openai_responses_api()` — HTTP call к `/v1/responses` с `json_object` format;
+- `call_openai_responses_api()` – HTTP call to `/v1/responses` with `json_object` format;
 - `run_adjudicator_for_event()` — per-event adjudication: eligibility → prompt → API → parse → validate → merge/degrade;
-- `run_adjudicator_batch()` — batch wrapper с `max_events_per_run`;
+- `run_adjudicator_batch()` – batch wrapper with `max_events_per_run`;
 - `write_adjudicator_artifacts()` — `rop_ai_adjudicator_requests.json`, `rop_ai_adjudicator_decisions.json`, `rop_ai_adjudicator_results.json`.
 
 Integration:
 
-- `run_rop_batch_case()` в `rop_operator.py` вызывает `run_adjudicator_batch()` после AI assist, до summary;
-- adjudicator counters записываются в `classification_diagnostics`.
+- `run_rop_batch_case()` in `rop_operator.py` calls `run_adjudicator_batch()` after AI assist, to summary;
+- adjudicator counters is recorded in `classification_diagnostics`.
 
 TSV:
 
-- 13 новых колонок: `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `deterministic_case_type`, `deterministic_case_subtype`, `deterministic_recommended_queue`, `deterministic_correct_action`, `deterministic_confidence`, `deterministic_reason_code`.
+- 13 new columns: `ai_used`, `ai_provider`, `ai_model`, `ai_confidence`, `ai_reason`, `ai_risk_flags`, `ai_error`, `deterministic_case_type`, `deterministic_case_subtype`, `deterministic_recommended_queue`, `deterministic_correct_action`, `deterministic_confidence`, `deterministic_reason_code`.
 
 Tests:
 
-- `tests/test_rop_ai_adjudicator.py` — 41 тест: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
+- `tests/test_rop_ai_adjudicator.py` - 41 test: eligibility, prompt building, JSON parsing, validation, provider call, per-event adjudication, batch, artifacts, config validation.
 
-### Итерация 35 — ROP duplicate runtime integration and reviewed classifier rollout v1
+### Iteration 35 — ROP duplicate runtime integration and reviewed classifier rollout v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Подключить released duplicate-aware `beeagent-rop` classification contract к реальному ROP batch path, чтобы current-batch duplicates определялись domain-модулем, сохранялись в artifacts/final decisions и были видимы РОПу в Queue/Event Detail без дублирования business matching logic в BeeAgent.
+Connect released duplicate-aware `beeagent-rop` classification contract to the real ROP batch path so that current-batch duplicates is defined by domain- module, stored in artifacts/final decisions and visible to ROP Queue/Event Detail without duplication of business matching logic to BeeAgent.
 
 #### Scope
 
-Включено:
+Includes:
 
-- потребить released `beeagent-rop` contract из Iteration 20;
-- сохранить BeeAgent responsibility только за orchestration/context/artifacts/UI;
-- построить deterministic bounded duplicate candidate context из уже загруженных событий текущего ROP batch;
-- ограничить duplicate candidates одинаковым client scope;
-- сравнивать текущее событие только с предыдущими canonical candidates;
-- использовать source timestamp с deterministic fallback/tie-break для стабильного canonical ordering;
-- не сравнивать event с самим собой;
-- не превращать уже обнаруженный duplicate в новый canonical original;
-- передавать candidate context в public `lead_classification` module call;
-- не реализовывать sender/subject/body similarity thresholds в BeeAgent;
-- принять module-returned `case_type=duplicate` и structured duplicate evidence;
-- сохранить base classification / duplicate candidate / confidence / reason traceability в ROP artifacts;
-- гарантировать, что final decision сохраняет confident deterministic `duplicate`;
-- explicit skip/preserve behavior для duplicate в AI adjudicator path;
-- убедиться, что summary/current-state/dashboard не теряют duplicate;
-- показывать duplicate в Queue;
-- обеспечить появление `Duplicate` в Classification filter при наличии duplicate rows;
-- показывать bounded duplicate evidence в Event Detail;
-- добавить integration fixtures/smoke на exact duplicate, near duplicate, non-duplicate и cross-source same-client scenario;
-- проверить reviewed classifier outcomes после обновления module dependency;
-- обновить docs и dependency pin только на реально выпущенную версию `beeagent-rop`.
+- consume released `beeagent-rop` contract from Iteration 20;
+- Save BeeAgent responsibility for orchestration/context/artifacts/UI only;
+- build deterministic bounded duplicate candidate context from the already loaded events of the current ROP batch;
+- Limit duplicate candidates to the same client scope;
+- To compare the current event with the previous canonical candidates only;
+- use source timestamp with deterministic fallback/tie-break for stable canonical ordering;
+- Do not compare event to yourself;
+- do not convert the duplicate already discovered into a new canonical original;
+- Transfer candidate context to public `lead_classification` module call;
+- do not implement sender/subject/body similarity thresholds in BeeAgent;
+- Accept module-returned `case_type=duplicate` and structured duplicate evidence;
+- Keep base classification / duplicate candidate / confidence / reason traceability in ROP artifacts;
+- Guarantee that final decision retains confident deterministic `duplicate`;
+- explicit skip/preserve behavior for duplicate in AI adjudicator path;
+- ensure that summary/current-state/dashboard does not lose duplicate;
+- Show duplicate in Queue;
+- ensure that `Duplicate` appears in Classification filter if duplicate rows is available;
+- Show bounded duplicate evidence in Event Detail;
+- Add integration fixtures/smoke to exact duplicate, near duplicate, non-duplicate and cross-source same-client scenario;
+- Check reviewed classifier outcomes after module dependency has been updated;
+- Update docs and dependency pin only to the actual version of `beeagent-rop`.
 
 #### Excluded
 
-- новые duplicate matching rules в BeeAgent;
-- изменение domain thresholds;
+- new duplicate matching rules in BeeAgent;
+- Change domain thresholds;
 - cross-run persistent duplicate database/index;
 - historical mailbox duplicate search;
 - live CRM/Bitrix entity-resolution as duplicate source;
 - Bitrix merge/write-back;
 - automatic deletion/suppression of duplicate emails;
-- изменение AI в основной classifier;
-- ослабление AI safety merge для reviewed supplier false positives;
+- change AI in the main classifier;
+- AI safety merge weakening for reviewed supplier false positives;
 - mailbox connector redesign;
 - attachment parser/OCR changes;
-- новая database/storage subsystem;
-- новая config surface без необходимости;
+- New database/storage subsystem;
+- New config surface needless;
 - BeeAgent `pyproject.toml.version` change.
 
 #### Deliverable
 
-ROP runtime передаёт current-batch candidate context в `beeagent-rop`, получает domain-owned duplicate-aware classification, сохраняет audit evidence и показывает `duplicate` как полноценную classification в Queue/Event Detail.
+ROP runtime transmits current-batch candidate context to `beeagent-rop`, receives domain-owned duplicate-aware classification, saves audit evidence and shows `duplicate` as a complete classification to Queue/Event Detail.
 
 #### Acceptance criteria
 
-- production ROP batch фактически использует duplicate-aware module contract;
-- второй exact duplicate в текущем client-scoped batch получает `case_type=duplicate`;
-- canonical first occurrence не становится duplicate своего последующего повторения;
-- near duplicate определяется только по module result;
-- unrelated similar emails не получают false duplicate;
-- candidates из другого client scope не сравниваются;
-- duplicate candidate/confidence/reason доступны в artifacts;
-- base semantic classification доступна для audit;
-- `rop_final_decisions.json` сохраняет deterministic duplicate;
-- AI adjudicator не превращает confident duplicate в invalid/manual-review result;
-- Queue показывает duplicate rows;
-- Classification filter автоматически содержит Duplicate при наличии таких rows;
-- Event Detail объясняет, с каким candidate найдено совпадение;
-- existing new-lead/existing-deal/irrelevant flows остаются backward-compatible;
-- reviewed It20 scenarios проходят BeeAgent integration regression.
+- production ROP batch actually uses duplicate-aware module contract;
+- The second exact duplicate in the current client-scoped batch receives `case_type=duplicate`;
+- canonical first occurrence does not become duplicate its subsequent repetition;
+- near duplicate is defined by module result only;
+- unrelated similar emails does not receive false duplicate;
+- candidates of the other client scope is not comparable;
+- duplicate candidate/confidence/reason is available on artifacts;
+- base semantic classification is available for audit;
+- `rop_final_decisions.json` retains deterministic duplicate;
+- AI adjudicator does not turn confident duplicate into invalid/manual-review result;
+- Queue shows duplicate rows;
+- Classification filter automatically contains Duplicate if there is such rows;
+- Event Detail explains where the candidate match was found;
+- existing new-lead/existing-deal/irrelevant flows remains backward-compatible;
+- reviewed It20 scenarios passes BeeAgent integration regression.
 
 #### Checks
 
@@ -8153,35 +8153,35 @@ ROP runtime передаёт current-batch candidate context в `beeagent-rop`, 
 
 Canonical ordering:
 
-- events обрабатываются в deterministic порядке `(received_at/date/event_date/timestamp ASC с UTC normalization, event_id tie-break)` внутри `_classify_normalized_events`, поэтому earliest event становится canonical original, а более поздние exact/near повторы получают `case_type=duplicate` относительно него;
-- BeeAgent присваивает каждому normalized processing item additive `event_instance_id` в пределах run; public transport/business `event_id` остаётся неизменным module contract, а selector используется только для artifact joins и Queue/Event Detail navigation, поэтому повторяющиеся Message-ID не схлопываются downstream;
-- duplicate candidates строятся только из уже обработанных canonical events текущего batch; из canonical pool исключаются только confirmed `case_type=duplicate` события, а successful semantic/fallback module classifications остаются кандидатами независимо от `is_fallback`; BeeAgent-generated processing failure/non-ok события в pool не попадают (они идут через controlled fallback вне pool); scope ограничен `client_id`, self-match исключён;
-- candidate records передаются в public `lead_classification` contract через `payload.duplicate_candidates` (bounded keys: `existing_lead_id`, `sender`, `subject`, `body`, `event_id`, `thread_id`, `message_id`, `raw_metadata`), упорядочены по source timestamp с `event_id` tie-break;
-- matching thresholds/reason semantics остаются в `beeagent-rop` (`EntityResolutionService`), BeeAgent не дублирует duplicate logic.
+- events is processed in deterministic in `(received_at/date/event_date/timestamp ASC with UTC normalization, event_id tie-break)` within `_classify_normalized_events`, so earliest event becomes canonical original, and the later exact/near re-tried `case_type=duplicate` relative to it;
+- BeeAgent assigns to each normalized processing item additive `event_instance_id` within run; public transport/business `event_id` remains unchanged module contract, and selector is used only for artifact joins and Queue/Event Detail navigation, so the repeated Message-ID does not cough up downstream;
+- duplicate candidates is built only from canonical events of the current batch; in canonical pool only confirmed `case_type=duplicate` events are excluded, and successful semantic/fallback module classifications remains candidates independently of `is_fallback`; BeeAgent-generated processing failure/non-ok events in pool do not occur (they go through controlled fallback outside pool); scope is limited to `client_id`, self-match is excluded;
+- candidate records are passed to public `lead_classification` contract through `payload.duplicate_candidates` (bounded keys: `existing_lead_id`, `sender`, `subject`, `body`, `event_id`, `thread_id`, `message_id`, `raw_metadata`), ordered by source timestamp with `event_id` tie-break;
+- matching thresholds/reason semantics remains in `beeagent-rop` (`EntityResolutionService`), BeeAgent does not duplicate duplicate logic.
 
 Runtime integration (`rop_operator.py`):
 
 - `_build_duplicate_candidates(...)`, `_duplicate_candidate_from_event(...)`, `_is_eligible_canonical_source(...)`, `_event_source_sort_key(...)`;
-- `_classify_normalized_events` поддерживает canonical pool и передаёт `duplicate_candidates` в per-event `lead_classification`;
-- `classification_diagnostics["duplicate_count"]` в `operator_summary.json`;
-- legacy AI assist (`_is_event_eligible_for_ai_assist`) и AI adjudicator (`_is_event_eligible_for_adjudicator`) явно skip deterministic `duplicate`.
+- `_classify_normalized_events` supports canonical pool and transmits `duplicate_candidates` to per-event `lead_classification`;
+- `classification_diagnostics["duplicate_count"]` in `operator_summary.json`;
+- legacy AI assist (`_is_event_eligible_for_ai_assist`) and AI adjudicator (`_is_event_eligible_for_adjudicator`) are clearly skip deterministic `duplicate`.
 
 Artifacts / final decisions:
 
-- `classified_events.json` сохраняет module-returned `base_classification` и `duplicate` (bounded candidate/confidence/reason evidence);
-- `rop_final_decisions.json` добавляет `base_classification` и `duplicate` в каждый final decision event (None, когда нет duplicate context); deterministic confident duplicate сохраняется как `deterministic_case_type/final_case_type=duplicate`, `final_decision_source=deterministic`, без AI invalidation;
-- `_is_final_decisions_payload` валидирует новые optional поля (backward-compatible).
+- `classified_events.json` retains module-returned `base_classification` and `duplicate` (bounded candidate/confidence/reason evidence);
+- `rop_final_decisions.json` adds `base_classification` and `duplicate` to each final decision event (None, when there is no duplicate context); deterministic confident duplicate retained as `deterministic_case_type/final_case_type=duplicate`, `final_decision_source=deterministic`, without AI invalidation;
+- `_is_final_decisions_payload` validates the new optional fields (backward-compatible).
 
 UI:
 
-- Queue (`rop_dashboard._build_queues`, `rop_current_state._build_queues`) добавляет `case_type=duplicate` rows в `needs_review`;
-- `rop_current_state._build_kpi` учитывает duplicates в `needs_manual_review`;
-- Classification filter автоматически содержит `Duplicate` при наличии duplicate rows (`_build_filter_options`);
-- Event Detail (`rop_event_detail`) показывает bounded duplicate evidence: candidate event/existing_lead id, confidence, reason_code/path, matched_fields, reasoning, `base_case_type`.
+- Queue (`rop_dashboard._build_queues`, `rop_current_state._build_queues`) adds `case_type=duplicate` rows to `needs_review`;
+- `rop_current_state._build_kpi` accounts for duplicates in `needs_manual_review`;
+- Classification filter automatically contains `Duplicate` with duplicate rows (`_build_filter_options`);
+- Event Detail (`rop_event_detail`) shows bounded duplicate evidence: candidate event/existing_lead id, confidence, reason_code/path, matched_fields, reasoning, `base_case_type`.
 
 Reason catalog:
 
-- добавлен display для нового public reason code `duplicate_candidate_confirmed` (It20 reviewed classifier rollout), coverage test зелёный.
+- display has been added for the new public reason code `duplicate_candidate_confirmed` (It20 reviewed classifier rollout), coverage test green.
 
 Dependency model:
 
@@ -8189,15 +8189,15 @@ Dependency model:
 - Registry/PyPI publication is not a prerequisite of the current private-module dependency model; the local editable source is the working resolution and is intentionally kept for development.
 - No dependency/version change is introduced by this iteration; `pyproject.toml` and `uv.lock` are untouched.
 
-### Итерация 36 — ROP multi-mailbox recipient routing and Bitrix responsible draft v0
+### Iteration 36 — ROP multi-mailbox recipient routing and Bitrix responsible draft v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Расширить production ROP polling с одного mailbox source до нескольких configured mailbox sources и сохранить адресную принадлежность каждого письма до Bitrix draft layer: BeeAgent должен детерминированно определить business recipient по существующему mailbox evidence, разрешить recipient email в active Bitrix user через read-only lookup и показать proposed responsible в artifacts/action draft/Event Detail без CRM write-back и без изменений business-classification semantics в `beeagent-rop`.
+The extension of production ROP polling from one mailbox source to several configured mailbox sources and the retention of the address of each email to Bitrix draft layer: BeeAgent must deter business recipient from the existing mailbox evidence, allow recipient email in active Bitrix user via read-only lookup and show proposed responsible in artifacts/action draft/Event Detail without CRM write-back and without change business-classification semantics in `beeagent-rop`.
 
-Целевой flow:
+Target flow:
 
 ```text
 enabled mailbox sources
@@ -8213,38 +8213,38 @@ enabled mailbox sources
 
 #### Scope
 
-Включено:
+Includes:
 
-- сохранить existing `rop.sources[]` как единственный source of truth для mailbox sources;
-- расширить `rop.mailbox_poll` до controlled all-enabled-sources mode с backward-compatible single-source mode;
-- не добавлять отдельный дублирующий список mailbox source IDs;
-- поддержать optional CLI source override для безопасного per-source poll/rebaseline;
-- выполнять production poll независимо по каждому enabled `mailbox_readonly` / `read_only` source;
-- сохранить per-source UIDVALIDITY / last_processed_uid checkpoint semantics;
-- сохранять at-least-once invariant: checkpoint конкретного source продвигается только после успешного ROP pipeline и обязательного postprocessing для этого source;
-- failure одного mailbox source не должен останавливать попытку обработки остальных selected sources;
-- successful source checkpoints не откатываются из-за failure другого source;
-- новый source без checkpoint получает только свой baseline без изменения checkpoint уже существующих sources;
-- использовать уже существующие normalized fields `source_id`, `source_role`, `source_display_name`, `client_id`, `to`, `cc`, `original_recipient`, `forwarded_wrapper`;
-- добавить optional source routing fallback `routing.email_recipient` для mailbox source;
-- `routing.email_recipient` является business recipient fallback и не должен браться из IMAP username/env;
+- Save existing `rop.sources[]` as the only source of truth for mailbox sources;
+- Expand `rop.mailbox_poll` to controlled all-enabled-sources mode with backward-compatible single-source mode;
+- Do not add a separate duplicate mailbox source IDs list;
+- Support optional CLI source override for safe per-source poll/rebaseline;
+- perform production poll independently for each enabled `mailbox_readonly` / `read_only` source;
+- Save per-source UIDVALIDITY / last_processed_uid checkpoint semantics;
+- Save at-least-once invariant: checkpoint of the specific source only moves after successful ROP pipeline and mandatory postprocessing for this source;
+- failure of one mailbox source must not stop the attempt to treat the remaining selected sources;
+- successful source checkpoints does not roll back because of failure of the other source;
+- the new source without checkpoint only receives its baseline without changing checkpoint already existing sources;
+- Use existing normalized fields `source_id`, `source_role`, `source_display_name`, `client_id`, `to`, `cc`, `original_recipient`, `forwarded_wrapper`;
+- Add optional source routing fallback `routing.email_recipient` for mailbox source;
+- `routing.email_recipient` is business recipient fallback and must not be taken from IMAP username/env;
 - deterministic recipient attribution precedence:
   - `original_recipient`;
   - `to`;
   - configured source recipient fallback;
   - unresolved;
 
-- несколько recipient candidates на одном evidence level → `ambiguous`, без выбора первого;
-- `cc` может сохраняться как evidence, но не используется для automatic responsible selection;
-- добавить BeeAgent-owned read-only Bitrix user lookup через exact normalized email;
-- расширить existing `BitrixReadonlyClient` только read-only method/capability, не добавляя CRM writes;
-- active exact email match only; никаких fuzzy user matches;
-- Bitrix user directory должен загружаться bounded образом и не запрашиваться отдельно для каждого письма;
-- создать artifact:
+- Several recipient candidates on one evidence level → `ambiguous`, without choosing the first;
+- `cc` may be retained as evidence, but not used for automatic responsible selection;
+- Add BeeAgent-owned read-only Bitrix user lookup through exact normalized email;
+- expand existing `BitrixReadonlyClient` only read-only method/capability, without adding CRM writes;
+- active exact email match only; No fuzzy user matches;
+- Bitrix user directory must be loaded bounded in a manner that is not requested separately for each email;
+- create artifact:
   - `storage/runs/<run_id>/rop_recipient_routing.json`;
 
-- artifact должен сохранять `event_id` + `event_instance_id`, source provenance, recipient status/evidence и proposed Bitrix responsible;
-- statuses должны явно различать как минимум:
+- artifact must retain `event_id` + `event_instance_id`, source provenance, recipient status/evidence and proposed Bitrix responsible;
+- statuses must clearly distinguish at least:
   - `resolved`;
   - `ambiguous`;
   - `unresolved`;
@@ -8252,16 +8252,16 @@ enabled mailbox sources
   - `not_found`;
   - `connector_degraded`;
 
-- обогатить `rop_action_drafts.json` proposed recipient/responsible evidence;
-- сохранить action drafts `read_only=true` / `draft_only=true`;
-- минимально показать source / recipient / proposed responsible в existing ROP Event Detail;
-- сохранить существующую `beeagent-rop` classification/subtype/queue/action semantics без изменений;
-- обновить ROADMAP/README/DEV_GUIDE/WEB_UI там, где меняются config/artifact/UI contracts.
+- Enrich `rop_action_drafts.json` proposed recipient/responsible evidence;
+- Save action drafts `read_only=true` / `draft_only=true`;
+- Minimum display source / recipient / proposed responsible in existing ROP Event Detail;
+- Keep the existing `beeagent-rop` classification/subtype/queue/action semantics unchanged;
+- Update ROADMAP/README/DEV_GUIDE/WEB_UI where config/artifact/UI contracts. changes
 
 #### Excluded
 
 - changes to `beeagent-rop`;
-- новые ROP classification rules в BeeAgent;
+- new ROP classification rules in BeeAgent;
 - `crm.item.add`;
 - `crm.item.update`;
 - `crm.item.delete`;
@@ -8272,8 +8272,8 @@ enabled mailbox sources
 - mailbox delete/archive/reply/mark-as-read;
 - fuzzy email/user matching;
 - Bitrix user ID stored as source-of-truth config;
-- использование IMAP username как business recipient;
-- использование `Cc` для automatic responsible selection;
+- using IMAP username as business recipient;
+- use of `Cc` for automatic responsible selection;
 - automatic inference of deliberate human reassignment from email forwarding;
 - responsible reassignment / override workflow;
 - assumption that existing `rop.routing.queues.*.bitrix_category` is a real Bitrix `categoryId`;
@@ -8419,74 +8419,74 @@ Optional live read-only smoke only when the required mailbox/Bitrix credentials 
 - tests/docs/security checks are completed;
 - `pyproject.toml.version` is not changed.
 
-### Итерация 37 — Controlled Bitrix CRM write-back v0
+### Iteration 37 — Controlled Bitrix CRM write-back v0
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Перевести существующий read-only/draft Bitrix flow в ограниченный production write-back: каждое классифицированное ROP-событие должно получить явное Bitrix delivery decision, новые лиды создаваться через `crm.item.add`, письма по безопасно найденным существующим CRM entities прикрепляться к ним без создания дубля, а ответственный определяться из уже реализованного recipient routing.
+Translate the existing read-only/draft Bitrix flow to the restricted production write-back: each classified ROP- event must receive an explicit Bitrix delivery decision, new ledes to be created through `crm.item.add`, emails on securely found existing CRM entities attached to them without creating a duplicate, and the responsible person to be identified from the already implemented recipient routing.
 
-Поле `should_rop_see` не должно разрешать или запрещать отправку в Bitrix.
+`should_rop_see` field must not permit or prohibit Bitrix. shipment
 
 #### Scope
 
-- реализовать write-back только в `beeagent`, без изменений `beeagent-rop`;
-- сохранить существующий `BitrixReadonlyClient` строго read-only;
-- добавить отдельную bounded execution-capable Bitrix boundary с отдельным write credential;
-- добавить config-driven `bitrix.writeback` policy и fail-fast validation;
-- хранить Bitrix `stageId` как изменяемый config, а не hardcoded business value;
-- включить `irrelevant` в read-only reconciliation и delivery planning;
-- использовать existing safe reconciliation result для выбора existing CRM target;
-- разрешать safe Deal target только после exact sender email/phone → Contact/Company → bounded read-only `crm.item.list` relation lookup (`entityTypeId=2`, `contactId`/ `companyId`): один Deal strong/safe, multiple/none/error fail closed; title/subject never authorizes Deal targeting;
-- считать Contact/Company только identity evidence: после успешного exact Lead и related-Deal поиска без executable target `identity_only_no_target` допускает configured create только для `new_lead`/`irrelevant`;
-- использовать existing `rop_recipient_routing.json` для exact responsible resolution;
-- `new_lead` и `irrelevant` без safe existing target создавать как Lead через `crm.item.add`, `entityTypeId=1`;
-- `existing_deal` / `duplicate` и любой safe existing target обрабатывать через attach-existing path без создания нового Lead;
-- unsafe/ambiguous target или responsible переводить в explicit pending/deferred state без silent drop;
-- использовать deterministic cross-run event identity для idempotency;
-- сохранять durable write-back intent до mailbox checkpoint commit;
-- добавить bounded retry/recovery для retryable и uncertain Bitrix failures;
-- сохранять per-run write-back state/results без credentials, raw `.eml` и raw attachments;
-- добавить controlled CLI/runtime path для pending write-back execution;
-- синхронизировать operator-facing draft semantics с execution plan;
-- обновить tests и документацию.
+- to implement write-back only in `beeagent`, unchanged `beeagent-rop`;
+- Retain the existing `BitrixReadonlyClient` strictly read-only;
+- Add a separate bounded execution-capable Bitrix boundary with a separate write credential;
+- Add config-driven `bitrix.writeback` policy and fail-fast validation;
+- Keep Bitrix `stageId` as variable config rather than hardcoded business value;
+- Insert `irrelevant` in read-only reconciliation and delivery planning;
+- Use existing safe reconciliation result to select existing CRM target;
+- allow safe Deal target only after exact sender email/phone → Contact/Company → bounded read-only `crm.item.list` relation lookup (`entityTypeId=2`, `contactId`/ `companyId`): One Deal strong/safe, multiple/none/error fail closed; title/subject never authorizes Deal targeting;
+- Consider Contact/Company only identity evidence: after successful exact Lead and related-Deal searches without executable target `identity_only_no_target` allows configured create only for `new_lead`/`irrelevant`;
+- Use existing `rop_recipient_routing.json` for exact responsible resolution;
+- `new_lead` and `irrelevant` without safe existing target be created as Lead through `crm.item.add`, `entityTypeId=1`;
+- `existing_deal` / `duplicate` and any safe existing target process through attach-existing path without creating a new Lead;
+- unsafe/ambiguous target or responsible translate to explicit pending/deferred state without silent drop;
+- Use deterministic cross-run event identity for idempotency;
+- Save durable write-back intent to mailbox checkpoint commit;
+- Add bounded retry/recovery for retryable and uncertain Bitrix failures;
+- Save per-run write-back state/results without credentials, raw `.eml` and raw attachments;
+- Add controlled CLI/runtime path for pending write-back execution;
+- Simulate operator-facing draft semantics with execution plan;
+- Update tests and documentation.
 
 #### Excluded
 
-- изменения classification, duplicate thresholds или taxonomy в `beeagent-rop`;
-- использование deprecated `crm.lead.add`;
+- classification, duplicate thresholds or taxonomy in `beeagent-rop`;
+- use of deprecated `crm.lead.add`;
 - broad `crm.item.update` / `crm.item.delete`;
-- automatic reassignment существующей CRM entity;
+- automatic reassignment of existing CRM entity;
 - fuzzy responsible or CRM-target matching;
-- использование `should_rop_see` как execution gate;
-- использование `rop.routing.queues.*.bitrix_category` как Bitrix stage ID;
+- using `should_rop_see` as execution gate;
+- using `rop.routing.queues.*.bitrix_category` as Bitrix stage ID;
 - hardcoded customer stage names/IDs;
-- raw `.eml` persistence в BeeAgent artifacts;
-- arbitrary custom-field upload вместо официального email-binding contract;
-- Bitrix write actions из GET/UI routes;
-- operator control panel и config editor;
-- dependency changes без отдельного обоснования.
+- raw `.eml` persistence in BeeAgent artifacts;
+- arbitrary custom-field upload instead of the official email-binding contract;
+- Bitrix write actions of GET/UI routes;
+- operator control panel and config editor;
+- dependency changes without separate justification.
 
 #### Deliverable
 
-BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-back flow: каждый processed event получает `create_lead`, `attach_existing` или explicit deferred outcome; successful new Lead получает configured stage и exact mapped responsible; повторный processing того же email не создаёт второй CRM object или второе email attachment.
+BeeAgent has disabled-by-default, idempotent and auditable Bitrix write-back flow: each processed event receives `create_lead`, `attach_existing` or explicit deferred outcome; successful new Lead receives configured stage and exact mapped responsible; repeated processing the same email does not create the second CRM object or the second email attachment.
 
 #### Acceptance criteria
 
-- `should_rop_see=false` не исключает событие из Bitrix delivery planning;
-- `irrelevant` без existing target создаётся как Lead в configured classification stage;
-- `new_lead` создаётся через `crm.item.add` с `entityTypeId=1`;
-- safe existing lead/deal получает email attachment и не создаёт новый Lead;
-- ambiguous/unsafe existing target никогда не выбирается автоматически;
-- unresolved/ambiguous responsible не заменяется Bitrix caller default;
-- configured stage IDs валидируются до POST;
-- repeated run/poll одного email не создаёт duplicate Lead;
+- `should_rop_see=false` does not exclude an event from Bitrix delivery planning;
+- `irrelevant` without existing target is created as Lead in configured classification stage;
+- `new_lead` is created by `crm.item.add` with `entityTypeId=1`;
+- safe existing lead/deal receives email attachment and does not create a new Lead;
+- ambiguous/unsafe existing target is never automatically selected;
+- unresolved/ambiguous responsible is not replaced by Bitrix caller default;
+- configured stage IDs are validated to POST;
+- repeated run/poll of one email does not create duplicate Lead;
 - uncertain POST outcome reconciles before retry;
-- Bitrix outage не теряет pending work и не требует повторного mailbox ingestion;
-- read-only Bitrix client не получает write methods;
-- credentials/raw email/raw attachments не попадают в logs/artifacts;
-- `beeagent-rop` public contract остаётся неизменным.
+- Bitrix outage does not lose pending work and does not require mailbox ingestion to be repeated;
+- read-only Bitrix client does not receive write methods;
+- credentials/raw email/raw attachments does not enter logs/artifacts;
+- `beeagent-rop` public contract remains unchanged.
 
 #### Checks
 
@@ -8505,7 +8505,7 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 
 #### DoD
 
-- production write-back authority находится только в BeeAgent server-side policy;
+- production write-back authority is only located in BeeAgent server-side policy;
 - all classified events enter the delivery plan without `should_rop_see` filtering;
 - create versus attach behavior is deterministic and explainable;
 - durable pending state survives restart/retry;
@@ -8521,91 +8521,91 @@ BeeAgent имеет disabled-by-default, idempotent и auditable Bitrix write-ba
 
 #### Implemented (v0, Issue #199)
 
-- `bitrix.writeback` config (disabled by default) с fail-fast validation; `email_attach` (email-activity binding на созданные лиды) и `source_id` (Lead SOURCE_ID);
-- отдельный `BitrixWriteClient` с exact mutation allowlist `crm.item.add` / `crm.activity.add` и отдельным env credential; `BitrixReadonlyClient` остаётся strictly read-only, а `crm.activity.list` используется только для idempotency lookup;
-- `irrelevant` включён в read-only reconciliation;
-- safe existing Deal становится reachable only through exact Contact/Company communication evidence and bounded read-only generic Deal relation lookup; title/subject remains unsafe;
+- `bitrix.writeback` config (disabled by default) with fail-fast validation; `email_attach` (email-activity binding for created ledes) and `source_id` (Lead SOURCE_ID);
+- Individual `BitrixWriteClient` with exact mutation allowlist `crm.item.add` / `crm.activity.add` and separate env credential; `BitrixReadonlyClient` remains strictly read-only, and `crm.activity.list` is used only for idempotency lookup;
+- `irrelevant` is included in read-only reconciliation;
+- safe existing Deal becomes reachable only through exact Contact/Company communication evidence and bounded read-only generic Deal relation lookup; title/subject remains unsafe;
 - exact Contact/Company without an executable Lead/Deal remains identity-only evidence; `identity_only_no_target` may enter configured create only for `new_lead`/`irrelevant`;
-- authoritative write-back planner/executor с outcomes `create_lead` / `attach_existing` / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`, idempotent `crm.item.add` (`entityTypeId=1`) с bounded `ORIGINATOR_ID`/`ORIGIN_ID`, recovery uncertain POST по idempotency lookup, bounded retry и fail-closed stage/ responsible/target обработкой;
-- прикрепление письма к созданному или safe existing Lead/Deal через официальный `crm.activity.add` (email activity, `TYPE_ID=4`) при `bitrix.writeback.email_attach: true`; перед каждым activity POST, включая timeout или malformed response, read-only `crm.activity.list` сверяет stable origin identity, а returned activity ID сохраняется в canonical state;
-- durable intent persistуется до mailbox checkpoint advancement; normal poll ordering — durable intent → checkpoint → external execution → original per-run projection refresh, а temporary reconciliation outage остаётся recoverable deferred state для later poll/run без mailbox re-ingestion;
+- authoritative write-back planner/executor with outcomes `create_lead` / `attach_existing` / `deferred`, canonical durable state `storage/interfaces/rop_writeback_state.json`, idempotent `crm.item.add` (`entityTypeId=1`) with bounded `ORIGINATOR_ID`/`ORIGIN_ID`, recovery uncertain POST to idempotency lookup, bounded retry and fail-closed stage/ responsible/target processing;
+- Attaching the email to the created or safe existing Lead/Deal via the official `crm.activity.add` (email activity, `TYPE_ID=4`) at `bitrix.writeback.email_attach: true`; Before each activity POST, including timeout or malformed response, read-only `crm.activity.list` checks stable origin identity and returned activity ID retains canonical state;
+- durable intent persist is going to mailbox checkpoint advancement; normal poll ordering – durable intent → checkpoint → external execution → original per-run projection refresh, while temporary reconciliation outage remains recoverable deferred state for later poll/run without mailbox re-ingestion;
 - CLI `rop writeback plan/execute`;
-- per-run операторская проекция `rop_writeback_summary.json` и read-only action drafts refreshятся из canonical state для каждого original run после execution/recovery; `rop run` не может сообщить успех, если reconciliation или durable plan persistence не создали intent.
+- per-run the operating projection `rop_writeback_summary.json` and read-only action drafts refresh are made of canonical state for each original run after execution/recovery; `rop run` cannot report success if reconciliation or durable plan persistence have not created intent.
 
-Официальный binding contract: Bitrix документирует email activity через [`crm.activity.add`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-add.html) с `TYPE_ID=4`, `OWNER_TYPE_ID`, `OWNER_ID`, `COMMUNICATIONS` и `RESPONSIBLE_ID`; его [`crm.activity.list`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-list.html) поддерживает field filters для remote idempotency reconciliation. Safe existing Lead/Deal получает exactly one activity на исходный stable email identity без `crm.item.add` и без изменения responsible target entity. Existing-target live smoke остаётся обязательным перед production enablement; до него Iteration 37 не считается DONE.
+Official binding contract: Bitrix documents email activity through [`crm.activity.add`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-add.html) with `TYPE_ID=4`, `OWNER_TYPE_ID`, `OWNER_ID`, `COMMUNICATIONS` and `RESPONSIBLE_ID`; It [`crm.activity.list`](https://apidocs.bitrix24.com/api-reference/crm/timeline/activities/activity-base/crm-activity-list.html) supports field filters for remote idempotency reconciliation. Safe existing Lead/Deal receives exactly one activity to source stable email identity without `crm.item.add` and remains mandatory responsible target entity. Existing-target live smoke before production enablement; before it Iteration 37 is not DONE.
 
-### Итерация 38 — Thread-aware Bitrix email write-back hardening v1
+### Iteration 38 — Thread-aware Bitrix email write-back hardening v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Сделать Bitrix write-back thread-aware: продолжение уже известной email-переписки должно прикрепляться к точному Lead/Deal предыдущего письма, а новый независимый запрос существующего клиента не должен автоматически прикрепляться к старой CRM entity только из-за совпадения sender email/phone.
+Make Bitrix write-back thread-aware: a continuation of the already known email- correspondence must be attached to the exact Lead/Deal of the previous email, and the new independent request of the existing client must not automatically be attached to the old CRM entity simply because of the coincidence of sender email/phone.
 
-Одновременно улучшить bounded email body normalization для Bitrix email activity: убрать DOCTYPE/HTML markup и сохранить читаемые абзацы/переводы строк без raw HTML, raw `.eml` или attachment content.
+At the same time, improve bounded email body normalization for Bitrix email activity: delete DOCTYPE/HTML markup and save the reading/translation lines without raw HTML, raw `.eml` or attachment content.
 
 #### Scope
 
-- реализовать изменения только в `beeagent`;
-- сохранить `beeagent-rop` public contract неизменным;
-- использовать existing normalized `Message-ID`, `In-Reply-To` и `References` как exact thread evidence;
-- добавить BeeAgent-owned cross-run thread-to-CRM target resolution поверх existing durable write-back state;
-- не создавать отдельную thread database, если existing `storage/interfaces/rop_writeback_state.json` достаточен;
-- различать customer identity и CRM target authority:
-  - sender email/phone определяет identity/candidate evidence;
-  - identity evidence alone не разрешает `attach_existing`;
-- разрешать automatic existing-target attach только при exact trusted target evidence;
-- использовать confirmed previous BeeAgent-created Lead as authoritative thread root;
-- legacy `attach_existing` records без trusted target provenance не использовать как automatic thread authority;
-- если `In-Reply-To` / `References` однозначно resolve в один existing Lead/Deal — прикреплять письмо туда без создания нового Lead;
-- если thread references указывают на конфликтующие targets — fail closed to ambiguous/deferred;
-- если exact thread target отсутствует:
-  - `new_lead` / `irrelevant` используют normal configured create path;
-  - `existing_deal` / `duplicate` без другого safe target остаются deferred/manual-review;
-- same sender email/phone не должен блокировать создание нового independent `new_lead`;
-- сохранить existing responsible существующей CRM entity;
-- сохранить write-back idempotency, retry/recovery и durable-intent-before-checkpoint semantics;
-- добавить bounded target-resolution provenance в reconciliation/write-back artifacts/state;
-- улучшить body preview normalization:
-  - удалить `<!DOCTYPE ...>`, comments, script/style и HTML tags;
-  - преобразовать safe structural HTML boundaries (`br`, paragraph/block/list boundaries) в читаемые line breaks;
-  - сохранить line breaks plain-text письма;
-  - нормализовать excessive whitespace без схлопывания всего письма в одну строку;
-  - сохранить existing `rop.email_preview.body_chars_max`;
-  - не добавлять новую parsing dependency;
-- обновить tests и documentation.
+- implement only the changes in `beeagent`;
+- Keep `beeagent-rop` public contract unchanged;
+- Use existing normalized `Message-ID`, `In-Reply-To` and `References` as exact thread evidence;
+- Add BeeAgent-owned cross-run thread-to-CRM target resolution above existing durable write-back state;
+- Do not create a separate thread database if existing `storage/interfaces/rop_writeback_state.json` is sufficient;
+- Select customer identity and CRM target authority:
+  - sender email/phone defines identity/candidate evidence;
+  - identity evidence alone does not permit `attach_existing`;
+- Allow automatic existing-target attach only at exact trusted target evidence;
+- Use confirmed previous BeeAgent-created Lead as authoritative thread root;
+- legacy `attach_existing` records without trusted target provenance must not be used as automatic thread authority;
+- If `In-Reply-To` / `References` is clearly resolve in one existing Lead/Deal — attach the email there without creating a new Lead;
+- if thread references indicates conflicting targets - fail closed to ambiguous/deferred;
+- If exact thread target is missing:
+  - `new_lead` / `irrelevant` use normal configured create path;
+  - `existing_deal` / `duplicate` without another safe target remain deferred/manual-review;
+- same sender email/phone must not block the creation of a new independent `new_lead`;
+- Save existing responsible of the existing CRM entity;
+- Save write-back idempotency, retry/recovery and durable-intent-before-checkpoint semantics;
+- Add bounded target-resolution provenance to reconciliation/write-back artifacts/state;
+- improve body preview normalization:
+  - Delete `<!DOCTYPE ...>`, comments, script/style and HTML tags;
+  - convert safe structural HTML boundaries (`br`, paragraph/block/list boundaries) into line breaks;
+  - Retain line breaks plain-text emails;
+  - Normalize excessive whitespace without slamming a single email into one line;
+  - Save existing `rop.email_preview.body_chars_max`;
+  - Do not add a new parsing dependency;
+- Update tests and documentation.
 
 #### Excluded
 
-- изменения classification/taxonomy/duplicate logic в `beeagent-rop`;
-- использование `existing_deal`, AI output, `RE:`, `FWD:` или subject similarity как CRM mutation authority;
+- classification/taxonomy/duplicate logic changes to `beeagent-rop`;
+- `existing_deal`, AI output, `RE:`, `FWD:` or subject similarity as CRM mutation authority;
 - fuzzy automatic thread-to-CRM matching;
-- automatic attach к historical Lead/Deal только по sender email/phone;
+- automatic attach to historical Lead/Deal only on sender email/phone;
 - arbitrary historical Bitrix email-thread backfill;
-- автоматическое восстановление thread binding для писем, которые BeeAgent никогда ранее не связывал с CRM target;
+- Automatic restoration of thread binding for letters that BeeAgent has never previously linked to CRM target;
 - manual CRM target mapping UI;
 - CRM reassignment;
 - `crm.item.update` / `crm.item.delete`;
-- расширение Bitrix write-method allowlist;
+- Extension of Bitrix write-method allowlist;
 - raw `.eml` persistence;
 - raw MIME/HTML rendering;
 - attachment content rendering;
 - full browser-quality HTML rendering;
-- новая HTML/parser dependency;
-- изменения BeeUI;
+- New HTML/parser dependency;
+- Changes to BeeUI;
 - version bump.
 
 #### Deliverable
 
-BeeAgent различает identity клиента и identity переписки. Для email thread, чей ancestor уже имеет trusted BeeAgent CRM binding, следующий exact reply автоматически прикрепляется к тому же Lead/Deal. Новый independent request от того же sender может создать новый Lead.
+BeeAgent distinguishes between identity client and identity correspondence. For email thread, whose ancestor already has trusted BeeAgent CRM binding, the next exact reply is automatically attached to the same Lead/Deal. New independent request of the same sender could create a new Lead.
 
-Email activity description в Bitrix содержит bounded readable plain text без DOCTYPE/HTML tags и без потери нормальных абзацев/line breaks.
+Email activity description in Bitrix contains bounded readable plain text without DOCTYPE/HTML tags and without loss of normal paragraphs/line breaks.
 
 #### Acceptance criteria
 
-- existing Lead с тем же sender email сам по себе не является safe CRM target;
-- existing Lead/Deal с exact phone/email identity alone не получает `safe_to_use_as_target=true`;
-- new independent `new_lead` от sender, уже присутствующего в старом Lead, может создать новый Lead;
+- existing Lead with the same sender email is not safe CRM target per se;
+- existing Lead/Deal with exact phone/email identity alone does not receive `safe_to_use_as_target=true`;
+- new independent `new_lead` of sender, already present in the old Lead, could create a new Lead;
 - first email `A` may create Lead `L1`;
 - later email `B` with exact `In-Reply-To`/`References` to `A` attaches to `L1`;
 - reply attachment does not call `crm.item.add`;
@@ -8671,48 +8671,48 @@ Email activity description в Bitrix содержит bounded readable plain tex
 
 #### Implemented (v1, Issue #203)
 
-- customer identity (sender email/phone, Contact/Company and related historical CRM relation) больше не является automatic execution target: reconciliation never emits `safe_to_use_as_target=true` для identity-only Lead/Deal matches; такие matches остаются strong identity/candidate evidence (`matched_*` c `safe_to_use_as_target=false` и `needs_manual_review=true`);
-- cross-run exact thread-to-CRM resolution поверх existing `storage/interfaces/rop_writeback_state.json` без отдельной thread database: exact `In-Reply-To` (preferred) и bounded `References` ancestry обязаны согласоваться на одном trusted target, иначе `ambiguous_thread_target` deferred с zero mutation;
-- bounded target provenance в write-back state: confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) является authoritative thread root; thread-resolved attach (`target_provenance=thread_resolved`) распространяет target по цепочке; legacy records без trusted provenance не являются thread authority (fail closed);
-- matching scope — same `client_id`, не обязательно same `source_id`;
-- exact reply с thread references прикрепляется к тому же Lead/Deal без нового `crm.item.add`; цепочка `A → B → C` сохраняет target; два независимых треда одного sender могут резолвиться в разные Leads; independent `new_lead` от известного sender может создать новый Lead;
-- `existing_deal`/`duplicate` без safe exact target остаются deferred/manual-review; run-local `thr_*` никогда не используется как durable CRM identity; classifier/AI/ subject/`RE:`/`FWD:` markers alone не авторизуют attach; existing target responsible сохраняется (без reassignment);
-- same-run reply к planned create в том же batch получает recoverable `pending_thread_root` deferred и резолвится после подтверждения root;
-- bounded body preview normalization: удаление `<!DOCTYPE ...>`/comments/script/style/ HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) становятся читаемыми line breaks, plain-text line breaks сохраняются, excessive whitespace bounded, прежний `rop.email_preview.body_chars_max` сохранён, без новой parsing dependency;
-- bounded thread headers (`in_reply_to`/`references`) и target-resolution provenance добавлены в classified events и write-back state/summaries;
-- optional `bitrix.writeback.user_id_fallback` назначает ответственного только при `responsible.status=not_found`; matched, ambiguous, degraded, unresolved и not-attempted остаются deferred; optional `bitrix.writeback.email_completed` (boolean, default `true`) задаёт, завершена ли создаваемая email-активность (`false` = письмо незавершённое/заметнее в таймлайне);
-- `beeagent-rop` public contract не менялся; dependencies/`uv.lock` не менялись.
+- customer identity (sender email/phone, Contact/Company and related historical CRM relation) is no longer automatic execution target: reconciliation never emits `safe_to_use_as_target=true` for identity-only Lead/Deal matches; Such matches remains strong identity/candidate evidence (`matched_*` c `safe_to_use_as_target=false` and `needs_manual_review=true`);
+- cross-run exact thread-to-CRM resolution above existing `storage/interfaces/rop_writeback_state.json` without separate thread database: exact `In-Reply-To` (preferred) and bounded `References` ancestry are required to agree on one trusted target, otherwise `ambiguous_thread_target` deferred with zero mutation;
+- bounded target provenance in write-back state: confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is authoritative thread root; thread-resolved attach (`target_provenance=thread_resolved`) distributes target along the chain; legacy records without trusted provenance are not thread authority (fail closed)
+- matching scope – same `client_id`, not necessarily same `source_id`;
+- exact reply with thread references is attached to the same Lead/Deal without a new `crm.item.add`; `A → B → C` stores target; Two independents of one sender may regress into different Leadss; independent `new_lead` from the famous sender could create a new Lead;
+- `existing_deal`/`duplicate` without safe exact target remain deferred/manual-review; run-local `thr_*` is never used as durable CRM identity; classifier/AI/ subject/`RE:`/`FWD:` markers alone does not authorize attach; existing target responsible retained (without reassignment);
+- same-run reply to planned create at the same batch receives recoverable `pending_thread_root` deferred and re-enlists upon confirmation of root;
+- bounded body preview normalization: removal of `<!DOCTYPE ...>`/comments/script/style/ HTML tags, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) become readable line breaks, plain-text line breaks are preserved, excessive whitespace bounded, the existing `rop.email_preview.body_chars_max` is preserved, without a new parsing dependency;
+- bounded thread headers (`in_reply_to`/`references`) and target-resolution provenance are added to classified events and write-back state/summaries;
+- optional `bitrix.writeback.user_id_fallback` appoints the responsible person only at `responsible.status=not_found`; matched, ambiguous, degraded, unresolved and not-attempted remain deferred; optional `bitrix.writeback.email_completed` (boolean, default `true`) asks if the email- activity created is complete (`false` = email incomplete / visible on timeline);
+- `beeagent-rop` public contract did not change; dependencies/`uv.lock` has not changed.
 
-Live controlled Bitrix test-portal smoke (A создаёт L1 → reply B прикрепляется к L1 → independent C создаёт L2 → reply D прикрепляется к L2) остаётся обязательным перед production enablement; до него Iteration 38 не считается полностью DONE.
+Live controlled Bitrix test-portal smoke (A creates L1 → reply B is attached to L1 → independent C creates L2 → reply D is attached to L2) remains mandatory prior to production enablement; before it Iteration 38 is not considered in its entirety DONE.
 
-### Итерация 39 — ROP conversation identity and AI decision hardening v2
+### Iteration 39 — ROP conversation identity and AI decision hardening v2
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Исправить системные причины reviewed classification mismatches и broken Bitrix email threads: BeeAgent должен использовать AI как второй semantic verification echelon для business-impacting решений, перестать рассчитывать на operator `manual_review` как normal classification path и строить cross-run/cross-mailbox conversation evidence без ослабления trusted CRM target boundary It38.
+Correct the systemic causes of reviewed classification mismatches and broken Bitrix email threads: BeeAgent must use AI as the second semantic verification echelon for business-impacting decisions, stop counting on operator `manual_review` as normal classification path and build cross-run/cross-mailbox conversation evidence without weakening trusted CRM target boundary It38.
 
 #### Scope
 
 - consume hardened `beeagent-rop` reviewed classification behavior;
-- расширить AI adjudicator eligibility на business-impacting `new_lead` / `existing_deal`;
-- сохранить skip для confirmed duplicate и явно безопасных strong-noise cases;
-- передавать AI bounded body, attachment, thread and relevant Bitrix context;
-- сделать `ai_reason_code` обязательным для newly generated valid AI decisions;
-- сохранить compatibility rendering historical AI artifacts;
-- заменить single global confidence-only merge на bounded class/evidence-aware merge;
-- не использовать semantic `manual_review` как normal terminal operator queue;
-- provider/validation failure сохраняет deterministic semantic result с diagnostics;
-- сохранить fail-closed `deferred` для unsafe CRM target/execution;
-- ввести BeeAgent-owned conversation relation отдельно от domain `case_type`;
-- сохранить exact RFC It38 `Message-ID` / `In-Reply-To` / `References` authority;
-- поддерживать exact cross-source conversation binding внутри одного `client_id`;
-- выполнить controlled Bitrix outbound-correlation evidence check;
-- использовать Bitrix outbound bridge только при наличии exact stable correlation evidence;
-- weak sender/subject/time matching использовать только как candidate evidence;
-- расширить Event Detail полноценной cross-run conversation timeline;
-- явно показывать deterministic decision, AI proposal и final decision.
+- expand AI adjudicator eligibility to business-impacting `new_lead` / `existing_deal`;
+- Save skip for confirmed duplicate and clearly secure strong-noise cases;
+- pass AI bounded body, attachment, thread and relevant Bitrix context;
+- Make `ai_reason_code` mandatory for newly generated valid AI decisions;
+- Save compatibility rendering historical AI artifacts;
+- Replace single global confidence-only merge with bounded class/evidence-aware merge;
+- do not use semantic `manual_review` as normal terminal operator queue;
+- provider/validation failure retains deterministic semantic result with diagnostics;
+- Save fail-closed `deferred` for unsafe CRM target/execution;
+- Enter BeeAgent-owned conversation relation separately from domain `case_type`;
+- Save exact RFC It38 `Message-ID` / `In-Reply-To` / `References` authority;
+- Support exact cross-source conversation binding within one `client_id`;
+- Implement controlled Bitrix outbound-correlation evidence check;
+- use Bitrix outbound bridge only if exact stable correlation evidence is available;
+- weak sender/subject/time matching to be used as candidate evidence only;
+- expand Event Detail to full cross-run conversation timeline;
+- Clearly display deterministic decision, AI proposal and final decision.
 
 #### Excluded
 
@@ -8729,7 +8729,7 @@ Live controlled Bitrix test-portal smoke (A создаёт L1 → reply B при
 
 #### Deliverable
 
-ROP runtime получает двухуровневую semantic classification pipeline и separate conversation layer. Reviewed classifications проходят regression gate, Bitrix/RFC continuation сохраняет trusted CRM binding где есть exact evidence, а Event Detail показывает полноценную историю переписки.
+ROP runtime receives a two-tiered semantic classification pipeline and separate conversation layer. Reviewed classifications passes regression gate, Bitrix/RFC continuation saves trusted CRM binding where there is exact evidence, and Event Detail shows a complete correspondence history.
 
 #### Acceptance criteria
 
@@ -8790,51 +8790,51 @@ ROP runtime получает двухуровневую semantic classification 
 
 #### Implemented (v2, Issue #206)
 
-- deterministic classifier остаётся первым semantic echelon; AI adjudicator расширен на business-impacting deterministic `new_lead` / `existing_deal` (высокая уверенность больше не exempt); confirmed duplicate (`case_type=duplicate`) защищён от AI reclassification; AI = реальный второй semantic echelon: eligibility minimal — possible duplicate → eligible, confirmed duplicate (`case_type=duplicate`) → skip, все остальные semantic events AI-eligible; transport labels (SPAM/FWD/RE, включая `spam_label_present`) — weak transport evidence и никогда не gate semantic verifier (mail-server spam label не позволяет ошибочному deterministic irrelevant обойти AI); marker signals остаются bounded evidence в prompt/audit, но не являются вторым semantic classifier с veto authority после AI (valid high-confidence AI semantic decision становится final, кроме структурно невозможных комбинаций); body контекст в prompt ограничен config (`rop.email_preview.body_chars_max`) внутри absolute `input_chars_max`;
-- `ai_reason_code` обязателен для нового valid AI decision: missing/unknown reason code — validation diagnostic с сохранением deterministic result (не `legacy`); historical artifacts без `ai_reason_code` остаются backward-compatible readable; class/evidence-aware merge policy вместо confidence-only: valid + high confidence + no conflict → AI applied; conflict / unresolved (`manual_review` queue) / invalid / low confidence / provider failure → deterministic result preserved с explicit diagnostics; `manual_review` не является normal terminal semantic queue; provider timeout/error/ invalid output сохраняет deterministic classification + diagnostics;
-- unsafe/ambiguous CRM target остаётся `deferred` и fail-closed; weak sender/subject/time evidence никогда не авторизует `attach_existing`;
-- BeeAgent-owned conversation relation отдельно от domain `case_type`: `rop_conversation.json` (per-run conversations, roles root/reply/continuation, exact RFC authority, same `client_id` across sources); exact continuation через `source_id` работает в пределах одного `client_id`; два независимых треда одного sender остаются раздельными; semantic `case_type` не выводится из conversation/CRM membership;
-- controlled read-only Bitrix outbound-correlation evidence check (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID из outbound activity) + последующий inbound RFC ancestry → exact conversation bridge; bridge авторизует `attach_existing` (`target_provenance=bitrix_outbound_exact`) только когда canonical CRM entity identity (entity type/type-id/entity-id) совпадает с canonical trusted CRM target из write-back state (provenances `beeagent_created`/`thread_resolved`); outbound activity `RESPONSIBLE_ID` — diagnostic evidence, не часть trusted identity и не может заменить trusted responsible; без exact identifier, без совпадения RFC ancestry или без trusted-target совпадения — candidate-only/deferred (`outbound_candidate_untrusted`) без mutation authority; проверенный `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop; реальный Bitrix Message-ID читается из `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name) и legacy locations (`SETTINGS.MESSAGE_ID`, `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`); outbound evidence collection bounded/paginated: `crm.activity.list` paginates через cursor `next` в пределах `bitrix.pages_max`, same Message-ID conflict обнаруживается по всей bounded result set (включая cross-page), malformed top-level response / malformed cursor / malformed result → fail-closed (`BitrixMalformedResponse`, без bridge, без mutation), `call()` требует object top-level JSON (list/null/string → `BitrixMalformedResponse`), read-only method allowlist не содержит mutation methods;
-- Event Detail: `deterministic` section (deterministic case_type/queue/action/confidence/ reason), `conversation` section (cross-run/cross-source timeline всех известных сообщений conversation с write-back CRM outcome), отдельные AI proposal (`ai_adjudicator`) и final semantic result (`final_decision`); deterministic/AI/final/conversation визуально различимы;
-- It38 exact `Message-ID`/`In-Reply-To`/bounded `References` authority и trusted-target/idempotency гарантии сохранены.
+- deterministic classifier remains the first semantic echelon; AI adjudicator extended to business-impacting deterministic `new_lead` / `existing_deal` (high confidence no longer exempt); confirmed duplicate (`case_type=duplicate`) protected from AI reclassification; AI = the actual second semantic echelon: eligibility minimal — possible duplicate → eligible, confirmed duplicate (`case_type=duplicate`) → skip, all other semantic events AI-eligible; transport labels (SPAM/FWD/RE, including `spam_label_present`) - weak transport evidence and never gate semantic verifier (mail-server spam label does not allow the wrong deterministic irrelevant to bypass AI); marker signals remains bounded evidence in prompt/audit but is not the second semantic classifier with veto authority after AI (valid high-confidence AI semantic decision becomes final except for structural impossible combinations); body the context in prompt is limited to config (`rop.email_preview.body_chars_max`) inside absolute `input_chars_max`;
+- `ai_reason_code` is mandatory for the new valid AI decision: missing/unknown reason code - validation diagnostic with deterministic result (not `legacy`); historical artifacts without `ai_reason_code` remain backward-compatible readable; class/evidence-aware merge policy instead of confidence-only: valid + high confidence + no conflict → AI applied; conflict / unresolved (`manual_review` queue) / invalid / low confidence / provider failure → deterministic result preserved with explicit diagnostics; `manual_review` is not normal terminal semantic queue; provider timeout/error/ invalid output retains deterministic classification + diagnostics;
+- unsafe/ambiguous CRM target remains `deferred` and fail-closed; weak sender/subject/time evidence never authorizes `attach_existing`;
+- BeeAgent-owned conversation relation separate from domain `case_type`: `rop_conversation.json` (per-run conversations, roles root/reply/continuation, exact RFC authority, same `client_id` across sources); exact continuation through `source_id` operates within one `client_id`; The two independents of one sender remain separate; semantic `case_type` is not removed from conversation/CRM membership;
+- controlled read-only Bitrix outbound-correlation evidence check (`bitrix_outbound_correlation.json`): exact stable outbound identifier (email Message-ID from outbound activity) + subsequent inbound RFC ancestry → exact conversation bridge; bridge authorises `attach_existing` (`target_provenance=bitrix_outbound_exact`) only when canonical CRM entity identity (entity type/type-id/entity-id) coincides with canonical trusted CRM target of write-back state (provenances `beeagent_created`/`thread_resolved`); outbound activity `RESPONSIBLE_ID` – diagnostic evidence, not part of trusted identity and cannot replace trusted responsible; without exact identifier, without RFC ancestry coincidence or trusted-target coincidence candidate-only/deferred (`outbound_candidate_untrusted`) without mutation authority; The tested `bitrix_outbound_exact` becomes trusted thread root for the following RFC hop; The actual Bitrix Message-ID is read from `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name) and legacy locations (`SETTINGS.MESSAGE_ID`, `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`); outbound evidence collection bounded/paginated: `crm.activity.list` paginates via cursor `next` within `bitrix.pages_max`, same Message-ID conflict is found throughout bounded result set (including cross-page), malformed top-level response / malformed cursor / malformed result → fail-closed (`BitrixMalformedResponse`, without bridge, without mutation), `call()` requires object top-level JSON (list/null/string → `BitrixMalformedResponse`), read-only method allowlist does not contain mutation methods;
+- Event Detail: `deterministic` section (deterministic case_type/queue/action/confidence/ reason), `conversation` section (cross-run/cross-source timeline of all known conversation messages with write-back CRM outcome), selected AI proposal (`ai_adjudicator`) and final semantic result (`final_decision`); deterministic/AI/final/conversation is visible;
+- It38 exact `Message-ID`/`In-Reply-To`/bounded `References` authority and trusted-target/idempotency guarantees are maintained.
 
 #### Verification (Issue #206)
 
-- reviewed classification integration gate: 8/8 reviewed scenarios достигают ожидаемого final semantic type (`run-9cd9d1ae99e9`, `run-844530c057e6`, `run-ce974a9b8582` → `irrelevant`; `run-41d2bcf42389`, `run-d96b18d8fc70` → `new_lead`; `run-a7c20bc709ba`, `run-0036f2c6d9ee`, `run-8bf12d19f51e` → `irrelevant`);
+- reviewed classification integration gate: 8/8 reviewed scenarios reaches the expected final semantic type (`run-9cd9d1ae99e9`, `run-844530c057e6`, `run-ce974a9b8582` → `irrelevant`; `run-41d2bcf42389`, `run-d96b18d8fc70` → `new_lead`; `run-a7c20bc709ba`, `run-0036f2c6d9ee`, `run-8bf12d19f51e` → `irrelevant`);
 - targeted AI eligibility, validation/reason-code, class/evidence-aware merge, provider failure, strong-noise skip, confirmed-duplicate skip, possible-duplicate unresolved base-preserved, low-confidence conflict, RFC A→B→C, cross-source exact reply, two independent threads same sender, subject-similarity never-authorizes, conflicting/malformed RFC, outbound exact bridge, candidate-only fail-closed, untrusted outbound candidate → deferred/zero mutation, trusted-entity outbound bridge → attach (activity responsible mismatch diagnostic only), numeric-string Bitrix IDs/DIRECTION, DIRECTION inbound/missing/malformed rejected, duplicate outbound Message-ID conflict → no bridge, stale bridge without current RFC ancestry → no bridge, proven bridge next-hop C continuation, conversation timeline, Event Detail deterministic/AI/final/conversation distinction;
-- correction run (final review blockers): trusted-canonical-entity authority для `bitrix_outbound_exact` (authorize `attach_existing` при совпадении canonical CRM entity identity entity type/type-id/entity-id с trusted CRM target из write-back state; outbound activity responsible — diagnostic only и не может заменить trusted responsible; иначе `outbound_candidate_untrusted` deferred/zero mutation); строго fail-closed outbound proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence не является proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated против текущего RFC ancestry; proven `bitrix_outbound_exact` становится trusted thread root для следующего RFC hop; bounded AI context только из canonical attachment extraction evidence (nested `attachments[].text_preview` не является authority); `input_chars_max` — абсолютная граница (иначе degraded `prompt_budget_exceeded`, без provider call); `manual_review` удалён из схемы новых AI-решений и нормализуется в final routing как `unresolved`/`no_action`/attention (`semantic_unresolved_no_operator_queue`); exact RFC trusted-target ambiguity использует полный trusted identity (entity_type/type-id/entity-id/responsible); confirmed: format-only churn в diff against main отсутствует (нет except-syntax churn и reflows; все hunks Issue-required);
-- final-review echelon hardening (Pass 6): AI = реальный второй semantic echelon — eligibility упрощён (possible-duplicate → eligible; confirmed duplicate → skip; все остальные semantic events eligible), marker-veto удалён из `_ai_output_conflicts_with_marker_signals` (только структурно невозможные комбинации veto), body context budget из `rop.email_preview.body_chars_max` внутри absolute `input_chars_max`; Bitrix outbound correlation hardened: top-level non-object JSON → `BitrixMalformedResponse`, bounded pagination (`bitrix.pages_max`) с cross-page same-Message-ID ambiguity, malformed cursor/result → fail-closed без bridge;
-- final-review AI-echelon correction (Pass 7): удалён structured spam-label gate — `_is_strong_explicit_irrelevant` полностью убран; `_is_event_eligible_for_adjudicator` минимален (possible duplicate → eligible; иначе `case_type != "duplicate"`); транспортные SPAM/FWD/RE labels (включая `spam_label_present`) — weak transport evidence и никогда не bypass AI semantic verifier;
-- new regression coverage (Pass 6+7): late-RFQ (за пределами первых 500 символов) deterministic high-confidence ignore остаётся AI-eligible и valid high-confidence AI `new_lead` может стать final, в т.ч. при `spam_label_present=true`; valid high-confidence AI semantic correction не vetoed generic marker lists; configured `body_chars_max` honored (content >1600 символов достигает AI при достаточном `input_chars_max`); reviewed buyer-RFQ gate и spam-labelled RFQ gate упражняют второй semantic echelon (valid AI decision → `final_decision_source=ai_adjudicator`); confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact Message-ID на page 2, cross-page conflict → no bridge, malformed `next`/result → fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
-- CRM-identity/write-back boundary correction (Pass 8): non-authoritative Bitrix identity/candidate evidence (`safe_to_use_as_target=false`: `weak_match`, `ambiguous`, `duplicate_candidate`, `matched_*`) не может veto независимый final `new_lead`; `_decide_delivery` использует normal configured create path для CREATE_CASE_TYPES (`new_lead`, `irrelevant`) при candidate-only CRM evidence без trusted exact RFC target; `bitrix_match_status=duplicate_candidate` остаётся CRM reconciliation evidence, а не semantic `case_type=duplicate`; exact trusted RFC/outbound target по-прежнему авторизует `attach_existing` (первым приоритетом), conflicting exact RFC targets / unresolved responsible / connector errors / malformed prerequisites — fail-closed; semantic `existing_deal` / `duplicate` без trusted target — non-creating/deferred; replay/origin idempotency и `pending_thread_root` сохранены; action-draft projection (`_map_action_v0`) для final `new_lead` + candidate evidence показывает independent `create_lead` (reason `new_lead_crm_duplicate_candidate`/`new_lead_crm_weak_match`/`new_lead_crm_ambiguous`), не «resolve_duplicate_candidate»; Event Detail/read-model раздельно показывают semantic final, conversation, Bitrix evidence и delivery outcome;
-- new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/`duplicate_candidate` → `create_lead` (без attach, без выбора candidate, c реальным `crm.item.add` при execute); new_lead + existing Bitrix `matched_lead` ()`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal + `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` + `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead - candidate evidence → `create_lead`; Event Detail final `new_lead` и Bitrix `duplicate_candidate` — separate fields;
-- live Bitrix outbound-correlation regression fix: реальный outbound Message-ID из `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID` сохранены); outbound bridge authorization — по canonical CRM entity identity (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` — diagnostic only (сотрудник, отправивший письмо, может отличаться от responsible самого Lead) и не может заменить trusted responsible; exact bridge → `attach_existing` с `target_provenance=bitrix_outbound_exact` и canonical trusted responsible; trusted responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong direction / no RFC ancestry — fail-closed;
-- `uv run pytest -q` → 1674 passed (exit 0); runtime smoke через ROP batch entrypoint (json_batch) создаёт `rop_conversation.json` + `rop_final_decisions.json`; logs bounded и secret-safe (нет `OPENAI_API_KEY`/raw body в log); controlled live Bitrix outbound-correlation smoke НЕ выполнялся (нет сконфигурированного тестового портала/вебхука в текущем окружении); эквивалентные positive/negative сценарии покрыты mock-level integration тестами (pagination/bridge/authority, deferred/zero mutation);
-- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены; `beeagent-rop` не изменялся (public contract consumption only).
+- correction run (final review blockers): trusted-canonical-entity authority for `bitrix_outbound_exact` (authorize `attach_existing` when canonical CRM entity identity entity type/type-id/entity-id matches trusted CRM target from write-back state; outbound activity responsible - diagnostic only and cannot replace trusted responsible; other than `outbound_candidate_untrusted` deferred/zero mutation); strictly fail-closed outbound proof (`DIRECTION=2` required, numeric strings accepted, Message-ID presence is not proof of direction, same-Message-ID conflict → no bridge); restored bridge re-validated v. current RFC ancestry; proven `bitrix_outbound_exact` becomes trusted thread root for the following RFC hop; bounded AI context from canonical attachment extraction evidence only (nested `attachments[].text_preview` is not authority); `input_chars_max` is the absolute boundary (other than degraded `prompt_budget_exceeded` without provider call); `manual_review` is removed from the schema for new AI- decisions and normalized in final routing as `unresolved`/`no_action`/attention (`semantic_unresolved_no_operator_queue`); exact RFC trusted-target ambiguity uses the complete trusted identity (entity_type/type-id/entity-id/responsible); confirmed: format-only churn is missing in diff against main (no except-syntax churn and reflows; All hunks Issue-required);
+- final-review echelon hardening (Pass 6): AI = the real second semantic echelon - eligibility is simplified (possible-duplicate → eligible; confirmed duplicate → skip; All other semantic events eligible), marker-veto is removed from `_ai_output_conflicts_with_marker_signals` (only structurally impossible combinations of veto), body context budget from `rop.email_preview.body_chars_max` inside absolute `input_chars_max`; Bitrix outbound correlation hardened: top-level non-object JSON → `BitrixMalformedResponse`, bounded pagination (`bitrix.pages_max`) with cross-page same-Message-ID ambiguity, malformed cursor/result → fail-closed without bridge;
+- final-review AI-echelon correction (Pass 7): structured spam-label gate - `_is_strong_explicit_irrelevant` removed completely; `_is_event_eligible_for_adjudicator` is minimal (possible duplicate → eligible; Other than `case_type != "duplicate"`); SPAM/FWD/RE labels transport (including `spam_label_present`) is weak transport evidence and never bypass AI semantic verifier;
+- new regression coverage (Pass 6+7): late-RFQ (beyond the first 500 characters) deterministic high-confidence ignore remains AI-eligible and valid high-confidence AI `new_lead` may become final, including at `spam_label_present=true`; valid high-confidence AI semantic correction is not vetoed generic marker lists; configured `body_chars_max` honored (content >1600 characters reach AI with sufficient `input_chars_max`); reviewed buyer-RFQ gate and spam-labelled RFQ gate exercise the second semantic echelon (valid AI decision → `final_decision_source=ai_adjudicator`); confirmed duplicate skip (eligibility + provider-skip); Bitrix pagination: exact Message-ID on page 2, cross-page conflict → no bridge, malformed `next`/result → fail-closed, `pages_max` respected, top-level list/null/string → `BitrixMalformedResponse`;
+- CRM-identity/write-back boundary correction (Pass 8): non-authoritative Bitrix identity/candidate evidence (`safe_to_use_as_target=false`: `weak_match`, `ambiguous`, `duplicate_candidate`, `matched_*`) cannot veto independent final `new_lead`; `_decide_delivery` uses normal configured create path for CREATE_CASE_TYPES (`new_lead`, `irrelevant`) for candidate-only CRM evidence without trusted exact RFC target; `bitrix_match_status=duplicate_candidate` remains CRM reconciliation evidence, not semantic `case_type=duplicate`; exact trusted RFC/outbound target continues to authorise `attach_existing` (first priority), conflicting exact RFC targets / unresolved responsible / connector errors / malformed prerequisites - fail-closed; semantic `existing_deal` / `duplicate` without trusted target - non-creating/deferred; replay/origin idempotency and `pending_thread_root` retained; action-draft projection (`_map_action_v0`) for final `new_lead` + candidate evidence shows independent `create_lead` (reason `new_lead_crm_duplicate_candidate`/`new_lead_crm_weak_match`/`new_lead_crm_ambiguous`) not "resolve_duplicate_candidate"; Event Detail/read-model shows semantic final, conversation, Bitrix evidence and delivery outcome separately;
+- new regression coverage (Pass 8): new_lead + `ambiguous`/`weak_match`/`duplicate_candidate` → `create_lead` (without attach, without choosing candidate, c the real `crm.item.add` at execute); new_lead + existing Bitrix `matched_lead` ()`safe_to_use_as_target=false`) → `create_lead` (never attach); existing_deal + `duplicate_candidate` → deferred `duplicate_target`; semantic `duplicate` + `duplicate_candidate` → deferred (never create); action-draft queue/reason for new_lead - candidate evidence → `create_lead`; Event Detail final `new_lead` and Bitrix `duplicate_candidate` – separate fields;
+- live Bitrix outbound-correlation regression fix: is the real outbound Message-ID of `SETTINGS.MESSAGE_HEADERS.<Message-Id>` (case-insensitive header name; legacy `SETTINGS.MESSAGE_ID` / `SETTINGS.EMAIL_MESSAGE_ID` / top-level `MESSAGE_ID` retained); outbound bridge authorization — canonical CRM entity identity (entity type/type-id/entity-id); outbound activity `RESPONSIBLE_ID` - diagnostic only (the staff member who sent the email may differ from responsible itself Lead) and cannot replace trusted responsible; exact bridge → `attach_existing` with `target_provenance=bitrix_outbound_exact` and canonical trusted responsible; trusted responsible ambiguity / OWNER mismatch / cross-client / untrusted OWNER / wrong direction / no RFC ancestry — fail-closed;
+- `uv run pytest -q` → 1674 passed (exit 0); runtime smoke through ROP batch entrypoint (json_batch) creates `rop_conversation.json` + `rop_final_decisions.json`; logs bounded and secret-safe (no `OPENAI_API_KEY`/raw body in log); controlled live Bitrix outbound-correlation smoke Not implemented (no reconfigured test portal/webhuk in the current environment); positive/negative equivalent scenarios are covered by mock-level integration tests (pagination/bridge/authority, deferred/zero mutation);
+- `pyproject.toml.version` is unchanged; dependencies/`uv.lock` has not been changed; `beeagent-rop` did not change (public contract consumption only).
 
-### Итерация 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
+### Iteration 40 — Secure ROP attachment lifecycle and AI-assisted document understanding v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить production-safe end-to-end lifecycle для email attachments в ROP: BeeAgent должен сохранять принятые MIME-вложения как opaque untrusted files до mailbox checkpoint, давать авторизованному оператору безопасно скачать исходный файл из Event Detail, передавать физические вложения вместе с соответствующим email activity в Bitrix и, при включённой config policy, получать bounded semantic context из поддерживаемых документов через configured AI provider для улучшения существующей ROP classification.
+Add production-safe end-to-end lifecycle for email attachments in ROP: BeeAgent. It must preserve accepted MIME- attachments as opaque untrusted files until mailbox checkpoint, allow an authorized operator to download the original file safely from Event Detail, deliver physical attachments with the corresponding email activity to Bitrix and, when config policy is enabled, obtain bounded semantic context from supported documents through configured AI provider to improve the existing ROP classification.
 
-Attachment retention/delivery и attachment semantic analysis должны быть независимы: отключение AI/content analysis не должно удалять вложение, скрывать download или запрещать Bitrix delivery.
+Attachment retention/delivery and attachment semantic analysis must be independent of: AI/content analysis deactivation must not remove an attachment, hide download or prohibit Bitrix delivery.
 
-AI document understanding не является malware scanner, sandbox или execution authority.
+AI document understanding is not malware scanner, sandbox or execution authority.
 
 #### Scope
 
-**Включено:**
+**Includes:**
 
-- реализовать изменения в `beeagent`;
-- сохранить `beeagent-rop` public attachment/classification contract без изменений;
-- сохранить BeeUI generic presentation contract без product-specific changes;
-- расширить mailbox ingestion так, чтобы accepted MIME attachment bytes не терялись после normalization;
-- хранить raw attachment bytes только в dedicated bounded opaque attachment store, отдельно от normal JSON artifacts;
-- использовать generated attachment IDs / content hashes вместо untrusted filenames для filesystem paths;
-- сохранять bounded attachment manifest metadata:
+- Implement changes to `beeagent`;
+- Save `beeagent-rop` public attachment/classification contract unchanged;
+- Save BeeUI generic presentation contract without product-specific changes;
+- Broaden mailbox ingestion so that accepted MIME attachment bytes does not lose after normalization;
+- Keep raw attachment bytes only in dedicated bounded opaque attachment store, separate from normal JSON artifacts;
+- Use generated attachment IDs / content hashes instead of untrusted filenames for filesystem paths;
+- Save bounded attachment manifest metadata:
   - attachment_id;
   - event identity;
   - original bounded filename;
@@ -8845,23 +8845,23 @@ AI document understanding не является malware scanner, sandbox или 
   - analysis status;
   - preview availability;
   - refusal/degradation reason;
-- не помещать raw attachment bytes в `normalized_events.json`, classification artifacts, write-back summaries, logs, HTML или JSON APIs;
-- сохранять accepted attachment blobs до mailbox checkpoint advancement;
-- при storage failure для attachment, который policy требует сохранить, не продвигать checkpoint;
-- добавить config-driven storage bounds:
+- No raw attachment bytes in `normalized_events.json`, classification artifacts, write-back summaries, logs, HTML or JSON APIs;
+- Save accepted attachment blobs to mailbox checkpoint advancement;
+- at storage failure for attachment, which policy requires to be retained, not promoted checkpoint;
+- Add config-driven storage bounds:
   - per-file size;
   - aggregate per-message attachment size;
   - attachment count;
-- сохранить `rop.attachments.enabled` как operator-visible switch semantic attachment analysis:
-  - `true` — выполнять bounded analysis для поддерживаемых файлов;
+- Save `rop.attachments.enabled` as operator-visible switch semantic attachment analysis:
+  - `true` - perform bounded analysis for supported files;
   - `false` — zero attachment content analysis / zero file egress to AI provider;
-- при `rop.attachments.enabled: false` продолжать:
-  - сохранять accepted attachments;
-  - показывать metadata;
-  - разрешать authenticated download;
-  - передавать файлы в Bitrix when write-back/file delivery policy permits;
-- сохранить существующие `rop.attachments.chars_max`, `size_max` и `types` как bounded analysis policy или мигрировать их с explicit backward-compatible validation if implementation requires clearer naming;
-- поддержать common business formats для semantic analysis where the configured provider capability is explicitly supported and verified, including target coverage for:
+- at `rop.attachments.enabled: false` continue:
+  - Save accepted attachments;
+  - Show metadata;
+  - Allow authenticated download;
+  - Transfer files to Bitrix when write-back/file delivery policy permits;
+- Save existing `rop.attachments.chars_max`, `size_max` and `types` as bounded analysis policy or migrate with explicit backward-compatible validation if implementation requires clearer naming;
+- Support common business formats for semantic analysis where the configured provider capability is explicitly supported and verified, including target coverage for:
   - `text/plain`;
   - `text/csv`;
   - PDF;
@@ -8869,33 +8869,33 @@ AI document understanding не является malware scanner, sandbox или 
   - DOC where provider support exists;
   - JPEG;
   - PNG;
-- unsupported provider/file combinations должны оставаться stored/downloadable/deliverable с explicit `analysis_status`, без local unsafe fallback parser;
-- не добавлять local PDF/DOC/DOCX/image deep parser в BeeAgent main process в v1;
-- передавать attachment bytes во внешний AI provider только через explicit configured/validated file-capable provider path;
-- считать attachment contents untrusted data and never treat instructions inside a document as agent/tool instructions;
-- AI attachment result должен быть bounded, schema-validated и преобразовываться в existing attachment extraction evidence (`attachment_text_preview`, status/refusal fields);
-- существующий `beeagent-rop` attachment-aware classification должен потреблять этот context без filesystem/provider access;
-- existing BeeAgent AI adjudicator может использовать resulting bounded attachment context through the current semantic decision path;
-- provider/analysis failure не должен удалять файл или блокировать deterministic classification; failure должен быть explicit degraded evidence;
-- добавить BeeAgent-owned authenticated download route for event attachments;
-- download должен разрешаться только через safe manifest lookup, без arbitrary path access;
-- download должен использовать forced attachment response and anti-sniff/no-store security headers;
-- Event Detail должен показывать attachment metadata, analysis status and safe internal download link;
-- product-specific attachment route/read-model должны оставаться на стороне BeeAgent; BeeUI только renders normalized data;
-- сохранить current `bitrix.writeback.email_attach` semantics as email-activity binding;
-- добавить отдельную config policy для physical file attachment delivery to Bitrix;
-- физические attachments должны доставляться к тому же trusted/new Lead/Deal email activity without weakening existing It37–39 CRM target authority;
-- file delivery state/idempotency должен храниться отдельно от current email-activity attachment status;
-- replay одного email не должен создавать duplicate Lead, duplicate email activity или uncontrolled duplicate file delivery;
-- Bitrix physical-file REST contract должен быть подтверждён controlled test-portal smoke before production enablement;
-- если physical-file binding требует дополнительного Bitrix mutation method, расширить write allowlist только exact required method;
-- обновить config validation, artifacts, docs and tests;
+- unsupported provider/file combinations must remain stored/downloadable/deliverable with explicit `analysis_status`, without local unsafe fallback parser;
+- do not add local PDF/DOC/DOCX/image deep parser to BeeAgent main process to v1;
+- Transfer attachment bytes to the outer AI provider only through explicit configured/validated file-capable provider path;
+- Consider attachment contents untrusted data and never treat instructions inside a document as agent/tool instructions;
+- AI attachment result must be bounded, schema-validated and converted to existing attachment extraction evidence (`attachment_text_preview`, status/refusal fields);
+- The existing `beeagent-rop` attachment-aware classification must consume this context without filesystem/provider access;
+- existing BeeAgent AI adjudicator may use resulting bounded attachment context through the current semantic decision path;
+- provider/analysis failure must not remove a file or block deterministic classification; failure must be explicit degraded evidence;
+- Add BeeAgent-owned authenticated download route for event attachments;
+- download must be permitted only through safe manifest lookup, without arbitrary path access;
+- download must use forced attachment response and anti-sniff/no-store security headers;
+- Event Detail must display attachment metadata, analysis status and safe internal download link;
+- product-specific attachment route/read-model must remain on BeeAgent side; BeeUI only renders normalized data;
+- Save current `bitrix.writeback.email_attach` semantics as email-activity binding;
+- Add a separate config policy for physical file attachment delivery to Bitrix;
+- The physical attachments must be delivered to the same trusted/new Lead/Deal email activity without weakening existing It37-39 CRM target authority;
+- file delivery state/idempotency must be kept separately from current email-activity attachment status;
+- replay of one email must not create duplicate Lead, duplicate email activity or uncontrolled duplicate file delivery;
+- Bitrix physical-file REST contract must be confirmed by controlled test-portal smoke before production enablement;
+- if physical-file binding requires additional Bitrix mutation method, expand write allowlist only exact required method;
+- Update config validation, artifacts, docs and tests;
 - reconcile `docs/product/ui_roadmap.md` UI-10 with the new BeeAgent-owned secure download contract;
-- не менять `pyproject.toml.version`.
+- Do not change `pyproject.toml.version`.
 
 #### Excluded
 
-- считать AI malware/antivirus scanner;
+- Consider AI malware/antivirus scanner;
 - claim that an AI-read file is safe to execute/open;
 - executing attachment content;
 - macros/scripts execution;
@@ -8922,7 +8922,7 @@ AI document understanding не является malware scanner, sandbox или 
 
 #### Deliverable
 
-ROP получает end-to-end attachment lifecycle:
+ROP receives end-to-end attachment lifecycle:
 
 ```text
 mailbox MIME
@@ -8934,7 +8934,7 @@ mailbox MIME
 → idempotent physical Bitrix attachment delivery
 ```
 
-Оператор может открыть Event Detail и скачать исходный accepted attachment. В Bitrix соответствующий Lead/Deal email activity содержит физические attachments. При включённом analysis BeeAgent получает bounded document context и использует existing ROP classification path; при выключенном analysis файлы продолжают храниться, скачиваться и доставляться в Bitrix без provider file calls.
+The operator can open Event Detail and download the source accepted attachment. in Bitrix the corresponding Lead/Deal email activity contains the physical attachments. With analysis BeeAgent on it receives bounded document context and uses existing ROP classification path; When analysis is off, the files continue to be stored, downloaded and delivered to Bitrix without provider file calls.
 
 #### Acceptance criteria
 
@@ -9025,50 +9025,50 @@ mailbox MIME
 
 #### Verification (Issue #209)
 
-- mailbox normalization теперь сохраняет accepted MIME attachment bytes под private key `_raw_attachments` (удаляется до записи `normalized_events.json`); bytes не попадают в normal JSON artifacts/logs/HTML/API;
-- dedicated bounded opaque attachment store: `storage/attachments/<run_id>/<blob_id>.bin` + `attachment_manifest.json` (generated `att-<sha256[:24]>` blob ids, filename только metadata, SHA-256 + exact size в manifest, no raw bytes); required persistence failure raises `AttachmentStoreError` → batch degraded → mailbox checkpoint не продвигается;
+- mailbox normalization now saves accepted MIME attachment bytes under private key `_raw_attachments` (to `normalized_events.json`); bytes does not enter normal JSON artifacts/logs/HTML/API;
+- dedicated bounded opaque attachment store: `storage/attachments/<run_id>/<blob_id>.bin` + `attachment_manifest.json` (generated `att-<sha256[:24]>` blob ids, filename only metadata, SHA-256 + exact size in manifest, no raw bytes); required persistence failure raises `AttachmentStoreError` → batch degraded → mailbox checkpoint is not moving;
 - config-driven storage bounds: `rop.attachments.storage.{enabled,file_max,message_max,files_message_max}` (validated fail-fast; count and bounded encoded-size preflight apply before decoded payload retention, then exact file/aggregate limits apply immediately after decode); oversized/count/aggregate/blocked (`.eml`/`message/rfc822`) — explicit manifest `storage_status`;
-- `rop.attachments.enabled:false` → zero provider calls (analysis artifact `analysis_status=disabled`), retention/download/Bitrix delivery независимы и продолжают работать;
-- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,chars_max}`; PDF/DOCX use the provider file-upload reference contract (file uploaded via the provider Files API, then `input_file` referenced by `file_id`, temporary file deleted after the response) and JPEG/PNG use `input_image` data URLs; binary analysis enabled (`file_capable:true`) only after controlled provider smokes prove the configured profile for PDF/DOCX/JPEG/PNG; unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated и bounded; document instructions не дают tool/mailbox/CRM authority;
-- AI preview интегрирован в existing attachment extraction contract: `attachment_text_preview` / `attachment_preview_available` / status/refusal fields (для `beeagent-rop` без изменения package);
-- authenticated download route `GET /rop/attachments/{attachment_id}/download?run_id=...&event_id=...`: существующая BeeUI session auth + authorization scopes, lookup только по safe manifest attachment ID, invalid/traversal/unrelated → fail closed, forced `attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: no-store`, `application/octet-stream` (no inline render);
-- Event Detail показывает filename/content_type/size/storage_status/analysis_status/sha256/safe download link; attachment manifest и analysis добавлены в evidence artifacts и allowlists;
-- Bitrix physical file delivery: отдельный disabled-by-default switch `bitrix.writeback.file_attach` (bool, validated), отдельный `file_attach_status`/`file_attach_attempts`/`last_file_attach_error_code`/`attachment_refs` в write-back state; файлы читаются из durable attachment store по manifest refs (retry без mailbox re-ingestion); используется только уже выбранный trusted/new CRM target (email activity), доставка сама не выбирает target; `email_attach` backward-compatible; timeout/malformed file updates fail closed as `reconciliation_required` and replay never resends them blindly; write allowlist расширен ровно на `crm.activity.update` (FILES/fileData);
-- `beeagent-rop` не изменялся; `beeui` не изменялся (generic renderer, download contract BeeAgent-owned);
+- `rop.attachments.enabled:false` → zero provider calls (analysis artifact `analysis_status=disabled`), retention/download/Bitrix delivery is independent and continues to operate;
+- bounded AI document understanding: `rop.attachments.analysis.{provider,file_capable,chars_max}`; PDF/DOCX use the provider file-upload reference contract (file uploaded via the provider Files API, then `input_file` referenced by `file_id`, temporary file deleted after the response) and JPEG/PNG use `input_image` data URLs; binary analysis enabled (`file_capable:true`) only after controlled provider smokes prove the configured profile for PDF/DOCX/JPEG/PNG; unsupported type/size/provider/file-input → explicit `analysis_status=unsupported`, no local parser fallback; provider failure/timeout/invalid output → `failed` + deterministic path preserved; output schema-validated and bounded; document instructions does not give tool/mailbox/CRM authority;
+- AI preview integrated into existing attachment extraction contract: `attachment_text_preview` / `attachment_preview_available` / status/refusal fields (for `beeagent-rop` unchanged by package);
+- authenticated download route `GET /rop/attachments/{attachment_id}/download?run_id=...&event_id=...`: The existing BeeUI session auth + authorization scopes, lookup only for safe manifest attachment ID, invalid/traversal/unrelated → fail closed, forced `attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: no-store`, `application/octet-stream` (no inline render);
+- Event Detail shows filename/content_type/size/storage_status/analysis_status/sha256/safe download link; attachment manifest and analysis are added to evidence artifacts and allowlists;
+- Bitrix physical file delivery: a separate disabled-by-default switch `bitrix.writeback.file_attach` (bool, validated), separate `file_attach_status`/`file_attach_attempts`/`last_file_attach_error_code`/`attachment_refs` in write-back state; The files are read from durable attachment store to manifest refs (retry without mailbox re-ingestion); Only the already selected trusted/new CRM target (email activity) is used, the delivery does not choose target; `email_attach` backward-compatible; timeout/malformed file updates fail closed as `reconciliation_required` and replay never resends them blindly; write allowlist extended exactly to `crm.activity.update` (FILES/fileData);
+- `beeagent-rop` did not change; `beeui` did not change (generic renderer, download contract BeeAgent-owned);
 - local verification is recorded only after fresh targeted and full-suite commands complete for this correction run;
-- controlled AI provider smoke для TXT/CSV/PDF/DOCX/JPEG/PNG выполнен на configured production profile: все шесть форматов дают successful bounded analysis и attachment-aware classification; controlled Bitrix test-portal attachment smoke остаётся NOT VERIFIABLE в текущем окружении, потому что доступен только production portal, и остаётся blocker для full DoD;
-- `pyproject.toml.version` не изменён; dependencies/`uv.lock` не изменены.
+- controlled AI provider smoke for TXT/CSV/PDF/DOCX/JPEG/PNG is run on configured production profile: and all six formats produce successful bounded analysis and attachment-aware classification; controlled Bitrix test-portal attachment smoke remains NOT VERIFIABLE in the current environment because only production portal is available and blocker remains for full DoD;
+- `pyproject.toml.version` is unchanged; dependencies/`uv.lock` unchanged.
 
-### Итерация 41 — Canonical local document extraction and ROP Docling migration v1
+### Iteration 41 — Canonical local document extraction and ROP Docling migration v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Зафиксировать BeeAgent-owned `document.extract` contract, принять Docling как canonical local document engine и перевести существующий ROP attachment semantic path с provider-based file reading на локальное bounded text extraction без изменения attachment storage, download, Bitrix delivery или public `beeagent-rop` classification contract.
+Record BeeAgent-owned `document.extract` contract, accept Docling as canonical local document engine and transfer the existing ROP attachment semantic path from provider-based file reading to local bounded text extraction without changing attachment storage, download, Bitrix delivery or public `beeagent-rop` classification contract.
 
 #### Scope
 
-- добавить стабильный BeeAgent `document.extract` result contract без Docling-specific типов;
-- использовать `docling==2.122.0` как единственный canonical document engine v1;
-- запускать untrusted document conversion через bounded local worker boundary, а не напрямую в ROP domain module;
-- читать только BeeAgent-resolved attachment blobs из existing opaque attachment store;
-- запретить arbitrary URL/path input и использование original filename как filesystem identity;
-- поддержать initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG и PNG;
-- использовать local Docling OCR path для JPEG/PNG и scanned PDF;
-- преобразовывать successful extraction в existing `attachment_extraction.json` / `attachment_text_preview` contract;
-- сохранить `attachment_extraction_status`, preview/status/refusal fields и existing public ROP module payload;
-- заменить `rop.attachments.analysis` provider/file-capable config на explicit local extraction config;
-- сохранить `rop.attachments.enabled`, storage limits, type allowlist и independent retention/download/Bitrix behavior;
-- передавать AI adjudicator только bounded extracted text и existing semantic evidence;
-- сохранить historical It40 artifact readability where compatibility requires it;
-- обновить settings validation, docs, dependency declarations and tests.
+- Add a stable BeeAgent `document.extract` result contract without Docling-specific types;
+- Use `docling==2.122.0` as the only canonical document engine v1;
+- Run untrusted document conversion through bounded local worker boundary, not directly to ROP domain module;
+- Read only BeeAgent-resolved attachment blobs of existing opaque attachment store;
+- Prohibit arbitrary URL/path input and the use of original filename as filesystem identity;
+- Support initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG and PNG;
+- Use local Docling OCR path for JPEG/PNG and scanned PDF;
+- Transform successful extraction into existing `attachment_extraction.json` / `attachment_text_preview` contract;
+- Save `attachment_extraction_status`, preview/status/refusal fields and existing public ROP module payload;
+- Replace `rop.attachments.analysis` provider/file-capable config with explicit local extraction config;
+- Save `rop.attachments.enabled`, storage limits, type allowlist and independent retention/download/Bitrix behavior;
+- Transfer AI adjudicator only to bounded extracted text and existing semantic evidence;
+- Save historical It40 artifact readability where compatibility requires it;
+- Update settings validation, docs, dependency declarations and tests.
 
 #### Excluded
 
-- изменения `beeagent-rop` classification rules или public output shape;
-- изменения BeeUI generic contracts;
-- AI file upload, `input_file`, `input_image` или binary provider fallback;
+- changes `beeagent-rop` classification rules or public output shape;
+- Changes to BeeUI generic contracts;
+- AI file upload, `input_file`, `input_image` or binary provider fallback;
 - second document engine or Tika/Marker/MarkItDown fallback;
 - full Secure Execution Runtime / execution-node framework;
 - arbitrary shell/converter execution;
@@ -9141,67 +9141,67 @@ No attachment binary is sent to the AI provider for document reading.
 - required tests and controlled smokes are green;
 - `pyproject.toml.version` is not changed.
 
-#### Реализация (It41)
+#### Implementation (It41)
 
-- Добавлен BeeAgent-owned `document.extract` contract: `DocumentExtractionResult` в `src/beeagent_module/core/document_extraction.py` (status, reason_code, engine, bounded text, text_length, is_truncated, content_type, ocr_used, page_count) без Docling-специфичных типов.
-- Docling `==2.122.0` — единственный canonical document engine v1; добавлен также `onnxruntime==1.29.0` как ONNX inference runtime для local RapidOCR (не второй document engine).
-- Untrusted документы обрабатываются через bounded local subprocess worker (`document_extraction_worker.py`) с таймаутом; Docling падает/зависает изолированно от ROP orchestration.
-- Входы разрешаются только из BeeAgent attachment manifest/store (`resolve_attachment_blob_path`); произвольные URL/path и original filename как filesystem identity запрещены — форматный hint выводится только из allowlisted content type.
-- Initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG; JPEG/PNG и scanned PDF используют local Docling OCR path; OCR backend явно выбран как RapidOCR (`RapidOcrOptions(backend="onnxruntime")` в `docling_reader.py`), а не неявный Docling auto-select; `onnxruntime` — inference runtime RapidOCR; cyrillic/Russian распознавание использует provisioned PP-OCRv5 cyrillic rec/det/dict assets, English regression остаётся зелёным на том же RapidOCR path.
-- Successful extraction feeding в existing `attachment_extraction.json` / `attachment_text_preview` contract; public ROP preview/status/refusal fields сохранены.
-- `rop.attachments.analysis` provider-конфиг заменён на explicit local `rop.attachments.extraction` (engine, chars_max, pages_max, timeout_seconds, ocr_enabled) с fail-fast validation.
-- Итоговый three-budget attachment text contract: `rop.attachments.chars_max=1000` — public/deterministic preview для `beeagent-rop`; `rop.ai_assist.adjudicator.attachment_chars_max=2000` — text-only attachment evidence для AI adjudicator; `rop.attachments.extraction.chars_max=3000` — maximum bounded Docling extracted text. Settings fail-fast валидируют `0 < attachments.chars_max <= ai_assist.adjudicator.attachment_chars_max <= attachments.extraction.chars_max`.
-- Provider Files API / `input_file` / `input_image` / base64 attachment path удалён из runtime; AI adjudicator остаётся text-only.
-- Local Docling model assets (layout model + RapidOCR PP-OCRv5 cyrillic rec/det/dict) подготавливаются явно через `config/start.py docling-assets-prepare`; runtime работает offline (`HF_HUB_OFFLINE=1`) и не скачивает модели молча; missing assets — explicit degraded.
-- `beeagent-rop` и `beeui` не изменялись; `pyproject.toml.version` не изменялся.
+- Added BeeAgent-owned `document.extract` contract: `DocumentExtractionResult` to `src/beeagent_module/core/document_extraction.py` (status, reason_code, engine, bounded text, text_length, is_truncated, content_type, ocr_used, page_count) without Docling- specific types.
+- Docling `==2.122.0` is the only canonical document engine v1; `onnxruntime==1.29.0` is also added as ONNX inference runtime for local RapidOCR (not the second document engine).
+- Untrusted documents are processed via bounded local subprocess worker (`document_extraction_worker.py`) with timeout; Docling falls/depends in isolation from ROP orchestration.
+- Entrys are permitted only from BeeAgent attachment manifest/store (`resolve_attachment_blob_path`); Arbitrary URL/path and original filename as filesystem identity are prohibited - the format hint is removed only from allowlisted content type.
+- Initial allowlist: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG; JPEG/PNG and scanned PDF use local Docling OCR path; OCR backend is clearly chosen as RapidOCR (`RapidOcrOptions(backend="onnxruntime")` in `docling_reader.py`) and not Docling auto-select; `onnxruntime` — inference runtime RapidOCR; cyrillic/Russian recognition uses provisioned PP-OCRv5 cyrillic rec/det/dict assets, English regression remains green on the same RapidOCR path.
+- Successful extraction feeding in existing `attachment_extraction.json` / `attachment_text_preview` contract; public ROP preview/status/refusal fields retained.
+- `rop.attachments.analysis` provider-confession replaced by explicit local `rop.attachments.extraction` (engine, chars_max, pages_max, timeout_seconds, ocr_enabled) with fail-fast validation.
+- The total three-budget attachment text contract: `rop.attachments.chars_max=1000` is public/deterministic preview for `beeagent-rop`; `rop.ai_assist.adjudicator.attachment_chars_max=2000` – text-only attachment evidence for AI adjudicator; `rop.attachments.extraction.chars_max=3000` – maximum bounded Docling extracted text. Settings fail-fast has been validated by `0 < attachments.chars_max <= ai_assist.adjudicator.attachment_chars_max <= attachments.extraction.chars_max`.
+- Provider Files API / `input_file` / `input_image` / base64 attachment path removed from runtime; AI adjudicator remains text-only.
+- Local Docling model assets (layout model + RapidOCR PP-OCRv5 cyrillic rec/det/dict) is clearly prepared via `config/start.py docling-assets-prepare`; runtime works offline (`HF_HUB_OFFLINE=1`) and does not download models silently; missing assets — explicit degraded.
+- `beeagent-rop` and `beeui` have not changed; `pyproject.toml.version` hasn't changed.
 
-### Итерация 42 — Responsible-aware Bitrix lead stage routing v1
+### Iteration 42 — Responsible-aware Bitrix lead stage routing v1
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Уточнить существующий BeeAgent-owned Bitrix write-back policy: новый Lead с точно найденным ответственным должен создаваться в customer stage «Лид назначен», а Lead, для которого recipient routing вернул `responsible.status=not_found` и применён configured fallback responsible, должен сохранять stage «Новый».
+Clarify the existing BeeAgent-owned Bitrix write-back policy: new Lead with the exact responsibility must be created in customer stage "Leed assigned", and Lead for which recipient routing returned `responsible.status=not_found` and applied configured fallback responsible must retain stage "New".
 
-Изменение должно использовать уже существующее разделение `matched` / `fallback` и не затрагивать classification, recipient matching, trusted CRM target authority, idempotency или BeeUI.
+The change must use the already existing `matched` / `fallback` partition and must not affect classification, recipient matching, trusted CRM target authority, idempotency or BeeUI.
 
 #### Scope
 
-- реализовать изменения только в `beeagent`;
-- сохранить `bitrix.writeback.stages.new_lead` как stage для fallback new Lead (`NEW` / «Новый» в текущем customer config);
-- добавить explicit config key `bitrix.writeback.stages.new_lead_assigned` для customer stage «Лид назначен»;
-- для `case_type=new_lead` и exact active `responsible.status=matched` использовать:
-  - найденный `responsible.user_id`;
+- implement only the changes in `beeagent`;
+- Save `bitrix.writeback.stages.new_lead` as stage for fallback new Lead (`NEW` / "New" in the current customer config);
+- add the explicit config key `bitrix.writeback.stages.new_lead_assigned` for the customer stage “Lead assigned”;
+- for `case_type=new_lead` and exact active `responsible.status=matched` use:
+  - Found `responsible.user_id`;
   - `stages.new_lead_assigned`;
-- для `case_type=new_lead` и `responsible.status=not_found` при configured valid `user_id_fallback` использовать:
+- for `case_type=new_lead` and `responsible.status=not_found` at configured valid `user_id_fallback` use:
   - `user_id_fallback`;
   - existing `stages.new_lead`;
-- сохранить fail-closed behavior для `ambiguous`, `connector_degraded`, `unresolved`, `not_attempted`, inactive или malformed responsible evidence;
-- сохранить `irrelevant` stage behavior без изменений;
-- сохранить trusted `attach_existing` behavior без stage/reassignment mutation существующей CRM entity;
-- валидировать новый required stage key fail-fast при enabled write-back;
-- проверять configured stage через существующий `crm.status.list` validation path до mutation;
-- сохранить existing durable write-back state, idempotency, retry/recovery и checkpoint semantics;
-- обновить targeted regression tests и contract documentation.
+- Save fail-closed behavior for `ambiguous`, `connector_degraded`, `unresolved`, `not_attempted`, inactive or malformed responsible evidence;
+- Save `irrelevant` stage behavior unchanged;
+- Save trusted `attach_existing` behavior without stage/reassignment mutation of the existing CRM entity;
+- Validate the new required stage key fail-fast at enabled write-back;
+- Check configured stage using the existing `crm.status.list` validation path to mutation;
+- Save existing durable write-back state, idempotency, retry/recovery and checkpoint semantics;
+- Update targeted regression tests and contract documentation.
 
 #### Excluded
 
-- изменения `beeagent-rop`;
-- изменения `beeui`;
-- добавление Bitrix write-back settings или CRM controls в ROP Web Console;
-- изменение recipient attribution или responsible matching;
-- изменение eligibility `user_id_fallback`;
-- изменение classification, subtype, duplicate или AI semantics;
-- изменение `irrelevant` / JUNK behavior;
-- изменение стадии или ответственного существующих trusted Lead/Deal;
-- `crm.item.update`, `crm.item.delete` или новые Bitrix mutation methods;
-- hardcoded customer stage IDs, Bitrix user IDs или display labels в Python runtime;
-- новые dependencies;
+- Changes to `beeagent-rop`;
+- Changes to `beeui`;
+- Appendix Bitrix write-back settings or CRM controls in ROP Web Console;
+- change recipient attribution or responsible matching;
+- change eligibility `user_id_fallback`;
+- Change classification, subtype, duplicate or AI semantics;
+- change `irrelevant` / JUNK behavior;
+- Modification of the stage or responsible existing trusted Lead/Deal;
+- `crm.item.update`, `crm.item.delete` or new Bitrix mutation methods;
+- hardcoded customer stage IDs, Bitrix user IDs or display labels in Python runtime;
+- New dependencies;
 - version bump.
 
 #### Deliverable
 
-BeeAgent write-back planner детерминированно выбирает stage нового Lead на основании уже подтверждённого responsible outcome:
+BeeAgent write-back planner deterministic stage of a new Lead based on the responsible outcome: already confirmed
 
 ```text
 new_lead + matched
@@ -9213,29 +9213,29 @@ new_lead + not_found + fallback
 → fallback Bitrix user
 ```
 
-Existing executor продолжает выполнять тот же bounded `crm.item.add` contract с planner-provided `STAGE_ID` и `ASSIGNED_BY_ID`.
+Existing executor continues to perform the same bounded `crm.item.add` contract with planner-provided `STAGE_ID` and `ASSIGNED_BY_ID`.
 
 #### Acceptance criteria
 
-- exact active matched responsible для `new_lead` создаёт Lead с `STAGE_ID=bitrix.writeback.stages.new_lead_assigned`;
-- matched Lead получает exact matched `ASSIGNED_BY_ID`;
-- `responsible.status=not_found` с valid `user_id_fallback` создаёт Lead с `STAGE_ID=bitrix.writeback.stages.new_lead`;
-- fallback Lead получает configured fallback `ASSIGNED_BY_ID`;
-- fallback никогда не overriding exact matched responsible;
-- ambiguous, degraded, unresolved и not-attempted responsible evidence остаётся `deferred` без create;
-- `irrelevant` сохраняет existing configured stage behavior;
-- trusted existing Lead/Deal attachment не вызывает нового Lead create, stage change или responsible reassignment;
-- missing/empty `new_lead_assigned` при enabled write-back rejected fail-fast;
-- unknown stage config keys остаются rejected;
-- invalid configured assigned stage приводит к zero mutation;
-- stage validation outage сохраняет existing recoverable fail-closed behavior;
-- replay/repeated execute не создаёт duplicate Lead и не выполняет повторный stage/responsible mutation;
-- новый Bitrix write method не добавляется;
-- public `beeagent-rop` contract не меняется;
-- BeeUI contract не меняется;
-- actual customer Bitrix STATUS_ID для «Лид назначен» подтверждён до production enablement;
-- configured fallback user ID подтверждён как active customer user `ROBOT WG` до production enablement;
-- `pyproject.toml.version` остаётся без изменений.
+- exact active matched responsible for `new_lead` creates Lead with `STAGE_ID=bitrix.writeback.stages.new_lead_assigned`;
+- matched Lead receives exact matched `ASSIGNED_BY_ID`;
+- `responsible.status=not_found` with valid `user_id_fallback` creates Lead with `STAGE_ID=bitrix.writeback.stages.new_lead`;
+- fallback Lead receives configured fallback `ASSIGNED_BY_ID`;
+- fallback never overriding exact matched responsible;
+- ambiguous, degraded, unresolved and not-attempted responsible evidence remain `deferred` without create;
+- `irrelevant` retains existing configured stage behavior;
+- trusted existing Lead/Deal attachment does not cause a new Lead create, stage change or responsible reassignment;
+- missing/empty `new_lead_assigned` at enabled write-back rejected fail-fast;
+- unknown stage config keys remains rejected;
+- invalid configured assigned stage leads to zero mutation;
+- stage validation outage retains existing recoverable fail-closed behavior;
+- replay/repeated execute does not create duplicate Lead and does not repeat stage/responsible mutation;
+- a new Bitrix write method is not added;
+- public `beeagent-rop` contract does not change;
+- BeeUI contract does not change;
+- actual customer Bitrix STATUS_ID for "Lide assigned" confirmed to production enablement;
+- configured fallback user ID is confirmed as active customer user `ROBOT WG` to production enablement;
+- `pyproject.toml.version` remains unchanged.
 
 #### Checks
 
@@ -9248,7 +9248,7 @@ Existing executor продолжает выполнять тот же bounded `c
 - settings validation tests for `new_lead_assigned`;
 - invalid assigned-stage regression proving zero mutation;
 - replay/idempotency regression;
-- read-only Bitrix verification of the exact customer STATUS_ID for «Лид назначен»;
+- read-only Bitrix verification of the exact customer STATUS_ID for "Lide assigned";
 - read-only Bitrix verification that configured `user_id_fallback` is the intended active `ROBOT WG` user;
 - controlled Bitrix smoke with one matched new Lead and one fallback new Lead before production enablement;
 - log and write-back artifact inspection;
@@ -9273,29 +9273,29 @@ Existing executor продолжает выполнять тот же bounded `c
 - required security/runtime checks are green;
 - `pyproject.toml.version` is unchanged.
 
-#### Реализация (It42)
+#### Implementation (It42)
 
-- Добавлен explicit config key `bitrix.writeback.stages.new_lead_assigned` (customer stage «Лид назначен»); значение подтверждено read-only Bitrix verification: STATUS_ID `2` = «Лид назначен», `user_id_fallback=167` = активный ROBOT WG (system@welding.kz), без guessing display labels.
-- Планировщик `_create_lead_delivery` в `src/beeagent_module/cases/rop_writeback.py` теперь выбирает stage key детерминированно по уже подтверждённому responsible outcome: `new_lead + matched` → `stages.new_lead_assigned` + exact matched `user_id`; `new_lead + not_found` + valid `user_id_fallback` → existing `stages.new_lead` + fallback user; `irrelevant` → existing `stages.irrelevant`. KISS: прямая ответственная-aware выборка stage key, без generic stage-routing framework.
-- Fail-closed поведение сохранено: `ambiguous`/`connector_degraded`/`unresolved`/`not_attempted`, inactive или malformed responsible evidence остаются `deferred` (`responsible_unresolved`) без create; fallback никогда не override exact matched responsible; trusted `attach_existing` не создаёт Lead и не restage/reassign существующей CRM entity.
-- Executor не менялся: продолжает выполнять тот же bounded `crm.item.add` (`entityTypeId=1`) с planner-provided `STAGE_ID`/`ASSIGNED_BY_ID`; mutation allowlist не расширялся.
-- Settings fail-fast validation (`src/beeagent_module/core/settings.py`) теперь разрешает `new_lead_assigned` как известный stage key и требует непустой `new_lead_assigned` при `bitrix.writeback.enabled=true`; неизвестные stage keys остаются rejected.
-- Stage pre-validation через существующий `crm.status.list` (`_validate_stages_against_bitrix`) теперь охватывает и `new_lead_assigned`; invalid assigned stage → zero mutation; stage-validation outage сохраняет recoverable fail-closed `pending` поведение.
-- Durable state, retry/recovery, checkpoint и idempotency семантика сохранены без изменений.
-- Добавлены focused regressions: settings validation для `new_lead_assigned` (missing/empty при enabled), planner matched/fallback/unresolved/degraded/irrelevant/trusted-attach stage selection, executor exact `STAGE_ID`+`ASSIGNED_BY_ID` для matched и fallback, invalid assigned stage → zero writes, replay/idempotency.
-- `beeagent-rop` и `beeui` не изменялись; новых dependencies нет; `pyproject.toml.version` не изменялся.
+- Added explicit config key `bitrix.writeback.stages.new_lead_assigned` (customer stage "Lide appointed"); value confirmed read-only Bitrix verification: STATUS_ID `2` = "Lide assigned", `user_id_fallback=167` = active ROBOT WG (system@welding.kz), without guessing display labels.
+- `_create_lead_delivery` planner in `src/beeagent_module/cases/rop_writeback.py` now chooses stage key deterministic from responsible outcome: already confirmed `new_lead + matched` → `stages.new_lead_assigned` + exact matched `user_id`; `new_lead + not_found` + valid `user_id_fallback` → existing `stages.new_lead` + fallback user; `irrelevant` → existing `stages.irrelevant`. KISS: direct responsible-aware sample stage key, without generic stage-routing framework.
+- Fail-closed behavior retained: `ambiguous`/`connector_degraded`/`unresolved`/`not_attempted`, inactive or malformed responsible evidence remain `deferred` (`responsible_unresolved`) without create; fallback never override exact matched responsible; trusted `attach_existing` does not create Lead or restage/reassign of the existing CRM entity.
+- Executor never changed: Continues to perform the same bounded `crm.item.add` (`entityTypeId=1`) with planner-provided `STAGE_ID`/`ASSIGNED_BY_ID`; mutation allowlist has not expanded.
+- Settings fail-fast validation (`src/beeagent_module/core/settings.py`) now permits `new_lead_assigned` as the famous stage key and demands the empty `new_lead_assigned` at `bitrix.writeback.enabled=true`; unknown stage keys remains rejected.
+- Stage pre-validation through the existing `crm.status.list` (`_validate_stages_against_bitrix`) now covers `new_lead_assigned`; invalid assigned stage → zero mutation; stage-validation outage retains recoverable fail-closed `pending` behavior.
+- Durable state, retry/recovery, checkpoint and idempotency semantics are maintained unchanged.
+- Added focused regressions: settings validation for `new_lead_assigned` (missing/empty at enabled), planner matched/fallback/unresolved/degraded/irrelevant/trusted-attach stage selection, executor exact `STAGE_ID`+`ASSIGNED_BY_ID` for matched and fallback, invalid assigned stage → zero writes, replay/idempotency.
+- `beeagent-rop` and `beeui` have not changed; No new dependencies; `pyproject.toml.version` hasn't changed.
 
-### Итерация 43 — Bounded isolated Solana capability for BeeDrill
+### Iteration 43 — Bounded isolated Solana capability for BeeDrill
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить минимальный BeeAgent-owned execution path для второго реального domain module — BeeDrill — чтобы модуль мог запросить один bounded isolated Solana lifecycle через host-provided capability boundary без прямого process/RPC authority.
+Add a minimum BeeAgent-owned execution path for the second real domain module - BeeDrill - so that the module can request one bounded isolated Solana lifecycle via host-provided capability boundary without direct process/RPC authority.
 
 #### Scope
 
-Включено:
+Includes:
 
 - consumption approved BeeSDK `ModuleContext` capability injection contract;
 - BeeAgent-owned scoped `CapabilityCaller`;
@@ -9307,13 +9307,13 @@ Existing executor продолжает выполнять тот же bounded `c
   - authority;
 
 - explicit module/case/capability policy;
-- одна capability:
+- one capability:
 
 ```text
 solana.isolated_lifecycle
 ```
 
-- один approved isolated target profile:
+- 1 approved isolated target profile:
 
 ```text
 surfpool_local
@@ -9321,7 +9321,7 @@ surfpool_local
 
 - Surfpool startup;
 - machine-verifiable readiness;
-- один fixed host-selected read-only Solana RPC smoke;
+- One fixed host-selected read-only Solana RPC smoke;
 - bounded timeout;
 - shutdown;
 - forced cleanup when required;
@@ -9403,9 +9403,9 @@ SCA if dependency surface changes
 
 BeeAgent provides BeeDrill with one real bounded isolated Solana execution capability while retaining complete ownership of process lifecycle, RPC target selection, policy, authority, timeout and cleanup.
 
-### Итерация 44 — Bounded BeeDrill reference-target baseline capability
+### Iteration 44 — Bounded BeeDrill reference-target baseline capability
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
@@ -9503,24 +9503,24 @@ git diff --check
 
 BeeAgent can safely prepare and reproduce the BeeDrill reference target inside the fixed isolated Solana environment while retaining complete ownership of runtime execution, RPC, target resolution, authority, timeout and cleanup.
 
-### Итерация 44.1 — Bounded BeeDrill reference-target attack capability
+### Iteration 44.1 — Bounded BeeDrill reference-target attack capability
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
-Добавить минимальный host-owned путь, необходимый BeeDrill Iteration 6 для выполнения одной фиксированной экономической атаки на `reference_vault` в изолированном Surfpool и получения проверяемого attack evidence.
+Add the minimum host-owned path required by BeeDrill Iteration 6 to carry out one fixed economic attack on `reference_vault` in isolation Surfpool and to obtain the verified attack evidence.
 
 #### Scope
 
-- один новый BeeDrill-scoped case/capability pair для фиксированной атаки;
-- reuse существующего scoped `CapabilityCaller`, offline Surfpool lifecycle, target-resource resolution, timeout и cleanup;
-- только `surfpool_local` и `reference_vault`;
-- host-owned preparation, deployment, canonical initialization, attack transaction и state observation;
-- bounded evidence: fixed identities, transaction signature(s), slot/timing reference, balances/state до и после, gross loss в integer lamports;
+- One new BeeDrill-scoped case/capability pair for a fixed attack;
+- reuse existing scoped `CapabilityCaller`, offline Surfpool lifecycle, target-resource resolution, timeout and cleanup;
+- only `surfpool_local` and `reference_vault`;
+- host-owned preparation, deployment, canonical initialization, attack transaction and state observation;
+- bounded evidence: fixed identities, transaction signature(s), slot/timing reference, balances/state before and after, gross loss in integer lamports;
 - explicit `ok/refused/timeout/error` outcomes;
-- negative policy, timeout, cleanup и evidence tests;
-- cross-repository integration smoke после доступности BeeDrill consumer.
+- negative policy, timeout, cleanup and evidence tests;
+- cross-repository integration smoke after access to BeeDrill consumer.
 
 #### Excluded
 
@@ -9528,24 +9528,24 @@ BeeAgent can safely prepare and reproduce the BeeDrill reference target inside t
 - arbitrary program/executable/path/argv;
 - module-controlled RPC target, method, raw transaction or credentials;
 - mainnet/production mutation;
-- detector, containment, metrics или verdict behavior;
+- detector, containment, metrics or verdict behavior;
 - BeeSDK contract/dependency changes;
-- новый Solana framework.
+- new Solana framework.
 
 #### Deliverable
 
-Одна bounded capability, выполняющая только allowlisted reference-vault attack и возвращающая machine-verifiable attack/economic evidence без передачи execution authority BeeDrill.
+One bounded capability performing only allowlisted reference-vault attack and returning machine-verifiable attack/economic evidence without execution authority BeeDrill. transmission
 
 #### Acceptance criteria
 
-- capability разрешена только для exact BeeDrill module/case/authority/payload scope;
-- атака меняет состояние изолированного reference target;
-- evidence содержит доказуемые state transition и gross loss;
-- повторный fresh run сохраняет эквивалентный security outcome;
-- malformed/forbidden intent отказан до host execution;
-- failure, timeout и cleanup outcomes явны;
-- no mainnet fallback, secrets или orphan processes;
-- существующие lifecycle и baseline capabilities остаются совместимыми.
+- capability permitted for exact BeeDrill module/case/authority/payload scope only;
+- The attack changes the state of the isolated reference target;
+- evidence contains the proven state transition and gross loss;
+- the repeated fresh run retains the equivalent security outcome;
+- malformed/forbidden intent failed to host execution;
+- failure, timeout and cleanup outcomes are visible;
+- no mainnet fallback, secrets or orphan processes;
+- The existing lifecycle and baseline capabilities remain compatible.
 
 #### Checks
 
@@ -9556,15 +9556,15 @@ BeeAgent can safely prepare and reproduce the BeeDrill reference target inside t
 - preparation, transaction, observation, timeout and cleanup failure tests;
 - real isolated integration smoke;
 - log/artifact inspection;
-- SAST; SCA только при изменении dependency surface.
+- SAST; SCA only when dependency surface. is changed
 
 #### DoD
 
-BeeAgent безопасно выполняет только фиксированную BeeDrill reference-target attack в approved isolated environment и возвращает bounded evidence, сохраняя host ownership execution, RPC, policy, authority, timeout и cleanup.
+BeeAgent is safe to perform only the fixed BeeDrill reference-target attack in approved isolated environment and returns bounded evidence, by retaining host ownership execution, RPC, policy, authority, timeout and cleanup.
 
-### Итерация 44.2 — Bounded BeeDrill reference-target detection capability
+### Iteration 44.2 — Bounded BeeDrill reference-target detection capability
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
@@ -9648,9 +9648,9 @@ git diff --check
 
 BeeAgent can independently observe the fixed BeeDrill reference attack and return bounded detection evidence while retaining complete ownership of execution, RPC, policy, authority, timing bounds and cleanup.
 
-### Итерация 44.3 — Bounded BeeDrill reference-target containment capability
+### Iteration 44.3 — Bounded BeeDrill reference-target containment capability
 
-**Статус:** DONE
+**Status:** DONE
 
 #### Goal
 
@@ -10772,108 +10772,85 @@ Any preparation mechanism not proven safe and reproducible remains unsupported r
 
 ### Iteration 45 — Unified AI Profile Selection v1
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
-Provide one reusable BeeAgent AI profile selection contract with a default provider and independent module-level overrides for ROP, BeeDrill and BeeScan.
+Enter a single AI- profile selection contract in BeeAgent Core: global default profile and independent overrides for ROP, BeeDrill and BeeScan.
 
-Allow multiple modules to use different configured AI providers without changing other modules' behavior, duplicating profile resolution logic or introducing a second configuration source.
-
-#### Depends on
-
-- Completed BeeAgent BS-8 and BeeScan It10.
-- Existing `ai.profiles`, AI transport and provider-specific structured-output contracts.
-- Existing ROP adjudicator, ROP AI assist, BeeDrill AI assist and BeeScan investigation integrations.
-
-#### Change level
-
-`security-sensitive`
-
-Reason: AI credentials, external provider destinations, configuration migration, runtime selection and provider trust boundaries.
+Ensure the modular independence of AI- providers, eliminate duplication of profiles and preserve existing runtime/security contracts.
 
 #### Scope
 
-- Introduce one shared BeeAgent core AI profile resolver using `config/settings.yml` as the only configuration source.
-- Support explicit `ai.default_profile` selection from existing named `ai.profiles`.
-- Support optional module overrides: `rop.ai_assist.ai_profile`, `beedrill.ai_assist.ai_profile` and the existing `beescan.investigation.ai_profile`.
-- Resolve each consumer as **module override → global default**, with no implicit fallback to another provider.
-- Allow BeeScan to inherit the default when no explicit named override is configured; preserve existing explicit selection.
-- Reuse the shared resolver in ROP adjudicator, existing ROP AI assist, BeeDrill AI assist and BeeScan investigation.
-- Preserve legacy single-enabled-profile configurations when `ai.default_profile` is absent; reject ambiguous mixed selection modes rather than silently choosing one.
-- Validate selected profile names, supported provider types, URLs, models and environment-variable references fail-fast.
-- Require the relevant credential only for a consumer that actually needs AI execution, preserving existing disabled and dry-run behavior.
-- Preserve the existing OpenAI Responses and OpenAI-compatible transport implementations, structured-output validation and bounded request limits.
-- Preserve provider/model provenance in existing safe artifacts without exposing credentials.
-- Update configuration examples, AI usage documentation and focused regression tests.
+- Implement one shared AI profile resolver above `config/settings.yml`.
+- Add `ai.default_profile` and optional module-level `ai_profile`.
+- Use priority: module override → global default.
+- Connect ROP adjudicator existing ROP AI assist, BeeDrill AI assist and BeeScan investigation.
+- Save legacy single-enabled-profile config in the absence of `ai.default_profile`.
+- Reject conflicting choice regimes without implicit fallback.
+- Validate profile names, providers, models, URL and credentials. links
+- Require credentials only under the current contract of the active AI- consumer.
+- Save BeeScan HTTPS restrictions, host authorization and fail-closed behavior.
+- Save bounded AI requests, deterministic fallbacks and secure provider/model provenance.
+- Update documentation and contract/regression tests.
 
 #### Excluded
 
-- LiteLLM, Pydantic AI or another provider abstraction dependency.
-- Provider auto-discovery, routing, retries across providers or automatic failover.
-- Automatic model selection based on price, latency or task complexity.
-- New AI features, agents, prompts, domain rules or execution permissions.
-- Changes to BeeScan security findings, HTTP investigation authority or ROP classification policy.
-- BeeSDK, BeeUI, Web Console and unrelated module changes.
-- New AI secrets storage, database or separate configuration service.
+- New AI framework dependencies, provider routers and automatic failover.
+- AI model selection for price, latency or tasks.
+- New prompts, AI agents, domain rules and capability permissions.
+- Modifications BeeScan security semantics or beeagent-rop classification rules.
+- BeeSDK, BeeUI, Web Console, a new secrets system and new services.
+- Unrelated refactoring and dependency updates.
 
 #### Deliverable
 
-BeeAgent provides a shared production AI profile resolver and one documented configuration contract.
+BeeAgent Core provides a single tested AI profile resolver.
 
-Example supported configuration:
+ROP may inherit global OpenRouter; BeeDrill is the independent choice of OpenAI; BeeScan — choose DeepSeek. independently
 
-- Global default: `openrouter`.
-- ROP: inherits `openrouter`.
-- BeeDrill: explicit `openai` override.
-- BeeScan: explicit `deepseek` override.
-
-Each enabled consumer resolves the expected provider/model/credential reference independently while reusing the existing AI transport.
-
-Existing legacy configurations remain functional during migration.
+Legacy configuration continues to operate, the new scheme has a clear documented migration path.
 
 #### Acceptance criteria
 
-- One shared resolver replaces duplicated profile-selection implementations in active AI consumers.
-- Default selection and module overrides have deterministic, documented precedence.
-- ROP adjudicator and applicable legacy ROP AI assist paths use consistent profile selection.
-- BeeDrill and BeeScan can select independent providers without changing the global default.
-- Existing global OpenRouter/DeepSeek configuration remains compatible.
-- Legacy `enabled: true` selection continues to work when `ai.default_profile` is absent.
-- Missing, unknown, malformed or conflicting profile selections fail closed with actionable errors.
-- Disabled AI consumers do not require unrelated provider credentials or perform provider requests.
-- No automatic provider fallback or unauthorized external destination is introduced.
-- Existing AI output validation, deterministic fallbacks and security boundaries remain unchanged.
-- Existing artifacts contain correct provider/model provenance without secrets.
-- No unrelated runtime, module or dependency behavior changes.
+- All active AI consumers uses shared resolver.
+- Default/override precedence is single and covered with tests.
+- ROP, BeeDrill and BeeScan may use different profiles simultaneously.
+- Old single-enabled contract retained.
+- Unknown, conflicting and incorrect profiles are rejected.
+- Disabled/dry-run does not create new credentials requirements or external calls.
+- Provider transport and deterministic fallback remain compatible.
+- BeeScan authority, HTTPS and evidence boundaries are not weakened.
+- Provider/model provenance is correct, secrets is not open.
+- There are no new dependencies or changes in public contracts for domain packages.
 
 #### Checks
 
-- Unit matrix: legacy/default/override, ROP/BeeDrill/BeeScan, OpenAI Responses/OpenRouter/direct DeepSeek.
-- Negative tests: conflicting selection modes, unknown profiles, invalid model, URL or credential reference, missing selected credential.
-- AI transport mocked tests: request schema, bounded output, failure/degraded behavior and no unintended network calls.
-- ROP adjudicator and ROP AI assist regression tests.
-- BeeDrill AI assist regression tests.
-- BeeScan BS-8 and BS-7 authorization, investigation and laboratory regressions.
-- Full frozen BeeAgent pytest, build, applicable Ruff/security checks and `git diff --check`.
-- Local smoke with independently selected provider profiles and protected dummy credentials.
-- Verify unchanged BeeSDK/BeeUI dependencies, existing Git-pinned BeeScan integration and package version.
+- Legacy/default/override compatibility matrix.
+- OpenAI Responses, OpenRouter and direct DeepSeek mocked tests.
+- Missing key, unknown profile, malformed URL/model, conflicting selection tests.
+- ROP adjudicator and ROP AI assist regression.
+- BeeDrill AI assist regression.
+- BeeScan BS-8 and BS-7 authorization/investigation regressions.
+- Full frozen pytest, build, Ruff/security checks, `git diff --check`.
+- Local mocked-provider smoke and logs/artifacts. verification
+- Dependency/version/unrelated-file checks.
 
 #### DoD
 
-All supported AI consumers use one verified profile resolution contract, independent module selection works, old configurations remain compatible, invalid configurations fail safely, full local regressions pass and updated documentation describes the actual behavior.
+All active AI- users use a single profile contract, independent overrides is working, legacy config is compatible, the wrong configuration does not lead to a hidden choice of the provider, and the complete set of local checks passes.
 
-**No automatic provider fallback, execution-authority expansion, new framework dependency or version bump.**
+**No automatic fallback, authority expansion, new AI framework dependency or version bump.**
 
 ---
 
-## Этап 5 — Operator / product shell v1 (ориентир)
+## Stage 5 - Operator / product shell v1 (reference)
 
 ### Purpose of stage
 
-Этап 5 добавляет минимальный operator/client-facing shell поверх уже существующего orchestrator и module contracts.
+Stage 5 adds the minimum operator/client-facing shell above the already existing orchestrator and module contracts.
 
-Фокус этапа:
+Stage focus:
 
 - bounded operator UI / chat flow;
 - run overview;
@@ -10883,26 +10860,26 @@ All supported AI consumers use one verified profile resolution contract, indepen
 
 ### Expected direction
 
-Этап должен идти малыми шагами:
+Stage must take small steps:
 
-- сначала read-only operator/client summaries;
-- затем stable backend/API contracts;
-- затем minimal safe actions;
-- только потом более широкий UI.
+- First read-only operator/client summaries;
+- Then stable backend/API contracts;
+- Then minimal safe actions;
+- only then the wider UI.
 
 ### Expected size
 
-Ориентир: **3–5 итераций**.
+Direction: **3-5 iterations**.
 
 ---
 
-## Этап 6 — Multi-module scaling v0 (ориентир)
+## Stage 6 – Multi-module scaling v0 (reference)
 
 ### Purpose of stage
 
-Этап 6 расширяет `beeagent` от первого клиентского модуля к платформе из нескольких доменных модулей.
+Stage 6 expands `beeagent` from the first client module to the platform of multiple domain modules.
 
-Фокус этапа:
+Stage focus:
 
 - `beescan`;
 - `merch`;
@@ -10912,23 +10889,23 @@ All supported AI consumers use one verified profile resolution contract, indepen
 
 ### Expected direction
 
-Этап должен идти малыми шагами:
+Stage must take small steps:
 
-- сначала второй реальный модуль;
-- потом общие module diagnostics;
-- потом common operator/product contracts;
-- затем более зрелая multi-module platform.
+- First, the second real module;
+- then shared module diagnostics;
+- Then common operator/product contracts;
+- then more mature multi-module platform.
 
 ### Expected size
 
-Ориентир: **4–6 итераций**.
+Direction: **4-6 iterations**.
 
 ---
 
 ## Related process documents
 
-Для выполнения итераций вместе с этим ROADMAP используются:
+ROADMAP is used to perform iterations together with:
 
-- `docs/DEV_GUIDE.md` — как запускать проект и как работать с AI/Copilot в рамках проекта;
+- `docs/DEV_GUIDE.md` — how to launch the project and how to work with AI/Copilot in the project;
 - `docs/SDLC.md` — lightweight process, change levels, required quality/security checks, DoD flow;
-- `docs/SECURITY.md` — secure development rules и security checks для разных типов изменений.
+- `docs/SECURITY.md` is secure development rules and security checks for different types of changes.

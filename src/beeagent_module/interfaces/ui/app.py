@@ -737,10 +737,10 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             cookie_param=request.cookies.get("beeui_lang"),
         )
         path = request.url.path
-        # /rop is rendered through the BeeUI product adapter, which receives
-        # only query params. Persist the cookie-derived locale into the request
-        # query string so the adapter localizes content on first load even when
-        # the URL carries no ?lang parameter.
+
+
+
+
         if path == "/rop" and "lang" not in request.query_params:
             from urllib.parse import quote
 
@@ -757,7 +757,7 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             reset_current_locale(token)
 
         content_type = response.headers.get("content-type", "")
-        # /rop is rendered by BeeUI adapter — no localization pass needed
+
         if path == "/rop":
             return response
 

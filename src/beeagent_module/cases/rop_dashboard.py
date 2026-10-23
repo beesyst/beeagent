@@ -176,7 +176,7 @@ def validate_filter_params(
             val = val.strip()
             if val:
                 if val.startswith("matched_"):
-                    pass  # matched_{entity_type} — динамический статус от Bitrix
+                    pass
                 elif val not in ALLOWED_BITRIX_STATUSES:
                     errors.append(
                         f"Invalid bitrix_status '{val}', "

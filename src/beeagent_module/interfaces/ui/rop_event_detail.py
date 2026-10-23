@@ -1601,7 +1601,7 @@ def build_rop_event_detail_page_model(
             }
         )
 
-    # Sort: filled sections first, "not used" sections last
+
     sections.sort(key=lambda s: s.get("no_data", False))
 
     bitrix_title = t("Bitrix evidence", lang)

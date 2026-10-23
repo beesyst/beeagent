@@ -2,55 +2,55 @@
 
 ## Purpose
 
-Этот документ определяет отдельный roadmap интеграции BeeScan в BeeAgent: module loading, governed security capabilities, provider execution, authorization, isolation, runtime artifacts и operator workflows.
+This document defines a separate roadmap for integrating BeeScan into BeeAgent: module loading, governed security capabilities, provider execution, authorization, isolation, runtime artifacts and operator workflows.
 
-BeeScan roadmap нужен, чтобы:
+The BeeScan roadmap is needed to:
 
-- не перегружать `docs/ROADMAP.md` деталями конкретного security-продукта;
-- сохранить независимую нумерацию BeeScan host iterations;
-- координировать BeeAgent host work с BeeScan domain iterations;
-- отделить security-domain semantics от execution authority;
-- последовательно довести первый Web Bug Bounty assessment MVP до настоящего end-to-end запуска;
-- развивать последующие security-интеграции без дублирования runtime и инфраструктуры.
+- avoid overloading `docs/ROADMAP.md` with security product details;
+- preserve independent numbering for BeeScan host iterations;
+- coordinate BeeAgent host work with BeeScan domain iterations;
+- separate security-domain semantics from execution authority;
+- bring the first Web Bug Bounty assessment MVP to a clear end-to-end launch sequence;
+- develop subsequent security integrations without duplicating runtime and infrastructure.
 
-Этот документ не заменяет:
+This document does not replace:
 
-- `docs/ROADMAP.md` — основной roadmap BeeAgent core;
-- `docs/product/ui_roadmap.md` — общий BeeUI operator console track;
-- `docs/SDLC.md` — процесс разработки, verification и delivery;
-- `docs/SECURITY.md` — общие security requirements;
-- `docs/DEV_GUIDE.md` — запуск, конфигурация и сопровождение;
-- BeeScan `docs/ROADMAP.md` — roadmap security-domain функциональности;
-- Issues и PR — точный scope и доказательства реализации.
+- `docs/ROADMAP.md` — the main BeeAgent core roadmap;
+- `docs/product/ui_roadmap.md` — the shared BeeUI operator console track;
+- `docs/SDLC.md` — development, verification and delivery processes;
+- `docs/SECURITY.md` — general security requirements;
+- `docs/DEV_GUIDE.md` — running, configuration and maintenance;
+- BeeScan `docs/ROADMAP.md` — the security-domain functionality roadmap;
+- Issues and PRs — exact scope and implementation evidence.
 
-**Главное правило:** отдельный roadmap не создаёт отдельный runtime, сервис, репозиторий или источник конфигурации.
+**Main rule:** a separate roadmap creates no separate runtime, service, repository or configuration source.
 
 ## Roadmap ownership
 
-| Roadmap                                    | Responsibility                                                            |
-| ------------------------------------------ | ------------------------------------------------------------------------- |
-| `beeagent/docs/ROADMAP.md`                 | Общая платформа, module system, runtime и shared infrastructure           |
-| `beeagent/docs/product/ui_roadmap.md`      | Общий UI, API, authentication, BeeUI migration и operator console         |
-| `beeagent/docs/product/beescan_roadmap.md` | BeeScan-specific host integration, governed execution и operator workflow |
-| `beescan/docs/ROADMAP.md`                  | Scope, Mission, Observations, Findings, triage и reporting semantics      |
-| `beesdk/docs/ROADMAP.md`                   | Только reusable public integration contracts                              |
-| `beeui/docs/ROADMAP.md`                    | Только generic presentation components и UI framework                     |
+| Roadmap                                    | Responsibility                                                              |
+| ------------------------------------------ | --------------------------------------------------------------------------- |
+| `beeagent/docs/ROADMAP.md`                 | Common platform, module system, runtime and shared infrastructure           |
+| `beeagent/docs/product/ui_roadmap.md`      | Shared UI, API, authentication, BeeUI migration and operator console        |
+| `beeagent/docs/product/beescan_roadmap.md` | BeeScan-specific host integration, governed execution and operator workflow |
+| `beescan/docs/ROADMAP.md`                  | Scope, Mission, Observations, Findings, triage and reporting semantics      |
+| `beesdk/docs/ROADMAP.md`                   | Only reusable public integration contracts                                  |
+| `beeui/docs/ROADMAP.md`                    | Only generic presentation components and UI framework                       |
 
-BeeAgent остаётся единственным execution host.
+BeeAgent remains the only execution host.
 
-BeeScan остаётся независимым доменным Python-пакетом.
+BeeScan remains an independent domain Python package.
 
-Новые BeeSDK или BeeUI изменения допустимы только при доказанном контрактном блокере и через отдельно утверждённый Issue соответствующего репозитория.
+New BeeSDK or BeeUI changes are permitted only for a demonstrated contract blocker through a separately approved Issue in the corresponding repository.
 
 ## Why BeeScan track is separate
 
-Основной BeeAgent ROADMAP содержит много завершённых этапов, включая module platform, ROP и BeeDrill. Последняя подтверждённая core iteration на момент создания этого плана — **Iteration 44.13 — Single-Project Isolated Security Test Execution and Onboarding**.
+The main BeeAgent ROADMAP contains many completed phases, including the module platform, ROP and BeeDrill. The last confirmed core iteration when this document was created was **Iteration 44.13 — Single-Project Isolated Security Test Execution and Onboarding**.
 
-BeeScan потребует самостоятельной последовательности host capabilities и security verification.
+BeeScan will require an independent sequence of host capabilities and security verification.
 
-Добавлять каждую BeeScan integration task как Iteration 45, 46, 47 и далее неудобно: это смешивает product-specific развитие с общим BeeAgent core.
+Adding every BeeScan integration task as Iteration 45, 46, 47 and so on is unwieldy: it mixes product-specific development with shared BeeAgent core work.
 
-Вместо этого используется отдельная последовательность:
+Instead, a separate sequence is used:
 
 ```text
 BS-1
@@ -59,9 +59,9 @@ BS-3
 ...
 ```
 
-Префикс `BS` означает BeeScan Host Track внутри BeeAgent.
+The `BS` prefix means the BeeScan Host Track inside BeeAgent.
 
-Нумерация не пересекается с:
+Numbering does not overlap with:
 
 ```text
 BeeAgent It0–It44.13
@@ -69,7 +69,7 @@ BeeAgent UI-0, UI-1, ...
 BeeScan It1–It6
 ```
 
-Отдельная BS-итерация не обязана иметь тот же номер, что соответствующая BeeScan domain iteration.
+A separate BS iteration does not have to share the number of its BeeScan domain iteration.
 
 ## Vision
 
@@ -1262,7 +1262,7 @@ BeeAgent:
 - `docs/SECURITY.md`
 - `docs/DEV_GUIDE.md`
 - `docs/WEB_UI.md`
-- `README.ru.md`
+- `README.md`
 
 BeeScan:
 

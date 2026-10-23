@@ -1,35 +1,65 @@
-# DEV_GUIDE — разработка модуля, тесты, интеграция с BeeAgent
+# DEV_GUIDE — Module development, tests and BeeAgent integration
 
 ## BeeDrill AI assist
 
 `./start.sh beedrill check` runs the existing BeeDrill security regression suite. `./start.sh beedrill diff --baseline <absolute-path> --candidate <absolute-path>` runs the fixed LiteSVM/Mocha/TSX test path in separate Bubblewrap sandboxes and writes `external_test_regression_diff.json`. Both project trees must contain the same `tests/litesvm.test.ts` and preinstalled regular-file Mocha/TSX/LiteSVM dependencies; project scripts, package installers, network access, host HOME and host secrets are unavailable. Each test process tree is placed in a verified systemd cgroup-v2 scope with a 768 MiB memory maximum and no swap; inability to establish that scope is infrastructure failure. Staging uses a private sandbox workspace and enforces the byte budget while copying rather than trusting the preflight tree size. A completed baseline PASS and candidate FAIL is `test_regression` with exit 1; unchanged or other completed outcomes exit 0; unsupported, incomplete or failed infrastructure exits 3. This is a test-regression classification, never a security PASS/FAIL verdict. `beedrill.ai_assist.enabled` defaults to `false`; when enabled, BeeAgent finalizes `beedrill_security_regression.json` first, then may write the optional bounded `beedrill_ai_assist.json`. AI receives only BeeDrill `explanation_facts`; it cannot alter verdicts, exit status, or execution authority.
 
-ROP AI adjudication uses the single enabled `ai.profiles` entry and supports `openai_responses` or `openai_compatible`. OpenRouter stays disabled until its environment-backed key is supplied. Bitrix blacklist trigger uses enabled `bitrix.blacklist_trigger`, configured stage/custom-field identifiers, an internally bootstrapped dedicated trigger secret, and an operator-supplied external event application token when that callback authentication mode is used.
+ROP AI adjudication and legacy assist use the shared Core profile resolver described below, supporting `openai_responses` and `openai_compatible`. Bitrix blacklist trigger uses enabled `bitrix.blacklist_trigger`, configured stage/custom-field identifiers, an internally bootstrapped dedicated trigger secret, and an operator-supplied external event application token when that callback authentication mode is used.
+
+## Shared AI profile selection (Iteration 45)
+
+`config/settings.yml` is the only profile catalog. `core/ai_profiles.py` resolves module `ai_profile` → `ai.default_profile` → exactly one legacy `ai.profiles.*.enabled: true` when the default is absent. Resolution returns profile identity and transport fields, never a credential value, and performs no network requests or provider fallback. ROP adjudicator and legacy assist share `rop.ai_assist.ai_profile`; BeeDrill and BeeScan select independently.
+
+The tracked configuration uses `ai.default_profile: openrouter`. To migrate a legacy configuration, set that default to the formerly enabled profile and remove every profile's `enabled` field, including `false` fields. Any `enabled` field together with `default_profile` is rejected. Module overrides can also select a named profile while the global configuration remains in legacy mode. Omitting an override inherits global selection; null, empty, non-string, malformed and unknown names fail validation.
+
+This partial example reuses the existing catalog and leaves enablement, approvals and budgets to their existing settings:
+
+```yaml
+ai:
+  default_profile: openrouter
+rop:
+  ai_assist:
+    ai_profile: openrouter
+beedrill:
+  ai_assist:
+    ai_profile: openai
+beescan:
+  investigation:
+    ai_profile: deepseek
+```
+
+Names use `[a-z][a-z0-9_]{0,63}`. Supported providers are `openai_responses` and `openai_compatible`; selected profiles require a bounded ASCII model identifier, an environment-variable reference and an HTTP(S) URL without credentials, query, fragment or control characters. Inactive empty model/URL placeholders remain accepted but cannot be selected. Unselected profiles never require their key values. Local HTTP endpoints remain supported for ROP/BeeDrill; BeeScan additionally requires HTTPS and uppercase credential references, including when inheriting a default.
+
+ROP checks the selected credential at startup for active adjudication and for non-dry-run legacy assist. Legacy assist dry-run requires no key and sends no request; adjudication retains its existing independent enablement and credential checks. Disabled ROP requires no AI credentials. BeeDrill validates selection when enabled and degrades on unavailable credentials/provider output without changing deterministic truth or exit status. Enabled BeeScan investigation requires its selected key and independent approval; disabled investigation validates endpoint configuration without requiring a key. Profile selection never enables a consumer or grants target authority.
+
+Historical `rop.ai_assist.profile` plus `profiles` with environment-backed model/base URL remain supported only by the legacy assist adapter. They cannot coexist with `rop.ai_assist.ai_profile` or `ai.default_profile`. Migrate their resolved transport values into `ai.profiles`, then replace the historical selector with `ai_profile`; no second canonical catalog is introduced. The historical assist transport and response handling remain unchanged.
+
+Existing request formats, deterministic fallbacks and ROP/BeeDrill artifact fields are preserved. BeeScan investigation results add nullable `ai_provider` and `ai_model` provenance under schema 1; these are host-selected values and never credentials or model-supplied authority. Model availability is not established by config validation or mocked tests.
 
 ## Purpose
 
-Этот документ описывает:
+This document describes:
 
-- как разрабатывать `beeagent-rop`;
-- как работать с окружением и зависимостями через `uv`;
-- как гонять тесты;
-- как держать границу между модулем и BeeAgent core;
-- как подключать модуль к `beeagent`;
-- как вести разработку в рамках текущего SDLC-light процесса.
+- How to develop `beeagent-rop`;
+- how to manage the environment and dependencies with `uv`;
+- How to run tests.
+- How to keep the boundary between the module and BeeAgent core;
+- How to connect the module to `beeagent`;
+- How to develop in the current SDLC-light process.
 
 ## Related project docs
 
-Этот документ используется вместе с:
+This document must be used together with:
 
-- `docs/ROADMAP.md` — этапы, итерации, scope, artifacts, checks, DoD;
+- `docs/ROADMAP.md` are the stages, iteration, scope, artifacts, checks, DoD;
 - `docs/SDLC.md` — lightweight process, change levels, required checks, PR flow;
-- `docs/SECURITY.md` — secure development rules и security checks по типу изменения.
+- `docs/SECURITY.md` is secure development rules and security checks by type of change.
 
-Правило:
+Rule:
 
-> `DEV_GUIDE` не заменяет `ROADMAP`, `SDLC` и `SECURITY`, а помогает быстро и безопасно разрабатывать модуль.
+> `DEV_GUIDE` does not replace `ROADMAP`, `SDLC` and `SECURITY`, but helps to develop the module quickly and safely.
 
-## Требования
+## Requirements
 
 - Python 3.14+
 - `uv`
@@ -141,49 +171,49 @@ A Lead create is allowed only after `rop_recipient_routing.json` reports an exac
 
 Email activity binding (`crm.activity.add`) is controlled by `bitrix.writeback.email_attach`. `bitrix.writeback.email_completed` (boolean, validated fail-fast, default `true`) sets whether the created email activity is completed (`true` → `COMPLETED=Y`); `false` creates it as not completed, which makes new incoming emails more visible in the lead timeline. For each record, durable state is saved after a created/recovered lead, after a created/recovered email activity, and after file delivery, so a retry reuses exact origin identities and continues delivery without re-ingesting mailbox UIDs.
 
-## Установка (dev)
+## Installation (dev)
 
-В корне модуля:
+At the root of the module:
 
 ```bash
 uv sync
 ```
 
-Запуск выполняй через `uv run`, активация venv не нужна.
+Use `uv run` to run commands; activating the venv is unnecessary.
 
-## Управление зависимостями (`uv`)
+## Dependency management (`uv`)
 
-Источник правды по зависимостям:
+Dependency sources of truth:
 
 - `pyproject.toml`
 - `uv.lock`
 
-Правило проекта:
+Rule of the project:
 
-> После изменения зависимостей коммить и `pyproject.toml`, и `uv.lock`.
+> After changing dependencies, commit both `pyproject.toml` and `uv.lock`.
 
 ### Optional module profiles
 
-Core dependencies всегда включают BeeSDK, но не включают domain modules. `modules.registry[].enabled` определяет runtime availability, а optional `install_extra` связывает enabled module с locked installation profile. Для текущих profiles используются `rop`, `beedrill` и `beescan`; отсутствие `install_extra` сохраняет поддержку externally installed modules.
+Core dependencies always include BeeSDK but exclude domain modules. `modules.registry[].enabled` determines runtime availability, while optional `install_extra` links an enabled module to a locked installation profile. The current profiles are `rop`, `beedrill` and `beescan`; omitting `install_extra` preserves support for externally installed modules.
 
-`uv run pytest -q` использует полный dev/test profile, включая locked ROP и Docling CPU dependencies, независимо от runtime enabled modules; в coordinated workspace ROP для этого profile разрешается через configured local editable `beeagent-rop` source. `./start.sh` запускает `uv sync --frozen --no-dev`, читает settings и затем синхронизирует extras только enabled module entries и выбранный Docling CPU/CUDA profile с `--no-dev`. Disabled entries не добавляют runtime dependencies. BeeSDK и enabled BeeDrill разрешаются из закреплённых release-backed sources. Normal BeeDrill runtime при disabled ROP не включает `beeagent-rop` и не требует ROP runtime setup.
+`uv run pytest -q` uses the complete dev/test profile, including locked ROP and Docling CPU dependencies, regardless of which runtime modules are enabled; in a coordinated workspace, ROP for this profile may resolve through the configured local editable `beeagent-rop` source. `./start.sh` runs `uv sync --frozen --no-dev`, reads settings and then synchronizes extras only for enabled module entries and the selected Docling CPU/CUDA profile with `--no-dev`. Disabled entries add no runtime dependencies. BeeSDK and enabled BeeDrill resolve from pinned release-backed sources. Normal BeeDrill runtime with ROP disabled excludes `beeagent-rop` and requires no ROP runtime setup.
 
-### Базовые команды
+### Basic Commands
 
-| Что сделать                    | Команда              |
-| ------------------------------ | -------------------- |
-| Поставить зависимости          | `uv sync`            |
-| Запустить тесты                | `uv run pytest -q`   |
-| Добавить зависимость           | `uv add <pkg>`       |
-| Добавить dev-зависимость       | `uv add --dev <pkg>` |
-| Удалить зависимость            | `uv remove <pkg>`    |
-| Посмотреть дерево зависимостей | `uv tree`            |
+| What to Do               | Command              |
+| ------------------------ | -------------------- |
+| Install dependencies     | `uv sync`            |
+| Run tests                | `uv run pytest -q`   |
+| Add Dependency           | `uv add <pkg>`       |
+| Add dev dependency       | `uv add --dev <pkg>` |
+| Remove Dependency        | `uv remove <pkg>`    |
+| View the dependency tree | `uv tree`            |
 
-## Что такое `beeagent-rop`
+## What is `beeagent-rop`
 
-`beeagent-rop` — это **не отдельный runtime** и не отдельный UI.
+`beeagent-rop` is **not a separate runtime** or a separate UI.
 
-Это доменный модуль для BeeAgent, который отвечает за:
+This is domain module for BeeAgent, which is responsible for:
 
 - inbound event understanding;
 - lead classification;
@@ -193,13 +223,13 @@ Core dependencies всегда включают BeeSDK, но не включаю
 - bounded recommendations;
 - bounded AI assist contract for ambiguous/fallback classification (It17+).
 
-Правило:
+Rule:
 
-> Модуль не должен брать на себя orchestration, session management, общий artifact lifecycle и capability transport. Это зона BeeAgent core.
+> The module must not take over orchestration, session management, the shared artifact lifecycle or capability transport. These belong to BeeAgent core.
 
-## Где проходит граница модуля
+## The module boundary
 
-### Это зона `beeagent-rop`
+### What belongs to `beeagent-rop`
 
 - `contracts.py`
 - `domain/*`
@@ -215,7 +245,7 @@ Core dependencies всегда включают BeeSDK, но не включаю
 - human-reviewed taxonomy contract (It18+)
 - thread context contract (It18+)
 
-### Это зона `beeagent`
+### What belongs to `beeagent`
 
 - module contract
 - module registry
@@ -224,21 +254,21 @@ Core dependencies всегда включают BeeSDK, но не включаю
 - transport/UI
 - capability abstraction
 - approvals / policy / authority boundaries
-- общий orchestration flow
+- shared orchestration flow
 
-Правило:
+Rule:
 
-> Если изменение нужно только для логики РОП/клиента, оно должно жить в `beeagent-rop`. Если оно нужно для всех модулей — тогда это кандидат в core.
+> If a change is needed only for ROP/client logic, it belongs in `beeagent-rop`. If all modules need it, it is a candidate for the core.
 
-## Как тестировать модуль
+## How to Test a Module
 
-Основной способ:
+Main way:
 
 ```bash
 uv run pytest -q
 ```
 
-### Что должно тестироваться внутри модуля
+### What must be tested inside the module
 
 - domain contracts;
 - classification cases;
@@ -251,85 +281,85 @@ uv run pytest -q
 - thread context validation and classification integration;
 - fixture-based edge cases.
 
-### Что не должно тестироваться как responsibility модуля
+### What is not the module’s testing responsibility
 
 - Telegram UI;
-- общий run lifecycle BeeAgent;
+- shared run lifecycle BeeAgent;
 - module registry;
 - MCP transport;
 - n8n execution engine.
 
-Это тестируется в `beeagent`.
+This is tested in `beeagent`.
 
-## Fixture-driven разработка
+## Fixture-driven Development
 
-Для `beeagent-rop` fixture-driven подход обязателен.
+A fixture driven approach is mandatory for `beeagent-rop`.
 
-Почему:
+Why:
 
-- клиентские кейсы грязные;
-- входящий поток нестабилен;
-- правила надо проверять не “в голове”, а на воспроизводимых примерах.
+- client cases contain messy data;
+- The incoming flow is unstable;
+- rules must be checked against reproducible examples rather than only reasoned about mentally.
 
-### Практика
+### Practice
 
-Для каждой значимой итерации полезно иметь fixture-наборы:
+For each relevant iteration it is useful to have fixture sets:
 
-- новый лид;
+- A new lead;
 - existing deal;
 - duplicate;
 - irrelevant / spam;
 - ambiguous case;
 - attachment-heavy case;
-- “смотри вложение” case;
+- “see attachment” case;
 - dirty input case.
 
-Для inbound contract baseline Iteration 2 fixture-источник живёт в `tests/fixtures/inbound_email_v0/`. Такие fixtures должны содержать только санитизированный input и ожидаемый normalized result без classification labels.
+For inbound contract baseline Iteration 2 fixtures, the source lives in `tests/fixtures/inbound_email_v0/`. Such fixtures must contain only the sanitized input and the expected normalized result without classification labels.
 
-Для Iteration 3 explainable classification fixture-источник живёт в `tests/fixtures/lead_classification_v1/`. Такие fixtures должны содержать нормализуемый inbound input и ожидаемый classification result c `case_type`, `priority`, `reason_code` и `is_fallback`.
+For Iteration 3 explainable classification fixtures, the source lives in `tests/fixtures/lead_classification_v1/`. Such fixtures must contain a normalized inbound input and the expected classification result c `case_type`, `priority`, `reason_code` and `is_fallback`.
 
-Для Iteration 4 duplicate resolution fixture-источник живёт в `tests/fixtures/duplicate_resolution_v1/`. Такие fixtures должны содержать inbound input, доступные `existing_records` и ожидаемый duplicate result c `candidate`, `confidence`, `reason_code`, `reason_path` и fallback semantics.
+For Iteration 4 duplicate resolution fixtures, the source lives in `tests/fixtures/duplicate_resolution_v1/`. Such fixtures must contain inbound input, accessible `existing_records` and expected duplicate result c `candidate`, `confidence`, `reason_code`, `reason_path` and fallback semantics.
 
-Для Iteration 5 attachment reader decision fixture-источник живёт в `tests/fixtures/attachment_reader_v0/`. Такие fixtures должны содержать attachment metadata input и ожидаемый `AttachmentReadResult` c `status`, `reason_code`, `is_supported`, `is_refused`, `needs_manual_review`. Fixture-примеры покрывают: PDF supported, DOCX supported, XLSX metadata_only, JPG unsupported (no OCR), inline/logo skipped, unknown content type unsupported, oversized refused.
+For Iteration 5 attachment reader decision fixtures, the source lives in `tests/fixtures/attachment_reader_v0/`. Such fixtures must contain attachment metadata input and the expected `AttachmentReadResult` c `status`, `reason_code`, `is_supported`, `is_refused`, `needs_manual_review`. Fixture examples cover: PDF supported, DOCX supported, XLSX metadata_only, JPG unsupported (no OCR), inline/logo skipped, unknown content type unsupported, oversized refused.
 
-Для Iteration 7 attachment-aware classification fixture-источник живёт в `tests/fixtures/attachment_aware_classification_v1/`. Такие fixtures должны содержать нормализуемый inbound input с вложениями и ожидаемый classification result. Attachment context поступает через:
+For Iteration 7 attachment-aware classification, the fixture source is `tests/fixtures/attachment_aware_classification_v1/`. These fixtures must contain normalizable inbound input with attachments and the expected classification result. Attachment context must arrive through:
 
-- `attachment.filename` — имя файла;
+- `attachment.filename` is the file name;
 - `attachment.raw_metadata.text_preview` / `attachment_text` / `summary` — legacy preview keys;
-- BeeAgent It25-like downstream keys в `event.raw_metadata` и `attachment.raw_metadata`: `attachment_extraction_status`, `attachment_preview_available`, `attachment_text_preview`, `attachment_refusal_reasons`, `extraction_status`, `preview_available`, `text_preview`, `reason_code`, `refusal_reason`. Classifier не читает файлы, не генерирует `attachment_extraction.json` и не выполняет OCR — только работает с уже переданными в payload безопасными preview/status/refusal данными. Fixture-примеры покрывают: weak body + request filename → new_lead; weak body + invoice filename → existing_deal; text_preview с заявкой → new_lead; text_preview со счётом → existing_deal; refused/unreadable attachment → safe fallback/manual-review.
+- BeeAgent It25-like downstream keys in `event.raw_metadata` and `attachment.raw_metadata`: `attachment_extraction_status`, `attachment_preview_available`, `attachment_text_preview`, `attachment_refusal_reasons`, `extraction_status`, `preview_available`, `text_preview`, `reason_code`, `refusal_reason`. Classifier does not read files, does not generate `attachment_extraction.json` and does not perform OCR; it only works with payload secure preview/status/refusal data already transmitted. Fixture examples cover: weak body + request filename → new_lead; weak body + invoice filename → existing_deal; text_preview with an inquiry → new_lead; text_preview with an invoice → existing_deal; refused/unreadable attachment → safe fallback/manual-review.
 
-Для Iteration 8 ROP summary v1 fixture-источник живёт в `tests/fixtures/rop_summary_v1/`. Такие fixtures должны содержать список classified inbound items и ожидаемый `SummaryResult` с `total_leads`, `counts` и highlighted `items`. Входной контракт элемента: `event_id`, `case_type`, `priority`, `is_fallback`, `is_attachment_aware`. Fixture-примеры покрывают: empty input; mixed flow (new_lead/existing_deal/duplicate/irrelevant); high-priority new lead; fallback/low-confidence → needs_manual_review; duplicate highlighted; attachment-aware item.
+For Iteration 8 ROP summary v1 fixtures, the source lives in `tests/fixtures/rop_summary_v1/`. Such fixtures must contain the classified inbound items list and the expected `SummaryResult` with `total_leads`, `counts` and highlighted `items`. The entry contract of the element: `event_id`, `case_type`, `priority`, `is_fallback`, `is_attachment_aware`. Fixture examples cover: empty input; mixed flow (new_lead/existing_deal/duplicate/irrelevant); high-priority new lead; fallback/low-confidence → needs_manual_review; duplicate highlighted; attachment-aware item.
 
-Для Iteration 9 recommendation builder v0 fixture-источник живёт в `tests/fixtures/recommendation_builder_v0/`. Такие fixtures должны содержать список classified events и ожидаемый список `RecommendationResult`. Входной контракт элемента: `event_id`, `case_type`, `priority`, `confidence`, `is_fallback`, `is_attachment_aware`, `reason_code`. Fixture-примеры покрывают: empty input; new_lead_next_step; existing_deal_follow_up; duplicate_review; irrelevant_no_action; manual_review_required; attachment_aware_review; mixed_recommendations.
+For Iteration 9 recommendation builder v0 fixtures, the source lives in `tests/fixtures/recommendation_builder_v0/`. Such fixtures must contain the classified events list and the expected `RecommendationResult` list. The entry contract of the element: `event_id`, `case_type`, `priority`, `confidence`, `is_fallback`, `is_attachment_aware`, `reason_code`. Fixture examples cover: empty input; new_lead_next_step; existing_deal_follow_up; duplicate_review; irrelevant_no_action; manual_review_required; attachment_aware_review; mixed_recommendations.
 
-Для Iteration 10 BeeAgent integration contract smoke v0 fixture-источник живёт в `tests/fixtures/integration_smoke_v0/`.
+For Iteration 10 BeeAgent integration contract smoke v0 fixtures, the source lives in `tests/fixtures/integration_smoke_v0/`.
 
-Для Iteration 17 AI assist v1 fixture-источник живёт в `tests/fixtures/ai_assist_v1/`. Такие fixtures должны содержать deterministic classification result, expected AI assist eligibility, optional AI decision и expected merge outcome. Fixture-примеры покрывают: fallback reply eligible; fallback low signal eligible; ambiguous existing deal eligible; confidential spam not eligible; confident new_lead not eligible; confident existing_deal not eligible; invalid AI decision degraded; AI low confidence degraded; spam cannot be AI-promoted; tender/RFQ remains deterministic; refused attachment with weak body; AI decision with CRM action rejected. Такие fixtures должны содержать BeeAgent-compatible payload для `RopModule.handle(...)` и ожидаемую shape-структуру `rop_summary` результата. Smoke-примеры покрывают: `rop_summary` output shape (`period`, `total_leads`, `counts`, `items`, `recommendations`), artifact write через `context.artifact_api.write_json(...)`, unsupported `case_type`, missing/non-list `events`, artifact write failure без crash.
+For Iteration 17 AI assist v1 fixtures, the source lives in `tests/fixtures/ai_assist_v1/`. Such fixtures must contain deterministic classification result, expected AI assist eligibility, optional AI decision and expected merge outcome. Fixture examples must cover: fallback reply eligible; fallback low signal eligible; ambiguous existing deal eligible; confidential spam not eligible; confident new_lead not eligible; confident existing_deal not eligible; invalid AI decision degraded; AI low confidence degraded; spam cannot be AI-promoted; tender/RFQ remains deterministic; refused attachment with weak body; AI decision with CRM action rejected. Such fixtures must contain BeeAgent-compatible payload for `RopModule.handle(...)` and the expected shape- structure of `rop_summary` results. Smoke examples cover: `rop_summary` output shape (`period`, `total_leads`, `counts`, `items`, `recommendations`), artifact write through `context.artifact_api.write_json(...)`, unsupported `case_type`, missing/non-list `events`, artifact write failure without crash.
 
-Для Iteration 19 ROP case subtype taxonomy v1 fixture-источник живёт в `tests/fixtures/reviewed_tsv_subtype_v1/`. Такие fixtures должны содержать inbound event input, expected classification result включая `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action` и `reviewed_expected.json` с ожидаемыми evaluation counts. Fixture-примеры покрывают: ETS/SAP tender → `new_lead_tender`; RFQ/quotation → `new_lead_rfq`; WARUITE shipping → `existing_deal_logistics`; Pentagon freight/invoice → `existing_deal_invoice`; ESAB lot clarification → `existing_deal_procurement`; Qarmet delivery deadline → `existing_deal_logistics`; Voestalpine product order → `existing_deal_procurement`; supplier promo → `supplier_offer`; Facebook/WPK/HR → `service_notification`; Kemppi order confirmation → `existing_deal_invoice`; finance reconciliation → `finance_document`; bulk newsletter → `spam_or_bulk`; internal memo → `internal_employee_correspondence`; document request → `existing_deal_document`; malformed subtype → degraded validation path. Subtype resolver детерминирован и explainable: использует `case_type`, `reason_code`, subject/body markers для выбора subtype без дублирования `rules.py`.
+For Iteration 19 ROP case subtype taxonomy v1 fixtures, the source lives in `tests/fixtures/reviewed_tsv_subtype_v1/`. Such fixtures must contain inbound event input, expected classification result, including `case_subtype`, `recommended_queue`, `should_rop_see`, `correct_action` and `reviewed_expected.json`, with the expected evaluation counts. Fixture examples covering: ETS/SAP tender → `new_lead_tender`; RFQ/quotation → `new_lead_rfq`; WARUITE shipping → `existing_deal_logistics`; Pentagon freight/invoice → `existing_deal_invoice`; ESAB lot clarification → `existing_deal_procurement`; Qarmet delivery deadline → `existing_deal_logistics`; Voestalpine product order → `existing_deal_procurement`; supplier promo → `supplier_offer`; Facebook/WPK/HR → `service_notification`; Kemppi order confirmation → `existing_deal_invoice`; finance reconciliation → `finance_document`; bulk newsletter → `spam_or_bulk`; internal memo → `internal_employee_correspondence`; document request → `existing_deal_document`; malformed subtype → degraded validation path. Subtype resolver is deterministic and explainable: uses `case_type`, `reason_code`, subject/body markers to choose subtype without duplication of `rules.py`.
 
-Для Iteration 18 human-reviewed taxonomy v1 fixture-источник живёт в `tests/fixtures/human_review_taxonomy_v1/`. Такие fixtures должны содержать human review payload и ожидаемый validation result. Fixture-примеры покрывают: confirmed new_lead; confirmed existing_deal; confirmed irrelevant; confirmed duplicate; manual_review/ambiguous; false_positive; false_negative; deferred review; malformed/missing label; malformed/invalid label; malformed/invalid status. Human review labels не влияют на live production classification и используются только как fixture/evaluation evidence.
+For Iteration 18 human-reviewed taxonomy v1 fixtures, the source lives in `tests/fixtures/human_review_taxonomy_v1/`. Such fixtures must contain human review payload and the expected validation result. Fixture examples must cover: confirmed new_lead; confirmed existing_deal; confirmed irrelevant; confirmed duplicate; manual_review/ambiguous; false_positive; false_negative; deferred review; malformed/missing label; malformed/invalid label; malformed/invalid status. Human review labels does not affect live production classification and is used only as fixture/evaluation evidence.
 
-Для Iteration 18 thread context v1 fixture-источник живёт в `tests/fixtures/thread_context_v1/`. Такие fixtures должны содержать thread context payload, ожидаемый validation result и expected_supportive флаг для ambiguous existing-deal helper. Fixture-примеры покрывают: reply chain с previous existing_deal; forward-only weak; supplier noise with thread context (не должен promote); tender/RFQ with thread context (детерминированный new_lead); weak continuation без CRM; CRM hint with reply; malformed payloads; empty thread_id.
+For Iteration 18 thread context v1 fixtures, the source lives in `tests/fixtures/thread_context_v1/`. Such fixtures must contain thread context payload, the expected validation result and expected_supportive flag for ambiguous existing-deal helper. Fixture examples must cover: reply chain with previous existing_deal; forward-only weak; supplier noise with thread context (must not be promote); tender/RFQ with thread context (deterministic new_lead); weak continuation without CRM; CRM hint with reply; malformed payloads; empty thread_id.
 
-Для Iteration 12 live mailbox fixture hardening v1 fixture-источник живёт в `tests/fixtures/live_mailbox_hardening_v1/`. Такие fixtures должны содержать только sanitized/signal-reduced payload и expected outcomes по live mailbox scenario groups. Минимальный набор групп: supplier promo, tender/procurement notifications, HR/service noise, operational documents, attachment-only manual-review cases, spam-like sales. Fixture-контракт должен быть explainable: `input` -> deterministic rules -> `expected` без AI-only path.
+For Iteration 12 live mailbox fixture hardening v1 fixtures, the source lives in `tests/fixtures/live_mailbox_hardening_v1/`. Such fixtures must contain only sanitized/signal-reduced payload and expected outcomes on live mailbox scenario groups. Minimum set of groups: supplier promo, tender/procurement notifications, HR/service noise, operational documents, attachment-only manual-review cases, spam-like sales. Fixture contract must be explainable: `input` -> deterministic rules -> `expected` without AI-only path.
 
-Для Iteration 13 human-reviewed live classification hardening v1 fixture-источник живёт в `tests/fixtures/live_human_review_v1/`. Такие fixtures должны содержать только sanitized human-reviewed payload и expected deterministic outcomes по first-pass live review. Минимальный набор групп: supplier promo, HR/service noise, finance/accounting documents, logistics notifications, tender/procurement, client continuation, attachment-only manual-review, duplicate-candidate finance noise. Fixture-контракт должен оставаться explainable: `input` -> deterministic rules -> `expected`, а кейсы с открытым бизнес-вопросом должны явно помечаться через `review_status = needs_business_confirmation`.
+For Iteration 13 human-reviewed live classification hardening v1 fixtures, the source lives in `tests/fixtures/live_human_review_v1/`. Such fixtures must contain only sanitized human-reviewed payload and expected deterministic outcomes on first-pass live review. Minimum set of groups: supplier promo, HR/service noise, finance/accounting documents, logistics notifications, tender/procurement, client continuation, attachment-only manual-review, duplicate-candidate finance noise. Fixture contract must remain explainable: `input` -> deterministic rules -> `expected`, and cases with open business questions must be clearly marked through `review_status = needs_business_confirmation`.
 
-Санитизация для live mailbox fixtures обязательна:
+Sanitation for live mailbox fixtures is mandatory:
 
-- только synthetic senders в домене `example.test`;
-- без реальных телефонов и live URL;
-- без raw `.eml` и full raw message bodies;
-- без секретов/токенов/паролей.
+- only synthetic senders in the `example.test` domain;
+- without real phones and live URL;
+- without raw `.eml` and full raw message bodies;
+- without secrets/tokens/passwords.
 
-Ожидаемое поведение artifact в module-side integration smoke:
+Expected artifact behaviour in module-side integration smoke:
 
-- если `context.artifact_api` передан, модуль вызывает `write_json("<case_type>_result.json", ...)`;
-- ошибка записи артефакта не должна ронять `RopModule.handle(...)`;
-- structured module result остаётся основным output path.
+- If `context.artifact_api` is available, the module calls `write_json("<case_type>_result.json", ...)`;
+- The error in writing the artifact must not drop `RopModule.handle(...)`;
+- structured module result remains the main output path.
 
-Output shape `rop_summary` (с Iteration 9) включает ключ `recommendations`:
+Output shape `rop_summary` (with Iteration 9) includes the `recommendations` key:
 
 ```json
 {
@@ -351,78 +381,78 @@ Output shape `rop_summary` (с Iteration 9) включает ключ `recommend
 }
 ```
 
-Правило:
+Rule:
 
-> Если логика меняется, должен быть fixture или тест, который объясняет, зачем именно она поменялась.
+> If logic changes, there must be fixture or a test that explains why it changed.
 
-## AI в модуле
+## AI in the module
 
-AI допустим только как bounded assistive layer.
+AI is allowed only as bounded assistive layer.
 
-### Разрешено
+### Authorized
 
 - classification assist;
 - summary drafting;
 - recommendation drafting;
-- enrichment поверх контролируемого pipeline.
+- enrichment above the controlled pipeline.
 
-### Не разрешено
+### Not allowed
 
-- подменять deterministic rules там, где они обязательны;
-- оставлять critical decision полностью на black-box AI;
-- скрывать за AI отсутствие нормального contract/rule path.
+- Replace deterministic rules where it is mandatory;
+- Leave critical decision entirely on black-box AI;
+- Hide for AI the absence of a normal contract/rule path.
 
-Правило:
+Rule:
 
-> Сначала deterministic path, потом bounded AI assist поверх него, а не наоборот.
+> First deterministic path, then bounded AI assist over it, not the other way around.
 
-## Подключение модуля к BeeAgent
+## Connecting module to BeeAgent
 
-`beeagent-rop` живёт как отдельная репа и ставится в `beeagent` как editable package.
+`beeagent-rop` lives in a separate repository and is installed in `beeagent` as editable package.
 
-Из `beeagent`:
+From `beeagent`:
 
 ```
 uv add --editable ../beeagent-rop
 ```
 
-После этого BeeAgent может импортировать пакет `beeagent_rop`.
+BeeAgent may then import the `beeagent_rop` package.
 
-### Рабочая модель
+### Working model
 
-- разработка доменной логики — в `beeagent-rop`
-- orchestration/integration changes — в `beeagent`
-- интеграционные проверки — запускать уже из `beeagent`
+- domain logic development in `beeagent-rop`
+- orchestration/integration changes — in `beeagent`
+- Integration checks — start already from `beeagent`
 
-## Логи и артефакты
+## Logs and artifacts
 
-Сам модуль не должен хаотично писать свои файлы куда попало.
+The module must not write its files to arbitrary locations.
 
-Правильная модель:
+Correct model:
 
-- unit/fixture tests живут внутри `beeagent-rop`;
-- production artifacts модуля пишутся через BeeAgent artifact API;
-- linkage идёт через `run_id`, `module_id`, `case_type`.
+- unit/fixture tests lives inside `beeagent-rop`;
+- production artifacts of the module is written via BeeAgent artifact API;
+- linkage goes through `run_id`, `module_id`, `case_type`.
 
-Правило:
+Rule:
 
-> Если модуль начал сам себе придумывать свой runtime storage lifecycle в обход BeeAgent, это архитектурная ошибка.
+> If the module started to invent its own runtime storage lifecycle by bypassing BeeAgent, that's an architectural error.
 
 ## SDLC-light workflow
 
-1. открыть `docs/ROADMAP.md`
-2. выбрать текущую итерацию
-3. создать issue
-4. определить `change level`
-5. создать ветку
-6. внести изменения
-7. прогнать:
+1. Open `docs/ROADMAP.md`
+2. Select current iteration
+3. create issue
+4. define `change level`
+5. Create a branch
+6. Amend
+7. Run:
    - `uv run pytest -q`
-   - нужные fixture tests
+   - Necessary fixture tests
 
-8. проверить, что логика не вылезла за scope
-9. оформить PR
-10. после review — merge
+8. Check that logic hasn't gone beyond scope
+9. to shape PR
+10. after review – merge
 
 ## Change levels
 
@@ -452,85 +482,85 @@ uv add --editable ../beeagent-rop
 - serialization/deserialization
 - trust-boundary changes
 
-## Что проверять перед PR
+## What to check before PR
 
-Минимум:
+Minimum:
 
 ```
 uv run pytest -q
 ```
 
-Плюс:
+Add:
 
-- проверить fixture coverage по своей итерации;
-- проверить, что deterministic path остался explainable;
-- проверить, что изменение не тащит client-specific костыли в общий contract без причины.
+- Check fixture coverage with iteration;
+- Check that deterministic path remains explainable;
+- Check that the change does not carry client-specific crutches into the common contract without cause.
 
-### Типовой checklist
+### Typical checklist
 
-- кейсы клиента покрыты тестами;
-- classification/reason path объясним;
-- duplicate logic воспроизводима;
-- attachment path bounded и безопасен;
-- AI не размывает deterministic contract;
-- изменение не вылезло за scope текущей итерации;
-- required checks по change level действительно выполнены.
+- client cases are covered by tests;
+- classification/reason path is explained;
+- duplicate logic is reproducible;
+- attachment path bounded and secure;
+- AI does not blur deterministic contract;
+- The change did not go beyond scope of the current iteration;
+- required checks on change level is actually complete.
 
 ## Copilot / AI prompt template (beeagent-rop)
 
 ```
-Нужно внести изменения в проект `beeagent-rop` (НЕ только в текущий файл).
+Changes are needed in the `beeagent-rop` project (NOT only in the current file).
 
-### Контекст
+### Context
 
-- Проект: `beeagent-rop` (`Python 3.14+`, `uv`)
-- Это отдельный доменный модуль для BeeAgent
-- Архитектура: модуль живёт отдельно от `beeagent`, подключается как package-based module и не является отдельным runtime или MCP server
+- Project: `beeagent-rop` (`Python 3.14+`, `uv`)
+- This is a separate domain module for BeeAgent
+- Architecture: the module lives separately from `beeagent`, connects as a package-based module and is not a separate runtime or MCP server
 - SDLC-light: `ROADMAP → Issue → branch → code → tests → artifacts → PR → merge`
-- Источник правды:
+- Source of truth:
   - domain contracts
   - business rules
   - fixture cases
   - `docs/ROADMAP.md`
   - `docs/SDLC.md`
   - `docs/SECURITY.md`
-- Итерация закрывается через `PR`, поэтому изменения должны быть проверяемыми, воспроизводимыми и согласованными с fixture/tests/artifacts
+- Iteration closes through `PR`, so the modifications must be verifiable, reproducible and consistent with fixture/tests/artifacts
 
-### Правила
+### Rules
 
-- Сначала прочитай все перечисленные файлы, потом предлагай и вноси правки.
-- Если по ходу нужен ещё файл — добавь его в список и тоже прочитай.
-- Сначала соотнеси задачу с текущей итерацией из `docs/ROADMAP.md`; не выходи за её scope.
-- Сначала определи `change level`:
+- First, read all the files listed, then suggest and submit corrections.
+- If another file is needed along the way, add it to the list and read it as well.
+- First map the task to the current iteration in `docs/ROADMAP.md`; stay within its scope.
+- First, define `change level`:
   - `low-risk`
   - `runtime-risk`
   - `security-sensitive`
-- Для выбранного `change level` определи required checks по `docs/SDLC.md` и `docs/SECURITY.md`.
-- Делай только минимально необходимые изменения по KISS. Не рефактори вне задачи.
-- Тесты должны быть минимальными и пропорциональными изменению: покрывай acceptance criteria и публичное поведение, не создавай новые test-файлы/test-helpers без явной необходимости.
-- Не меняй чужой scope итерации и не протаскивай “на будущее” недоделанную архитектуру.
-- Не убирай существующие проверки без явной причины.
-- Не тащи orchestration/runtime/module-registry/capability-transport логику в `beeagent-rop`, если она должна жить в `beeagent`.
-- Если видишь, что изменение относится к `beeagent` core, а не к доменному модулю, прямо укажи это в ответе.
+- Determine the required checks for the selected `change level` from `docs/SDLC.md` and `docs/SECURITY.md`.
+- Make only the smallest necessary KISS changes. Do not refactor outside the task.
+- The tests must be of a minimum and proportional nature: Cover acceptance criteria and public behavior, do not create new test- files/test-helpers without explicit need.
+- Do not change another iteration’s scope or introduce unfinished architecture for hypothetical future use.
+- Don't remove existing checks for no apparent reason.
+- Don't drag orchestration/runtime/module-registry/capability-transport logic into `beeagent-rop`, if it has to live in `beeagent`.
+- If you see that the change relates to `beeagent` core, not to the domain module, just point it out in the answer.
 
 ### Source of truth rules
 
-- Источник правды в модуле:
+- Source of truth in the module:
   - domain contracts;
   - fixture cases;
   - agreed business rules;
-  - явные deterministic paths;
+  - Visible deterministic paths;
   - bounded AI assist only where justified.
-- Не создавай hidden behavior, который нельзя объяснить через input → rules → result.
-- Не подменяй обязательные deterministic paths чистым AI output.
-- Если добавляешь новый rule/config-like contract внутри модуля, сначала объясни:
-  - где он должен жить;
-  - почему он относится к модулю, а не к `beeagent`;
-  - почему это не создаёт второй source of truth для core runtime.
+- Do not create hidden behavior that cannot be explained through input → rules → result.
+- Do not replace mandatory deterministic paths with pure AI output.
+- If you add a new rule/config-like contract inside the module, first explain:
+  - where it must reside;
+  - Why it's a module, not `beeagent`;
+  - Why doesn't it create a second source of truth for core runtime.
 
 ### Core / module boundary rules
 
-- `beeagent-rop` отвечает за:
+- `beeagent-rop` is responsible for:
   - inbound event understanding;
   - lead classification;
   - new vs existing deal logic;
@@ -539,101 +569,101 @@ uv run pytest -q
   - rop summary;
   - bounded recommendations;
   - fixture-driven client behavior.
-- `beeagent-rop` НЕ должен без причины брать на себя:
+- `beeagent-rop` must not, for no reason, take over:
   - orchestration;
   - run/session lifecycle;
   - global artifact management;
   - module registry;
   - MCP/tool transport;
   - global approvals / authority / policy.
-- Если задача требует изменения общих contracts платформы — это `beeagent`, а не `beeagent-rop`.
+- If the task requires a change in the common contracts platform, it is `beeagent`, not `beeagent-rop`.
 
 ### Docs / contracts / artifacts
 
-- Если меняется module behavior, contract, fixture contract, result shape или docs-contract, проверь, нужно ли обновить:
+- If module behavior, a contract, fixture contract, result shape or documentation contract changes, check whether these need updating:
   - `docs/ROADMAP.md`
   - `README.md`
   - `docs/DEV_GUIDE.md`
   - `docs/SDLC.md`
   - `docs/SECURITY.md`
-- Если меняется shape результата, покажи пример объекта результата.
-- Если меняются fixture contracts, покажи пример fixture input/output.
-- После работы дай короткий чеклист для PR/отчёта.
+- If shape changes the result, show an example of the object of the result.
+- If fixture contracts changes, give an example of fixture input/output.
+- After completing the work, provide a short checklist for the PR/report.
 
 ### Code style / execution rules
 
-- Соблюдай PEP 8: имена, длина строк, структура.
-- Не добавляй никаких комментариев.
-- Логи, имена полей, JSON/JSONL, runtime messages — на английском языке.
-- Все команды запуска и тестов указывай через `uv run`, если это применимо.
-- Не предлагай hidden side effects во внешних системах без явной задачи на это.
+- Follow PEP 8: names, length of lines, structure.
+- Don't add any comments.
+- Keep logs, field names, JSON/JSONL and runtime messages in English.
+- All start-up commands and tests should be indicated via `uv run`, if applicable.
+- Do not propose hidden side effects in external systems without an explicit task requiring them.
 
 ### AI / deterministic rules
 
-- Сначала deterministic path, потом bounded AI assist поверх него.
-- Если AI используется:
-  - явно укажи, где именно;
-  - что остаётся deterministic;
-  - каков fallback path;
-  - как результат будет проверяемым.
-- Не делай black-box решение единственным путём для критичной классификации.
+- First deterministic path, then bounded AI assist over it.
+- If AI is used:
+  - clearly indicate where it is;
+  - which remains deterministic;
+  - What is fallback path;
+  - how the result will be verifiable.
+- Don't make black-box the only way for critical classification.
 
 ### Release / versioning rules
 
-- Не меняй `version` в `pyproject.toml`, не трогай release metadata, changelog, tags и release-related файлы, если задача явно не про релиз/версионирование.
-- Version bump не делается в обычном feature/fix/docs PR.
-- Если добавляешь зависимости, обнови только dependency declarations и укажи required SCA checks; версию пакета не меняй без явного указания задачи.
+- Do not change `version` in `pyproject.toml`, release metadata, changelog, tags or release-related files unless the task explicitly concerns releases/versioning.
+- Version bump is not made in the normal feature/fix/docs PR.
+- If adding dependencies, update only dependency declarations and specify the required SCA checks; do not change the package version without an explicit task instruction.
 
-### Формат ответа
+### Response format
 
-Ответ строго в формате:
+Response in strict format:
 
-1. `Что прочитал`
-2. `План`
+1. `Files read`
+2. `Plan`
 3. `Change level`
 4. `Required checks`
 5. `Source of truth after change`
-6. `Граница core/module`
-7. `Было`
-8. `Стало`
-9. `Почему`
-10. `Чеклист`
-11. `Что написать в PR`
+6. `Core/module boundary`
+7. `Before`
+8. `After`
+9. `Why`
+10. `Checklist`
+11. `PR description`
 
-### Дополнительно к формату
+### Additional to format
 
-- Без diff
-- Без лишних рассуждений
-- Если нужна новая функция/класс — укажи точное место вставки (до/после какого блока)
-- Для тестов перечисли, какие именно тесты нужно добавить/обновить
-- Для каждого нового правила/контракта укажи:
-  - где он живёт;
-  - почему именно там;
-  - почему это относится к модулю, а не к `beeagent`
-- Для PR кратко перечисли, что должно попасть в:
+- Without diff
+- No further reasoning.
+- If you need a new function/class, specify the exact location (before/after which block)
+- For tests, list which tests to add/update
+- For each new rule/contract, indicate:
+  - where it resides;
+  - Why it is there;
+  - Why does this apply to the module, not to `beeagent`?
+- For PR, briefly list what must be in:
   - `Summary`
   - `Tests`
   - `Artifacts`
   - `Security review`
-- Отдельно явно укажи:
-  - менялся ли `pyproject.toml.version`
-  - если задача не про релиз, ответ должен быть `version not changed`
+- Explicitly state separately:
+  - was `pyproject.toml.version` changed
+  - If the task is not about release, the answer must be `version not changed`
 
-### Задача
+### Task
 
-<опиши задачу одной фразой>
+<describe the task in one sentence>
 
-### Итерация
+### Iteration
 
-<укажи номер и название итерации из `docs/ROADMAP.md`>
+<specify the iteration number and title from `docs/ROADMAP.md`>
 
 ### Issue context
 
-<вставь кратко Summary / Scope / Deliverable / Acceptance Criteria из issue>
+<briefly insert Summary / Scope / Deliverable / Acceptance Criteria from the issue>
 
-### Файлы
+### Files
 
-Обязательно прочитай:
+Read all of the following:
 
 - `docs/ROADMAP.md`
 - `docs/SDLC.md`
@@ -647,54 +677,54 @@ uv run pytest -q
 - `src/beeagent_rop/domain/enums.py`
 - `src/beeagent_rop/domain/rules.py`
 
-Если нужно, добавь и прочитай также:
+If necessary, add and read:
 
 - `src/beeagent_rop/cases/*`
 - `src/beeagent_rop/services/*`
 - `src/beeagent_rop/adapters/*`
 - `tests/*`
 
-### Ожидаемый результат
+### Output expected
 
-- `uv run pytest -q` проходит
-- ключевые fixture/case scenarios покрыты тестами
-- deterministic path остаётся explainable
-- AI, если используется, остаётся bounded и имеет fallback path
-- изменение не ломает границу между модулем и BeeAgent core
-- required checks для данного `change level` определены и перечислены
-- изменение готово к оформлению в PR по текущей итерации
+- `uv run pytest -q` passes
+- key fixture/case scenarios covered by tests
+- deterministic path remains explainable
+- AI, if used, remains bounded and has fallback path
+- The change does not break the boundary between module and BeeAgent core
+- required checks for this `change level` is defined and listed
+- Change ready for PR on current iteration
 ```
 
-## Чего не делать
+## What to avoid
 
-- не тащи client-specific логику в `beeagent` core без причины;
-- не подменяй обязательные rules чистым AI output;
-- не делай hidden write-back в внешние системы;
-- не строй второй runtime внутри модуля;
-- не закрывай итерацию без fixture-based tests;
-- не смешивай scope нескольких итераций в одном PR;
-- не допускай небезопасный file parsing.
+- Do not drag client-specific logic into `beeagent` core without cause;
+- do not replace mandatory rules with pure AI output;
+- Do not make hidden write-back into external systems;
+- Don't build the second runtime inside the module;
+- Do not close iteration without fixture based tests;
+- do not mix scope with several iterations in one PR;
+- do not allow unsafe file parsing.
 
-## Быстрый рабочий сценарий
+## Quick working scenario
 
-1. открыть `docs/ROADMAP.md`
-2. выбрать текущую итерацию
-3. открыть issue
-4. определить `change level`
-5. создать ветку
-6. внести изменения
-7. прогнать:
+1. Open `docs/ROADMAP.md`
+2. Select current iteration
+3. Open issue
+4. define `change level`
+5. Create a branch
+6. Amend
+7. Run:
    - `uv run pytest -q`
 
-8. проверить fixture coverage
-9. оформить PR
-10. после review — merge
+8. Check fixture coverage
+9. to shape PR
+10. after review – merge
 
 ## Bitrix24 Local Application registration (UI-8.5)
 
-Чтобы открыть read-only ROP Web Console внутри Bitrix24 как Server-Side Local Application with User Interface:
+To open read-only ROP Web Console inside Bitrix24 as Server-Side Local Application with User Interface:
 
-1. Настроить `config/settings.yml`:
+1. Settings `config/settings.yml`:
 
 ```yaml
 web:
@@ -716,40 +746,40 @@ bitrix:
     request_timeout: 10
 ```
 
-2. Обеспечить HTTPS deployment BeeAgent web console (`./start.sh web` за trusted HTTPS-прокси, который настраивает scheme ASGI запроса на `https`). Install/launch handlers требуют HTTPS; HTTPS определяется по scheme ASGI запроса, а не по заголовку клиента (`X-Forwarded-Proto` не доверяется).
+2. Deploy the BeeAgent web console over HTTPS (`./start.sh web` behind a trusted HTTPS proxy that sets the ASGI request scheme to `https`). Install/launch handlers require HTTPS; this is determined by the ASGI request scheme, not a client header (`X-Forwarded-Proto` is not trusted).
 
-3. Зарегистрировать Local Application в Bitrix24 вручную:
+3. Register Local Application in Bitrix24 manually:
 
-| Поле                         | Значение                                     |
+| Field                        | Value                                        |
 | ---------------------------- | -------------------------------------------- |
 | Name                         | BeeAgent — ROP                               |
 | Handler                      | `https://<beeagent-host>/bitrix/rop/launch`  |
 | Initial installation handler | `https://<beeagent-host>/bitrix/rop/install` |
 | Uses API only                | false                                        |
 
-3a. В правах приложения обязательно указать **`user`** (Пользователи) — без него `user.current` при входе отклоняется (`insufficient_scope`). После изменения прав приложение нужно переустановить.
+3a. Application permissions must include **`user`** (Users); without it, `user.current` is rejected at login (`insufficient_scope`). Reinstall the application after changing permissions.
 
-4. Установить приложение на портале. Bitrix пришлёт `POST /bitrix/rop/install` с `member_id`, `AUTH_ID`, `AUTH_EXPIRES` и др.; BeeAgent проверит expiry и active Bitrix current user через `user.current`, после чего атомарно сохранит one-time binding в `storage/interfaces/bitrix_rop_app.json` (без OAuth credentials).
+4. Install the application on the portal. Bitrix sends `POST /bitrix/rop/install` with `member_id`, `AUTH_ID`, `AUTH_EXPIRES`, etc.; BeeAgent checks expiry and the active Bitrix current user through `user.current`, then atomically persists the one-time binding in `storage/interfaces/bitrix_rop_app.json` (without OAuth credentials).
 
-5. Пользователь открывает приложение из Bitrix24. Bitrix пришлёт `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` (поля `DOMAIN` Bitrix не шлёт — привязка по `member_id`, домен из config). Запрос приходит на `POST /bitrix/rop/launch` или на `POST /bitrix/rop/install` (в этом случае install тоже выполняет launch flow и редиректит); GET на `/bitrix/rop/launch` отклоняется (`405`) и никогда не обрабатывает OAuth значения. BeeAgent проверит current user через Bitrix REST и создаст bounded BeeUI viewer session, после чего вернёт `303` на `/rop` внутри iframe.
+5. The user opens the application from Bitrix24. Bitrix sends `AUTH_ID`, `AUTH_EXPIRES`, `REFRESH_ID`, `member_id`, `PLACEMENT`, `status` (Bitrix does not send `DOMAIN`; binding uses `member_id` and the domain comes from config). The request reaches `POST /bitrix/rop/launch` or `POST /bitrix/rop/install` (install then also performs the launch flow and redirects); GET on `/bitrix/rop/launch` is rejected (`405`) and never processes OAuth values. BeeAgent checks the current user through Bitrix REST, creates a bounded BeeUI viewer session, then returns `303` to `/rop` inside the iframe.
 
-Ограничения:
+Limitations:
 
-- access управляется Bitrix24; BeeAgent не хранит список Bitrix user ID;
-- OAuth credentials не сохраняются и не логируются;
-- existing local BeeAgent login сохраняется.
+- access is controlled by Bitrix24; BeeAgent does not keep Bitrix user ID;
+- OAuth credentials are neither stored nor logged;
+- existing local BeeAgent login retained.
 
-## Резюме
+## Summary
 
-`beeagent-rop` развивается как отдельный explainable доменный модуль.
+`beeagent-rop` develops as a separate explainable domain module.
 
-Ключевая дисциплина:
+Key discipline:
 
-- доменная логика живёт в модуле;
-- orchestration живёт в BeeAgent;
-- fixture-driven разработка обязательна;
-- deterministic path важнее black-box магии;
-- изменения должны быть объяснимыми, тестируемыми и bounded.
+- domain logic lives in the module;
+- orchestration lives in BeeAgent;
+- fixture driven is mandatory;
+- deterministic path is more important than black-box magic;
+- The modifications must be explained, tested and bounded.
 
 ## BeeScan BS-1 lab profile
 

@@ -573,3 +573,52 @@ def test_enabled_rop_requires_bitrix_writeback_credential(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="BITRIX_WRITEBACK_WEBHOOK_URL"):
         validate_settings(settings)
+
+
+@pytest.mark.parametrize(
+    "module,section",
+    [("rop", "ai_assist"), ("beedrill", "ai_assist"), ("beescan", "investigation")],
+)
+@pytest.mark.parametrize("value", [None, False, [], {}, "", "missing", "bad/name"])
+def test_invalid_module_selector_fails_when_disabled(
+    monkeypatch, module, section, value
+):
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config/settings.yml")
+    settings[module][section].update(enabled=False, ai_profile=value)
+    with pytest.raises(RuntimeError):
+        validate_settings(settings)
+
+
+def test_beescan_can_inherit_default_with_strict_https(monkeypatch):
+    from beeagent_module.integrations.beescan.investigation import named_ai_profile
+
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config/settings.yml")
+    settings["beescan"]["investigation"].pop("ai_profile")
+    settings["ai"]["default_profile"] = "deepseek"
+    for profile in settings["ai"]["profiles"].values():
+        profile.pop("enabled")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    validate_settings(settings)
+    assert (
+        named_ai_profile(settings, require_key=False)["model"] == "test-deepseek-model"
+    )
+    settings["ai"]["profiles"]["deepseek"]["base_url"] = "http://127.0.0.1:1234/v1"
+    with pytest.raises(RuntimeError, match="investigation"):
+        validate_settings(settings)
+
+
+def test_rop_override_credential_and_beedrill_degraded_policy(monkeypatch):
+    _base_env(monkeypatch)
+    settings = load_settings(_project_root() / "config/settings.yml")
+    settings["beedrill"]["ai_assist"].update(enabled=True, ai_profile="deepseek")
+    for module in settings["modules"]["registry"]:
+        if module["id"] == "beedrill":
+            module["enabled"] = True
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    validate_settings(settings)
+    settings["rop"]["ai_assist"]["ai_profile"] = "deepseek"
+    _enable_rop(settings)
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        validate_settings(settings)

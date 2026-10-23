@@ -1,13 +1,13 @@
 # BeeAgent final review
 
-Используй только BeeMCP.
+Use only BeeMCP.
 
-Прочитай:
+Read:
 
 - `AGENTS.md`
 - `.agents/skills/beeagent-review-and-close/SKILL.md`
 
-## Основной target
+## Main target
 
 - Project: `beeagent`
 - Instruction worktree: `<INSTRUCTION_WORKTREE>`
@@ -17,13 +17,13 @@
 - Mode: `<MODE>`
 - Roadmap context: `<ROADMAP_CONTEXT>`
 
-## Утверждённый Issue
+## Approved Issue
 
 ```text
 <FULL_APPROVED_ISSUE>
 ```
 
-## Текущий PR
+## Current PR
 
 ```text
 <CURRENT_PR_OR_NONE>
@@ -35,18 +35,18 @@
 <CURRENT_IMPLEMENTATION_EVIDENCE>
 ```
 
-## Дополнительные targets
+## Additional targets
 
 ```text
 <ADDITIONAL_TARGETS_OR_NONE>
 ```
 
-Правила:
+Rules:
 
-- Проведи один полный read-only review pass.
-- Для дополнительных targets соблюдай указанные `Role`, `Mode` и `Skill`.
-- Фактические manifest, diff, files, templates, static assets, package contents и public contracts имеют приоритет над Issue, PR и отчётами.
-- Не изменяй файлы и не запускай команды.
-- Не добавляй необязательный polish, новые требования или unrelated cleanup.
-- Не требуй `uv lock --check`.
-- Верни результат строго по review skill.
+- Conduct one full read-only review pass.
+- Follow the declared `Role`, `Mode` and `Skill` for additional targets.
+- The actual manifest, diff, files, templates, static assets, package contents and public contracts take precedence over the Issue, PR and reports.
+- Do not modify files or run commands.
+- Do not add optional polish, new requirements or unrelated cleanup.
+- Do not require `uv lock --check`.
+- Return the result strictly in the format required by the review skill.

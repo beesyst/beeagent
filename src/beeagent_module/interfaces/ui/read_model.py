@@ -2262,8 +2262,8 @@ def build_rop_dashboard_read_model(
         )
         effective_period = default_period
 
-    # Point 5: If date range is explicitly set in filter params, load all events
-    # so date_from/date_to can filter across any period
+
+
     if filter_params and (
         filter_params.get("date_from") or filter_params.get("date_to")
     ):
@@ -2404,8 +2404,8 @@ def build_rop_dashboard_read_model(
         "order": order,
     }
 
-    # Build filter options from period-filtered queue data for the filter form
-    # Point 8: use displayed data (queues) rather than raw unfiltered classified
+
+
     if dashboard_payload and isinstance(dashboard_payload, dict):
         queue_items: list[dict[str, Any]] = []
         for q_items in dashboard_payload.get("queues", {}).values():
@@ -3527,21 +3527,21 @@ def _build_rop_overview_layout(
         )
         if item["period"] in configured_values
     ]
-    # Build date range from current period so Queue shows same period as Overview
+
     period_start_utc = data.get("period_start_utc")
     period_end_utc = data.get("period_end_utc")
     _parsed_start = _parse_utc_datetime(period_start_utc) if period_start_utc else None
     _parsed_end = _parse_utc_datetime(period_end_utc) if period_end_utc else None
     date_from_str = _day_label(_parsed_start) if _parsed_start else ""
     date_to_str = _day_label(_parsed_end) if _parsed_end else ""
-    # Build date filter params for Queue links
+
     date_filter: dict[str, str] = {}
     if date_from_str:
         date_filter["date_from"] = date_from_str
     if date_to_str:
         date_filter["date_to"] = date_to_str
 
-    # Filtered Queue hrefs for each overview card
+
     queue_urgent_href = build_rop_url(
         tab="queue",
         period=current_period,
@@ -4361,7 +4361,7 @@ def _queue_table(
             }
         )
 
-    # Build columns with sortable headers
+
     columns = [
         {
             "key": "priority",
@@ -4485,7 +4485,7 @@ def _queue_table(
         },
     ]
 
-    # Build pagination
+
     pagination_label = f"/ {total_count}"
 
     pagination_pages: list[dict[str, Any]] = []
@@ -4509,7 +4509,7 @@ def _queue_table(
             }
         )
 
-    # Filter columns based on `columns` param (comma-separated list of keys to show)
+
     selected_columns_str = filter_params.get("columns", "")
     if selected_columns_str:
         selected_keys = {
@@ -4517,7 +4517,7 @@ def _queue_table(
         }
         columns = [c for c in columns if c["key"] in selected_keys]
 
-    # Add detail column if any row has a detail link
+
     has_detail = any(row.get("detail_href") for row in rows)
     if has_detail:
         columns.append(

@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib import request
+
+from beeagent_module.core.ai_profiles import resolve_ai_profile as resolve_core_profile
 
 _AI_ASSIST_PROVIDERS = frozenset({"openai_compatible", "openai_responses"})
 
@@ -14,44 +17,44 @@ def resolve_ai_profile(
     ai_cfg: dict[str, Any],
     ai_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    profile_name = ai_cfg.get("profile", "")
-    profiles = ai_cfg.get("profiles", {})
-    if isinstance(profiles, dict) and isinstance(profile_name, str) and profile_name:
+    settings = {"ai": ai_settings or {}}
+    if "ai_profile" in ai_cfg and ai_cfg["ai_profile"] is None:
+        raise RuntimeError("Invalid rop.ai_assist.ai_profile")
+    if "profile" in ai_cfg or "profiles" in ai_cfg:
+        if "ai_profile" in ai_cfg or "default_profile" in settings["ai"]:
+            raise RuntimeError("Conflicting ROP AI selectors")
+        profile_name = ai_cfg.get("profile")
+        profiles = ai_cfg.get("profiles")
+        if not isinstance(profile_name, str) or not isinstance(profiles, dict):
+            raise RuntimeError("Invalid legacy rop.ai_assist.profile")
         profile = profiles.get(profile_name)
         if not isinstance(profile, dict):
-            raise RuntimeError(f"Unknown rop.ai_assist.profile: {profile_name}")
-
-        return {
-            "provider": profile["provider"],
-            "model": os.getenv(profile["model_env"], "").strip(),
-            "api_key_env": profile["api_key_env"],
-            "base_url": os.getenv(profile["base_url_env"], "").strip(),
-            "request_timeout": ai_cfg.get("request_timeout", 30),
-            "dry_run": ai_cfg.get("dry_run", False),
-            "profile": profile_name,
+            raise RuntimeError("Unknown legacy rop.ai_assist.profile")
+        for key in ("model_env", "base_url_env"):
+            value = profile.get(key)
+            if not isinstance(value, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]{0,127}", value
+            ):
+                raise RuntimeError("Invalid legacy ROP AI environment reference")
+        settings = {
+            "ai": {
+                "default_profile": profile_name,
+                "profiles": {
+                    profile_name: {
+                        "provider": profile.get("provider"),
+                        "model": os.getenv(profile["model_env"], "").strip(),
+                        "base_url": os.getenv(profile["base_url_env"], "").strip(),
+                        "api_key_env": profile.get("api_key_env"),
+                    }
+                },
+            }
         }
-
-    active_profiles = (ai_settings or {}).get("profiles", {})
-    if not isinstance(active_profiles, dict):
-        raise RuntimeError("ai.profiles must be a mapping")
-
-    enabled_profiles = [
-        (name, profile)
-        for name, profile in active_profiles.items()
-        if isinstance(profile, dict) and profile.get("enabled") is True
-    ]
-    if len(enabled_profiles) != 1:
-        raise RuntimeError("Exactly one ai.profiles.*.enabled must be true")
-
-    active_name, active_profile = enabled_profiles[0]
+    name, profile = resolve_core_profile(settings, ai_cfg.get("ai_profile"))
     return {
-        "provider": active_profile["provider"],
-        "model": active_profile["model"],
-        "api_key_env": active_profile["api_key_env"],
-        "base_url": active_profile["base_url"],
+        **profile,
         "request_timeout": ai_cfg.get("request_timeout", 30),
         "dry_run": ai_cfg.get("dry_run", False),
-        "profile": active_name,
+        "profile": name,
     }
 
 

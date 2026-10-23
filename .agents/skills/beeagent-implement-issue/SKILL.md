@@ -163,10 +163,10 @@ Return one report containing:
 
 For every substantive correction made during implementation, describe:
 
-- `Файл`
-- `Было`
-- `Стало`
-- `Почему`
+- `File`
+- `Before`
+- `After`
+- `Why`
 
 Do not include a diff.
 
