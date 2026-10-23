@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.80.0...beeagent-v0.81.0) (2026-10-23)
+
+
+### Features
+
+* **ai:** unify profile selection across consumers ([#333](https://github.com/beesyst/beeagent/issues/333)) ([4c1cf9d](https://github.com/beesyst/beeagent/commit/4c1cf9dee1fffdff996e02ed331598f89ba124c4))
+
 ## [0.80.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.79.0...beeagent-v0.80.0) (2026-10-23)
 
 
