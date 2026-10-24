@@ -1062,6 +1062,8 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
             validate_investigation_settings(settings)
             task = read_task(task_path, config)
             policy = InvestigationPolicy.from_config(config["approval"])
+            if task["target"] != policy.transport.origin:
+                raise PermissionError("target_not_approved")
             deadline = started + policy.transport.time_budget_seconds
             authorize()
             try:

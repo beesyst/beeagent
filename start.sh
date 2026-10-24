@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 if [[ "${1:-}" == "beescan" && "${2:-}" == "review" ]]; then
   if [[ ! -x .venv/bin/python3 ]]; then

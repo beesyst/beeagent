@@ -1,4 +1,8 @@
+import os
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from beeagent_module.core.log import get_logger, setup_logging
 from beeagent_module.core.paths import ensure_dirs, get_app_log_path, get_storage_dir
@@ -242,3 +246,74 @@ def test_storage_dir_is_canonical_for_a_regular_local_directory(
 
     assert storage_dir.is_dir()
     assert (storage_dir / ".gitkeep").is_file()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_private_storage_initialization(tmp_path, existing):
+    storage = tmp_path / "storage"
+    runs = storage / "runs"
+    historical = runs / "historical"
+    artifact = historical / "artifact.json"
+
+    if existing:
+        runs.mkdir(parents=True)
+        storage.chmod(0o775)
+        runs.chmod(0o775)
+        historical.mkdir()
+        historical.chmod(0o755)
+        artifact.write_text("{}")
+        artifact.chmod(0o644)
+    for _ in range(2):
+        ensure_dirs(tmp_path)
+        assert storage.stat().st_mode & 0o7777 == 0o700
+        assert runs.stat().st_mode & 0o7777 == 0o700
+        assert (storage / ".gitkeep").is_file()
+    if existing:
+        assert historical.stat().st_mode & 0o7777 == 0o755
+        assert artifact.stat().st_mode & 0o7777 == 0o644
+        assert artifact.read_text() == "{}"
+
+
+@pytest.mark.parametrize("name", ["storage", "runs"])
+@pytest.mark.parametrize("unsafe", ["symlink", "foreign_owner", "file"])
+def test_storage_initialization_refuses_unsafe_directory(
+    tmp_path, monkeypatch, name, unsafe
+):
+    from beeagent_module.core import paths
+
+    storage = tmp_path / "storage"
+    if name == "runs":
+        storage.mkdir()
+    directory = storage if name == "storage" else storage / "runs"
+    target = tmp_path / "external"
+
+    if unsafe == "symlink":
+        target.mkdir()
+        target.chmod(0o775)
+        directory.symlink_to(target, target_is_directory=True)
+    elif unsafe == "file":
+        directory.write_text("preserve")
+    else:
+        directory.mkdir()
+        directory.chmod(0o775)
+        original_fstat = os.fstat
+        inode = directory.stat().st_ino
+
+        def fstat(descriptor):
+            info = original_fstat(descriptor)
+            if info.st_ino == inode:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=os.getuid() + 1)
+            return info
+
+        monkeypatch.setattr(paths.os, "fstat", fstat)
+    with pytest.raises(OSError):
+        ensure_dirs(tmp_path)
+    if unsafe == "symlink":
+        assert directory.is_symlink()
+        assert target.stat().st_mode & 0o7777 == 0o775
+        assert list(target.iterdir()) == []
+    elif unsafe == "foreign_owner":
+        assert directory.stat().st_mode & 0o7777 == 0o775
+        assert list(directory.iterdir()) == []
+    else:
+        assert directory.read_text() == "preserve"
