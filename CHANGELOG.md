@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.0...beeagent-v0.81.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **beescan:** secure runtime storage and bind investigation target ([#335](https://github.com/beesyst/beeagent/issues/335)) ([7f6a320](https://github.com/beesyst/beeagent/commit/7f6a32071d7c6ffe24a6e3fc12e1b610c614eaa7))
+
 ## [0.81.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.80.0...beeagent-v0.81.0) (2026-10-23)
 
 
