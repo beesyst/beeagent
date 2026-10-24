@@ -119,6 +119,8 @@ Avoid logging:
 
 ### 4. Artifacts must be reproducible and safe
 
+`start.sh` sets `umask 077`. Core startup creates `storage` and `storage/runs` with mode `0700` and normalizes existing directories only after descriptor-based directory and current-operator ownership checks. Symlinks and foreign-owned directories fail closed; historical artifact permissions and ownership are not recursively changed. The project root remains a trusted operator-controlled location.
+
 Artifacts in `storage/` should be:
 
 - predictable;
@@ -551,6 +553,8 @@ The main rules are:
 - keep everything simple enough to maintain.
 
 ## BeeScan HTTP probe boundary (BS-1)
+
+BeeScan investigation requires exact equality between the task target and the independently approved transport origin before domain loading, AI calls, DNS resolution or managed egress creation. A mismatch follows the existing authorization refusal path with zero requests; targets are never rewritten or normalized into authorization.
 
 BeeScan HTTP execution is disabled by default and available only through a fixed host CLI/CapabilityCaller using a current trusted OS-operator approval from settings. The host independently enforces exact identity/origin, one-request HEAD profile, DNS pinning, immutable provider digest/version, rootless namespace ownership, exact deny-by-default nftables rules, nested Bubblewrap isolation, minimal environment, resource/output limits and cleanup. Bootstrap remains READ_ONLY and obtains no scanner authority; existing Solana isolation is unchanged.
 

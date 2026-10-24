@@ -501,6 +501,81 @@ def test_cli_syntax(settings, tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "target,enabled",
+    [
+        ("http://other.test", True),
+        ("http://127.0.0.1:18080/", True),
+        ("http://127.0.0.1:18081", True),
+        ("http://127.0.0.1:18080", True),
+        ("http://other.test", False),
+    ],
+)
+def test_task_target_binding_before_execution(
+    settings, approved, tmp_path, monkeypatch, caplog, target, enabled
+):
+    from beeagent_module.core.paths import ensure_dirs
+
+    ensure_dirs(tmp_path)
+    settings["beescan"]["investigation"]["enabled"] = enabled
+    calls = []
+
+    def load_domain(**kwargs):
+        calls.append("domain")
+        return SimpleNamespace(), "a" * 40
+
+    def classify(*args, **kwargs):
+        calls.append("ai")
+        raise PermissionError("test_stop_after_binding")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("No AI transport, DNS, egress or HTTP execution permitted")
+
+    monkeypatch.setattr(host, "_load_domain", load_domain)
+    monkeypatch.setattr(host, "classify_task", classify)
+    monkeypatch.setattr(host, "call_structured_ai", forbidden)
+    monkeypatch.setattr("socket.socket", forbidden)
+    monkeypatch.setattr("socket.getaddrinfo", forbidden)
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.http_runner.verify_resolution", forbidden
+    )
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.egress.ManagedEgress", forbidden
+    )
+    monkeypatch.setattr(
+        "beeagent_module.integrations.beescan.detection_runner.run_detection_provider",
+        forbidden,
+    )
+    path = task_file(tmp_path, {"target": target, "task": "Find framework version"})
+    with caplog.at_level(logging.INFO):
+        code = handle_beescan_cli(
+            ["investigate", str(path)],
+            settings=settings,
+            reload_settings=lambda: settings,
+            storage_dir=tmp_path / "storage",
+            logger=logging.getLogger("test"),
+        )
+    assert code == 3
+    assert calls == (
+        ["domain", "ai"] if enabled and target == approved.transport.origin else []
+    )
+    (directory,) = (tmp_path / "storage/runs").iterdir()
+    directory = directory / "module-beescan"
+    status = json.loads((directory / "investigation_status.json").read_text())
+    assert status["status"] == "REFUSED"
+    assert status["reason"] == (
+        "authorization_refused" if enabled else "capability_disabled"
+    )
+    assert status["request_count"] == status["capture_launch_count"] == 0
+    assert status["request_count_exact"] is True
+    assert status["complete"] is False
+    assert "status=REFUSED" in caplog.text
+    assert "requests=0" in caplog.text
+    for artifact in directory.iterdir():
+        assert artifact.stat().st_mode & 0o777 == 0o600
+        assert "test-private-key" not in artifact.read_text()
+
+
 @pytest.fixture
 def collection(approved):
     origin = approved.transport.origin
