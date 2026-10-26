@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 beescan = [
-    "beescan==0.10.1",
+    "beescan==0.10.2",
 ]
 rop = [
     "beeagent-rop==0.19.8",
@@ -107,6 +107,7 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv]
+upgrade-package = ["beescan"]
 override-dependencies = [
     "beesdk @ git+https://github.com/beesyst/beesdk.git@e6629f6ceb4ad58a711c5a7f640db712ce00106a",
 ]
