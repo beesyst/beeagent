@@ -265,8 +265,10 @@ def read_investigation_response(stream, *, limit):
     if re.fullmatch(r"[0-9]{1,6}", length) is None or int(length) > limit:
         raise ValueError("invalid_response_length")
     content_type = headers.get("content-type", "").lower()
+    untyped_error = status == 500 and "content-type" not in headers
     if (
-        re.fullmatch(
+        not untyped_error
+        and re.fullmatch(
             r"(?:text/html|text/plain|application/xhtml\+xml)"
             r"(?:; *charset=(?:utf-8|us-ascii))?",
             content_type,
@@ -287,6 +289,18 @@ def read_investigation_response(stream, *, limit):
     text = body.decode("utf-8")
     if any(ord(c) < 32 and c not in "\r\n\t" or ord(c) == 127 for c in text):
         raise ValueError("invalid_response_body")
+    if untyped_error:
+        stripped = text.strip(" \r\n\t")
+        if not stripped or any(not c.isprintable() and c not in "\r\n\t" for c in text):
+            raise ValueError("unsupported_response_type")
+        if re.match(
+            r"(?:<!doctype html>\s*)?<html(?:\s[^<>]*)?>", stripped, re.IGNORECASE
+        ) and stripped.lower().endswith("</html>"):
+            content_type = "text/html"
+        elif stripped[0].isalpha() and "<" not in text and ">" not in text:
+            content_type = "text/plain"
+        else:
+            raise ValueError("unsupported_response_type")
     return {
         "status_code": status,
         "content_type": content_type.split(";", 1)[0],

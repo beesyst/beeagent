@@ -373,11 +373,22 @@ class Stream:
         return self.buffer.read(size)
 
 
-def raw_response(body=b"Hello", headers=b"", status=b"200 OK"):
+def raw_response(
+    body: bytes = b"Hello",
+    headers: bytes = b"",
+    status: bytes = b"200 OK",
+    content_type: bytes | None = b"text/html; charset=utf-8",
+):
     return (
         b"HTTP/1.1 "
         + status
-        + b"\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+        + b"\r\n"
+        + (
+            b"Content-Type: " + content_type + b"\r\n"
+            if content_type is not None
+            else b""
+        )
+        + b"Content-Length: "
         + str(len(body)).encode()
         + b"\r\n"
         + headers
@@ -399,6 +410,144 @@ def test_bounded_capture_discards_private_headers():
         "body": "Hello",
         "complete": True,
     }
+
+
+@pytest.mark.parametrize(
+    "body,media",
+    [
+        (b"<!DOCTYPE html>\n<html><body><pre>Error</pre></body></html>", "text/html"),
+        (b' \r\n<HTML lang="en"><body>Error</body></HTML>\t', "text/html"),
+        (
+            b"java.lang.NumberFormatException: invalid\n\tat example.Handler.run(Handler.java:1)\n",
+            "text/plain",
+        ),
+        ("Internal error: неверный параметр\n".encode(), "text/plain"),
+    ],
+)
+def test_untyped_500_text_evidence(body, media, caplog, capsys):
+    parsed = read_investigation_response(
+        Stream(
+            raw_response(body, status=b"500 Internal Server Error", content_type=None)
+        ),
+        limit=1024,
+    )
+    assert parsed == {
+        "status_code": 500,
+        "content_type": media,
+        "body": body.decode("utf-8"),
+        "complete": True,
+    }
+    assert caplog.text == ""
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\x89PNG\r\n\x1a\n",
+        b"Error\xff",
+        b"Error\x00",
+        b"Error\x7f",
+        "Error\u0085data".encode(),
+        "Error\u200bdata".encode(),
+        b"",
+        b" \r\n\t",
+        b"<pre>Error</pre>",
+        b"<html>Error",
+        b"<htmlish>Error</html>",
+        b"<?xml version='1.0'?><error/>",
+        b"%PDF-1.7",
+        b'{"error":"invalid"}',
+    ],
+)
+def test_untyped_500_rejects_binary_and_ambiguous_bodies(body):
+    with pytest.raises((ValueError, UnicodeError)):
+        read_investigation_response(
+            Stream(
+                raw_response(
+                    body, status=b"500 Internal Server Error", content_type=None
+                )
+            ),
+            limit=1024,
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        b"200 OK",
+        b"201 Created",
+        b"400 Bad Request",
+        b"404 Not Found",
+        b"501 Not Implemented",
+        b"503 Unavailable",
+    ],
+)
+def test_untyped_other_statuses_remain_strict(status):
+    with pytest.raises(ValueError, match="^unsupported_response_type$"):
+        read_investigation_response(
+            Stream(raw_response(status=status, content_type=None)), limit=1024
+        )
+
+
+@pytest.mark.parametrize(
+    "media",
+    [
+        b"",
+        b"application/octet-stream",
+        b"application/json",
+        b"image/png",
+        b"text/html; charset=latin1",
+    ],
+)
+def test_500_explicit_unsupported_media_is_not_inferred(media):
+    with pytest.raises(ValueError, match="^unsupported_response_type$"):
+        read_investigation_response(
+            Stream(
+                raw_response(
+                    b"<html>Error</html>", status=b"500 Error", content_type=media
+                )
+            ),
+            limit=1024,
+        )
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ("short", "incomplete_response_body"),
+        ("extra", "incomplete_response_body"),
+        ("oversized_length", "invalid_response_length"),
+        ("oversized_body", "response_body_limit"),
+        ("redirect", "redirect_refused"),
+        ("transfer", "unsupported_response_encoding"),
+        ("encoding", "unsupported_response_encoding"),
+        ("duplicate", "duplicate_response_header"),
+        ("malformed", "invalid_response_header"),
+    ],
+)
+def test_untyped_500_preserves_framing_guards(change, reason):
+    raw = raw_response(b"Internal error", status=b"500 Error", content_type=None)
+    if change == "short":
+        raw = raw[:-1]
+    elif change == "extra":
+        raw += b"extra"
+    elif change == "oversized_length":
+        raw = raw.replace(b"Content-Length: 14", b"Content-Length: 1025")
+    elif change == "oversized_body":
+        raw += b"x" * 1024
+    elif change == "redirect":
+        raw = raw.replace(b"500 Error", b"302 Found")
+    else:
+        header = {
+            "transfer": b"Transfer-Encoding: chunked",
+            "encoding": b"Content-Encoding: gzip",
+            "duplicate": b"Content-Length: 14",
+            "malformed": b" folded: bad",
+        }[change]
+        raw = raw.replace(b"\r\n\r\n", b"\r\n" + header + b"\r\n\r\n")
+    with pytest.raises(ValueError, match=f"^{reason}$"):
+        read_investigation_response(Stream(raw), limit=1024)
 
 
 @pytest.mark.parametrize(
@@ -744,6 +893,22 @@ def test_seeded_json_and_http_parser_inputs():
             host._json(raw)
         with pytest.raises((ValueError, UnicodeError)):
             read_investigation_response(Stream(raw), limit=1024)
+
+
+def test_seeded_untyped_error_body_inputs():
+    import random
+
+    generator = random.Random(500)
+    for _ in range(200):
+        body = b"Error: " + generator.randbytes(generator.randrange(1, 256))
+        raw = raw_response(body, status=b"500 Error", content_type=None)
+        try:
+            parsed = read_investigation_response(Stream(raw), limit=1024)
+        except ValueError, UnicodeError:
+            continue
+        assert parsed["body"].encode("utf-8") == body
+        assert parsed["complete"] is True
+        assert parsed["content_type"] == "text/plain"
 
 
 @pytest.mark.parametrize("stage", ["discovery", "baseline", "mutation"])
@@ -1125,7 +1290,11 @@ def test_investigation_cli_terminal_exit(
     )
 
 
-def test_installed_editable_it10_contract(approved):
+@pytest.mark.parametrize(
+    "mutation_media,html",
+    [(b"text/html", True), (None, True), (b"text/plain", False), (None, False)],
+)
+def test_installed_editable_it10_contract(approved, mutation_media, html):
     import importlib.metadata
     import tomllib
 
@@ -1161,7 +1330,17 @@ def test_installed_editable_it10_contract(approved):
         ]
     intent = host._prepare_intent(domain, approved, "installed-contract")
 
-    def facts(request, body, status=200):
+    def facts(request, body, status=200, content_type=b"text/html"):
+        parsed = read_investigation_response(
+            Stream(
+                raw_response(
+                    body.encode(),
+                    status=f"{status} Response".encode(),
+                    content_type=content_type,
+                )
+            ),
+            limit=16384,
+        )
         return host.capture_to_facts(
             request,
             {
@@ -1171,10 +1350,7 @@ def test_installed_editable_it10_contract(approved):
                 "method": "GET",
                 "relative_url": request.relative_url,
                 "request_count": 1,
-                "complete": True,
-                "status_code": status,
-                "content_type": "text/html",
-                "body": body,
+                **parsed,
             },
             policy=approved,
             domain=domain,
@@ -1190,18 +1366,36 @@ def test_installed_editable_it10_contract(approved):
     selection = domain.select_investigation(intent, discovery, at=datetime.now(UTC))
     assert selection.baseline.relative_url == "/products?item=7"
     assert selection.mutation.relative_url == "/products?item=invalid"
-    result = domain.analyze_investigation(
-        selection,
-        facts(selection.baseline, "Valid record"),
-        facts(
-            selection.mutation,
+    saved, calls = [], []
+
+    def capture(request, *, reauthorize):
+        reauthorize()
+        calls.append(request.relative_url)
+        if request.stage == "discovery":
+            return discovery, 1
+        if request.stage == "baseline":
+            return facts(request, "Valid record"), 1
+        body = (
             "java.lang.NumberFormatException: invalid\n"
             " at org.apache.struts2.dispatcher.Dispatcher.serviceAction(Dispatcher.java:562)\n"
-            "Apache Struts 2.3.31",
-            500,
-        ),
-        at=datetime.now(UTC),
+            "Apache Struts 2.3.31"
+        )
+        if html:
+            body = "<!DOCTYPE html><html><body><pre>" + body + "</pre></body></html>"
+        return facts(request, body, 500, mutation_media), 1
+
+    result, sources, count = host.collect_investigation(
+        intent,
+        policy=approved,
+        domain=domain,
+        capture=capture,
+        reload_policy=lambda: approved,
+        persist_source=saved.append,
+        verify_source=lambda source: source in saved,
     )
+    assert calls == ["/", "/products?item=7", "/products?item=invalid"]
+    assert count == len(saved) == len(sources) == 3
+    assert sources[2].content_type == ("text/html" if html else "text/plain")
     assert result.status.value == "match"
     assert (result.framework, result.version) == ("Apache Struts", "2.3.31")
     assert result.candidate.status.value == "candidate"
