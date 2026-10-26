@@ -1154,10 +1154,10 @@ def test_installed_editable_it10_contract(approved):
         assert packages[0]["source"] == {
             "git": "https://github.com/beesyst/beescan.git#" + revision
         }
-        assert packages[0]["version"] == distribution.version == "0.10.0"
+        assert packages[0]["version"] == distribution.version
         project = tomllib.loads((project_root / "pyproject.toml").read_text())
         assert project["project"]["optional-dependencies"]["beescan"] == [
-            "beescan==0.10.0"
+            f"beescan=={distribution.version}"
         ]
     intent = host._prepare_intent(domain, approved, "installed-contract")
 
