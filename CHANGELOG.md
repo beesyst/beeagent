@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.2...beeagent-v0.81.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **beescan:** accept bounded untyped HTTP 500 text evidence ([#339](https://github.com/beesyst/beeagent/issues/339)) ([e35b717](https://github.com/beesyst/beeagent/commit/e35b71798574a65acc180d5839920928c3596456))
+
 ## [0.81.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.1...beeagent-v0.81.2) (2026-10-26)
 
 
