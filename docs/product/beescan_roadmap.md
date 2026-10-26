@@ -1108,6 +1108,119 @@ An operator can run one approved, task-driven Web investigation without Burp or 
 
 The implementation remains CLI-first and supplies a stable backend result/action contract for the next separately reviewed BeeUI chat increment. No version change occurs during the feature implementation.
 
+### Iteration BS-9 — BeeScan Trusted Local Operator CLI v0
+
+**Status:** PLANNED
+
+#### Goal
+
+Provide a direct, zero-friction BeeScan terminal interface for a single trusted local operator, allowing the operator to enter a target URL and natural-language task and immediately start the existing AI-guided investigation without manually creating JSON files, configuring target-specific approval profiles or completing repetitive confirmation dialogs.
+
+Separate the private single-operator CLI trust model from the future multi-user Web/SaaS authorization model without weakening the existing investigation execution, evidence and isolation guarantees.
+
+#### Depends on
+
+- Completed BeeAgent BS-8 supervised AI-guided Web investigation.
+- Completed BeeScan Iteration 10 deterministic investigation domain API.
+- Existing BeeAgent AI transport, governed HTTP capture, managed egress, ArtifactAPI and investigation result contracts.
+- Existing local operator execution environment and installed immutable BeeScan dependency.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add `./start.sh beescan` as an interactive terminal entrypoint accepting one target URL and one natural-language task.
+- Add `./start.sh beescan investigate --target URL --task "TEXT"` for direct noninteractive invocation.
+- Preserve the original `./start.sh beescan investigate TASK.json` entrypoint for backward compatibility.
+- Introduce one shared validated in-memory task intake contract reused by all three CLI input modes.
+- Implement an explicit trusted-local-operator execution mode for the private single-user CLI.
+- Use the existing trusted local operating-system execution context rather than introducing Web accounts, subscription plans, RBAC roles or per-run approval dialogs.
+- Allow the trusted local operator to select the target directly without maintaining a preconfigured per-target allowlist, hostname-family registry or separate approval profile for each URL.
+- Derive one immutable run-scoped target binding from the operator-supplied canonical HTTP(S) origin and independently validated destination.
+- Preserve exact-origin enforcement, DNS revalidation, TLS verification, request accounting, deadline enforcement, managed-egress containment and verified cleanup.
+- Distinguish the trusted local operator's requested scope from independently verified third-party authorization; never falsely represent external authorization as verified.
+- Ensure the new local-operator entrypoint cannot be invoked implicitly through Web requests, task content, remote API payloads or AI-generated instructions.
+- Reuse the existing AI classification, bounded investigation orchestration, BeeScan domain analysis and evidence publication.
+- Preserve the existing supported investigation capability, fixed request methods and payload profile; do not expand scanner behavior as a side effect of CLI work.
+- Display useful investigation progress, terminal status, evidence-derived framework/version when available, finding disposition, run ID and report location.
+- Preserve the existing investigation, evidence, lifecycle and report artifact schemas.
+- Expose one reusable validated task/result boundary suitable for a later BeeAgent/BeeUI Web chat adapter.
+- Document the distinction between private local operation and future remote multi-user execution.
+
+#### Excluded
+
+- Per-target approval forms, checkbox dialogs and mandatory interactive confirmation steps.
+- New hostname allowlists, approval-profile registries or subscription policies for the private CLI.
+- BeeUI/Web chat implementation in this iteration.
+- Remote access to trusted-local-operator privileges.
+- New users, billing, RBAC, quotas or SaaS tenancy.
+- A separate BeeScan runtime, database, scanner executor or agent framework.
+- Arbitrary shell execution, uncontrolled payload generation, unrestricted AI tool use or new vulnerability detection families.
+- Removal of existing transport containment, evidence integrity checks or resource cleanup.
+- New proxy services, purchased IP addresses, IP rotation or external egress infrastructure.
+- Changes to BeeScan, BeeSDK or generic BeeUI components without a proven blocker.
+- Hardcoded external testing targets, task answers, laboratory identities or private investigation artifacts.
+- Automatic VERIFIED findings or external vulnerability submission.
+
+#### Deliverable
+
+One complete single-operator CLI workflow:
+
+`Operator target + task → validated run-scoped target binding → AI task interpretation → existing governed investigation → BeeScan domain analysis → protected artifacts → terminal result`.
+
+The operator does not manually create JSON, edit YAML for every target, select authorization profiles or answer additional confirmation prompts.
+
+The trusted local mode remains separate from future remote Web execution.
+
+#### Acceptance criteria
+
+- `./start.sh beescan` opens a terminal interaction accepting a target and natural-language task.
+- `./start.sh beescan investigate --target URL --task TEXT` supports direct invocation without user-created JSON.
+- The original `./start.sh beescan investigate TASK.json` continues working with its original secure file-validation behavior.
+- The three input modes use a single validated investigation task contract without duplicating the investigation engine.
+- A trusted local operator does not need to pre-register a separate target-specific approval profile or edit YAML for each investigation.
+- The CLI does not introduce additional confirmation dialogs, checkbox flows or subscription-related restrictions.
+- The run records the actual trusted local operator context and selected target without falsely claiming independently verified third-party authorization.
+- The exact operator-selected origin and resolved destination are bound to the execution; AI responses, HTTP content and redirects cannot expand them.
+- Existing DNS/TLS checks, managed network containment, request deadlines, request budgets and cleanup guarantees remain effective.
+- Unsupported URL formats, invalid task input and incompatible runtime prerequisites produce truthful errors without unsafe execution.
+- Unsupported investigation tasks do not trigger arbitrary scanning or fabricated answers.
+- The CLI never imports task-supplied modules, executes task-generated shell commands or treats AI text as execution authority.
+- Successful investigations display the evidence-derived answer and preserve CANDIDATE finding semantics.
+- REFUSED, TIMEOUT, ERROR, NO_MATCH and INCONCLUSIVE remain distinguishable and cannot be presented as successful vulnerability findings.
+- Existing protected source evidence, steps, lifecycle and Markdown/JSON reports remain compatible.
+- The trusted local operator mode is inaccessible through the current Web routes and is not automatically exposed to future remote users.
+- Existing BeeAgent CLI workflows, ROP, BeeDrill, BeeScan and unrelated modules remain regression-clean.
+
+#### Checks
+
+- Interactive terminal and direct CLI invocation tests.
+- Missing arguments, malformed target, oversized input, quoting, non-TTY and interruption tests.
+- Legacy task-file backward compatibility and file-security validation tests.
+- Shared task intake validation and equivalent execution-path tests.
+- Trusted local operator entrypoint isolation and remote invocation refusal tests.
+- Run-scoped origin binding, DNS revalidation, redirect refusal and exact destination enforcement tests.
+- Existing AI classification, unsupported-task and prompt-injection regressions.
+- Existing three-request budget, managed-egress containment, deadlines, cancellation and cleanup tests.
+- Investigation result, source evidence, candidate, artifact integrity and deterministic reporting regressions.
+- A real explicitly authorized Web laboratory executed through the direct CLI without manually preparing task JSON.
+- Full relevant pytest, Ruff/type checks, applicable security review, entrypoint smoke, build, installed dependency verification, artifact inspection, independent BeeMCP review and hosted CI.
+- Regression checks confirming the existing Web interface cannot invoke trusted local execution.
+
+#### DoD
+
+A single trusted local operator can launch BeeScan from the terminal, supply a target and natural-language task, and receive the evidence-backed investigation result without creating JSON files, configuring per-target approval profiles or answering repetitive confirmation prompts.
+
+The existing BeeAgent investigation backend remains the sole execution engine. The selected target is bound to the run, security-critical transport and evidence guarantees remain effective, and all generated artifacts continue to use the existing protected ArtifactAPI.
+
+The new trusted local execution mode is isolated from remote Web interfaces. Future multi-user authorization, subscriptions, quotas and Web access policies are handled through separately reviewed iterations.
+
+The existing JSON-file CLI remains backward compatible. Full regressions, real authorized laboratory verification and independent review pass.
+
+No BeeScan, BeeSDK or BeeUI implementation changes are required. Package versions remain unchanged during ordinary implementation.
+
 ---
 
 ## Post-MVP product directions
