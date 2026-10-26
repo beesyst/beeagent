@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.2](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.1...beeagent-v0.81.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **beescan:** sync 0.10.1 dependency resolution ([#337](https://github.com/beesyst/beeagent/issues/337)) ([d59c38c](https://github.com/beesyst/beeagent/commit/d59c38c3cc8ece4a6599111a7229a2c44f6a1588))
+
 ## [0.81.1](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.0...beeagent-v0.81.1) (2026-10-24)
 
 
