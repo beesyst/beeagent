@@ -109,12 +109,16 @@ Module-specific examples:
 ./start.sh beescan assess
 
 # AI-assisted web investigation
+./start.sh beescan
+./start.sh beescan investigate --target https://authorized.example --task 'Identify framework version'
 ./start.sh beescan investigate TASK.json
 ```
 
 Module commands require their corresponding modules to be enabled. Security assessments and external operations also require explicit authorization and valid execution prerequisites.
 
 See the module-specific guides for configuration and supported operations.
+
+BeeScan direct and interactive intake require the one-time, default-disabled `beescan.investigation.trusted_local_enabled` setting and a permitted target. The legacy task-file command retains its independent configured approval. See [trusted local CLI operation](docs/product/beescan_guide.md#bs-9-trusted-local-operator-cli) for authority, prerequisites, limits and result semantics.
 
 ## Configuration
 

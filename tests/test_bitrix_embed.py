@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from beeagent_module.interfaces.ui import bitrix_embed
+from tests.settings_support import load_test_settings
 
 PORTAL_ORIGIN = "https://company.bitrix24.ru"
 PORTAL_DOMAIN = "company.bitrix24.ru"
@@ -51,11 +52,8 @@ def _set_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _full_settings(monkeypatch: pytest.MonkeyPatch) -> dict:
-    from beeagent_module.core.paths import get_project_root
-    from beeagent_module.core.settings import load_settings
-
     _set_auth_env(monkeypatch)
-    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["bitrix"]["embedded_app"]["enabled"] = True
     settings["bitrix"]["embedded_app"]["portal_origin"] = PORTAL_ORIGIN
     settings["bitrix"]["embedded_app"]["default_role"] = "viewer"

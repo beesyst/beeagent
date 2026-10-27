@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -349,18 +350,64 @@ def _current_policy(settings):
     return ProbePolicy.from_config(settings["beescan"]["approval"])
 
 
-def handle_beescan_cli(args, *, settings, reload_settings, storage_dir, logger):
-    if args and args[0] == "investigate":
-        if len(args) != 2:
-            print("Usage: ./start.sh beescan investigate TASK.json")
-            return 2
+def handle_beescan_cli(
+    args, *, settings, reload_settings, storage_dir, logger, local_operator=None
+):
+    if not args or args[0] == "investigate":
         from beeagent_module.integrations.beescan.investigation import (
             execute_investigation,
+            validate_task,
         )
 
+        options = {}
+        try:
+            if not args:
+                if not sys.stdin.isatty():
+                    raise ValueError("terminal_required")
+                config = settings["beescan"]["investigation"]
+                value = {}
+                for key, limit in (
+                    ("target", 2048),
+                    ("task", config["task_chars_max"]),
+                ):
+                    print(key.capitalize() + ": ", end="", flush=True, file=sys.stderr)
+                    line = sys.stdin.readline(limit + 2)
+                    if not line or not line.endswith("\n") or len(line[:-1]) > limit:
+                        raise ValueError("invalid_terminal_input")
+                    value[key] = line[:-1]
+                options["task"] = validate_task(value, config)
+            elif len(args) == 2 and not args[1].startswith("-"):
+                options["task_path"] = args[1]
+            else:
+                if (
+                    len(args) != 5
+                    or {args[1], args[3]} != {"--target", "--task"}
+                    or args[2].startswith("--")
+                    or args[4].startswith("--")
+                ):
+                    raise ValueError("invalid_arguments")
+                value = {args[i][2:]: args[i + 1] for i in (1, 3)}
+                options["task"] = validate_task(
+                    value, settings["beescan"]["investigation"]
+                )
+        except KeyboardInterrupt:
+            print("BeeScan input cancelled", file=sys.stderr)
+            return 130
+        except KeyError, OSError, ValueError, ImportError:
+            print(
+                "Usage: ./start.sh beescan [investigate TASK.json | "
+                "investigate --target URL --task TEXT]",
+                file=sys.stderr,
+            )
+            return 2
+        if "task" in options:
+            options["local_operator"] = local_operator
+            options["progress"] = lambda stage: print(
+                "BeeScan: " + stage, file=sys.stderr, flush=True
+            )
         try:
             result = execute_investigation(
-                task_path=args[1],
+                **options,
                 settings=settings,
                 reload_settings=reload_settings,
                 storage_dir=storage_dir,

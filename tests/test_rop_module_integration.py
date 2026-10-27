@@ -14,7 +14,7 @@ from beeagent_module.core.module_contract import (
 )
 from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.module_runtime import execute_module_case
-from beeagent_module.core.settings import load_settings
+from tests.settings_support import load_test_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -39,7 +39,7 @@ def _project_root() -> Path:
 
 
 def _rop_registry_entry_from_settings() -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":

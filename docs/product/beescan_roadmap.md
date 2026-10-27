@@ -1110,7 +1110,7 @@ The implementation remains CLI-first and supplies a stable backend result/action
 
 ### Iteration BS-9 — BeeScan Trusted Local Operator CLI v0
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 

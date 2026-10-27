@@ -21,6 +21,7 @@ from beeagent_module.integrations.beescan.assessment import execute_approved_ass
 from beeagent_module.integrations.beescan.git_exposure import GitExposurePolicy
 from beeagent_module.integrations.beescan.policy import HTTPX_SHA256, ProbePolicy
 from tests import test_beescan_detection
+from tests.settings_support import read_test_settings
 from tests.test_beescan_detection import settings_for
 
 approved = test_beescan_detection.approved
@@ -702,7 +703,7 @@ def test_real_launcher_managed_assessment(managed_lab):
     for source in (repository / "config").iterdir():
         if source.name != "settings.yml":
             (project / "config" / source.name).symlink_to(source)
-    config = yaml.safe_load((repository / "config/settings.yml").read_text())
+    config = read_test_settings()
     config["beescan"] = settings["beescan"]
     for item in config["modules"]["registry"]:
         item["enabled"] = item["id"] == "beescan"

@@ -244,8 +244,6 @@ def ensure_beescan_providers(settings: dict) -> None:
         )
         if config.get(flag) is True
     ]
-    if not selected:
-        return
     managed_approvals = ["approval", "detection_approval"]
     if config.get("git_exposure_enabled") is True:
         managed_approvals.append("git_exposure_approval")
@@ -259,6 +257,12 @@ def ensure_beescan_providers(settings: dict) -> None:
             for key in managed_approvals
         )
     )
+    investigation = config.get("investigation", {})
+    pasta_selected = (
+        pasta_selected or investigation.get("trusted_local_enabled") is True
+    )
+    if not selected and not pasta_selected:
+        return
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ProviderProvisioningError("BeeScan native providers require Linux x86_64")
     if pasta_selected:

@@ -5,6 +5,7 @@ import os
 import re
 import stat
 import time
+import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -26,6 +27,22 @@ from beeagent_module.core.runtime_context import (
     generate_session_id,
 )
 from beeagent_module.integrations.beescan.policy import ProbePolicy
+
+LAB_NETWORKS = tuple(
+    ip_network(network)
+    for network in (
+        "127.0.0.0/8",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "fc00::/7",
+        "192.0.2.0/24",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "2001:db8::/32",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -114,10 +131,11 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
     }
     if (
         type(config) is not dict
-        or set(config) - {"local_lab_enabled", "ai_profile"}
+        or set(config) - {"local_lab_enabled", "ai_profile", "trusted_local_enabled"}
         != {"enabled", "approval", *limits}
         or type(config["enabled"]) is not bool
         or type(config.get("local_lab_enabled", False)) is not bool
+        or type(config.get("trusted_local_enabled", False)) is not bool
     ):
         raise RuntimeError("Invalid beescan.investigation settings")
     for key, (low, high) in limits.items():
@@ -125,15 +143,16 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
             raise RuntimeError("Invalid beescan.investigation limits")
     if config["approval"] is not None and type(config["approval"]) is not dict:
         raise RuntimeError("Invalid beescan.investigation approval")
-    if config["enabled"]:
+    active = config["enabled"] or config.get("trusted_local_enabled", False)
+    if active:
         enabled = any(
             item.get("id") == "beescan" and item.get("enabled") is True
             for item in settings.get("modules", {}).get("registry", [])
         )
-        if not enabled or config["approval"] is None:
+        if not enabled or config["enabled"] and config["approval"] is None:
             raise RuntimeError("BeeScan investigation requires independent approval")
     try:
-        named_ai_profile(settings, require_key=config["enabled"])
+        named_ai_profile(settings, require_key=active)
         if validate_contracts and config["approval"] is not None:
             InvestigationPolicy.from_config(config["approval"])
     except ImportError, KeyError, TypeError, ValueError:
@@ -209,7 +228,21 @@ def read_task(path, config):
                 raise ValueError("task_file_changed")
     finally:
         os.close(directory)
-    value = _json(raw)
+    return validate_task(_json(raw), config)
+
+
+@dataclass(frozen=True)
+class InvestigationTask:
+    target: str
+    task: str
+
+    def __getitem__(self, key):
+        if key not in {"target", "task"}:
+            raise KeyError(key)
+        return getattr(self, key)
+
+
+def validate_task(value, config):
     if type(value) is not dict or set(value) != {"target", "task"}:
         raise ValueError("invalid_task_schema")
     if (
@@ -218,10 +251,17 @@ def read_task(path, config):
         or type(value["task"]) is not str
         or not value["task"].strip()
         or not 1 <= len(value["task"]) <= config["task_chars_max"]
-        or any(ord(c) < 32 or ord(c) == 127 for c in value["task"])
+        or any(
+            unicodedata.category(c).startswith("C")
+            for c in value["task"] + value["target"]
+        )
     ):
         raise ValueError("invalid_task_schema")
-    return value
+    from beescan.domain.locators import canonical_locator
+    from beescan.domain.models import TargetKind
+
+    canonical_locator(TargetKind.URL, value["target"])
+    return InvestigationTask(value["target"], value["task"])
 
 
 def _prompt(settings, name, facts):
@@ -620,21 +660,7 @@ def _load_domain(*, local_lab=False, policy=None):
             raise PermissionError("local_laboratory_not_approved")
         policy.authorize(policy.transport.origin, at=datetime.now(UTC))
         address = ip_address(policy.transport.connected_ip)
-        if not any(
-            address in ip_network(network)
-            for network in (
-                "127.0.0.0/8",
-                "::1/128",
-                "10.0.0.0/8",
-                "172.16.0.0/12",
-                "192.168.0.0/16",
-                "fc00::/7",
-                "192.0.2.0/24",
-                "198.51.100.0/24",
-                "203.0.113.0/24",
-                "2001:db8::/32",
-            )
-        ):
+        if not any(address in network for network in LAB_NETWORKS):
             raise PermissionError("local_laboratory_target_required")
         expected = Path("/home/bee/Pro/beescan")
         if (
@@ -801,7 +827,17 @@ def _prepare_intent(domain, policy, run_id):
     )
 
 
-def execute_investigation(*, task_path, settings, reload_settings, storage_dir, logger):
+def execute_investigation(
+    *,
+    task_path=None,
+    task=None,
+    local_operator=None,
+    settings,
+    reload_settings,
+    storage_dir,
+    logger,
+    progress=None,
+):
     from beeagent_module.integrations.beescan.assessment import _write_report
     from beeagent_module.integrations.beescan.detection import _persist
     from beeagent_module.integrations.beescan.detection_runner import (
@@ -868,6 +904,7 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
     ai_profile = None
     started = time.monotonic()
     deadline = None
+    local_context = None
 
     def authorize(*, resolve=False):
         current_policy = policy
@@ -877,6 +914,8 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
             raise TimeoutError("investigation_deadline")
         if reload_settings() != settings:
             raise PermissionError("approval_changed")
+        if local_context is not None:
+            local_context.verify(current_policy)
         current_policy.authorize(current_policy.transport.origin, at=datetime.now(UTC))
         if intent is not None:
             intent.validate_at(datetime.now(UTC))
@@ -948,6 +987,8 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
 
     def capture(selected, *, reauthorize):
         current_policy = authorize(resolve=True)
+        if progress is not None:
+            progress(selected.stage)
         current_intent = intent
         if current_intent is None:
             raise PermissionError("investigation_not_approved")
@@ -1057,12 +1098,28 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
             raise RuntimeError("cleanup_unverified")
         snapshot.verify()
 
+    local_selected = task is not None or local_operator is not None
     try:
-        if config.get("enabled") is True:
+        if local_selected or config.get("enabled") is True:
             validate_investigation_settings(settings)
-            task = read_task(task_path, config)
-            policy = InvestigationPolicy.from_config(config["approval"])
-            if task["target"] != policy.transport.origin:
+            if local_selected:
+                from beeagent_module.integrations.beescan.local_cli import (
+                    bind_local_run,
+                )
+
+                if task_path is not None or type(task) is not InvestigationTask:
+                    raise PermissionError("local_invocation_refused")
+                task = validate_task(asdict(task), config)
+                local_context = bind_local_run(
+                    task, local_operator, settings, run_id=run_id
+                )
+                policy = local_context.policy
+                status["execution_context"] = local_context.provenance()
+                _persist(artifacts, "investigation_status.json", status)
+            else:
+                task = read_task(task_path, config)
+                policy = InvestigationPolicy.from_config(config["approval"])
+            if local_context is None and task["target"] != policy.transport.origin:
                 raise PermissionError("target_not_approved")
             deadline = started + policy.transport.time_budget_seconds
             authorize()
@@ -1088,6 +1145,8 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
                 )
                 authorize()
                 ai_profile = named_ai_profile(settings)
+                if progress is not None:
+                    progress("classification")
                 classify_task(settings, task["task"], logger, deadline=deadline)
                 authorize()
                 intent = _prepare_intent(domain, policy, run_id)
@@ -1167,6 +1226,15 @@ def execute_investigation(*, task_path, settings, reload_settings, storage_dir, 
             else [],
             "explanation": explanation if accepted is not None else None,
         }
+        if local_selected:
+            result["report_location"] = str(artifacts.artifact_dir() / "report.md")
+            result["disposition"] = "CANDIDATE" if result["findings"] else None
+            status.update(
+                framework=result["framework"],
+                version=result["version"],
+                disposition=result["disposition"],
+                report_location=result["report_location"],
+            )
         report = accepted.report() if accepted is not None else None
         _persist(artifacts, "investigation_steps.json", steps)
         _persist(artifacts, "investigation_result.json", result)

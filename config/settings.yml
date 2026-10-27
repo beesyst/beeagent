@@ -111,6 +111,7 @@ beescan:
   git_exposure_approval: null
   investigation:
     enabled: false
+    trusted_local_enabled: true
     local_lab_enabled: false
     approval: null
     ai_profile: openrouter

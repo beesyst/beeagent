@@ -20,8 +20,8 @@ from beeagent_module.cases.rop_dashboard import (
 from beeagent_module.cases.rop_dashboard import (
     build_rop_dashboard as _build_rop_dashboard,
 )
-from beeagent_module.core.settings import load_settings
 from tests.rop_dashboard_test_support import seed_rop_dashboard_run
+from tests.settings_support import load_test_settings
 
 TEST_PLAN_LEAD = 20
 
@@ -736,7 +736,7 @@ def test_v2_manifest_accepts_legacy_view_metadata_without_unblocking_legacy_view
 
 class TestSettingsValidation:
     def test_settings_rop_dashboard_contract(self) -> None:
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = load_test_settings()
         dashboard = settings["rop"]["dashboard"]
         periods = dashboard["periods"]
         plan_lead = dashboard["leaderboard"]["plan_lead"]

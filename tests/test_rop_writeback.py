@@ -34,7 +34,8 @@ from beeagent_module.cases.rop_writeback import (
     refresh_recoverable_writeback_prerequisites,
 )
 from beeagent_module.core.cli import create_rop_parser
-from beeagent_module.core.settings import load_settings, validate_settings
+from beeagent_module.core.settings import validate_settings
+from tests.settings_support import load_test_settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -385,7 +386,7 @@ class TestWritebackSettingsValidation:
         )
 
     def _load(self) -> dict:
-        return load_settings(_PROJECT_ROOT / "config" / "settings.yml")
+        return load_test_settings()
 
     def test_writeback_enabled_with_verified_stage_and_fallback(self) -> None:
         settings = self._load()
