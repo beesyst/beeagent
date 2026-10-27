@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.3...beeagent-v0.82.0) (2026-10-27)
+
+
+### Features
+
+* **beescan:** add trusted local operator CLI intake ([#342](https://github.com/beesyst/beeagent/issues/342)) ([0540139](https://github.com/beesyst/beeagent/commit/054013978d16a15bb0bba38a292034ef11932669))
+
 ## [0.81.3](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.2...beeagent-v0.81.3) (2026-10-26)
 
 
