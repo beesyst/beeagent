@@ -412,8 +412,8 @@ def run_provider(policy: ProbePolicy, *, reauthorize):
         os.close(user_descriptor)
 
 
-def verify_resolution(policy):
-    hostname = urlsplit(policy.origin).hostname
+def resolve_addresses(origin):
+    hostname = urlsplit(origin).hostname
     try:
         addresses = {str(ip_address(hostname))}
     except ValueError:
@@ -439,5 +439,9 @@ def verify_resolution(policy):
             addresses = {str(ip_address(value)) for value in records}
         except ValueError, TypeError:
             raise PermissionError("dns_unverified") from None
-    if policy.connected_ip not in addresses:
+    return addresses
+
+
+def verify_resolution(policy):
+    if policy.connected_ip not in resolve_addresses(policy.origin):
         raise PermissionError("dns_changed")

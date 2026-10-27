@@ -24,8 +24,8 @@ from beeagent_module.core.module_contract import (
 from beeagent_module.core.module_registry import ModuleRegistry
 from beeagent_module.core.settings import (
     apply_runtime_settings_overrides,
-    load_settings,
 )
+from tests.settings_support import load_test_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -40,12 +40,12 @@ def global_ai_profile(request):
 
 @pytest.fixture(autouse=True)
 def _isolated_global_ai(monkeypatch, isolated_ai_settings, global_ai_profile):
-    loader = load_settings
+    loader = load_test_settings
 
-    def load_isolated(path):
-        return isolated_ai_settings(loader(path), global_ai_profile)
+    def load_isolated():
+        return isolated_ai_settings(loader(), global_ai_profile)
 
-    monkeypatch.setattr(f"{__name__}.load_settings", load_isolated)
+    monkeypatch.setattr(f"{__name__}.load_test_settings", load_isolated)
     monkeypatch.setattr(
         "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
         lambda **kwargs: None,
@@ -102,7 +102,7 @@ def _attachment_settings() -> dict[str, object]:
 
 
 def _rop_registry_entry_from_settings() -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
@@ -127,7 +127,7 @@ def _remove_fake_package(name: str) -> None:
 
 
 def test_rop_operator_flow_success_with_installed_module(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     rop_entry = _rop_registry_entry_from_settings()
     registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
 
@@ -167,7 +167,7 @@ def test_rop_operator_flow_success_with_installed_module(tmp_path: Path) -> None
 
 
 def test_rop_operator_flow_degraded_when_module_missing(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     registry = ModuleRegistry(config=[], logger=_null_logger())
 
     result = run_rop_operator_case(
@@ -215,7 +215,7 @@ class _StubNonOkModule:
 
 
 def test_rop_operator_flow_degraded_for_non_ok_module_status(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     pkg_name = "_test_stub_non_ok_pkg"
     entry_name = "StubNonOkModule"
@@ -261,7 +261,7 @@ def test_rop_operator_flow_degraded_for_non_ok_module_status(tmp_path: Path) -> 
 
 
 def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     registry = ModuleRegistry(config=[], logger=_null_logger())
 
     try:
@@ -280,7 +280,7 @@ def test_rop_operator_raises_when_payload_is_none(tmp_path: Path) -> None:
 
 
 def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -305,7 +305,7 @@ def _make_batch_settings(batch_path: str, enabled: bool = True) -> dict:
 
 
 def _make_mailbox_settings(enabled: bool = True) -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -387,7 +387,7 @@ def _make_raw_batch_settings(
     client_id: str = "welding",
     source_id: str = "test-batch",
 ) -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -602,7 +602,7 @@ def test_rop_batch_indexes_newest_first_source_events_in_canonical_order(
 
 
 def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -628,7 +628,7 @@ def test_rop_batch_case_degraded_no_enabled_source(tmp_path: Path) -> None:
 def test_rop_batch_case_source_selection_error_writes_diagnostics(
     tmp_path: Path,
 ) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -929,7 +929,7 @@ def test_rop_batch_case_all_sources_partial_degradation(tmp_path: Path) -> None:
     rop_entry = _rop_registry_entry_from_settings()
     registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -1030,7 +1030,7 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
     rop_entry = _rop_registry_entry_from_settings()
     registry = ModuleRegistry(config=[rop_entry], logger=_null_logger())
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -1095,7 +1095,7 @@ def test_rop_batch_case_explicit_source_id_runs_single_source(tmp_path: Path) ->
 def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
     tmp_path: Path,
 ) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_sanitize.json"
     batch = {
@@ -1191,7 +1191,7 @@ def test_rop_batch_case_sanitizes_json_batch_in_normalized_events(
 
 
 def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_attachment_extraction.json"
     batch = {
@@ -1313,7 +1313,7 @@ def test_rop_batch_case_attachment_extraction_artifact_v0(tmp_path: Path) -> Non
 def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
     tmp_path: Path,
 ) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_attachment_safety.json"
     batch = {
@@ -1411,7 +1411,7 @@ def test_rop_batch_case_attachment_extraction_does_not_store_raw_content(
 
 
 def test_rop_batch_attachment_items_carry_event_instance_id(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_attachment_instance.json"
     batch = {
@@ -1519,7 +1519,7 @@ def test_rop_batch_attachment_items_carry_event_instance_id(tmp_path: Path) -> N
 
 
 def test_rop_batch_classification_handoff_success(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch.json"
     batch = {
@@ -1951,7 +1951,7 @@ def test_rop_batch_same_message_id_isolated_by_client(tmp_path: Path) -> None:
             json.dumps({"period": "2026-05", "items": [event]}),
             encoding="utf-8",
         )
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -2065,7 +2065,7 @@ def test_rop_batch_fallback_first_classification_is_canonical_for_duplicates(
 
 
 def test_rop_batch_client_scope_isolation_for_duplicates(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -2233,7 +2233,7 @@ def test_rop_batch_similar_unrelated_event_stays_non_duplicate(tmp_path: Path) -
 
 
 def test_rop_batch_same_client_multi_source_duplicate(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"] = {
         "email_preview": {"body_chars_max": 4000},
         "attachments": _attachment_settings(),
@@ -3479,7 +3479,7 @@ def test_bitrix_continuation_handoff_is_occurrence_scoped(
             ],
             logger=_null_logger(),
         )
-        settings = load_settings(_project_root() / "config" / "settings.yml")
+        settings = load_test_settings()
         run_rop_operator_case(
             settings=settings,
             storage_dir=tmp_path,
@@ -3585,7 +3585,7 @@ def test_ai_adjudicator_preserves_deterministic_duplicate(
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"]["ai_assist"]["enabled"] = True
     settings["rop"]["ai_assist"]["dry_run"] = True
     settings["rop"]["ai_assist"]["adjudicator"]["enabled"] = True
@@ -4001,7 +4001,7 @@ def test_filter_event_for_module_preserves_context_fields() -> None:
 
 
 def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "preclassified_batch.json"
     batch = {
@@ -4078,7 +4078,7 @@ def test_rop_batch_preclassified_events_get_trace_fields(tmp_path: Path) -> None
 
 
 def test_rop_batch_event_preview_maps_to_body(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "preview_batch.json"
     batch = {
@@ -4245,7 +4245,7 @@ def test_rop_batch_per_event_classification_failure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_fail.json"
     batch = {
@@ -4425,7 +4425,7 @@ def test_rop_batch_per_event_classification_failure(
 def test_rop_batch_classification_payload_does_not_send_empty_received_at(
     tmp_path: Path,
 ) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_received_at_empty.json"
     batch = {
@@ -4571,7 +4571,7 @@ def test_rop_batch_classification_payload_does_not_send_empty_received_at(
 
 
 def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_att.json"
     batch = {
@@ -4692,7 +4692,7 @@ def test_rop_batch_attachment_metadata_sanitation(tmp_path: Path) -> None:
 
 
 def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
 
     batch_file = tmp_path / "batch_valueerr.json"
     batch = {
@@ -4835,7 +4835,7 @@ def test_rop_batch_value_error_does_not_crash_batch(tmp_path: Path) -> None:
 
 
 def test_json_batch_run_writes_mailbox_selection_envelope(tmp_path: Path) -> None:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     batch_file = tmp_path / "batch_mailbox_selection.json"
     batch_file.write_text(
         json.dumps(
@@ -4972,7 +4972,7 @@ def test_ai_assist_merge_contract_unavailable_preserves_deterministic_result(
         ),
     )
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["rop"]["ai_assist"] = {
         "enabled": True,
         "events_max": 20,
@@ -5150,7 +5150,7 @@ def test_ai_adjudicator_accepted_result_updates_classified_events(
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True
@@ -5457,7 +5457,7 @@ def _write_adjudicator_batch_source(
 
 
 def _adjudicator_enabled_settings() -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True
@@ -5697,7 +5697,7 @@ def test_adjudicator_enabled_skips_legacy_ai_assist_provider_path(
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True
@@ -5841,7 +5841,7 @@ def test_adjudicator_env_kill_switch_skips_all_ai_paths(
     monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "0")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True
@@ -6006,7 +6006,7 @@ def test_ai_adjudicator_low_confidence_preserves_deterministic_result(
     )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True
@@ -6524,7 +6524,7 @@ def _semantic_attachment_settings() -> dict:
 
 
 def _semantic_mailbox_settings() -> dict:
-    settings = load_settings(_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     for item in settings["modules"]["registry"]:
         if item["id"] == "beeagent-rop":
             item["enabled"] = True

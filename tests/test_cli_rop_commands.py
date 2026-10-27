@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 import pytest
 
@@ -25,8 +26,8 @@ from beeagent_module.core.rop_review_export import review_tsv_columns
 from beeagent_module.core.rop_sources import load_rop_sources
 from beeagent_module.core.settings import (
     apply_runtime_settings_overrides,
-    load_settings,
 )
+from tests.settings_support import load_test_settings
 
 os.environ.setdefault("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BEEAGENT_WEB_ADMIN_TOKEN", "test-admin-token")
@@ -37,6 +38,21 @@ os.environ.setdefault("BEEAGENT_WEB_OPERATOR_TOKEN", "test-operator-token")
 @pytest.fixture(autouse=True)
 def _set_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_assist._call_ai_provider",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "beeagent_module.core.rop_ai_adjudicator.call_structured_ai",
+        lambda **kwargs: None,
+    )
+
+    def deny_bitrix_transport(*args, **kwargs):
+        raise URLError("Unit-test Bitrix transport unavailable")
+
+    monkeypatch.setattr(
+        "beeagent_module.adapters.bitrix_client.urlopen", deny_bitrix_transport
+    )
 
 
 def _null_logger() -> logging.Logger:
@@ -176,9 +192,7 @@ class TestRopCliArgumentParser:
     def test_rop_dashboard_rejects_period_not_configured(self) -> None:
         import argparse
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         args = argparse.Namespace(period="14d", run_id="test-run-123")
 
         with pytest.raises(RopCliError, match="Invalid period"):
@@ -205,9 +219,7 @@ class TestRopCliArgumentParser:
     def test_rop_mvp_pack_rejects_period_not_configured(self) -> None:
         import argparse
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         args = argparse.Namespace(period="14d", run_id="test-run-123")
 
         with pytest.raises(RopCliError, match="Invalid period"):
@@ -220,9 +232,7 @@ class TestRopCliArgumentParser:
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "disabled")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
 
         assert settings["rop"]["ai_assist"]["enabled"] is True
         assert settings["rop"]["ai_assist"]["adjudicator"]["enabled"] is False
@@ -230,9 +240,7 @@ class TestRopCliArgumentParser:
 
 class TestSourceOverrides:
     def test_apply_source_overrides_with_source_id(self) -> None:
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
 
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "hotline_mailbox":
@@ -260,9 +268,7 @@ class TestSourceOverrides:
                 assert source["enabled"] is False
 
     def test_apply_source_overrides_nonexistent_source_raises_error(self) -> None:
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
 
         with pytest.raises(RopCliError) as exc_info:
             _apply_source_overrides(
@@ -288,9 +294,7 @@ class TestSourceOverrides:
         assert "rop.sources is not configured" in str(exc_info.value)
 
     def test_apply_source_overrides_all_sources_requires_enabled(self) -> None:
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         for source in settings["rop"]["sources"]:
             source["enabled"] = False
 
@@ -341,9 +345,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         batch_data = {
@@ -408,9 +410,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:
@@ -486,9 +486,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -546,9 +544,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         good_batch_path = tmp_path / "good_batch.json"
@@ -641,9 +637,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
@@ -684,9 +678,7 @@ class TestRopCliRun:
     def test_rop_run_missing_source_id_raises_error(self, tmp_path: Path) -> None:
         import argparse
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
 
         args = argparse.Namespace(
             source_id="nonexistent_source",
@@ -715,9 +707,7 @@ class TestRopCliRun:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -885,9 +875,7 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -1031,9 +1019,7 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = True
         settings["bitrix"]["reconciliation"]["enabled"] = True
@@ -1087,9 +1073,7 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -1161,9 +1145,7 @@ class TestRopCliRun:
             rop_web_projection_index,
         )
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
         settings["bitrix"]["enabled"] = False
         settings["bitrix"]["writeback"]["enabled"] = False
@@ -1369,9 +1351,7 @@ class TestRopCliExportReview:
         assert set(row.keys()) == set(expected_cols)
 
     def test_apply_source_overrides_disabled_source_raises_error(self) -> None:
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
 
         for source in settings["rop"]["sources"]:
             if source["source_id"] == "rop_batch_sample":
@@ -1441,9 +1421,7 @@ class TestRopCliExportReview:
 
         import beeagent_module.core.cli as cli_module
 
-        settings = _with_sources(
-            load_settings(_project_root() / "config" / "settings.yml")
-        )
+        settings = _with_sources(load_test_settings())
         monkeypatch.setenv("BEEAGENT_ROP_AI_ADJUDICATOR_ENABLED", "false")
 
         for source in settings["rop"]["sources"]:

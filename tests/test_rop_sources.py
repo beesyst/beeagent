@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from beeui_module.adapters.envelopes import AdapterResult
 
 from beeagent_module.adapters.mailbox import MailboxAuthError
 from beeagent_module.core.rop_sources import (
@@ -22,6 +23,7 @@ from beeagent_module.core.rop_sources import (
     update_rop_source_display_name,
 )
 from beeagent_module.interfaces.ui.adapter import BeeAgentUiAdapter
+from tests.settings_support import read_test_settings
 
 
 def _settings() -> dict:
@@ -614,6 +616,7 @@ def test_admin_add_and_edit_mailbox_credentials(monkeypatch, tmp_path: Path) -> 
         },
         actor,
     )
+    assert isinstance(credentials_only, AdapterResult)
     assert credentials_only.data["changed"] is True
 
     deleted = adapter.execute_action(
@@ -750,7 +753,7 @@ def test_source_action_rejects_browser_supplied_environment_references(
 
 
 def test_checked_in_registry_is_canonical() -> None:
-    settings = yaml.safe_load(Path("config/settings.yml").read_text(encoding="utf-8"))
+    settings = read_test_settings()
     assert "sources" not in settings["rop"]
     assert settings["rop"]["sources_path"] == "config/rop/sources.yml"
     registry = yaml.safe_load(

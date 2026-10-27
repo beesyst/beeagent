@@ -20,6 +20,7 @@ import yaml
 
 from beeagent_module.integrations.beescan import detection, egress, review_source
 from beeagent_module.integrations.beescan import investigation as host
+from tests.settings_support import read_test_settings
 
 approved = network_lab.approved
 managed_lab = network_lab.managed_lab
@@ -28,7 +29,7 @@ managed_lab = network_lab.managed_lab
 @pytest.fixture
 def investigation_lab(managed_lab, monkeypatch):
     _, root, _, sessions, probe = managed_lab
-    config = yaml.safe_load(Path("config/settings.yml").read_text())
+    config = read_test_settings()
     ai_calls = []
 
     def ai(**kwargs):
@@ -153,10 +154,21 @@ def investigation_lab(managed_lab, monkeypatch):
         thread.join(timeout=2)
 
 
-def execute(lab, reload=None):
+def execute(lab, reload=None, *, local=False):
     config, root, _, _, _, _, task = lab
+    options = {"task_path": task}
+    if local:
+        from beeagent_module.integrations.beescan import local_cli
+
+        config["beescan"]["investigation"]["trusted_local_enabled"] = True
+        options = {
+            "task": host.read_task(task, config["beescan"]["investigation"]),
+            "local_operator": local_cli._LocalOperator(
+                local_cli._identity(), local_cli._SEAL
+            ),
+        }
     return host.execute_investigation(
-        task_path=task,
+        **options,
         settings=config,
         reload_settings=reload or (lambda: config),
         storage_dir=root / "storage",
@@ -238,13 +250,14 @@ def test_real_investigation(investigation_lab, case):
     if result["complete"]:
         local = lab[0]["beescan"]["investigation"]["local_lab_enabled"]
         expected_status = "LABORATORY_ONLY" if local else "COMPLETE"
-        expected_revision = (
-            "editable:/home/bee/Pro/beescan"
-            if local
-            else json.loads(
-                importlib.metadata.distribution("beescan").read_text("direct_url.json")
-            )["vcs_info"]["commit_id"]
-        )
+        if local:
+            expected_revision = "editable:/home/bee/Pro/beescan"
+        else:
+            direct_url = importlib.metadata.distribution("beescan").read_text(
+                "direct_url.json"
+            )
+            assert direct_url is not None
+            expected_revision = json.loads(direct_url)["vcs_info"]["commit_id"]
         assert result["integration_status"] == expected_status
         assert result["dependency_revision"] == expected_revision
         report = json.loads((directory / "report.json").read_text())
@@ -281,25 +294,29 @@ def test_real_investigation(investigation_lab, case):
 
 
 @pytest.mark.parametrize(
-    "fault",
+    "fault,local",
     [
-        "revocation",
-        "expiry",
-        "deadline",
-        "cancel",
-        "tamper",
-        "readback",
-        "cleanup",
-        "publication",
-        "manifest",
-        "explanation",
-        "dns",
-        "ip",
-        "port",
-        "tls",
-    ],
+        (fault, False)
+        for fault in (
+            "revocation",
+            "expiry",
+            "deadline",
+            "cancel",
+            "tamper",
+            "readback",
+            "cleanup",
+            "publication",
+            "manifest",
+            "explanation",
+            "dns",
+            "ip",
+            "port",
+            "tls",
+        )
+    ]
+    + [(fault, True) for fault in ("cancel", "cleanup", "publication", "manifest")],
 )
-def test_real_investigation_fault(investigation_lab, monkeypatch, fault):
+def test_real_investigation_fault(investigation_lab, monkeypatch, fault, local):
     lab = investigation_lab
     config, root, requests, _sessions, _, _, _ = lab
     original = deepcopy(config)
@@ -412,7 +429,7 @@ def test_real_investigation_fault(investigation_lab, monkeypatch, fault):
                 raise KeyboardInterrupt
         return config
 
-    result = execute(lab, reload)
+    result = execute(lab, reload, local=local)
     directory = assert_lifecycle(lab, result)
     assert not result["complete"], result
     assert len(requests) <= (
@@ -424,19 +441,51 @@ def test_real_investigation_fault(investigation_lab, monkeypatch, fault):
     )
     assert not json.loads((directory / "report.json").read_text())["complete"]
     assert original["beescan"]["investigation"]["approval"]["mutation"]
+    if local:
+        assert result["framework"] is result["version"] is result["disposition"] is None
+        assert (
+            result["execution_context"]["third_party_authorization_verified"] is False
+        )
+        result_data = json.loads((directory / "investigation_result.json").read_text())
+        assert result_data["findings"] == []
+        assert result_data["disposition"] is None
+        assert result_data["status"] == result["status"]
 
 
 @pytest.mark.parametrize("managed_lab", [False], indirect=True)
 @pytest.mark.parametrize(
     "case",
-    ["disabled", "refused", "vulnerable", "patched", "ambiguous", "framing", "timeout"],
+    [
+        "disabled",
+        "refused",
+        "vulnerable",
+        "patched",
+        "ambiguous",
+        "framing",
+        "timeout",
+        "local-match",
+        "local-patched",
+        "local-tty",
+        "local-unsupported",
+    ],
 )
 def test_real_investigation_launcher(investigation_lab, case):
     lab = investigation_lab
     config, root, requests, _, scenario, _, task = lab
+    local = case.startswith("local-")
     scenario["mode"] = (
         case if case in {"patched", "ambiguous", "framing"} else "vulnerable"
     )
+    if case == "local-patched":
+        scenario["mode"] = "patched"
+    target = config["beescan"]["investigation"]["approval"]["transport"]["origin"]
+    if local:
+        config["beescan"]["investigation"].update(
+            trusted_local_enabled=True,
+            enabled=False,
+            approval=None,
+        )
+        task.unlink()
     if case == "refused":
         config["beescan"]["investigation"]["approval"]["mutation"] = False
     if case == "timeout":
@@ -491,7 +540,7 @@ def test_real_investigation_launcher(investigation_lab, case):
             "from beeagent_module.integrations.beescan import investigation as host\n"
             "def ai(**kwargs):\n"
             " if 'intent' in kwargs['responses_text_format']['schema']['properties']:\n"
-            "  return json.dumps({'intent':'framework_version_disclosure'})\n"
+            "  return json.dumps({'intent':os.environ.get('BEEAGENT_BS9_LAB_INTENT','framework_version_disclosure')})\n"
             " prompt=kwargs['prompt'];data=json.loads(prompt[prompt.index('{'):])\n"
             " return json.dumps({'facts':data['facts'],'explanation':data['allowed_explanation']})\n"
             "host.call_structured_ai=ai\n"
@@ -511,20 +560,49 @@ def test_real_investigation_launcher(investigation_lab, case):
         check=True,
         timeout=120,
     )
-    result = subprocess.run(
-        ["./start.sh", "beescan", "investigate", str(task)],
-        cwd=project,
-        env={
-            **os.environ,
-            "PYTHONPATH": str(hooks),
-            "BEEAGENT_BS8_LAB_ROOT": str(project),
-            "UV_PROJECT_ENVIRONMENT": str(project / ".venv"),
-            "UV_OFFLINE": "1",
-        },
-        capture_output=True,
-        check=False,
-        timeout=120,
-    )
+    command = ["./start.sh", "beescan", "investigate", str(task)]
+    terminal_fd = None
+    stdin = None
+    if local:
+        command = [
+            "./start.sh",
+            "beescan",
+            "investigate",
+            "--target",
+            target,
+            "--task",
+            "Identify response-observed framework version",
+        ]
+    if case == "local-tty":
+        import pty
+
+        terminal_fd, stdin = pty.openpty()
+        os.write(terminal_fd, (target + "\nIdentify framework version\n").encode())
+        command = ["./start.sh", "beescan"]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(hooks),
+                "BEEAGENT_BS8_LAB_ROOT": str(project),
+                "UV_PROJECT_ENVIRONMENT": str(project / ".venv"),
+                "UV_OFFLINE": "1",
+                "BEEAGENT_BS9_LAB_INTENT": "unsupported"
+                if case == "local-unsupported"
+                else "framework_version_disclosure",
+            },
+            stdin=stdin,
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    finally:
+        if terminal_fd is not None:
+            os.close(terminal_fd)
+        if stdin is not None:
+            os.close(stdin)
     (root / "launcher.stdout").write_bytes(result.stdout)
     (root / "launcher.stderr").write_bytes(result.stderr)
     expected_code = {
@@ -533,6 +611,7 @@ def test_real_investigation_launcher(investigation_lab, case):
         "ambiguous": 5,
         "framing": 5,
         "timeout": 4,
+        "local-unsupported": 5,
     }.get(case, 0)
     assert result.returncode == expected_code, (
         result.stdout,
@@ -545,16 +624,20 @@ def test_real_investigation_launcher(investigation_lab, case):
     else:
         assert len(requests) == (
             0
-            if case in {"disabled", "refused"}
+            if case in {"disabled", "refused", "local-unsupported"}
             else 1
             if case in {"ambiguous", "framing"}
             else 3
         )
-    assert terminal["complete"] == (case in {"vulnerable", "patched"})
+    assert terminal["complete"] == (
+        case in {"vulnerable", "patched", "local-match", "local-patched", "local-tty"}
+    )
     directory = project / "storage/runs" / terminal["run_id"] / "module-beescan"
     assert json.loads((directory / "investigation_status.json").read_text()) == terminal
     if terminal["complete"]:
-        assert terminal["status"] == ("MATCH" if case == "vulnerable" else "NO_MATCH")
+        assert terminal["status"] == (
+            "NO_MATCH" if case in {"patched", "local-patched"} else "MATCH"
+        )
         assert terminal["integration_status"] == (
             "LABORATORY_ONLY"
             if config["beescan"]["investigation"]["local_lab_enabled"]
@@ -564,3 +647,18 @@ def test_real_investigation_launcher(investigation_lab, case):
         assert evidence["cleanup_verified"] and evidence["state"] == "closed"
         for key in ("helper_pid", "supervisor_pid"):
             assert not Path(f"/proc/{evidence[key]}").exists()
+    if local:
+        assert terminal["execution_context"]["origin"] == target
+        assert terminal["execution_context"]["operator_uid"] == os.getuid()
+        assert (
+            terminal["execution_context"]["third_party_authorization_verified"] is False
+        )
+        assert terminal["report_location"] == str(directory / "report.md")
+        result_data = json.loads((directory / "investigation_result.json").read_text())
+        assert result_data["framework"] == terminal["framework"]
+        assert terminal["disposition"] == (
+            "CANDIDATE" if terminal["status"] == "MATCH" else None
+        )
+        assert yaml.safe_load((project / "config/settings.yml").read_text()) == config
+        assert not task.exists()
+        assert not list(project.glob("*task*.json"))

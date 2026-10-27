@@ -274,8 +274,18 @@ def main() -> None:
         sys.exit(_handle_beedrill_cli(args[1:], settings=settings, logger=logger))
 
     if args and args[0] == "beescan":
+        from beeagent_module.integrations.beescan.local_cli import (
+            _operator_from_entrypoint,
+        )
         from beeagent_module.integrations.beescan.probe import handle_beescan_cli
 
+        local_operator = None
+        if len(args) == 1 or (args[1:2] == ["investigate"] and "--target" in args[2:]):
+            try:
+                local_operator = _operator_from_entrypoint()
+            except PermissionError:
+                print("BeeScan local entrypoint refused", file=sys.stderr)
+                sys.exit(3)
         sys.exit(
             handle_beescan_cli(
                 args[1:],
@@ -283,6 +293,7 @@ def main() -> None:
                 reload_settings=lambda: load_settings(settings_path),
                 storage_dir=get_storage_dir(),
                 logger=logger,
+                local_operator=local_operator,
             )
         )
 

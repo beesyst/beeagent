@@ -34,7 +34,7 @@ from beeagent_module.core.cli import (
     handle_rop_reconcile_bitrix,
 )
 from beeagent_module.core.rop_review_export import _build_review_tsv_rows
-from beeagent_module.core.settings import load_settings
+from tests.settings_support import load_test_settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,7 +57,7 @@ def _null_logger() -> logging.Logger:
 
 
 def _load_test_settings() -> dict:
-    return load_settings(_PROJECT_ROOT / "config" / "settings.yml")
+    return load_test_settings()
 
 
 def _make_fake_bitrix_response(

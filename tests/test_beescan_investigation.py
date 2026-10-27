@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
 from beeagent_module.core.settings import _require_one_enabled_ai_profile
 from beeagent_module.integrations.beescan import investigation as host
@@ -23,11 +22,12 @@ from beeagent_module.integrations.beescan.policy import (
     validate_beescan_settings,
 )
 from beeagent_module.integrations.beescan.probe import handle_beescan_cli
+from tests.settings_support import read_test_settings
 
 
 @pytest.fixture
 def settings():
-    return yaml.safe_load(Path("config/settings.yml").read_text())
+    return read_test_settings()
 
 
 def configure_approved(settings, monkeypatch):
@@ -1522,3 +1522,479 @@ def test_local_opt_in_cannot_come_from_task_or_ai(settings, monkeypatch, tmp_pat
     )
     with pytest.raises(ValueError):
         host.classify_task(settings, "Find version", logging.getLogger("test"))
+
+
+@pytest.fixture
+def local_operator():
+    from beeagent_module.integrations.beescan import local_cli
+
+    return local_cli._LocalOperator(local_cli._identity(), local_cli._SEAL)
+
+
+@pytest.mark.parametrize("value", [None, 1, "true", {}, []])
+def test_trusted_local_setting_is_boolean(settings, value):
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = value
+    with pytest.raises(RuntimeError):
+        host.validate_investigation_settings(settings)
+
+
+def test_trusted_local_configuration_needs_no_target_approval(settings, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-private-key")
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    host.validate_investigation_settings(settings)
+    assert settings["beescan"]["investigation"]["approval"] is None
+    settings["modules"]["registry"][2]["enabled"] = False
+    with pytest.raises(RuntimeError):
+        host.validate_investigation_settings(settings)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["https://EXAMPLE.test:443/", "http://127.0.0.1:18080", "https://[::1]/"],
+)
+def test_shared_in_memory_task_contract(settings, tmp_path, target):
+    from dataclasses import FrozenInstanceError
+
+    config = settings["beescan"]["investigation"]
+    value = {"target": target, "task": "Identify framework version"}
+    task = host.validate_task(value, config)
+    assert host.read_task(task_file(tmp_path, value), config) == task
+    attribute = "target"
+    with pytest.raises(FrozenInstanceError):
+        setattr(task, attribute, "http://other.test")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"target": "ftp://example.test", "task": "Find version"},
+        {"target": "https://user:password@example.test", "task": "Find version"},
+        {"target": "https://example.test/path", "task": "Find version"},
+        {"target": "https://example.test?x=1", "task": "Find version"},
+        {"target": "https://example.test\n", "task": "Find version"},
+        {"target": "https://example.test", "task": "Find\u0085version"},
+        {"target": "https://example.test", "task": "Find\u202eversion"},
+        {"target": "https://example.test", "task": "x" * 2001},
+        {"target": "https://example.test", "task": " "},
+        {"target": "https://example.test", "task": "Find", "trusted_local": True},
+    ],
+)
+def test_shared_invalid_task_contract(settings, tmp_path, value):
+    config = settings["beescan"]["investigation"]
+    with pytest.raises(ValueError):
+        host.validate_task(value, config)
+    with pytest.raises(ValueError):
+        host.read_task(task_file(tmp_path, value), config)
+
+
+@pytest.mark.parametrize("mode", ["direct", "reverse", "tty"])
+def test_local_cli_intake(
+    settings, tmp_path, monkeypatch, capsys, local_operator, mode
+):
+    import sys
+
+    calls = []
+    target = "https://example.test"
+    task = "Find framework version"
+    arguments = ["investigate", "--target", target, "--task", task]
+    if mode == "reverse":
+        arguments = ["investigate", "--task", task, "--target", target]
+    elif mode == "tty":
+        arguments = []
+        stream = io.StringIO(target + "\n" + task + "\n")
+        stream.isatty = lambda: True
+        monkeypatch.setattr(sys, "stdin", stream)
+    else:
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            SimpleNamespace(
+                readline=lambda *_: pytest.fail("Direct mode must not read stdin")
+            ),
+        )
+
+    def execute(**kwargs):
+        calls.append(kwargs)
+        kwargs["progress"]("classification")
+        return {"status": "NO_MATCH", "complete": True}
+
+    monkeypatch.setattr(host, "execute_investigation", execute)
+    before = deepcopy(settings)
+    assert (
+        handle_beescan_cli(
+            arguments,
+            settings=settings,
+            reload_settings=lambda: settings,
+            storage_dir=tmp_path,
+            logger=logging.getLogger("test"),
+            local_operator=local_operator,
+        )
+        == 0
+    )
+    assert len(calls) == 1
+    assert calls[0]["task"] == host.InvestigationTask(target, task)
+    assert calls[0]["local_operator"] is local_operator
+    assert "task_path" not in calls[0]
+    assert settings == before
+    assert list(tmp_path.iterdir()) == []
+    output = capsys.readouterr()
+    assert "classification" in output.err
+    assert target not in output.out + output.err
+    assert output.err.count("Target: ") == (1 if mode == "tty" else 0)
+    assert output.err.count("Task: ") == (1 if mode == "tty" else 0)
+
+
+@pytest.mark.parametrize("mode", ["notty", "eof", "cancel", "long", "controls"])
+def test_interactive_bad_input_is_bounded(settings, tmp_path, monkeypatch, mode):
+    import sys
+
+    stream = io.StringIO(
+        {
+            "long": "x" * 2050 + "\n",
+            "controls": "https://example.test\nFind\x1bversion\n",
+        }.get(mode, "")
+    )
+    stream.isatty = lambda: mode != "notty"
+    if mode in {"cancel", "notty"}:
+
+        def read(*_):
+            if mode == "cancel":
+                raise KeyboardInterrupt
+            pytest.fail("Non-TTY must not read stdin")
+
+        stream.readline = read
+    monkeypatch.setattr(sys, "stdin", stream)
+    monkeypatch.setattr(
+        host, "execute_investigation", lambda **_: pytest.fail("No execution")
+    )
+    assert handle_beescan_cli(
+        [],
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=tmp_path,
+        logger=logging.getLogger("test"),
+    ) == (130 if mode == "cancel" else 2)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["investigate", "--target", "https://example.test"],
+        ["investigate", "--task", "Find"],
+        ["investigate", "--target", "https://example.test", "--target", "Find"],
+        ["investigate", "--target", "ftp://example.test", "--task", "Find"],
+        ["investigate", "--target", "https://example.test", "--task", "Find", "--yes"],
+        ["investigate", "task.json", "--trusted-local"],
+    ],
+)
+def test_direct_syntax_refuses_without_execution(settings, tmp_path, monkeypatch, args):
+    monkeypatch.setattr(
+        host, "execute_investigation", lambda **_: pytest.fail("No execution")
+    )
+    assert (
+        handle_beescan_cli(
+            args,
+            settings=settings,
+            reload_settings=lambda: settings,
+            storage_dir=tmp_path,
+            logger=logging.getLogger("test"),
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("forgery", [None, {}, {"operator_uid": os.getuid()}, True])
+def test_remote_data_cannot_assert_local_authority(
+    settings, tmp_path, monkeypatch, forgery
+):
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-private-key")
+    monkeypatch.setattr(host, "_load_domain", lambda **_: pytest.fail("No domain"))
+    monkeypatch.setattr("socket.getaddrinfo", lambda *_: pytest.fail("No DNS"))
+    result = host.execute_investigation(
+        task=host.InvestigationTask("https://example.test", "Find version"),
+        local_operator=forgery,
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=tmp_path,
+        logger=logging.getLogger("test"),
+    )
+    assert result["status"] == "REFUSED"
+    assert result["request_count"] == result["capture_launch_count"] == 0
+
+
+def test_local_factory_refuses_imported_remote_entrypoint():
+    from beeagent_module.integrations.beescan.local_cli import _operator_from_entrypoint
+
+    with pytest.raises(PermissionError, match="local_entrypoint_required"):
+        _operator_from_entrypoint()
+
+
+@pytest.mark.parametrize(
+    "change", ["uid", "euid", "gid", "egid", "pid", "seal", "policy"]
+)
+def test_local_context_rechecks_operator_and_binding(
+    settings, monkeypatch, local_operator, change
+):
+    from beeagent_module.integrations.beescan import local_cli
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    task = host.InvestigationTask("http://127.0.0.1:18080/", "Find version")
+    context = local_cli.bind_local_run(
+        task, local_operator, settings, run_id="local-test"
+    )
+    context.verify(context.policy)
+    if change == "seal":
+        context = replace(context, operator=replace(local_operator, seal=object()))
+    elif change != "policy":
+        function = "get" + change
+        previous = getattr(os, function)()
+        monkeypatch.setattr(os, function, lambda: previous + 1)
+    policy = context.policy
+    if change == "policy":
+        policy = replace(policy, mutation=False)
+    with pytest.raises(PermissionError):
+        context.verify(policy)
+
+
+@pytest.mark.parametrize(
+    "address", ["169.254.169.254", "0.0.0.0", "224.0.0.1", "fe80::1"]
+)
+def test_local_destination_refused(settings, local_operator, address):
+    from beeagent_module.integrations.beescan import local_cli
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    target = "http://" + (f"[{address}]" if ":" in address else address)
+    with pytest.raises(PermissionError):
+        local_cli.bind_local_run(
+            host.InvestigationTask(target, "Find version"),
+            local_operator,
+            settings,
+            run_id="local-test",
+        )
+
+
+@pytest.mark.parametrize("change", ["none", "settings", "operator", "unsupported"])
+def test_local_execution_preserves_settings_and_rechecks(
+    settings, tmp_path, monkeypatch, local_operator, change
+):
+    from beeagent_module.integrations.beescan import local_cli
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-private-key")
+    original = deepcopy(settings)
+    calls = []
+    monkeypatch.setattr(host, "_load_domain", lambda **_: (SimpleNamespace(), "a" * 40))
+
+    def classify(*args, **kwargs):
+        calls.append("classification")
+        if change == "settings":
+            settings["beescan"]["investigation"]["trusted_local_enabled"] = False
+        elif change == "operator":
+            monkeypatch.setattr(local_cli, "_identity", lambda: (0, 0, 0))
+        elif change == "unsupported":
+            raise ValueError("unsupported_investigation_task")
+
+    monkeypatch.setattr(host, "classify_task", classify)
+
+    def prepare(*args):
+        calls.append("prepare")
+        raise TimeoutError
+
+    monkeypatch.setattr(host, "_prepare_intent", prepare)
+    result = host.execute_investigation(
+        task=host.InvestigationTask("http://127.0.0.1:18080/", "Find version"),
+        local_operator=local_operator,
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=tmp_path,
+        logger=logging.getLogger("test"),
+    )
+    assert (
+        result["status"]
+        == {
+            "none": "TIMEOUT",
+            "settings": "REFUSED",
+            "operator": "REFUSED",
+            "unsupported": "ERROR",
+        }[change]
+    )
+    assert calls == (
+        ["classification", "prepare"] if change == "none" else ["classification"]
+    )
+    assert result["request_count"] == 0
+    if change != "settings":
+        assert settings == original
+    context = result["execution_context"]
+    assert context["origin"] == "http://127.0.0.1:18080"
+    assert context["operator_uid"] == local_operator.identity[1]
+    assert context["third_party_authorization_verified"] is False
+    assert result["framework"] is result["version"] is result["disposition"] is None
+    assert Path(result["report_location"]).exists()
+    directory = Path(result["report_location"]).parent
+    assert json.loads((directory / "investigation_status.json").read_text()) == result
+    assert json.loads(
+        (directory / "investigation_result.json").read_text()
+    ) == result | {
+        "ai_provider": "openai_compatible",
+        "ai_model": settings["ai"]["profiles"]["openrouter"]["model"],
+        "findings": [],
+        "explanation": None,
+    }
+    assert not list(tmp_path.glob("*.json"))
+
+
+@pytest.mark.parametrize("console", ["legacy", "beeui"])
+def test_web_cannot_invoke_local_execution(settings, tmp_path, monkeypatch, console):
+    from fastapi.testclient import TestClient
+
+    from beeagent_module.integrations.beescan import local_cli
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    settings["web"]["auth"]["enabled"] = False
+    settings["bitrix"]["embedded_app"]["enabled"] = False
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Web must not enter trusted local execution")
+
+    monkeypatch.setattr(local_cli, "_operator_from_entrypoint", forbidden)
+    monkeypatch.setattr(local_cli, "bind_local_run", forbidden)
+    monkeypatch.setattr(host, "execute_investigation", forbidden)
+    if console == "beeui":
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        app = build_beeui_app(settings, logging.getLogger("test"), tmp_path)
+    else:
+        from beeagent_module.web.app import create_web_app
+
+        app = create_web_app(settings, logging.getLogger("test"), tmp_path)
+    with TestClient(app) as client:
+        for path in (
+            "/beescan/investigate",
+            "/api/beescan/investigate",
+            "/api/beescan",
+        ):
+            response = client.post(
+                path,
+                json={
+                    "target": "https://example.test",
+                    "task": "Find version",
+                    "trusted_local_enabled": True,
+                    "operator_uid": os.getuid(),
+                },
+            )
+            assert response.status_code in {401, 403, 404, 405}
+        if console == "beeui":
+            for route in ("preview", "execute"):
+                for action in (
+                    "beescan_investigate",
+                    "execute_investigation",
+                    "beescan",
+                ):
+                    response = client.post(
+                        "/api/actions/" + route,
+                        json={
+                            "action_id": action,
+                            "payload": {
+                                "target": "https://example.test",
+                                "task": "Find version",
+                                "local_operator": {"operator_uid": os.getuid()},
+                                "trusted_local_enabled": True,
+                            },
+                        },
+                    )
+                    assert response.status_code == 502
+                    assert response.json()["error"]["code"] == "permission_denied"
+    assert not (tmp_path / "runs").exists()
+
+
+def test_local_dns_pin_does_not_switch_destination(
+    settings, monkeypatch, local_operator
+):
+    from beeagent_module.integrations.beescan import http_runner, local_cli
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    monkeypatch.setattr(
+        http_runner, "resolve_addresses", lambda _: {"8.8.8.8", "1.1.1.1"}
+    )
+    context = local_cli.bind_local_run(
+        host.InvestigationTask("https://EXAMPLE.test:443/", "Find version"),
+        local_operator,
+        settings,
+        run_id="local-test",
+    )
+    assert context.policy.transport.origin == "https://example.test"
+    assert context.policy.transport.connected_ip == "1.1.1.1"
+    http_runner.verify_resolution(context.policy.transport)
+    monkeypatch.setattr(http_runner, "resolve_addresses", lambda _: {"8.8.8.8"})
+    with pytest.raises(PermissionError, match="dns_changed"):
+        http_runner.verify_resolution(context.policy.transport)
+    assert context.policy.transport.connected_ip == "1.1.1.1"
+
+
+def test_trusted_local_bootstrap_selects_only_managed_egress(settings, monkeypatch):
+    from contextlib import nullcontext
+
+    from beeagent_module.integrations.beescan import providers
+
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    calls = []
+    monkeypatch.setattr(providers, "_install_pasta", lambda root: calls.append("pasta"))
+    monkeypatch.setattr(
+        providers, "_check_provider", lambda *_: pytest.fail("No scanner")
+    )
+    monkeypatch.setattr(
+        providers, "_install_nuclei", lambda *_: pytest.fail("No scanner")
+    )
+    monkeypatch.setattr(providers, "_secure_root", lambda *_: None)
+    monkeypatch.setattr(providers.os, "open", lambda *_: 1)
+    monkeypatch.setattr(
+        providers.os,
+        "fdopen",
+        lambda *_: nullcontext(SimpleNamespace(fileno=lambda: 1)),
+    )
+    monkeypatch.setattr(
+        providers.os,
+        "fstat",
+        lambda *_: SimpleNamespace(
+            st_mode=0o100600,
+            st_uid=os.getuid(),
+            st_nlink=1,
+        ),
+    )
+    monkeypatch.setattr("fcntl.flock", lambda *_: None)
+    monkeypatch.setattr(providers.platform, "libc_ver", lambda: ("glibc", "2.38"))
+    providers.ensure_beescan_providers(settings)
+    assert calls == ["pasta"]
+
+
+def test_legacy_task_changed_file_check(settings, tmp_path, monkeypatch):
+    path = task_file(tmp_path)
+    original = os.fstat
+    calls = 0
+
+    def changed(fd):
+        nonlocal calls
+        calls += 1
+        info = original(fd)
+        if calls == 2:
+            return SimpleNamespace(
+                **{
+                    key: getattr(info, key) + (1 if key == "st_mtime_ns" else 0)
+                    for key in (
+                        "st_dev",
+                        "st_ino",
+                        "st_size",
+                        "st_uid",
+                        "st_mode",
+                        "st_nlink",
+                        "st_mtime_ns",
+                        "st_ctime_ns",
+                    )
+                }
+            )
+        return info
+
+    monkeypatch.setattr(os, "fstat", changed)
+    with pytest.raises(ValueError, match="task_file_changed"):
+        host.read_task(path, settings["beescan"]["investigation"])

@@ -11,6 +11,8 @@ import pytest
 import yaml
 from beesdk.modules import AuthorityLevel, ModuleResult
 
+from tests.settings_support import load_test_settings
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config.start as start_module
@@ -399,10 +401,8 @@ def _rop_settings(monkeypatch) -> dict[str, Any]:
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
     monkeypatch.setenv("BEEAGENT_WEB_ROP_TOKEN", "rop-token")
     monkeypatch.setenv("BEEAGENT_WEB_OPERATOR_TOKEN", "operator-token")
-    from beeagent_module.core.settings import load_settings as real_load_settings
 
-    root = Path(__file__).resolve().parents[1]
-    settings = real_load_settings(root / "config" / "settings.yml")
+    settings = load_test_settings()
     for module in settings["modules"]["registry"]:
         module["enabled"] = module["id"] == "beeagent-rop"
     return settings

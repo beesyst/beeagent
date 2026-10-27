@@ -6,6 +6,7 @@ import pytest
 from beeagent_module.core.ai_transport import call_structured_ai
 from beeagent_module.core.beedrill_ai_assist import _response_format
 from beeagent_module.core.rop_ai_adjudicator import _build_openai_response_format
+from tests.settings_support import read_test_settings
 
 
 class _Response:
@@ -273,9 +274,6 @@ def test_selected_profile_reuses_transport(isolated_ai_settings, name):
 def test_all_consumers_select_independently(
     isolated_ai_settings, monkeypatch, tmp_path, rop_override
 ):
-    from pathlib import Path
-
-    import yaml
 
     from beeagent_module.core import (
         beedrill_ai_assist,
@@ -285,7 +283,7 @@ def test_all_consumers_select_independently(
     from beeagent_module.integrations.beescan import investigation
 
     settings = isolated_ai_settings(
-        yaml.safe_load(Path("config/settings.yml").read_text()), "openrouter"
+        read_test_settings(), "openrouter"
     )
     settings["ai"]["default_profile"] = "openrouter"
     for profile in settings["ai"]["profiles"].values():
@@ -378,16 +376,13 @@ def test_all_consumers_select_independently(
 def test_investigation_cli_preserves_selected_provenance_on_ai_failure(
     isolated_ai_settings, monkeypatch, tmp_path
 ):
-    from pathlib import Path
-
-    import yaml
 
     from beeagent_module.integrations.beescan import investigation
     from beeagent_module.integrations.beescan.probe import handle_beescan_cli
     from tests.test_beescan_investigation import configure_approved, task_file
 
     settings = isolated_ai_settings(
-        yaml.safe_load(Path("config/settings.yml").read_text()), "openrouter"
+        read_test_settings(), "openrouter"
     )
     configure_approved(settings, monkeypatch)
     settings["beescan"]["investigation"]["ai_profile"] = "deepseek"

@@ -22,6 +22,7 @@ from tests.beeui_console_support import (
     _write_rop_web_projection,
     _write_run_artifacts,
 )
+from tests.settings_support import load_test_settings
 
 
 def _write_non_rop_run(storage_dir: Path, run_id: str) -> Path:
@@ -1298,8 +1299,7 @@ def test_auth_settings_fail_fast_empty_scopes(
 def test_auth_settings_accepts_future_safe_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from beeagent_module.core.paths import get_project_root
-    from beeagent_module.core.settings import load_settings, validate_settings
+    from beeagent_module.core.settings import validate_settings
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
@@ -1308,7 +1308,7 @@ def test_auth_settings_accepts_future_safe_scope(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
-    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["web"]["auth"]["principals"][1]["scopes"] = ["beescan"]
     validate_settings(settings)
 
@@ -1370,8 +1370,7 @@ def test_auth_settings_fail_fast_wildcard_with_other_scope(
 def test_auth_settings_accepts_wildcard_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from beeagent_module.core.paths import get_project_root
-    from beeagent_module.core.settings import load_settings, validate_settings
+    from beeagent_module.core.settings import validate_settings
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
@@ -1380,15 +1379,14 @@ def test_auth_settings_accepts_wildcard_only(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
-    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     validate_settings(settings)
 
 
 def test_auth_settings_accepts_multiple_scopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from beeagent_module.core.paths import get_project_root
-    from beeagent_module.core.settings import load_settings, validate_settings
+    from beeagent_module.core.settings import validate_settings
 
     monkeypatch.setenv("BEEAGENT_WEB_SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("BEEAGENT_WEB_ADMIN_TOKEN", "admin-token")
@@ -1397,7 +1395,7 @@ def test_auth_settings_accepts_multiple_scopes(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BITRIX_ROP_BLACKLIST_TRIGGER_SECRET", "trigger-secret")
 
-    settings = load_settings(get_project_root() / "config" / "settings.yml")
+    settings = load_test_settings()
     settings["web"]["auth"]["principals"][1]["scopes"] = ["rop", "runs"]
     validate_settings(settings)
 
