@@ -1221,6 +1221,127 @@ The existing JSON-file CLI remains backward compatible. Full regressions, real a
 
 No BeeScan, BeeSDK or BeeUI implementation changes are required. Package versions remain unchanged during ordinary implementation.
 
+### Iteration BS-10 — Governed Debug Page Disclosure Investigation v0
+
+**Status:** PLANNED
+
+#### Goal
+
+Extend the existing BeeAgent AI-guided BeeScan CLI with a second complete, independently governed Web investigation workflow: discover a diagnostic resource referenced by an HTML comment and identify an explicitly requested sensitive configuration value from authenticated response evidence.
+
+Enable a trusted local operator to complete the supported PortSwigger debug-page disclosure scenario without Burp, manual URL discovery, Repeater or response inspection.
+
+Reuse the existing BeeAgent execution engine, managed egress, AI transport and ArtifactAPI while integrating the reviewed BeeScan Iteration 11 offline domain contract.
+
+#### Depends on
+
+- Completed BeeAgent BS-9 trusted local operator CLI and BS-8 bounded AI-guided investigation.
+- Completed BeeScan Iteration 11 debug-page disclosure domain API at a reviewed immutable Git revision.
+- Existing BeeAgent BS-7 managed rootless public egress, verified HTTP capture, exact destination enforcement and protected ArtifactAPI.
+- Existing BeeAgent AI profile selection and structured task-classification boundary.
+- An explicitly authorized test target and a controlled vulnerable/negative laboratory.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Extend the existing AI classification schema with one supported `debug_page_secret_disclosure` intent, preserving `framework_version_disclosure`, unsupported and ambiguous behavior.
+- Reuse all three BS-9 CLI input modes and the validated in-memory task contract; do not introduce another operator entrypoint.
+- Deterministically validate and bind the requested configuration-field identifier from operator-controlled task input. AI classification cannot invent additional fields, targets, URLs, methods or execution steps.
+- Dispatch the selected task family to the corresponding reviewed BeeScan domain capability through the existing investigation orchestrator.
+- Extend the bounded HTML discovery adapter to extract safe candidate references from HTML comments without interpreting comments as instructions or execution authority.
+- Feed normalized, size-bounded comment/link facts into BeeScan It11 for deterministic discovery selection; BeeAgent must not duplicate domain candidate-selection rules.
+- Support one fixed two-request workflow: GET the approved root for discovery, then GET the single BeeScan-selected same-origin diagnostic resource.
+- Reuse the existing managed-egress session, pinned providers, exact origin/IP/port binding, current settings checks, DNS revalidation, TLS verification, request accounting, deadlines, process isolation and verified cleanup.
+- Introduce only the bounded response-processing behavior demonstrably necessary for diagnostic pages, with explicit response-size ceilings and complete framing requirements.
+- Treat diagnostic response content as untrusted sensitive data. Parse it through bounded host normalization and supply authenticated response facts to BeeScan It11.
+- Preserve exact parent/child run identities, request/response provenance, source authentication, evidence read-back and terminal publication guarantees.
+- Enforce a strict separation between transient sensitive answer material and safe serialized results. Never send diagnostic-page contents or extracted values to the AI provider.
+- Allow the selected AI provider to classify the task, but derive resource selection, disclosure evidence and the actual answer deterministically from authenticated host/BeeScan data.
+- Reveal the exact value only to the trusted local operator through an explicitly protected local terminal presentation boundary. Ordinary JSON output, logs, persisted report artifacts and future Web projections must contain only redacted metadata and evidence references.
+- Preserve a reviewable, safely redacted disclosure CANDIDATE, source references, investigation steps, terminal status and cleanup lifecycle in the existing protected ArtifactAPI.
+- Return an explicit, truthful unsupported-task reason before target requests when no supported intent applies, rather than reporting an unexplained general execution failure.
+- Preserve the existing BS-8 numeric-query framework-version investigation and the BS-9 interactive/direct/file CLI behaviors.
+- Maintain compatibility with ROP, BeeDrill, existing BeeScan assessment/review workflows and unrelated runtime configuration.
+- Update the BeeScan operator guide and security documentation for the new task family, supported response bounds, sensitive-result handling and laboratory verification.
+
+#### Excluded
+
+- BeeUI/Web Chat, remote invocation or access to trusted local operator privileges.
+- Generic crawling, automatic directory enumeration, debug-path wordlists, brute force, unrestricted hyperlink traversal or arbitrary Web search strategies.
+- Hardcoded PortSwigger lab addresses, `/cgi-bin/phpinfo.php`, known secret values or challenge-specific answers.
+- Automatic execution of AI-proposed URLs, commands, scripts, payloads, plugins or scanner tools.
+- Additional HTTP methods, arbitrary parameters, POST requests, authenticated sessions or cross-origin navigation.
+- SQL injection, XSS, IDOR, credential exploitation, authentication bypass or broad secret discovery.
+- Sending cookies, raw diagnostic bodies, environment-variable dumps or extracted secrets to OpenRouter/DeepSeek.
+- Publishing plaintext credentials or secret values through normal stdout JSON, logs, public artifacts or Web APIs.
+- Automatic VERIFIED findings, arbitrary impact claims or automated submission of PortSwigger lab answers.
+- A second investigation runtime, new browser framework, database, proxy service or general AI-agent planner.
+- Changes to generic BeeSDK/BeeUI components or unrelated modules without a proven blocking dependency.
+
+#### Deliverable
+
+One additional complete BeeScan CLI workflow:
+
+`Operator target + task → AI task-family classification → validated field selector → governed GET / → BeeScan comment-based discovery → governed GET diagnostic resource → BeeScan evidence analysis → protected local answer presentation → redacted CANDIDATE report + verified cleanup`.
+
+The existing `framework_version_disclosure` workflow continues unchanged.
+
+A successful debug-page investigation gives the trusted local operator the exact evidence-derived requested value without manual HTTP investigation, while normal persisted outputs remain suitable for safe review.
+
+#### Acceptance criteria
+
+- The existing interactive and direct BeeScan CLI accepts a natural-language debug-page disclosure task without requiring a manually created JSON file or target-specific approval profile.
+- The AI classifier distinguishes the new task family from framework-version disclosure and unsupported/ambiguous tasks through a strict structured schema.
+- The requested configuration-field identifier is explicitly derived from validated operator input; AI responses, page comments and diagnostic content cannot silently change it.
+- Unsupported tasks produce a specific terminal reason with zero target HTTP requests and no fabricated findings.
+- The first target request is the fixed discovery GET against the independently authorized origin.
+- Discovery includes bounded HTML-comment references while continuing to reject scripts, executable page instructions and unsafe untrusted links.
+- Only one eligible BeeScan-selected diagnostic resource can authorize the second request; no candidate or ambiguous candidates cannot trigger guessing, enumeration or fallback requests.
+- A successful debug-page workflow performs exactly two authenticated GET operations within one approved origin and one validated destination.
+- Redirects, alternate schemes, DNS changes, destination changes, traversal, unsupported response encoding and incomplete HTTP framing fail closed.
+- Existing isolation, sandbox, network/firewall rules, TLS verification, aggregate deadlines, request ceilings and cleanup remain effective for both requests.
+- The supported debug response is captured within explicit finite size/resource limits; oversized or truncated content cannot silently become successful evidence.
+- BeeScan It11, not the AI response or host-specific hardcoded rules, determines whether the requested field/value disclosure is supported by authenticated evidence.
+- A successful local CLI session presents the exact requested value only through its protected operator terminal path. Non-TTY, redirected or remotely consumed output never exposes the sensitive value.
+- AI prompts, provider requests, ordinary JSON/Markdown artifacts, step traces, source summaries, logs and error messages contain no plaintext extracted secret.
+- Persisted evidence metadata remains attributable to the originating authenticated response, with sufficient source identity and redacted facts to support later review.
+- Complete MATCH remains distinct from NO_MATCH, INCONCLUSIVE, REFUSED, TIMEOUT and ERROR. A disclosure is a CANDIDATE, never an automatically VERIFIED vulnerability.
+- Provider failure, ambiguous input, source tampering, corrupted artifacts, cancellation, timeout, invalid scope and failed cleanup cannot produce an accepted completed finding or sensitive-value release.
+- A fresh, explicitly authorized PortSwigger debug-page laboratory can be investigated through the direct CLI without manually finding the URL or reading the debug response.
+- A patched/no-disclosure laboratory returns a truthful negative result without inventing an answer.
+- Existing BS-8/BS-9 flows, BeeScan assessments/review, ROP, BeeDrill and unrelated module/configuration tests remain regression-clean.
+
+#### Checks
+
+- AI classification tests for both supported task families, unsupported/ambiguous tasks, malformed structured output, provider failure and adversarial task text.
+- Operator field-selector validation tests, including missing, duplicate, malformed, oversized and conflicting requested identifiers.
+- Bounded HTML-comment parsing tests with actual comment links, misleading comments, duplicate candidates, traversal, external URLs and prompt-injection content.
+- End-to-end deterministic two-request workflow tests with exact source/request/response identity and immutable run-scoped target binding.
+- Real Linux managed-egress laboratories using vulnerable and patched diagnostic resources, including HTML-table and supported text representations.
+- Sensitive-data non-disclosure checks covering AI transport payloads, stdout JSON, logs, artifacts, errors, exception paths and non-TTY output.
+- Trusted local terminal test proving that the operator can receive the exact evidence-derived value without exposing it to other output surfaces.
+- Negative response-framing, Content-Length, content type, redirect, DNS/TLS, response-size and truncated/oversized-data tests.
+- Authorization, operator identity, settings reload, revocation, request-budget, process isolation, namespace/firewall integrity, cancellation and cleanup fault-injection tests.
+- Existing framework-version disclosure, BS-9 local/legacy CLI, assessment/review and ROP/BeeDrill regression suites.
+- Artifact read-back, parent/child provenance, redacted source manifests, CANDIDATE reporting and terminal publication consistency tests.
+- Real authorized PortSwigger debug-page disclosure smoke using a fresh lab instance, with external target data and actual sensitive values excluded from public PR artifacts.
+- Full frozen pytest, relevant Linux labs, Ruff/type checks, applicable SAST/DAST and parser boundary/property tests, independent BeeMCP review and hosted CI.
+
+#### DoD
+
+A trusted local operator can run BeeScan against one explicitly authorized Web target, describe a debug-page disclosure task and obtain the exact requested response-observed configuration value without Burp, manual URL discovery, Repeater or HTTP editing.
+
+BeeAgent performs one governed discovery request and at most one approved diagnostic-resource request. BeeScan It11 deterministically interprets authenticated evidence. Normal outputs remain redacted, while the sensitive answer is restricted to the trusted local operator terminal.
+
+All scope, authorization, TLS/DNS, managed-egress, evidence-integrity, request-accounting, timeout and cleanup guarantees remain effective. The existing BS-8/BS-9 framework-version workflow and unrelated modules remain compatible.
+
+The workflow passes real vulnerable and negative laboratories, applicable security checks, full regressions, independent review and hosted CI. No new general scanner runtime, unrestricted AI execution or remote privilege exposure is introduced.
+
+No package-version change occurs during ordinary implementation.
+
 ---
 
 ## Post-MVP product directions
