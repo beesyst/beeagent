@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import SubprocessError
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -359,9 +359,37 @@ def handle_beescan_cli(
             validate_task,
         )
 
-        options = {}
+        options: dict[str, Any] = {}
         try:
-            if not args:
+            if args[1:2] == ["--inspect"] and len(args) == 3:
+                from beeagent_module.integrations.beescan.case_state import load_case
+                from beeagent_module.integrations.beescan.local_cli import (
+                    _LocalOperator,
+                )
+
+                if type(local_operator) is not _LocalOperator:
+                    raise PermissionError("local_operator_required")
+                local_operator.verify()
+                state, _ = load_case(storage_dir, args[2])
+                print(json.dumps(state, sort_keys=True))
+                return 0
+            if args[1:2] == ["--resume"] and len(args) == 5 and args[3] == "--task":
+                from beeagent_module.integrations.beescan.case_state import load_case
+
+                state, _ = load_case(storage_dir, args[2])
+                options.update(adaptive=True, resume_case_id=args[2])
+                options["task"] = validate_task(
+                    {"target": state["origin"], "task": args[4]},
+                    settings["beescan"]["investigation"],
+                )
+                args = []
+            elif "--adaptive" in args:
+                args = list(args)
+                args.remove("--adaptive")
+                options["adaptive"] = True
+            if "resume_case_id" in options:
+                pass
+            elif not args:
                 if not sys.stdin.isatty():
                     raise ValueError("terminal_required")
                 config = settings["beescan"]["investigation"]
@@ -395,10 +423,11 @@ def handle_beescan_cli(
         except KeyboardInterrupt:
             print("BeeScan input cancelled", file=sys.stderr)
             return 130
-        except KeyError, OSError, ValueError, ImportError:
+        except KeyError, OSError, ValueError, ImportError, PermissionError:
             print(
                 "Usage: ./start.sh beescan [investigate TASK.json | "
-                "investigate --target URL --task TEXT]",
+                "investigate [--adaptive] --target URL --task TEXT | "
+                "investigate --inspect CASE | investigate --resume CASE --task TEXT]",
                 file=sys.stderr,
             )
             return 2
@@ -474,7 +503,7 @@ def handle_beescan_cli(
             )
             print(result.summary)
             return 0 if result.status == "ok" else 3
-        execute = execute_approved_probe
+        execute: Any = execute_approved_probe
         if args == ["detect"]:
             from beeagent_module.integrations.beescan.detection import (
                 execute_approved_detection,

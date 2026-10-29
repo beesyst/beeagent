@@ -121,6 +121,10 @@ beescan:
     input_chars_max: 8000
     output_chars_max: 2000
     body_bytes_max: 73728
+    adaptive:
+      enabled: false
+      max_steps: 2
+      max_requests: 6
 
 beedrill:
   ai_assist:

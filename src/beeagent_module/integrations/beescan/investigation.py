@@ -8,7 +8,7 @@ import stat
 import time
 import unicodedata
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
@@ -137,7 +137,8 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
     }
     if (
         type(config) is not dict
-        or set(config) - {"local_lab_enabled", "ai_profile", "trusted_local_enabled"}
+        or set(config)
+        - {"local_lab_enabled", "ai_profile", "trusted_local_enabled", "adaptive"}
         != {"enabled", "approval", *limits}
         or type(config["enabled"]) is not bool
         or type(config.get("local_lab_enabled", False)) is not bool
@@ -147,6 +148,20 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
     for key, (low, high) in limits.items():
         if type(config[key]) is not int or not low <= config[key] <= high:
             raise RuntimeError("Invalid beescan.investigation limits")
+    if "adaptive" in config:
+        adaptive = config["adaptive"]
+        if (
+            type(adaptive) is not dict
+            or set(adaptive) != {"enabled", "max_steps", "max_requests"}
+            or type(adaptive["enabled"]) is not bool
+            or type(adaptive["max_steps"]) is not int
+            or not 1 <= adaptive["max_steps"] <= 2
+            or type(adaptive["max_requests"]) is not int
+            or not 1 <= adaptive["max_requests"] <= 6
+            or adaptive["enabled"]
+            and config.get("trusted_local_enabled") is not True
+        ):
+            raise RuntimeError("Invalid beescan.investigation.adaptive settings")
     if config["approval"] is not None and type(config["approval"]) is not dict:
         raise RuntimeError("Invalid beescan.investigation approval")
     active = config["enabled"] or config.get("trusted_local_enabled", False)
@@ -285,7 +300,7 @@ def _prompt(settings, name, facts):
     return result
 
 
-def _ai(settings, name, facts, schema, logger, *, deadline=None):
+def _ai(settings, name, facts, schema, logger, *, deadline=None, on_call=None):
     config = settings["beescan"]["investigation"]
     profile = named_ai_profile(settings)
     private_logger = logging.Logger("beescan.ai.private")
@@ -295,8 +310,11 @@ def _ai(settings, name, facts, schema, logger, *, deadline=None):
         timeout = min(timeout, deadline - time.monotonic())
         if timeout <= 0:
             raise TimeoutError("investigation_deadline")
+    prompt = _prompt(settings, name, facts)
+    if on_call is not None:
+        on_call()
     raw = call_structured_ai(
-        prompt=_prompt(settings, name, facts),
+        prompt=prompt,
         provider=profile["provider"],
         model=profile["model"],
         api_key=os.getenv(profile["api_key_env"], ""),
@@ -371,6 +389,41 @@ def requested_debug_field(task):
     if len(selectors) != 1 or re.fullmatch(pattern, selectors[0]) is None:
         raise ValueError("invalid_requested_field")
     return selectors[0]
+
+
+def adaptive_objective(settings, task, logger, *, deadline, on_call=None):
+    choices = {
+        "framework_version_disclosure": ("framework_version_disclosure",),
+        "debug_page_secret_disclosure": ("debug_page_secret_disclosure",),
+        "supported_disclosures": (
+            "framework_version_disclosure",
+            "debug_page_secret_disclosure",
+        ),
+    }
+    result = _ai(
+        settings,
+        "adaptive_objective",
+        {"task": task},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["objective"],
+            "properties": {
+                "objective": {"type": "string", "enum": [*choices, "unsupported"]}
+            },
+        },
+        logger,
+        deadline=deadline,
+        on_call=on_call,
+    )
+    if (
+        type(result) is not dict
+        or set(result) != {"objective"}
+        or type(result["objective"]) is not str
+        or result["objective"] not in choices
+    ):
+        raise ValueError("unsupported_investigation_task")
+    return choices[result["objective"]]
 
 
 def _load_debug_domain(domain):
@@ -929,6 +982,8 @@ def execute_investigation(
     storage_dir,
     logger,
     progress=None,
+    adaptive=False,
+    resume_case_id=None,
 ):
     from beeagent_module.integrations.beescan.assessment import _write_report
     from beeagent_module.integrations.beescan.detection import _persist
@@ -1002,7 +1057,13 @@ def execute_investigation(
     debug_domain = sensitive = None
     transient_content: dict[str, Any] = {}
     source_key = os.urandom(32)
-    publication_snapshot = None
+    publication_snapshot = case_snapshot = None
+    case = case_domain = case_artifacts = case_lock = None
+    case_history = []
+    case_decisions = []
+    previous_case = resume_snapshot = None
+    action_start = 0
+    ai_calls = 0
 
     def authorize(*, resolve=False):
         current_policy = policy
@@ -1018,6 +1079,8 @@ def execute_investigation(
         if intent is not None:
             intent.validate_at(datetime.now(UTC))
         snapshot.verify()
+        if resume_snapshot is not None:
+            resume_snapshot.verify()
         if resolve:
             verify_resolution(current_policy.transport)
         if session is not None and not session.closed:
@@ -1090,7 +1153,17 @@ def execute_investigation(
         current_intent = intent
         if current_intent is None:
             raise PermissionError("investigation_not_approved")
-        if status["capture_launch_count"] >= current_intent.spec.request_budget:
+        if (
+            status["capture_launch_count"]
+            >= (
+                config["adaptive"]["max_requests"]
+                if adaptive
+                else current_intent.spec.request_budget
+            )
+            or adaptive
+            and status["capture_launch_count"] - action_start
+            >= current_intent.spec.request_budget
+        ):
             raise PermissionError("request_budget_exceeded")
         status["capture_launch_count"] += 1
         child = api(selected.child_run_id)
@@ -1160,12 +1233,15 @@ def execute_investigation(
             evidence_ref=evidence_ref,
             elapsed_seconds=int(time.monotonic() - begin),
             body_bytes_max=config["body_bytes_max"],
-            redacted=debug_domain is not None,
+            redacted=debug_domain is not None or adaptive and case is None,
         )
-        if debug_domain is not None:
-            transient_content[response_id] = debug_domain.TransientText(
-                captured["body"]
-            )
+        if debug_domain is not None or adaptive:
+            from beescan.domain.debug_disclosure import TransientText
+
+            transient_content[response_id] = TransientText(captured["body"])
+        persisted_facts = asdict(facts)
+        if adaptive:
+            persisted_facts.update(excerpt="", links=[])
         record = {
             "schema_version": 1,
             "parent_run_id": run_id,
@@ -1174,10 +1250,12 @@ def execute_investigation(
             "run_id": selected.child_run_id,
             "request_id": selected.request_id,
             "response_id": response_id,
-            "facts": asdict(facts),
+            "facts": persisted_facts,
             **(
                 {
-                    "projection": "debug-redacted-v1",
+                    "projection": "adaptive-redacted-v1"
+                    if adaptive
+                    else "debug-redacted-v1",
                     "source_authentication": hmac.digest(
                         source_key,
                         json.dumps(
@@ -1193,7 +1271,7 @@ def execute_investigation(
                         "sha256",
                     ).hex(),
                 }
-                if debug_domain is not None
+                if debug_domain is not None or adaptive
                 else {"capture": captured}
             ),
         }
@@ -1221,10 +1299,360 @@ def execute_investigation(
             raise RuntimeError("cleanup_unverified")
         snapshot.verify()
 
+    def case_checkpoint(*, pending):
+        if case is None or case_artifacts is None:
+            return
+        current_policy = policy
+        if current_policy is None:
+            raise PermissionError("investigation_not_approved")
+        from beeagent_module.integrations.beescan.case_state import save_case
+
+        old_metrics = previous_case["metrics"] if previous_case else {}
+        state = {
+            "schema_version": 1,
+            "case_id": case.case_id,
+            "identity": case.identity,
+            "origin": current_policy.transport.origin,
+            "connected_ip": current_policy.transport.connected_ip,
+            "project_id": current_policy.transport.project_id,
+            "scope_id": current_policy.transport.scope_id,
+            "mission_id": current_policy.transport.mission_id,
+            "target_id": current_policy.transport.target_id,
+            "requested_field": case.requested_field,
+            "dependency_revision": status["dependency_revision"],
+            "segments": (previous_case["segments"] if previous_case else []) + [run_id],
+            "outcomes": case_history,
+            "decisions": (previous_case["decisions"] if previous_case else [])
+            + case_decisions,
+            "status": status["status"],
+            "reason": status["reason"],
+            "terminal": bool(
+                case_decisions
+                and case_decisions[-1]["reason"] in {"match", "no_eligible_action"}
+            ),
+            "pending": pending,
+            "evidence_refs": sorted(
+                {
+                    ref
+                    for entry in case_history
+                    for ref in entry["outcome"]["evidence_refs"]
+                }
+            ),
+            "metrics": {
+                "request_count": old_metrics.get("request_count", 0)
+                + status["request_count"],
+                "request_count_exact": old_metrics.get("request_count_exact", True)
+                and status["request_count_exact"],
+                "capture_launch_count": old_metrics.get("capture_launch_count", 0)
+                + status["capture_launch_count"],
+                "elapsed_seconds": old_metrics.get("elapsed_seconds", 0)
+                + time.monotonic()
+                - started,
+                "ai_calls": old_metrics.get("ai_calls", 0) + ai_calls,
+                "tokens": None,
+                "cost": None,
+                "usage_status": "unavailable",
+            },
+        }
+        save_case(case_artifacts, state)
+        summary = {
+            "case_id": case.case_id,
+            "status": state["status"],
+            "reason": state["reason"],
+            "pending": pending,
+            "completed_checks": [entry["outcome"] for entry in case_history],
+            "evidence_refs": state["evidence_refs"],
+            "metrics": state["metrics"],
+            "next_actions": status.get(
+                "next_actions",
+                ["Inspect evidence and current authority before continuation."],
+            ),
+            "limitations": [
+                "Only two bounded disclosure families are supported; negative checks do not establish target safety.",
+                "Response-observed candidates require independent human verification.",
+                "Redacted artifacts cannot reconstruct raw HTTP responses or replay sensitive values.",
+            ],
+        }
+        _persist(case_artifacts, "case_report.json", summary)
+        _write_report(
+            case_artifacts,
+            "case_report.md",
+            "# Adaptive investigation\n\n```json\n"
+            + json.dumps(summary, indent=2)
+            + "\n```\n",
+        )
+        status.update(case_id=case.case_id, metrics=state["metrics"])
+
+    def run_adaptive():
+        nonlocal intent, case, case_domain, debug_domain, analysis, sensitive
+        nonlocal session, action_start, case_history, ai_calls, ai_profile
+        current_task = task
+        current_policy = policy
+        if current_task is None or current_policy is None:
+            raise PermissionError("investigation_not_approved")
+        import importlib
+
+        from beescan.capabilities.catalog import Capability, ToolCatalog, ToolDefinition
+
+        from beeagent_module.integrations.beescan.case_state import (
+            action_record,
+            restored_outcomes,
+        )
+
+        case_domain = importlib.import_module("beescan.domain.investigation_case")
+        module_file = getattr(case_domain, "__file__", None)
+        if not isinstance(module_file, str) or Path(module_file).resolve() != Path(
+            domain.__file__
+        ).resolve().with_name("investigation_case.py"):
+            raise ImportError("reviewed_it12_revision_unavailable")
+        debug_api = _load_debug_domain(domain)
+        field = None
+        try:
+            field = requested_debug_field(current_task["task"])
+        except ValueError:
+            if "field=" in current_task["task"]:
+                raise
+        if previous_case and (
+            previous_case["requested_field"] != field
+            or previous_case["dependency_revision"] != revision
+            or previous_case["origin"] != current_policy.transport.origin
+            or previous_case["connected_ip"] != current_policy.transport.connected_ip
+            or previous_case["pending"]
+            or previous_case["terminal"]
+            or not previous_case["metrics"]["request_count_exact"]
+        ):
+            raise PermissionError("case_resume_refused")
+        ai_profile = named_ai_profile(settings)
+
+        def ai_attempt():
+            nonlocal ai_calls
+            ai_calls += 1
+
+        objective = adaptive_objective(
+            settings,
+            current_task["task"],
+            logger,
+            deadline=deadline,
+            on_call=ai_attempt,
+        )
+        prior = restored_outcomes(previous_case) if previous_case else ()
+        intent = _prepare_intent(domain, current_policy, run_id)
+        intent = replace(
+            intent,
+            mission=replace(
+                intent.mission,
+                capability_ids=tuple(cap for _, cap in case_domain.FAMILIES),
+            ),
+        )
+        expected_identity = case_domain.investigation_case_identity(
+            resume_case_id or run_id, intent, objective, field
+        )
+        if previous_case and previous_case["identity"] != expected_identity:
+            raise PermissionError("case_identity_changed")
+        current_policy = authorize(resolve=True)
+        session = ManagedEgress(
+            current_policy.transport,
+            artifacts=artifacts,
+            assessment_run_id=run_id,
+            seconds=max(
+                1,
+                math.ceil(
+                    started
+                    + current_policy.transport.time_budget_seconds
+                    - time.monotonic()
+                ),
+            ),
+        )
+        session.start()
+        facts, _ = capture(intent.discovery, reauthorize=authorize)
+        persist_source(facts)
+        if verify_source(facts) is not True:
+            raise ValueError("unauthenticated_investigation_source")
+        signals = case_domain.discovery_signals(
+            intent,
+            facts,
+            transient_content.pop(facts.response_id),
+            at=datetime.now(UTC),
+        )
+        case = case_domain.InvestigationCase(
+            resume_case_id or run_id,
+            intent,
+            objective,
+            field,
+            signals,
+            outcomes=prior,
+            max_steps=min(2, len(prior) + config["adaptive"]["max_steps"]),
+        )
+        catalog = ToolCatalog(
+            tuple(
+                Capability(cap, "Governed existing investigation")
+                for _, cap in case_domain.FAMILIES
+            ),
+            (
+                ToolDefinition(
+                    "host-web-capture",
+                    tuple(cap for _, cap in case_domain.FAMILIES),
+                    "1",
+                ),
+            ),
+        )
+        available = tuple(cap for _, cap in case_domain.FAMILIES)
+        while True:
+            authorize()
+            remaining = (
+                config["adaptive"]["max_requests"] - status["capture_launch_count"]
+            )
+            available = tuple(
+                capability
+                for family, capability in case_domain.FAMILIES
+                if remaining >= (3 if family == domain.TASK else 2)
+            )
+            decision = case_domain.decide_case(
+                case,
+                catalog=catalog,
+                available_capabilities=available,
+                at=datetime.now(UTC),
+            )
+            case_decisions.append(
+                {
+                    **asdict(decision),
+                    "run_id": run_id,
+                    "explanation": decision.explanation,
+                }
+            )
+            status.update(reason=decision.reason, next_actions=[decision.explanation])
+            case_checkpoint(pending=True)
+            if decision.kind is case_domain.DecisionKind.STOP:
+                if decision.reason == "match":
+                    status.update(status="MATCH", complete=True)
+                elif decision.reason == "evidence_not_equivalent":
+                    status.update(status="INCONCLUSIVE", complete=False)
+                elif case.outcomes:
+                    status.update(
+                        status=case.outcomes[-1].status.value.upper(), complete=False
+                    )
+                else:
+                    status.update(status="INCONCLUSIVE", complete=False)
+                break
+            if (
+                decision.task_family,
+                decision.capability_id,
+            ) not in case_domain.FAMILIES:
+                raise PermissionError("unsupported_case_action")
+            required_requests = 3 if decision.task_family == domain.TASK else 2
+            if (
+                status["capture_launch_count"] + required_requests
+                > config["adaptive"]["max_requests"]
+            ):
+                status.update(
+                    status="INCONCLUSIVE",
+                    reason="request_budget_exhausted",
+                    complete=False,
+                )
+                break
+            debug_domain = (
+                debug_api if decision.task_family == domain.DEBUG_TASK else None
+            )
+            intent = _prepare_intent(
+                domain,
+                policy,
+                generate_run_id("case-action"),
+                **(
+                    {"debug_domain": debug_domain, "requested_field": field}
+                    if debug_domain
+                    else {}
+                ),
+            )
+            action_start = status["capture_launch_count"]
+            source_start = len(source_manifest)
+            analysis, _sources, count = collect_investigation(
+                intent,
+                policy=policy,
+                domain=domain,
+                capture=capture,
+                reload_policy=authorize,
+                persist_source=persist_source,
+                verify_source=verify_source,
+                **(
+                    {
+                        "debug_domain": debug_domain,
+                        "transient_content": transient_content,
+                    }
+                    if debug_domain
+                    else {}
+                ),
+            )
+            if debug_domain:
+                analysis, sensitive = analysis
+            if count != status["request_count"] - action_start:
+                raise ValueError("request_count_unverified")
+            updated = case_domain.record_outcome(case, analysis)
+            payload, entry = action_record(
+                updated.outcomes[-1], source_manifest[source_start:], run_id
+            )
+            from beeagent_module.integrations.beescan.case_state import digest
+
+            for source in payload["sources"]:
+                source["source_sha256"] = digest(
+                    snapshot.json(source["run_id"], "source.json")
+                )
+                source["marker_sha256"] = digest(
+                    snapshot.json(source["run_id"], "capture_status.json")
+                )
+            entry = {**payload, "sha256": digest(payload)}
+            _persist(
+                artifacts, "case_action_" + decision.task_family + ".json", payload
+            )
+            case_history.append(entry)
+            case = updated
+            status.update(
+                status=analysis.status.value.upper(),
+                complete=False,
+                evidence_refs=list(analysis.evidence_refs),
+            )
+            transient_content.clear()
+            case_checkpoint(pending=True)
+        close_egress()
+        authorize()
+        if analysis is not None:
+            status["reason"] = (
+                "ok" if analysis.status.value == "match" else status["reason"]
+            )
+
     local_selected = task is not None
     try:
         if local_selected or config.get("enabled") is True:
+            if resume_case_id is not None and not adaptive:
+                raise PermissionError("adaptive_required")
             validate_investigation_settings(settings)
+            if adaptive:
+                import fcntl
+
+                from beescan.domain.models import validate_identifier
+
+                from beeagent_module.integrations.beescan.case_state import load_case
+
+                if (
+                    not local_selected
+                    or config.get("adaptive", {}).get("enabled") is not True
+                ):
+                    raise PermissionError("adaptive_not_approved")
+                validate_identifier(resume_case_id or run_id)
+                case_artifacts = api(resume_case_id or run_id)
+                case_lock = os.open(
+                    case_artifacts.artifact_dir(),
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                )
+                fcntl.flock(case_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if resume_case_id:
+                    previous_case, resume_snapshot = load_case(
+                        storage_dir, resume_case_id
+                    )
+                    if len(previous_case["segments"]) >= 8:
+                        raise PermissionError("case_segment_budget_exhausted")
+                    resume_snapshot.verify()
+                    resume_snapshot.files.pop((resume_case_id, "case.json"))
+                    case_history = list(previous_case["outcomes"])
             if local_selected:
                 from beeagent_module.integrations.beescan.local_cli import (
                     bind_local_run,
@@ -1234,10 +1662,16 @@ def execute_investigation(
                     raise PermissionError("local_invocation_refused")
                 task = validate_task(asdict(task), config)
                 local_context = bind_local_run(
-                    task, local_operator, settings, run_id=run_id
+                    task, local_operator, settings, run_id=resume_case_id or run_id
                 )
                 policy = local_context.policy
                 status["execution_context"] = local_context.provenance()
+                if adaptive:
+                    status["execution_context"].update(
+                        mode="adaptive",
+                        effective_request_budget=config["adaptive"]["max_requests"],
+                        step_budget=config["adaptive"]["max_steps"],
+                    )
                 _persist(artifacts, "investigation_status.json", status)
             else:
                 task = read_task(task_path, config)
@@ -1288,100 +1722,105 @@ def execute_investigation(
                     status="ERROR",
                 )
                 authorize()
-                ai_profile = named_ai_profile(settings)
-                if progress is not None:
-                    progress("classification")
-                family = classify_task(
-                    settings, task["task"], logger, deadline=deadline
-                )
-                field = None
-                if family == "debug_page_secret_disclosure":
-                    status.update(task_family=family, integration_status="PENDING")
-                    field = requested_debug_field(task["task"])
-                    try:
-                        debug_domain = _load_debug_domain(domain)
-                    except ImportError:
-                        raise ValueError("reviewed_it11_revision_unavailable") from None
-                    if "execution_context" in status:
-                        status["execution_context"].update(
-                            task_family=family, effective_request_budget=2
-                        )
-                    if dependency_status == "LOCAL_EDITABLE":
-                        status["integration_status"] = "LOCAL_EDITABLE"
-                    elif config.get("local_lab_enabled", False):
-                        status["integration_status"] = "LABORATORY_ONLY"
-                    elif re.fullmatch(r"[0-9a-f]{40}", revision):
-                        status["integration_status"] = "COMPLETE"
-                    else:
-                        raise ValueError("reviewed_it11_revision_unavailable")
-                authorize()
-                intent = _prepare_intent(
-                    domain,
-                    policy,
-                    run_id,
-                    **(
-                        {"debug_domain": debug_domain, "requested_field": field}
-                        if debug_domain
-                        else {}
-                    ),
-                )
-                authorize(resolve=True)
-                session = ManagedEgress(
-                    policy.transport,
-                    artifacts=artifacts,
-                    assessment_run_id=run_id,
-                    seconds=max(1, math.ceil(deadline - time.monotonic())),
-                )
-                session.start()
-                authorize(resolve=True)
-                analysis, _sources, count = collect_investigation(
-                    intent,
-                    policy=policy,
-                    domain=domain,
-                    capture=capture,
-                    reload_policy=authorize,
-                    persist_source=persist_source,
-                    verify_source=verify_source,
-                    **(
-                        {
-                            "debug_domain": debug_domain,
-                            "transient_content": transient_content,
-                        }
-                        if debug_domain
-                        else {}
-                    ),
-                )
-                if debug_domain is not None:
-                    analysis, sensitive = analysis
-                if analysis is None:
-                    raise ValueError("investigation_analysis_unavailable")
-                if (
-                    count != status["request_count"]
-                    or not status["request_count_exact"]
-                ):
-                    raise ValueError("request_count_unverified")
-                close_egress()
-                authorize()
-                normalized = {
-                    "status": analysis.status.value,
-                    "framework": analysis.framework,
-                    "version": analysis.version,
-                    "evidence_refs": list(analysis.evidence_refs),
-                    "disposition": "candidate"
-                    if analysis.candidate is not None
-                    else None,
-                }
-                if debug_domain is None:
-                    explanation = explain_result(
-                        settings, normalized, logger, deadline=deadline
+                if adaptive:
+                    run_adaptive()
+                else:
+                    ai_profile = named_ai_profile(settings)
+                    if progress is not None:
+                        progress("classification")
+                    family = classify_task(
+                        settings, task["task"], logger, deadline=deadline
                     )
-                authorize()
-                status.update(
-                    status=analysis.status.value.upper(),
-                    reason="ok",
-                    complete=analysis.status.value in {"match", "no_match"},
-                    evidence_refs=list(analysis.evidence_refs),
-                )
+                    field = None
+                    if family == "debug_page_secret_disclosure":
+                        status.update(task_family=family, integration_status="PENDING")
+                        field = requested_debug_field(task["task"])
+                        try:
+                            debug_domain = _load_debug_domain(domain)
+                        except ImportError:
+                            raise ValueError(
+                                "reviewed_it11_revision_unavailable"
+                            ) from None
+                        if "execution_context" in status:
+                            status["execution_context"].update(
+                                task_family=family, effective_request_budget=2
+                            )
+                        if dependency_status == "LOCAL_EDITABLE":
+                            status["integration_status"] = "LOCAL_EDITABLE"
+                        elif config.get("local_lab_enabled", False):
+                            status["integration_status"] = "LABORATORY_ONLY"
+                        elif re.fullmatch(r"[0-9a-f]{40}", revision):
+                            status["integration_status"] = "COMPLETE"
+                        else:
+                            raise ValueError("reviewed_it11_revision_unavailable")
+                    authorize()
+                    intent = _prepare_intent(
+                        domain,
+                        policy,
+                        run_id,
+                        **(
+                            {"debug_domain": debug_domain, "requested_field": field}
+                            if debug_domain
+                            else {}
+                        ),
+                    )
+                    authorize(resolve=True)
+                    session = ManagedEgress(
+                        policy.transport,
+                        artifacts=artifacts,
+                        assessment_run_id=run_id,
+                        seconds=max(1, math.ceil(deadline - time.monotonic())),
+                    )
+                    session.start()
+                    authorize(resolve=True)
+                    analysis, _sources, count = collect_investigation(
+                        intent,
+                        policy=policy,
+                        domain=domain,
+                        capture=capture,
+                        reload_policy=authorize,
+                        persist_source=persist_source,
+                        verify_source=verify_source,
+                        **(
+                            {
+                                "debug_domain": debug_domain,
+                                "transient_content": transient_content,
+                            }
+                            if debug_domain
+                            else {}
+                        ),
+                    )
+                    if debug_domain is not None:
+                        analysis, sensitive = analysis
+                    if analysis is None:
+                        raise ValueError("investigation_analysis_unavailable")
+                    if (
+                        count != status["request_count"]
+                        or not status["request_count_exact"]
+                    ):
+                        raise ValueError("request_count_unverified")
+                    close_egress()
+                    authorize()
+                    normalized = {
+                        "status": analysis.status.value,
+                        "framework": analysis.framework,
+                        "version": analysis.version,
+                        "evidence_refs": list(analysis.evidence_refs),
+                        "disposition": "candidate"
+                        if analysis.candidate is not None
+                        else None,
+                    }
+                    if debug_domain is None:
+                        explanation = explain_result(
+                            settings, normalized, logger, deadline=deadline
+                        )
+                    authorize()
+                    status.update(
+                        status=analysis.status.value.upper(),
+                        reason="ok",
+                        complete=analysis.status.value in {"match", "no_match"},
+                        evidence_refs=list(analysis.evidence_refs),
+                    )
     except KeyboardInterrupt:
         status.update(status="INCONCLUSIVE", reason="cancelled", complete=False)
     except TimeoutError:
@@ -1413,6 +1852,23 @@ def execute_investigation(
                 status.update(
                     status="ERROR", reason="cleanup_unverified", complete=False
                 )
+
+    if adaptive and case is None:
+        status.update(
+            metrics={
+                "request_count": status["request_count"],
+                "request_count_exact": status["request_count_exact"],
+                "capture_launch_count": status["capture_launch_count"],
+                "elapsed_seconds": time.monotonic() - started,
+                "ai_calls": ai_calls,
+                "tokens": None,
+                "cost": None,
+                "usage_status": "unavailable",
+            },
+            next_actions=[
+                "Inspect current authority, dependency and evidence before retrying the bounded investigation."
+            ],
+        )
 
     def publish():
         nonlocal publication_snapshot
@@ -1511,6 +1967,30 @@ def execute_investigation(
         )
         _persist(artifacts, "investigation_status.json", status)
         publish()
+    try:
+        if adaptive and case is not None:
+            pending = status["reason"] in {"cleanup_unverified", "artifact_incomplete"}
+            case_checkpoint(pending=pending)
+            if not pending:
+                from beeagent_module.integrations.beescan.case_state import load_case
+
+                _, case_snapshot = load_case(storage_dir, case.case_id)
+                case_snapshot.verify()
+            publish()
+            if case_snapshot is not None:
+                case_snapshot.verify()
+    except OSError, ValueError, RuntimeError, KeyboardInterrupt:
+        status.update(
+            status="ERROR",
+            reason="case_checkpoint_unverified",
+            complete=False,
+            evidence_refs=[],
+        )
+        publish()
+    finally:
+        if case_lock is not None:
+            os.close(case_lock)
+            case_lock = None
     if (
         debug_domain is not None
         and sensitive is not None
@@ -1524,6 +2004,10 @@ def execute_investigation(
             if publication_snapshot is None:
                 raise OSError("publication_unverified")
             publication_snapshot.verify()
+            if adaptive:
+                if case_snapshot is None:
+                    raise OSError("case_unverified")
+                case_snapshot.verify()
             authorize()
         except OSError, ValueError, RuntimeError, KeyboardInterrupt:
             status.update(
