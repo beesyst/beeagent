@@ -480,8 +480,12 @@ def test_sync_extras_rejects_unsafe_extra(monkeypatch) -> None:
         start_module._sync_runtime_extras(["not an extra"], Path("."))
 
 
-def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
+def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch, tmp_path) -> None:
     calls: list[Any] = []
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.optional-dependencies]\nrop=[]\nbeescan=[]\ndocling-cpu=[]\n"
+        '[tool.uv.sources]\nbeescan={git="https://github.com/beesyst/beescan.git"}\n'
+    )
 
     class _Completed:
         returncode = 0
@@ -493,7 +497,7 @@ def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
         lambda argv, **kwargs: calls.append(argv) or _Completed(),
     )
     start_module._sync_runtime_extras(
-        ["rop", "beescan", "docling-cpu", "rop"], Path(".")
+        ["rop", "beescan", "docling-cpu", "rop"], tmp_path
     )
     assert calls == [
         [
@@ -509,6 +513,79 @@ def test_sync_extras_uses_one_deterministic_frozen_sync(monkeypatch) -> None:
             "rop",
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "editable",
+        "disabled",
+        "git",
+        "extra_key",
+        "wrong_path",
+        "sync_failure",
+        "install_failure",
+    ],
+)
+def test_sync_extras_preserves_selected_local_beescan(monkeypatch, tmp_path, case):
+    from types import SimpleNamespace
+
+    project = tmp_path / "project"
+    project.mkdir()
+    if case != "wrong_path":
+        (tmp_path / "beescan").symlink_to(
+            "/home/bee/Pro/beescan", target_is_directory=True
+        )
+    source = 'path="../beescan", editable=true'
+    if case == "git":
+        source = 'git="https://github.com/beesyst/beescan.git"'
+    elif case == "extra_key":
+        source += ', extra="untrusted"'
+    (project / "pyproject.toml").write_text(
+        "[project.optional-dependencies]\nbeescan=[]\n"
+        "[tool.uv.sources]\nbeescan={" + source + "}\n"
+    )
+    calls = []
+    activated = []
+    monkeypatch.setattr(
+        start_module.site, "getsitepackages", lambda: ["/current/site-packages"]
+    )
+    monkeypatch.setattr(start_module.site, "addsitedir", activated.append)
+
+    def run(argv, **kwargs):
+        assert kwargs == {"cwd": str(project), "capture_output": True, "text": True}
+        calls.append(argv)
+        failed = case == "sync_failure" or case == "install_failure" and len(calls) == 2
+        return SimpleNamespace(returncode=int(failed), stderr="installation refused")
+
+    monkeypatch.setattr(start_module.subprocess, "run", run)
+    if case in {"sync_failure", "install_failure", "wrong_path"}:
+        message = {
+            "sync_failure": "Failed to sync",
+            "install_failure": "Failed to install local editable BeeScan",
+            "wrong_path": "Local editable BeeScan source mismatch",
+        }[case]
+        with pytest.raises(RuntimeError, match=message):
+            start_module._sync_runtime_extras(["beescan"], project)
+    else:
+        start_module._sync_runtime_extras(
+            [] if case == "disabled" else ["beescan"], project
+        )
+    assert len(calls) == (2 if case in {"editable", "install_failure"} else 1)
+    assert activated == (["/current/site-packages"] if case == "editable" else [])
+    assert calls[0][:4] == ["uv", "sync", "--frozen", "--no-dev"]
+    if len(calls) == 2:
+        assert calls[1] == [
+            "uv",
+            "pip",
+            "install",
+            "--offline",
+            "--no-deps",
+            "--python",
+            sys.executable,
+            "--editable",
+            "/home/bee/Pro/beescan",
+        ]
 
 
 def test_sync_extras_failure_raises(monkeypatch) -> None:

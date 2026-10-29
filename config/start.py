@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import site
 import subprocess
 import sys
 import tomllib
@@ -152,7 +153,8 @@ def _sync_runtime_extras(extras: list[str], project_root: Path) -> None:
     ):
         raise RuntimeError("Invalid runtime dependency extra")
     with (project_root / "pyproject.toml").open("rb") as stream:
-        declared = tomllib.load(stream)["project"]["optional-dependencies"]
+        project = tomllib.load(stream)
+    declared = project["project"]["optional-dependencies"]
     if any(extra not in declared for extra in extras):
         raise RuntimeError(
             "Runtime dependency extra is not declared in project metadata"
@@ -173,6 +175,33 @@ def _sync_runtime_extras(extras: list[str], project_root: Path) -> None:
             + ": "
             + completed.stderr.strip()
         )
+    source = project.get("tool", {}).get("uv", {}).get("sources", {}).get("beescan")
+    if "beescan" in extras and source == {"path": "../beescan", "editable": True}:
+        local_source = (project_root / source["path"]).resolve()
+        if local_source != Path("/home/bee/Pro/beescan"):
+            raise RuntimeError("Local editable BeeScan source mismatch")
+        completed = subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--offline",
+                "--no-deps",
+                "--python",
+                sys.executable,
+                "--editable",
+                str(local_source),
+            ],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "Failed to install local editable BeeScan: " + completed.stderr.strip()
+            )
+        for directory in site.getsitepackages():
+            site.addsitedir(directory)
 
 
 def main() -> None:
@@ -280,7 +309,7 @@ def main() -> None:
         from beeagent_module.integrations.beescan.probe import handle_beescan_cli
 
         local_operator = None
-        if len(args) == 1 or (args[1:2] == ["investigate"] and "--target" in args[2:]):
+        if len(args) == 1 or args[1:2] == ["investigate"]:
             try:
                 local_operator = _operator_from_entrypoint()
             except PermissionError:

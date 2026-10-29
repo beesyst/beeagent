@@ -120,7 +120,7 @@ beescan:
     timeout_seconds: 20
     input_chars_max: 8000
     output_chars_max: 2000
-    body_bytes_max: 16384
+    body_bytes_max: 73728
 
 beedrill:
   ai_assist:

@@ -7,6 +7,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from beeagent_module.integrations.beescan.capture_worker import (
+    RESPONSE_FAILURES,
+    ResponseLengthExceeded,
+)
 from beeagent_module.integrations.beescan.detection_policy import TEMPLATE_SHA256
 from beeagent_module.integrations.beescan.http_runner import (
     _open_namespace,
@@ -241,7 +245,7 @@ def run_detection_provider(
         or type(investigation) is not dict
         or set(investigation) != {"relative_url", "body_bytes_max"}
         or type(investigation["body_bytes_max"]) is not int
-        or not 1024 <= investigation["body_bytes_max"] <= 16384
+        or not 1024 <= investigation["body_bytes_max"] <= 73728
     ):
         raise ValueError("invalid_capture_selection")
     deadline = min(
@@ -434,6 +438,26 @@ def run_detection_provider(
             if code == 4:
                 raise TimeoutError("timeout")
             if code:
+                if investigation is not None and code == 5:
+                    try:
+                        failure = json.loads(raw_capture, object_pairs_hook=_unique_object)
+                    except ValueError, UnicodeError:
+                        failure = None
+                    if (
+                        type(failure) is dict
+                        and set(failure) == {"failure_reason"}
+                        and type(failure["failure_reason"]) is str
+                        and failure["failure_reason"] in RESPONSE_FAILURES
+                    ):
+                        raise ValueError(failure["failure_reason"])
+                    if (
+                        type(failure) is dict
+                        and set(failure) == {"failure_reason", "content_length"}
+                        and failure["failure_reason"] == "response_length_exceeds_limit"
+                        and type(failure["content_length"]) is int
+                        and 0 <= failure["content_length"] <= 999999
+                    ):
+                        raise ResponseLengthExceeded(failure["content_length"])
                 raise ValueError("capture_failed")
             if git_exposure or investigation is not None:
                 return raw_capture
