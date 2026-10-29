@@ -13,6 +13,7 @@ import pytest
 from beeagent_module.core.settings import _require_one_enabled_ai_profile
 from beeagent_module.integrations.beescan import investigation as host
 from beeagent_module.integrations.beescan.capture_worker import (
+    ResponseLengthExceeded,
     capture,
     read_investigation_response,
 )
@@ -180,7 +181,7 @@ def test_fail_fast_configuration(settings, approved, change):
     elif change == "approval":
         config["approval"] = None
     elif change == "limits":
-        config["body_bytes_max"] = 32769
+        config["body_bytes_max"] = 73729
     elif change == "extra":
         config["command"] = "curl"
     else:
@@ -512,12 +513,20 @@ def test_500_explicit_unsupported_media_is_not_inferred(media):
         )
 
 
+def test_json_404_reason_is_bounded_and_does_not_expose_body():
+    body = b'{"error":"fixture-private-value"}'
+    raw = raw_response(body, status=b"404 Not Found", content_type=b"application/json")
+    with pytest.raises(ValueError, match="^response_json_status_404$") as error:
+        read_investigation_response(Stream(raw), limit=1024)
+    assert "fixture-private-value" not in repr(error.value)
+
+
 @pytest.mark.parametrize(
     "change,reason",
     [
         ("short", "incomplete_response_body"),
         ("extra", "incomplete_response_body"),
-        ("oversized_length", "invalid_response_length"),
+        ("oversized_length", "response_length_exceeds_limit"),
         ("oversized_body", "response_body_limit"),
         ("redirect", "redirect_refused"),
         ("transfer", "unsupported_response_encoding"),
@@ -546,8 +555,11 @@ def test_untyped_500_preserves_framing_guards(change, reason):
             "malformed": b" folded: bad",
         }[change]
         raw = raw.replace(b"\r\n\r\n", b"\r\n" + header + b"\r\n\r\n")
-    with pytest.raises(ValueError, match=f"^{reason}$"):
+    with pytest.raises(ValueError, match=f"^{reason}$") as error:
         read_investigation_response(Stream(raw), limit=1024)
+    if change == "oversized_length":
+        assert isinstance(error.value, ResponseLengthExceeded)
+        assert error.value.content_length == 1025
 
 
 @pytest.mark.parametrize(
@@ -1091,8 +1103,11 @@ def git_dependency(tmp_path, monkeypatch):
     )
 
 
-def test_domain_dependency_uses_locked_git_revision(git_dependency):
-    domain, revision = host._load_domain()
+@pytest.mark.parametrize("local_lab", [False, True])
+def test_domain_dependency_uses_locked_git_revision(
+    git_dependency, approved, local_lab
+):
+    domain, revision = host._load_domain(local_lab=local_lab, policy=approved)
     assert domain is git_dependency.module
     assert revision == git_dependency.revision
     assert "rev =" not in git_dependency.project.read_text()
@@ -1136,7 +1151,7 @@ def test_domain_dependency_uses_locked_git_revision(git_dependency):
         "archive_source",
     ],
 )
-def test_domain_dependency_rejects_untrusted_install(git_dependency, change):
+def test_domain_dependency_rejects_untrusted_install(git_dependency, approved, change):
     dependency = git_dependency
     if change == "missing_pin":
         dependency.lock.unlink()
@@ -1236,6 +1251,8 @@ def test_domain_dependency_rejects_untrusted_install(git_dependency, change):
         dependency.direct["archive_info"] = {}
     with pytest.raises(ImportError, match="^reviewed_it10_revision_unavailable$"):
         host._load_domain()
+    with pytest.raises(ImportError, match="^reviewed_it10_revision_unavailable$"):
+        host._load_domain(local_lab=True, policy=approved)
 
 
 def test_ai_timeout_uses_remaining_investigation_budget(settings, monkeypatch):
@@ -1409,6 +1426,61 @@ def test_local_lab_opt_in_requires_boolean(settings, value):
         host.validate_investigation_settings(settings)
 
 
+@pytest.fixture
+def editable_dependency(tmp_path, monkeypatch):
+    import importlib
+    import importlib.metadata
+
+    expected = Path("/home/bee/Pro/beescan")
+    project = tmp_path / "beeagent"
+    project.mkdir()
+    (tmp_path / "beescan").symlink_to(expected, target_is_directory=True)
+    (project / "pyproject.toml").write_text(
+        '[tool.uv.sources]\nbeescan = { path = "../beescan", editable = true }\n'
+    )
+    monkeypatch.setattr(host, "get_project_root", lambda: project)
+    direct = {"url": expected.as_uri(), "dir_info": {"editable": True}}
+    distribution = SimpleNamespace(read_text=lambda _: json.dumps(direct))
+    monkeypatch.setattr(importlib.metadata, "distribution", lambda _: distribution)
+    for name in (
+        "beescan",
+        "beescan.domain.models",
+        "beescan.domain.scope",
+        "beescan.capabilities.http_probe",
+        "beescan.domain.web_investigation",
+    ):
+        suffix = name.replace(".", "/") + (
+            "/__init__.py" if name == "beescan" else ".py"
+        )
+        monkeypatch.setattr(
+            importlib.import_module(name), "__file__", str(expected / "src" / suffix)
+        )
+    return distribution
+
+
+def test_editable_loader_uses_exact_source(editable_dependency, approved):
+    from beescan.domain import web_investigation
+
+    from beeagent_module.integrations.beescan import local_cli
+
+    domain, revision = host._load_domain(local_lab=True, policy=approved)
+    assert domain is web_investigation
+    assert revision == "editable:/home/bee/Pro/beescan"
+    policy = replace(
+        approved,
+        transport=replace(
+            approved.transport,
+            origin="https://public.example.test",
+            connected_ip="1.1.1.1",
+            allow_private_lab=False,
+        ),
+    )
+    context = local_cli._LocalRun(
+        local_cli._LocalOperator(local_cli._identity(), local_cli._SEAL), policy
+    )
+    assert host._load_domain(policy=policy, local_context=context) == (domain, revision)
+
+
 def test_editable_refused_without_local_opt_in(tmp_path, monkeypatch):
     (tmp_path / "pyproject.toml").write_text(
         '[tool.uv.sources]\nbeescan = { path = "../beescan", editable = true }\n'
@@ -1446,7 +1518,7 @@ def test_editable_loader_requires_controlled_lab_approval(approved, change):
     "change", ["stale_git", "wrong_path", "noneditable", "mixed_module"]
 )
 def test_editable_loader_rejects_stale_or_substituted_install(
-    approved, monkeypatch, change
+    approved, monkeypatch, editable_dependency, change
 ):
     import importlib.metadata
     import sys

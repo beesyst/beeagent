@@ -7,6 +7,31 @@ import sys
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+RESPONSE_FAILURES = frozenset(
+    {
+        "incomplete_response_header",
+        "invalid_response_status",
+        "redirect_refused",
+        "invalid_response_header",
+        "duplicate_response_header",
+        "unsupported_response_encoding",
+        "invalid_response_length",
+        "response_length_exceeds_limit",
+        "response_length_missing",
+        "unsupported_response_type",
+        "response_body_limit",
+        "incomplete_response_body",
+        "invalid_response_body",
+        "response_json_status_404",
+    }
+)
+
+
+class ResponseLengthExceeded(ValueError):
+    def __init__(self, content_length):
+        self.content_length = content_length
+        super().__init__("response_length_exceeds_limit")
+
 
 def normalized_headers(values, *, https):
     nosniff = values.get("x-content-type-options")
@@ -82,7 +107,7 @@ def capture(config):
             or parsed.netloc
             or parsed.fragment
             or type(config["body_bytes_max"]) is not int
-            or not 1024 <= config["body_bytes_max"] <= 32768
+            or not 1024 <= config["body_bytes_max"] <= 73728
         ):
             raise ValueError
     origin = urlsplit(config["origin"])
@@ -225,7 +250,7 @@ def capture(config):
 
 
 def read_investigation_response(stream, *, limit):
-    if type(limit) is not int or not 1 <= limit <= 32768:
+    if type(limit) is not int or not 1 <= limit <= 73728:
         raise ValueError("invalid_response_limit")
     header = bytearray()
     while not header.endswith(b"\r\n\r\n"):
@@ -262,8 +287,12 @@ def read_investigation_response(stream, *, limit):
     if "transfer-encoding" in headers or "content-encoding" in headers:
         raise ValueError("unsupported_response_encoding")
     length = headers.get("content-length", "")
-    if re.fullmatch(r"[0-9]{1,6}", length) is None or int(length) > limit:
+    if "content-length" not in headers:
+        raise ValueError("response_length_missing")
+    if re.fullmatch(r"[0-9]{1,6}", length) is None:
         raise ValueError("invalid_response_length")
+    if int(length) > limit:
+        raise ResponseLengthExceeded(int(length))
     content_type = headers.get("content-type", "").lower()
     untyped_error = status == 500 and "content-type" not in headers
     if (
@@ -275,6 +304,11 @@ def read_investigation_response(stream, *, limit):
         )
         is None
     ):
+        if (
+            status == 404
+            and content_type.split(";", 1)[0].strip() == "application/json"
+        ):
+            raise ValueError("response_json_status_404")
         raise ValueError("unsupported_response_type")
     body = bytearray()
     while True:
@@ -317,6 +351,12 @@ if __name__ == "__main__":
             print(json.dumps(result))
     except TimeoutError:
         code = 4
-    except OSError, ValueError, KeyError, TypeError, UnicodeError:
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError) as error:
+        reason = str(error)
+        if reason in RESPONSE_FAILURES:
+            failure = {"failure_reason": reason}
+            if isinstance(error, ResponseLengthExceeded):
+                failure["content_length"] = error.content_length
+            print(json.dumps(failure))
         code = 5
     sys.exit(code)

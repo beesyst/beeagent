@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 import math
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import yaml
@@ -25,6 +27,10 @@ from beeagent_module.core.runtime_context import (
     RuntimeContext,
     generate_run_id,
     generate_session_id,
+)
+from beeagent_module.integrations.beescan.capture_worker import (
+    RESPONSE_FAILURES,
+    ResponseLengthExceeded,
 )
 from beeagent_module.integrations.beescan.policy import ProbePolicy
 
@@ -127,7 +133,7 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
         "timeout_seconds": (1, 60),
         "input_chars_max": (512, 16000),
         "output_chars_max": (128, 4000),
-        "body_bytes_max": (1024, 16384),
+        "body_bytes_max": (1024, 73728),
     }
     if (
         type(config) is not dict
@@ -323,6 +329,7 @@ def classify_task(settings, task, logger, *, deadline=None):
                 "type": "string",
                 "enum": [
                     "framework_version_disclosure",
+                    "debug_page_secret_disclosure",
                     "unsupported",
                     "ambiguous",
                 ],
@@ -337,11 +344,49 @@ def classify_task(settings, task, logger, *, deadline=None):
         logger,
         deadline=deadline,
     )
-    if type(plan) is not dict or set(plan) != {"intent"}:
+    if (
+        type(plan) is not dict
+        or set(plan) != {"intent"}
+        or type(plan["intent"]) is not str
+    ):
         raise ValueError("invalid_investigation_plan")
-    if plan["intent"] != "framework_version_disclosure":
+    if plan["intent"] not in {
+        "framework_version_disclosure",
+        "debug_page_secret_disclosure",
+    }:
         raise ValueError("unsupported_investigation_task")
     return plan["intent"]
+
+
+def requested_debug_field(task):
+    selectors = re.findall(r"(?<![A-Za-z0-9_])field=([^\s,;]*)", task)
+    pattern = r"[A-Za-z_][A-Za-z0-9_]{0,63}"
+    if not selectors:
+        pattern = r"[A-Z_][A-Z0-9_]{1,63}"
+        selectors = [
+            token.strip("`'\"()[]{}!?").removesuffix(".").strip("`'\"()[]{}!?")
+            for token in re.findall(r"[^\s,;]+", task)
+            if re.search(r"[A-Z_][A-Z0-9_]+", token)
+        ]
+    if len(selectors) != 1 or re.fullmatch(pattern, selectors[0]) is None:
+        raise ValueError("invalid_requested_field")
+    return selectors[0]
+
+
+def _load_debug_domain(domain):
+    import importlib
+
+    module = importlib.import_module("beescan.domain.debug_disclosure")
+    module_file = getattr(module, "__file__", None)
+    domain_file = getattr(domain, "__file__", None)
+    if (
+        not isinstance(module_file, str)
+        or not isinstance(domain_file, str)
+        or Path(module_file).resolve()
+        != Path(domain_file).resolve().with_name("debug_disclosure.py")
+    ):
+        raise ImportError("reviewed_it11_revision_unavailable")
+    return module
 
 
 def explain_result(settings, facts, logger, *, deadline=None):
@@ -522,6 +567,7 @@ def capture_to_facts(
     evidence_ref,
     elapsed_seconds,
     body_bytes_max,
+    redacted=False,
 ):
     from beescan.capabilities.http_probe import HostProvenance
 
@@ -543,13 +589,16 @@ def capture_to_facts(
         )
         or selected.origin != policy.transport.origin
         or type(body_bytes_max) is not int
-        or not 1024 <= body_bytes_max <= 16384
+        or not 1024 <= body_bytes_max <= 73728
         or type(captured["body"]) is not str
         or len(captured["body"].encode("utf-8")) > body_bytes_max
     ):
         raise ValueError("invalid_investigation_capture")
     links, excerpt = (), ""
-    if captured["content_type"] in {"text/html", "application/xhtml+xml"}:
+    if not redacted and captured["content_type"] in {
+        "text/html",
+        "application/xhtml+xml",
+    }:
         parser = _CaptureHTML()
         parser.feed(captured["body"])
         parser.close()
@@ -557,7 +606,7 @@ def capture_to_facts(
             links = tuple(parser.links)
         if selected.stage == "mutation":
             excerpt = "".join(parser.text)
-    elif selected.stage == "mutation":
+    elif not redacted and selected.stage == "mutation":
         excerpt = captured["body"]
     if len(excerpt) > 16384:
         raise ValueError("investigation_excerpt_limit")
@@ -586,9 +635,11 @@ def collect_investigation(
     verify_source,
     clock=lambda: datetime.now(UTC),
     monotonic=time.monotonic,
+    debug_domain=None,
+    transient_content=None,
 ):
     deadline = monotonic() + policy.transport.time_budget_seconds
-    sources = []
+    sources: list[Any] = []
     request_count = 0
 
     def checkpoint():
@@ -629,6 +680,25 @@ def collect_investigation(
         return facts
 
     discovery = request(intent.discovery)
+    if debug_domain is not None:
+        if transient_content is None:
+            raise ValueError("invalid_investigation_capture")
+
+        selection = debug_domain.select_debug_resource(
+            intent, discovery, transient_content.pop(discovery.response_id), at=clock()
+        )
+        response = request(selection.diagnostic) if selection.status is None else None
+        checkpoint()
+        for facts in sources:
+            if verify_source(facts) is not True:
+                raise ValueError("investigation_source_changed")
+        result = debug_domain.analyze_debug_disclosure(
+            selection,
+            response,
+            transient_content.pop(response.response_id) if response else None,
+            at=clock(),
+        )
+        return result, tuple(sources), request_count
     selection = domain.select_investigation(intent, discovery, at=clock())
     baseline = mutation = None
     if selection.status is None:
@@ -644,7 +714,7 @@ def collect_investigation(
     return result, tuple(sources), request_count
 
 
-def _load_domain(*, local_lab=False, policy=None):
+def _load_domain(*, local_lab=False, policy=None, local_context=None):
     import importlib
     import importlib.metadata
     import tomllib
@@ -652,16 +722,29 @@ def _load_domain(*, local_lab=False, policy=None):
     project_file = (get_project_root() / "pyproject.toml").resolve()
     project = tomllib.loads(project_file.read_text())
     source = project.get("tool", {}).get("uv", {}).get("sources", {}).get("beescan", {})
-    if local_lab is True:
-        if (
-            type(policy) is not InvestigationPolicy
-            or not policy.transport.allow_private_lab
-        ):
+    editable_local = local_context is not None and source == {
+        "path": "../beescan",
+        "editable": True,
+    }
+    if local_lab is True or editable_local:
+        if type(policy) is not InvestigationPolicy:
             raise PermissionError("local_laboratory_not_approved")
+        if editable_local:
+            from beeagent_module.integrations.beescan.local_cli import _LocalRun
+
+            if type(local_context) is not _LocalRun:
+                raise PermissionError("local_invocation_refused")
+            local_context.verify(policy)
         policy.authorize(policy.transport.origin, at=datetime.now(UTC))
         address = ip_address(policy.transport.connected_ip)
-        if not any(address in network for network in LAB_NETWORKS):
+        if any(address in network for network in LAB_NETWORKS):
+            if local_lab is not True or not policy.transport.allow_private_lab:
+                raise PermissionError("local_laboratory_not_approved")
+        elif not (editable_local and address.is_global):
             raise PermissionError("local_laboratory_target_required")
+    if editable_local or (
+        local_lab is True and type(source) is dict and "git" not in source
+    ):
         expected = Path("/home/bee/Pro/beescan")
         if (
             source != {"path": "../beescan", "editable": True}
@@ -763,18 +846,18 @@ def _load_domain(*, local_lab=False, policy=None):
     ):
         raise ImportError("reviewed_it10_revision_unavailable")
     domain = importlib.import_module("beescan.domain.web_investigation")
-    expected = distribution.locate_file("beescan/domain/web_investigation.py")
+    installed_file = distribution.locate_file("beescan/domain/web_investigation.py")
     module_file = getattr(domain, "__file__", None)
     if (
         not isinstance(module_file, str)
         or not module_file
-        or Path(module_file).resolve() != Path(str(expected)).resolve()
+        or Path(module_file).resolve() != Path(str(installed_file)).resolve()
     ):
         raise ImportError("reviewed_it10_revision_unavailable")
     return domain, revision
 
 
-def _prepare_intent(domain, policy, run_id):
+def _prepare_intent(domain, policy, run_id, *, debug_domain=None, requested_field=None):
     from beescan.domain.models import (
         EngagementScope,
         Mission,
@@ -785,7 +868,15 @@ def _prepare_intent(domain, policy, run_id):
     )
 
     transport = policy.transport
-    return domain.prepare_investigation(
+    capability = domain.CAPABILITY if debug_domain is None else domain.DEBUG_CAPABILITY
+    budget = 3 if debug_domain is None else 2
+    prepare = (
+        domain.prepare_investigation
+        if debug_domain is None
+        else debug_domain.prepare_debug_investigation
+    )
+    options = {} if debug_domain is None else {"requested_field": requested_field}
+    return prepare(
         Project(transport.project_id, "Approved web investigation"),
         (
             Target(
@@ -803,27 +894,28 @@ def _prepare_intent(domain, policy, run_id):
             valid_from=transport.valid_from,
             expires_at=transport.expires_at,
             approved_methods=(domain.METHOD,),
-            max_requests=3,
+            max_requests=budget,
             max_seconds=transport.time_budget_seconds,
         ),
         Mission(
             transport.mission_id,
             transport.project_id,
             transport.scope_id,
-            (domain.CAPABILITY,),
+            (capability,),
         ),
         MissionSpec(
             transport.mission_id,
             transport.target_id,
-            domain.CAPABILITY,
+            capability,
             domain.METHOD,
-            3,
+            budget,
             transport.time_budget_seconds,
         ),
         at=datetime.now(UTC),
         run_id=run_id,
         provider_id="host-web-capture",
         provider_version="1",
+        **options,
     )
 
 
@@ -883,7 +975,7 @@ def execute_investigation(
         return result
 
     artifacts = api(run_id)
-    status = {
+    status: dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_id,
         "status": "REFUSED",
@@ -897,7 +989,9 @@ def execute_investigation(
     }
     _persist(artifacts, "investigation_status.json", status)
     config = settings.get("beescan", {}).get("investigation", {})
-    steps, source_manifest, records = [], [], {}
+    steps: list[dict[str, Any]] = []
+    source_manifest: list[dict[str, Any]] = []
+    records: dict[str, tuple[dict[str, Any], ArtifactAPI]] = {}
     snapshot = AssessmentSnapshot(storage_dir)
     session = policy = intent = None
     analysis = explanation = None
@@ -905,6 +999,10 @@ def execute_investigation(
     started = time.monotonic()
     deadline = None
     local_context = None
+    debug_domain = sensitive = None
+    transient_content: dict[str, Any] = {}
+    source_key = os.urandom(32)
+    publication_snapshot = None
 
     def authorize(*, resolve=False):
         current_policy = policy
@@ -992,7 +1090,7 @@ def execute_investigation(
         current_intent = intent
         if current_intent is None:
             raise PermissionError("investigation_not_approved")
-        if status["capture_launch_count"] >= 3:
+        if status["capture_launch_count"] >= current_intent.spec.request_budget:
             raise PermissionError("request_budget_exceeded")
         status["capture_launch_count"] += 1
         child = api(selected.child_run_id)
@@ -1062,7 +1160,12 @@ def execute_investigation(
             evidence_ref=evidence_ref,
             elapsed_seconds=int(time.monotonic() - begin),
             body_bytes_max=config["body_bytes_max"],
+            redacted=debug_domain is not None,
         )
+        if debug_domain is not None:
+            transient_content[response_id] = debug_domain.TransientText(
+                captured["body"]
+            )
         record = {
             "schema_version": 1,
             "parent_run_id": run_id,
@@ -1072,7 +1175,27 @@ def execute_investigation(
             "request_id": selected.request_id,
             "response_id": response_id,
             "facts": asdict(facts),
-            "capture": captured,
+            **(
+                {
+                    "projection": "debug-redacted-v1",
+                    "source_authentication": hmac.digest(
+                        source_key,
+                        json.dumps(
+                            {
+                                "request_id": selected.request_id,
+                                "response_id": response_id,
+                                "evidence_ref": evidence_ref,
+                                "capture": captured,
+                            },
+                            sort_keys=True,
+                            ensure_ascii=True,
+                        ).encode(),
+                        "sha256",
+                    ).hex(),
+                }
+                if debug_domain is not None
+                else {"capture": captured}
+            ),
         }
         records[response_id] = record, child
         step.update(response_id=response_id, status="captured")
@@ -1098,7 +1221,7 @@ def execute_investigation(
             raise RuntimeError("cleanup_unverified")
         snapshot.verify()
 
-    local_selected = task is not None or local_operator is not None
+    local_selected = task is not None
     try:
         if local_selected or config.get("enabled") is True:
             validate_investigation_settings(settings)
@@ -1119,7 +1242,20 @@ def execute_investigation(
             else:
                 task = read_task(task_path, config)
                 policy = InvestigationPolicy.from_config(config["approval"])
-            if local_context is None and task["target"] != policy.transport.origin:
+                if (
+                    local_operator is not None
+                    and config.get("trusted_local_enabled") is True
+                ):
+                    from beeagent_module.integrations.beescan.local_cli import (
+                        _LocalOperator,
+                        _LocalRun,
+                    )
+
+                    if type(local_operator) is not _LocalOperator:
+                        raise PermissionError("local_invocation_refused")
+                    local_operator.verify()
+                    local_context = _LocalRun(local_operator, policy)
+            if not local_selected and task["target"] != policy.transport.origin:
                 raise PermissionError("target_not_approved")
             deadline = started + policy.transport.time_budget_seconds
             authorize()
@@ -1127,6 +1263,7 @@ def execute_investigation(
                 domain, revision = _load_domain(
                     local_lab=config.get("local_lab_enabled", False),
                     policy=policy,
+                    **({"local_context": local_context} if local_context else {}),
                 )
             except ImportError:
                 status["reason"] = (
@@ -1135,10 +1272,17 @@ def execute_investigation(
                     else "reviewed_it10_revision_unavailable"
                 )
             else:
-                status.update(
-                    integration_status="COMPLETE"
+                dependency_status = (
+                    "COMPLETE"
                     if re.fullmatch(r"[0-9a-f]{40}", revision)
-                    else "LABORATORY_ONLY",
+                    else "LOCAL_EDITABLE"
+                    if revision == "editable:/home/bee/Pro/beescan"
+                    and local_context is not None
+                    and ip_address(policy.transport.connected_ip).is_global
+                    else "LABORATORY_ONLY"
+                )
+                status.update(
+                    integration_status=dependency_status,
                     dependency_revision=revision,
                     reason="execution_incomplete",
                     status="ERROR",
@@ -1147,9 +1291,40 @@ def execute_investigation(
                 ai_profile = named_ai_profile(settings)
                 if progress is not None:
                     progress("classification")
-                classify_task(settings, task["task"], logger, deadline=deadline)
+                family = classify_task(
+                    settings, task["task"], logger, deadline=deadline
+                )
+                field = None
+                if family == "debug_page_secret_disclosure":
+                    status.update(task_family=family, integration_status="PENDING")
+                    field = requested_debug_field(task["task"])
+                    try:
+                        debug_domain = _load_debug_domain(domain)
+                    except ImportError:
+                        raise ValueError("reviewed_it11_revision_unavailable") from None
+                    if "execution_context" in status:
+                        status["execution_context"].update(
+                            task_family=family, effective_request_budget=2
+                        )
+                    if dependency_status == "LOCAL_EDITABLE":
+                        status["integration_status"] = "LOCAL_EDITABLE"
+                    elif config.get("local_lab_enabled", False):
+                        status["integration_status"] = "LABORATORY_ONLY"
+                    elif re.fullmatch(r"[0-9a-f]{40}", revision):
+                        status["integration_status"] = "COMPLETE"
+                    else:
+                        raise ValueError("reviewed_it11_revision_unavailable")
                 authorize()
-                intent = _prepare_intent(domain, policy, run_id)
+                intent = _prepare_intent(
+                    domain,
+                    policy,
+                    run_id,
+                    **(
+                        {"debug_domain": debug_domain, "requested_field": field}
+                        if debug_domain
+                        else {}
+                    ),
+                )
                 authorize(resolve=True)
                 session = ManagedEgress(
                     policy.transport,
@@ -1167,7 +1342,17 @@ def execute_investigation(
                     reload_policy=authorize,
                     persist_source=persist_source,
                     verify_source=verify_source,
+                    **(
+                        {
+                            "debug_domain": debug_domain,
+                            "transient_content": transient_content,
+                        }
+                        if debug_domain
+                        else {}
+                    ),
                 )
+                if debug_domain is not None:
+                    analysis, sensitive = analysis
                 if analysis is None:
                     raise ValueError("investigation_analysis_unavailable")
                 if (
@@ -1186,9 +1371,10 @@ def execute_investigation(
                     if analysis.candidate is not None
                     else None,
                 }
-                explanation = explain_result(
-                    settings, normalized, logger, deadline=deadline
-                )
+                if debug_domain is None:
+                    explanation = explain_result(
+                        settings, normalized, logger, deadline=deadline
+                    )
                 authorize()
                 status.update(
                     status=analysis.status.value.upper(),
@@ -1202,9 +1388,24 @@ def execute_investigation(
         status.update(status="TIMEOUT", reason="investigation_deadline", complete=False)
     except PermissionError:
         status.update(status="REFUSED", reason="authorization_refused", complete=False)
-    except OSError, ValueError, RuntimeError, ImportError:
-        status.update(status="ERROR", reason="execution_incomplete", complete=False)
+    except (OSError, ValueError, RuntimeError, ImportError) as error:
+        reason = str(error)
+        safe_reason = (
+            reason
+            if reason
+            in {
+                "unsupported_investigation_task",
+                "invalid_requested_field",
+                "reviewed_it11_revision_unavailable",
+                *RESPONSE_FAILURES,
+            }
+            else "execution_incomplete"
+        )
+        status.update(status="ERROR", reason=safe_reason, complete=False)
+        if isinstance(error, ResponseLengthExceeded):
+            status["response_content_length"] = error.content_length
     finally:
+        transient_content.clear()
         if session is not None:
             try:
                 close_egress()
@@ -1214,6 +1415,7 @@ def execute_investigation(
                 )
 
     def publish():
+        nonlocal publication_snapshot
         accepted = analysis if status["reason"] == "ok" else None
         result = {
             **status,
@@ -1296,6 +1498,7 @@ def execute_investigation(
         output.verify()
         if accepted is not None:
             authorize()
+        publication_snapshot = output
 
     try:
         publish()
@@ -1308,6 +1511,38 @@ def execute_investigation(
         )
         _persist(artifacts, "investigation_status.json", status)
         publish()
+    if (
+        debug_domain is not None
+        and sensitive is not None
+        and status["status"] == "MATCH"
+        and status["complete"]
+        and status["reason"] == "ok"
+        and local_context is not None
+    ):
+        try:
+            authorize()
+            if publication_snapshot is None:
+                raise OSError("publication_unverified")
+            publication_snapshot.verify()
+            authorize()
+        except OSError, ValueError, RuntimeError, KeyboardInterrupt:
+            status.update(
+                status="ERROR",
+                reason="artifact_incomplete",
+                complete=False,
+                evidence_refs=[],
+            )
+            publish()
+        else:
+            try:
+                from beeagent_module.integrations.beescan.local_cli import (
+                    present_sensitive_value,
+                )
+
+                present_sensitive_value(sensitive, local_context, policy)
+            except OSError, ValueError, PermissionError, KeyboardInterrupt:
+                pass
+    sensitive = None
     logger.info(
         "BeeScan investigation: run_id=%s status=%s reason=%s requests=%s",
         run_id,

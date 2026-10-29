@@ -378,6 +378,8 @@ def handle_beescan_cli(
                 options["task"] = validate_task(value, config)
             elif len(args) == 2 and not args[1].startswith("-"):
                 options["task_path"] = args[1]
+                if local_operator is not None:
+                    options["local_operator"] = local_operator
             else:
                 if (
                     len(args) != 5

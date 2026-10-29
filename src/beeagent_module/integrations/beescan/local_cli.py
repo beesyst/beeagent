@@ -136,3 +136,32 @@ def bind_local_run(task, operator, settings, *, run_id):
     )
     operator.verify()
     return _LocalRun(operator, policy)
+
+
+def present_sensitive_value(value, context, policy):
+    from beescan.domain.debug_disclosure import SensitiveValue
+
+    if type(value) is not SensitiveValue or type(context) is not _LocalRun:
+        raise PermissionError("sensitive_presentation_refused")
+    context.verify(policy)
+    if not all(os.isatty(descriptor) for descriptor in (0, 1, 2)):
+        return False
+    terminals = [os.fstat(descriptor) for descriptor in (0, 1, 2)]
+    if any(info.st_rdev != terminals[0].st_rdev for info in terminals):
+        return False
+    descriptor = os.open(
+        os.ttyname(0), os.O_WRONLY | os.O_NOCTTY | os.O_CLOEXEC | os.O_NOFOLLOW
+    )
+    try:
+        terminal = os.fstat(descriptor)
+        if terminal.st_rdev != terminals[0].st_rdev or terminal.st_uid != os.getuid():
+            raise PermissionError("sensitive_terminal_mismatch")
+        if os.tcgetpgrp(descriptor) != os.getpgrp():
+            raise PermissionError("controlling_terminal_required")
+        context.verify(policy)
+        raw = (value.reveal_to_host() + "\n").encode("utf-8")
+        if os.write(descriptor, raw) != len(raw):
+            raise OSError("sensitive_terminal_write_failed")
+    finally:
+        os.close(descriptor)
+    return True
