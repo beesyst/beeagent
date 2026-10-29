@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.83.0...beeagent-v0.84.0) (2026-10-29)
+
+
+### Features
+
+* **beescan:** add governed adaptive investigations and resume ([#348](https://github.com/beesyst/beeagent/issues/348)) ([ce6efb8](https://github.com/beesyst/beeagent/commit/ce6efb80b6fc6db5e03edeb1efdfe54fbbe0c97b))
+
 ## [0.83.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.82.0...beeagent-v0.83.0) (2026-10-29)
 
 
