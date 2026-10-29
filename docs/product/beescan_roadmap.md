@@ -1298,6 +1298,128 @@ The existing investigation workflow remains compatible. Linux positive/negative 
 
 No unrelated version change occurs.
 
+### Iteration BS-11 — Governed Adaptive Investigation and Resume v0
+
+**Status:** PLANNED
+
+#### Goal
+
+Extend the existing BeeScan trusted-local investigation runtime with a bounded adaptive execution loop using the reviewed BeeScan It12 decision API.
+
+Enable an operator to provide a target and investigation objective, allow BeeScan to select subsequent supported checks from real evidence, and receive a reproducible investigation result or actionable partial summary.
+
+Support minimal persistent Investigation Case checkpoints so the operator can inspect prior decisions and resume supported unfinished work without unnecessarily repeating completed checks.
+
+Preserve BeeAgent as the sole orchestration, execution, authorization and storage runtime.
+
+#### Depends on
+
+- Completed BeeScan It10/It11 investigation domain capabilities.
+- Completed BeeAgent BS-8/BS-10 governed investigation runtime.
+- Reviewed BeeScan It12 adaptive decision contract.
+- Existing BeeAgent AI profiles, trusted-local CLI, managed egress, ArtifactAPI, source authentication and reporting.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Extend the existing BeeScan investigation entrypoint to support one bounded adaptive investigation objective.
+- Reuse the current target/task intake and trusted-local operator execution model.
+- Reuse existing governed HTTP capture, provider execution, DNS/TLS validation, destination enforcement and managed-egress isolation.
+- Reuse existing framework-version and diagnostic-disclosure capabilities as the initial supported action set.
+- Execute the cycle: observe → request BeeScan decision → authorize selected capability → execute → authenticate evidence → evaluate → continue or stop.
+- Allow BeeScan to select the next supported action based on authenticated evidence and previous Case state.
+- Use existing AI profiles for task interpretation and optional bounded hypothesis proposals where useful.
+- Validate every AI-proposed action against BeeScan domain constraints and BeeAgent execution policy before any tool invocation.
+- Keep the execution sequence bounded by explicit step, request, time and AI-use budgets.
+- Persist minimal Case checkpoints through the existing ArtifactAPI, including step states, selected actions, evidence references, decisions, outcomes and measured execution costs.
+- Preserve distinct parent Case identity and individual execution/run identities.
+- Support inspection of the latest Case state, completed steps, pending actions, limitations and next-action recommendations.
+- Support explicit operator-driven continuation of an unfinished or inconclusive Case using its preserved identity.
+- Resume only from authenticated, internally consistent completed checkpoints; do not assume that redacted artifacts contain reusable raw HTTP evidence.
+- Reuse completed steps only when durable authenticated evidence is sufficient. Otherwise require a fresh governed capture and record the reason.
+- Revalidate current scope, target binding, authorization, execution budgets and dependency readiness before resumed network actions.
+- Preserve protected trusted-local TTY presentation and existing sensitive-result redaction guarantees.
+- Produce a useful terminal summary containing status, completed checks, discovered evidence, unresolved hypotheses, recommended next steps, run/Case identifiers and report locations.
+- Record request counts, elapsed time, AI calls and available token/cost usage, action selection and terminal reasons without fabricating unavailable measurements.
+- Preserve existing direct, interactive and task-file CLI behavior and existing investigation artifact compatibility.
+
+#### Excluded
+
+- A new BeeAgent core runtime, parallel orchestrator or standalone BeeScan service.
+- New scanner engines, browser automation, proxy frameworks, arbitrary shell execution or additional network providers.
+- Unrestricted AI tool calling, generated exploitation payloads or unapproved target expansion.
+- Automatic execution of unsupported actions suggested by an LLM.
+- Persistent AI conversation dumps, hidden agent memory or unrestricted reasoning traces.
+- A generic Skill Bank, multi-agent swarm, MCP tool marketplace or external autonomous agent framework.
+- A new database, graph engine, Redis queue, distributed worker system or vector store.
+- Web/BeeUI development, multi-user authorization, subscriptions or billing.
+- Automatic vulnerability verification, exploitation escalation or bug bounty submission.
+- Replaying sensitive plaintext from stored Case artifacts.
+- Repeating completed steps merely to satisfy an expected investigation sequence.
+- Hardcoded PortSwigger targets, challenge paths, answers or laboratory-specific routing.
+- Unrelated BeeAgent core refactors or package-version changes.
+
+#### Deliverable
+
+One complete trusted-local workflow:
+
+`Target + Task → governed discovery → BeeScan next-action decision → governed capability execution → authenticated evidence → evaluation → continue / stop → persisted Case + report`.
+
+The operator can inspect the resulting Case and continue a supported investigation using preserved state and additional instructions.
+
+The workflow reuses existing BeeAgent execution and artifact infrastructure and provides explicit metrics and evidence-backed next actions.
+
+#### Acceptance criteria
+
+- The existing CLI can launch an adaptive investigation without manually constructing a sequence of scanner steps.
+- The first action and subsequent supported actions are selected using validated task context and actual evidence.
+- At least one real investigation demonstrates different next-action decisions for different observed responses under the same general objective.
+- The runtime can execute multiple bounded decision cycles without a hardcoded task-family sequence.
+- Only existing explicitly supported capabilities are executable.
+- Every request is independently checked against current origin, IP, DNS/TLS, scope, budget, deadline and execution policy.
+- Missing authorization, unsupported capability, exhausted budget, invalid AI output or unavailable evidence stops safely with an explicit reason.
+- Completed and authenticated Case steps are preserved with consistent source and execution identities.
+- A second CLI invocation can inspect and resume a supported unfinished Case using its persisted checkpoint.
+- Resumption does not reexecute already completed checks when sufficient safe authenticated state is available.
+- Missing or insufficient persisted evidence results in explicit recapture or refusal, never a fabricated completed result.
+- Changes to target, scope, authority, dependency or Case identity cannot silently inherit previous execution permission.
+- Secrets and raw diagnostic response bodies remain absent from ordinary Case state, logs, AI requests, reports and persisted source artifacts.
+- Trusted-local TTY restrictions and verified cleanup remain effective after each execution segment.
+- Request, elapsed-time, action and AI-use metrics correspond to actual host execution evidence.
+- Failed or unsupported investigations produce a meaningful partial summary and actionable next steps.
+- Existing BS-8/BS-9/BS-10 and unrelated BeeAgent workflows remain compatible.
+
+#### Checks
+
+- Full adaptive investigation against controlled vulnerable and patched HTTP/HTTPS laboratories.
+- Different discovery responses leading to different BeeScan-selected supported checks.
+- Negative-result follow-up, unsupported capability, missing evidence and explicit terminal-stop scenarios.
+- Same objective against previously unfamiliar laboratory fixtures without implementation changes specific to those fixtures.
+- Fresh process restart followed by Case inspection and authorized resume.
+- Completed-step reuse, interrupted-step handling and prevention of duplicate completed work.
+- Scope drift, changed destination, DNS rebinding, TLS failure, redirects, expired authority and exceeded-budget scenarios.
+- Malicious HTTP content and AI output attempting to alter target, method, execution policy or capability arguments.
+- Case/checkpoint tampering, foreign-run evidence, inconsistent transitions and missing artifact read-back tests.
+- Secret redaction across AI transport, logs, Case checkpoints, child artifacts, reports and non-TTY output.
+- Exact request accounting, subprocess isolation, cleanup verification and controlled failure recovery.
+- Existing framework-version/debug-disclosure and unrelated module regressions.
+- Full pytest, applicable static/security checks, build, integration tests, artifact inspection, independent BeeMCP review and hosted CI.
+
+#### DoD
+
+A trusted local operator can initiate one bounded adaptive BeeScan investigation, observe evidence-driven selection of supported follow-up checks, receive a meaningful final or partial result, and resume supported unfinished work using a validated persistent Investigation Case.
+
+At least one previously unfamiliar controlled scenario demonstrates adaptive behavior without challenge-specific code changes.
+
+All actual tool execution remains within BeeAgent's existing authorization, destination, resource, isolation and evidence boundaries.
+
+The implementation reuses existing providers and infrastructure, preserves existing investigation compatibility and introduces no additional runtime, database or multi-agent subsystem.
+
+No unrelated version change occurs.
+
 ---
 
 ## Post-MVP product directions
