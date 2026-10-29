@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.82.0...beeagent-v0.83.0) (2026-10-29)
+
+
+### Features
+
+* **beescan:** add governed debug-page investigation ([#345](https://github.com/beesyst/beeagent/issues/345)) ([e387b5f](https://github.com/beesyst/beeagent/commit/e387b5f8f6ac63ff0b3e3ec315258af482416130))
+
 ## [0.82.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.81.3...beeagent-v0.82.0) (2026-10-27)
 
 
