@@ -1420,6 +1420,203 @@ The implementation reuses existing providers and infrastructure, preserves exist
 
 No unrelated version change occurs.
 
+### Iteration BS-12 — Autonomous Web Investigation CLI MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Deliver a practically usable, operator-facing Web information-disclosure investigation MVP powered by the BeeScan It13 general discovery and hypothesis decision API.
+
+The operator supplies only an authorized Target and a natural-language Task. BeeAgent starts a governed investigation automatically, invokes AI and available tools as needed, follows evidence-backed next-action decisions and returns a defensible answer or a useful partial report.
+
+Complete the product workflow end-to-end before introducing a Web UI or expanding to additional vulnerability classes.
+
+The investigation runtime must no longer terminate before discovery merely because the task is absent from a fixed enum of previously implemented disclosure scenarios.
+
+#### Proven necessity
+
+The actual PortSwigger backup-file test stopped with `unsupported_investigation_task` after one AI call, zero HTTP requests and exit code 5.
+
+The BS-11 host interprets the task as a fixed objective enum before any network discovery. Its execution loop then selects only the two existing capability families.
+
+The current system has sound baseline execution, evidence, isolation and checkpoint mechanisms but lacks general Web research orchestration, useful first-pass discovery for unfamiliar tasks and an operator-ready outcome for unsupported problems.
+
+These limitations must be addressed together, not split into additional small iterations.
+
+#### Depends on
+
+- BeeScan It13 general Web discovery, hypothesis and evidence interpretation API.
+- Existing BeeScan It10/It11/It12 investigation semantics.
+- Existing BeeAgent BS-7–BS-11 managed egress, trusted-local CLI, AI profiles, HTTP capture, source authentication, ArtifactAPI, Case persistence and reporting.
+- Existing BeeSDK public contracts.
+- Approved one-target execution scope and current host security controls.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Make the adaptive investigation loop the default behavior for normal BeeScan operator investigation commands.
+- Preserve `--inspect`, `--resume` and supported legacy behavior without making `--adaptive` or a fixed vulnerability category mandatory for normal use.
+- Provide one primary CLI workflow:
+
+  `./start.sh beescan investigate --target URL --task "Natural-language research objective"`
+
+- Reuse existing trusted-local operator authorization, exact target scope, managed egress, DNS/TLS validation, destination policy and resource accounting. Do not add new per-request confirmation steps.
+- Replace fail-fast fixed-family AI classification for general investigation with bounded objective interpretation and hypothesis assistance that accepts unfamiliar research tasks.
+- Begin permitted general Web discovery before concluding that an unfamiliar task cannot be solved.
+- Reuse existing governed HTTP execution for bounded same-origin discovery:
+  - Initial target response.
+  - Standard public discovery resources such as `robots.txt` and `sitemap.xml`.
+  - Source-observed same-origin links and referenced resources.
+  - Bounded directory-index and exposed text/source resources.
+  - Existing supported investigation capabilities when indicated by evidence.
+- Apply bounded queueing, canonicalization, deduplication, maximum depth, request budgets and timeouts to the discovery loop.
+- Ensure every actual network action is separately validated against existing host execution authority and destination controls; no fresh manual approval is required for each ordinary in-scope GET.
+- Use the existing AI profile for semantic interpretation and bounded hypothesis generation where deterministic parsing is insufficient.
+- Constrain proposed actions to supported host capabilities and approved destination/method/resource limits before execution.
+- Return authenticated, bounded observations to BeeScan It13 for hypothesis reevaluation and next-action decisions.
+- Support both:
+  - Evidence-backed resolution of a task, with a precise answer when established.
+  - Partial investigation of an unresolved task, with explicit observations, attempted actions, limitations and recommended next steps.
+- Provide a general source/content interpretation path for publicly exposed textual code and configuration resources discovered within the approved scope.
+- Reuse protected transient handling of secret values and trusted-terminal presentation when an exact sensitive answer is legitimately requested. Never store disclosed passwords or full sensitive responses in ordinary reports or Case artifacts.
+- Preserve existing framework-version, debug-page, passive-signal and applicable governed detection functionality; route through existing contracts instead of duplicating providers or domain logic.
+- Reuse and minimally extend the BS-11 Investigation Case/checkpoint mechanism to preserve discovery steps, hypotheses, decisions, evidence references, metrics, outcomes and operator continuation context.
+- Support `--inspect` and `--resume` on incomplete investigations without repeating sufficient authenticated completed work.
+- Preserve a truthful distinction between terminal success, partial progress, inconclusive results, refusal, timeout and execution errors.
+- Produce useful human-readable terminal output plus structured JSON and Markdown reports with:
+  - Task and target summary.
+  - Actual actions and examined resources.
+  - Evidence-backed answer or finding candidate.
+  - Unresolved hypotheses and gaps.
+  - Specific next recommended actions.
+  - Case ID and report location.
+  - Exact request counts, AI-call counts and elapsed time.
+  - Available token/cost data, with explicit unavailable status when not provided.
+- Use a bounded default research budget appropriate to a first-pass single-target investigation, with existing config validation and explicit operator limits. Do not silently introduce unlimited crawling.
+- Maintain backward compatibility with existing approved run artifacts and prior Case inspection wherever feasible.
+- Update only relevant runtime, security, CLI, artifact and operator documentation.
+
+#### Excluded
+
+- A standalone BeeScan server or second execution/orchestration runtime.
+- New browser automation, Playwright integration, proxy infrastructure or generic shell executor without a proven blocker.
+- New multi-agent frameworks, Skill Bank, marketplaces, RAG or vector/graph storage.
+- A large generic crawler or unbounded wordlist brute-force engine.
+- Autonomous exploitation, state-changing requests, login attacks or high-volume vulnerability probing.
+- Automatic target expansion beyond the operator's authorized origin/scope.
+- Arbitrary AI-generated shell commands, network destinations, HTTP methods or exploitation payloads.
+- Automatic submission to PortSwigger, HackerOne, Bugcrowd or other bounty platforms.
+- New BeeSDK, BeeUI or generic BeeAgent core interfaces without an actual blocker.
+- Web UI implementation during this CLI-first product acceptance increment.
+- New database, job queue, distributed worker or scheduler.
+- Duplicated authorization layers or per-request approval prompts.
+- Hardcoded PortSwigger paths, database passwords, laboratory solutions or task-specific bypasses.
+- Unrelated refactoring, speculative abstractions and version changes.
+
+#### Deliverable
+
+One complete operator workflow:
+
+`Target + Task → Governed Discovery → BeeScan Hypotheses → Supported Action → Governed Execution → Evidence Evaluation → Continue / Stop → Answer or Partial Report`.
+
+A user can launch the workflow without providing a vulnerability-family identifier, manually writing a tool plan or enabling a separate adaptive mode.
+
+A completed investigation exposes its decisions, actual observations, meaningful outcome, metrics and continuation guidance through CLI and existing Case artifacts.
+
+#### Acceptance criteria
+
+- `./start.sh beescan investigate --target URL --task TEXT` launches the adaptive investigation by default.
+- A task absent from the old `adaptive_objective` enum does not fail before discovery solely because its category is unfamiliar.
+- The first successful supported discovery produces authenticated observations visible to the BeeScan decision API.
+- Different observed resources cause different supported action selections without hardcoded challenge-specific workflows.
+- The system can follow a bounded chain of evidence-discovered same-origin resources and analyze the final resource as task-relevant content.
+- Existing HTTP providers, DNS/TLS checks, isolation and authorization remain the only actual network execution path.
+- Real tool calls cannot be introduced solely by free-form AI output.
+- Action planning and execution are bounded by actual request, step, depth and time ceilings.
+- A normal permitted investigation does not require separate manual confirmation for each in-scope HTTP request.
+- A previously unsupported information-disclosure task can now be investigated and, when evidence permits, answered automatically.
+- The answer is supported by authenticated response evidence, not the AI model's guess, a prior laboratory solution or a known hostname.
+- An unresolved task produces a useful PARTIAL/INCONCLUSIVE report rather than a generic unsupported-task error after zero discovery requests.
+- A patched or unrelated application produces no invented credential, successful finding or false vulnerability claim.
+- Sensitive credentials remain absent from AI inputs, logs, JSON/Markdown reports, Case checkpoints and redirected output; approved local TTY presentation remains protected.
+- Case checkpoint history captures discovery, hypotheses, selected actions, evidence references, completed steps, terminal reasons and actual measured metrics.
+- Fresh-process inspection and continuation work using existing safe Case identity/provenance semantics.
+- Invalid, missing, altered or insufficient persisted evidence cannot establish a completed action or an authenticated finding.
+- Previous It10/It11/It12 and BS-8–BS-11 workflows remain compatible.
+- No additional BeeAgent runtime, infrastructure service or speculative dependency is introduced.
+
+#### Product acceptance — mandatory before PR
+
+Run the full real operator entrypoint with actual configured AI transport and governed HTTP/HTTPS execution.
+
+Required acceptance suite:
+
+1. The previously blocked PortSwigger backup-file disclosure laboratory, or a newly launched equivalent instance. Supply only Target and Task; no manual path hints, expected answers or laboratory-specific routing inside code.
+2. A distinct unfamiliar disclosure scenario with different HTML/resource structure, names and paths. Demonstrate that the same planning/execution mechanism handles it without code changes.
+3. A patched/non-disclosing scenario. Demonstrate truthful negative or partial conclusions and meaningful next actions.
+4. At least one previously solved framework-version case and one debug-secret case as regression checks.
+5. A task that cannot be fully solved using available capabilities. Demonstrate useful evidence-backed partial reporting, not an unsupported-task failure before discovery.
+6. Fresh-process Case inspection and resume, including absence of unnecessary repeated completed work.
+7. Adversarial inputs, changed DNS/IP/scope, denied actions, redirect boundaries, corrupted checkpoints and secret-redaction checks.
+
+For the backup-file scenario, success means discovery of the relevant exposed resource through a general, documented discovery technique and extraction of the requested value from the actual response, when the resource is discoverable within the approved bounds. The value must not be hardcoded or fabricated.
+
+If a live laboratory is unavailable, a realistic controlled equivalent can verify functional behavior, but at least one separate real public authorized target must still demonstrate the live operator path before MVP acceptance.
+
+No simulated AI-only run or unit-test-only verification is sufficient.
+
+#### Checks
+
+- Full BeeAgent pytest and all affected legacy BeeScan integration tests.
+- Controlled real HTTP/HTTPS discovery, content analysis and patched-site scenarios.
+- Actual LLM objective interpretation and hypothesis assistance with strict action validation.
+- Fresh-process CLI launch, inspect and resume.
+- Scope, destination, DNS/TLS, request accounting, deadline and egress cleanup regressions.
+- Hostile content, prompt injection, unsafe paths, unsupported methods and malformed responses.
+- Case persistence, evidence identity, checkpoint integrity, safe recapture and duplication checks.
+- TTY/non-TTY secret handling and log/artifact redaction.
+- Actual request/time/AI metrics and meaningful partial reports.
+- Full package build, scoped static/type/SAST checks and security-sensitive independent verification.
+- Hosted CI and final review of both repositories.
+
+#### SDLC / PDCA delivery rule
+
+This iteration and BeeScan It13 must be implemented and accepted together.
+
+Use separate repository Issues and feature branches but a shared implementation/verification workflow and coordinated acceptance evidence.
+
+Keep the editable BeeScan dependency during local development when working on both source trees. Finalize the production Git dependency during the merge process, not as a blocker to local integration.
+
+Perform iterative implementation, targeted tests, full tests, real PortSwigger execution, product-gap analysis and fixes inside the same two feature branches.
+
+Do not split missing functionality required by this accepted MVP into additional iterations merely because it spans multiple files, tests, prompts or execution steps.
+
+Do not mark one repository's increment complete or proceed with its PR as a finished product while the paired repository and end-to-end acceptance remain blocked.
+
+Only after both implementations satisfy the shared Definition of Done: complete independent reviews, prepare two PRs, run hosted CI and perform user-authorized squash merges in dependency order.
+
+#### DoD
+
+A trusted local operator can supply a new authorized target and an unfamiliar Web information-disclosure task through a single default CLI command.
+
+BeeAgent performs actual governed discovery; BeeScan forms and reevaluates evidence-backed hypotheses; existing providers execute supported actions; and the operator receives either a substantiated answer or a meaningful partial investigation report with next actions.
+
+The previously demonstrated `unsupported_investigation_task` / zero-request product failure is eliminated for safely researchable unfamiliar objectives.
+
+At least one previously unsupported real Web disclosure scenario is solved through reusable discovery and evidence interpretation rather than a challenge-specific detector.
+
+Previously supported scenarios, scope enforcement, managed egress, checkpoint safety, sensitive-value protection and artifact integrity remain intact.
+
+Real AI/HTTP operator acceptance, unfamiliar/patched targets, regression suites, independent review and hosted CI pass before the coordinated merge.
+
+The result is a useful CLI-first Web reconnaissance/information-disclosure Bug Bounty MVP, not a claim of comprehensive automated penetration testing.
+
+No unrelated package-version change occurs.
+
 ---
 
 ## Post-MVP product directions

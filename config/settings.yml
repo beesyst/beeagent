@@ -122,7 +122,7 @@ beescan:
     output_chars_max: 2000
     body_bytes_max: 73728
     adaptive:
-      enabled: false
+      enabled: true
       max_steps: 2
       max_requests: 6
 
