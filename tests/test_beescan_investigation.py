@@ -145,6 +145,17 @@ def test_missing_key(settings, monkeypatch):
         host.named_ai_profile(settings)
 
 
+def test_general_validation_allows_missing_key_but_validates_profile(settings, monkeypatch):
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    host.validate_investigation_settings(settings, require_ai_key=False)
+    with pytest.raises(RuntimeError, match="AI profile"):
+        host.validate_investigation_settings(settings)
+    settings["ai"]["profiles"]["openrouter"]["base_url"] = "http://provider.test"
+    with pytest.raises(RuntimeError, match="AI profile"):
+        host.validate_investigation_settings(settings, require_ai_key=False)
+
+
 def test_configuration_and_policy(settings, approved):
     validate_beescan_settings(settings)
     assert (
@@ -409,6 +420,19 @@ def test_bounded_capture_discards_private_headers():
         "status_code": 200,
         "content_type": "text/html",
         "body": "Hello",
+        "complete": True,
+    }
+
+
+def test_general_binary_response_is_skipped_before_body_read():
+    parsed = read_investigation_response(
+        Stream(raw_response(b"x" * 2048, content_type=b"image/jpeg")),
+        limit=1024,
+        general=True,
+    )
+    assert parsed == {
+        "status_code": 200,
+        "skip_reason": "unsupported_response_type",
         "complete": True,
     }
 

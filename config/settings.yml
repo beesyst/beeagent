@@ -123,8 +123,9 @@ beescan:
     body_bytes_max: 73728
     adaptive:
       enabled: true
-      max_steps: 2
-      max_requests: 6
+      max_steps: 16
+      max_requests: 20
+      max_depth: 4
 
 beedrill:
   ai_assist:

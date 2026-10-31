@@ -243,7 +243,8 @@ def run_detection_provider(
         or http_signals
         or not callable(on_attempt)
         or type(investigation) is not dict
-        or set(investigation) != {"relative_url", "body_bytes_max"}
+        or set(investigation) - {"general"} != {"relative_url", "body_bytes_max"}
+        or "general" in investigation and investigation["general"] is not True
         or type(investigation["body_bytes_max"]) is not int
         or not 1024 <= investigation["body_bytes_max"] <= 73728
     ):

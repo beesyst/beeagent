@@ -130,7 +130,9 @@ def capture(config):
             stream.sendall(request.encode("ascii"))
             if investigation:
                 result = read_investigation_response(
-                    stream, limit=config["body_bytes_max"]
+                    stream,
+                    limit=config["body_bytes_max"],
+                    general=config.get("general", False),
                 )
                 result.update(
                     origin=config["origin"],
@@ -249,7 +251,9 @@ def capture(config):
             stream.close()
 
 
-def read_investigation_response(stream, *, limit):
+def read_investigation_response(stream, *, limit, general=False):
+    if type(general) is not bool:
+        raise ValueError("invalid_response_limit")
     if type(limit) is not int or not 1 <= limit <= 73728:
         raise ValueError("invalid_response_limit")
     header = bytearray()
@@ -291,25 +295,36 @@ def read_investigation_response(stream, *, limit):
         raise ValueError("response_length_missing")
     if re.fullmatch(r"[0-9]{1,6}", length) is None:
         raise ValueError("invalid_response_length")
-    if int(length) > limit:
-        raise ResponseLengthExceeded(int(length))
     content_type = headers.get("content-type", "").lower()
     untyped_error = status == 500 and "content-type" not in headers
+    media_pattern = (
+        r"(?:text/html|text/plain|application/xhtml\+xml|text/xml|application/xml|application/json|application/javascript|text/javascript)"
+        if general
+        else r"(?:text/html|text/plain|application/xhtml\+xml)"
+    )
     if (
         not untyped_error
         and re.fullmatch(
-            r"(?:text/html|text/plain|application/xhtml\+xml)"
-            r"(?:; *charset=(?:utf-8|us-ascii))?",
+            media_pattern + r"(?:; *charset=(?:utf-8|us-ascii))?",
             content_type,
         )
         is None
     ):
+        if general and not untyped_error:
+            return {
+                "status_code": status,
+                "skip_reason": "unsupported_response_type",
+                "complete": True,
+            }
         if (
             status == 404
             and content_type.split(";", 1)[0].strip() == "application/json"
+            and not general
         ):
             raise ValueError("response_json_status_404")
         raise ValueError("unsupported_response_type")
+    if int(length) > limit:
+        raise ResponseLengthExceeded(int(length))
     body = bytearray()
     while True:
         chunk = stream.recv(min(4096, limit + 1 - len(body)))
