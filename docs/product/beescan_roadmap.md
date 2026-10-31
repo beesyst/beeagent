@@ -1485,6 +1485,78 @@ No new runtime, unnecessary dependency, UI implementation or unrelated version c
 
 ---
 
+## Stage 9 — Governed External DAST Execution
+
+### Iteration BS-13 — Governed ZAP Web Assessment Provider MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Предоставить BeeAgent первую расширяемую DAST capability на основе готового ZAP scanner engine с управляемым запуском и интеграцией результатов в BeeScan.
+
+Устранить необходимость самостоятельно разрабатывать Web fuzzing, parameter mutation и десятки специализированных detector implementations.
+
+#### Scope
+
+- Переиспользовать текущий BeeAgent execution, authorization, policy, evidence и artifact lifecycle.
+- Подключить фиксированную, проверенную версию ZAP как внешний provider, без установки полноценного второго BeeAgent runtime.
+- Запускать ZAP только по явному operator-approved активному профилю.
+- Реализовать ограниченный профиль HTTP parameter security assessment, первоначально использующий существующий ZAP Path Traversal rule ID 6.
+- Использовать проверенный механизм discovery/import URL, а не собственный crawler framework.
+- Обеспечить независимое от ZAP ограничение destination, DNS/IP, исходящих соединений, времени и фактического количества запросов.
+- Проверять выполнение sandbox и сетевых ограничений до разрешения активных запусков.
+- Ограничить набор scanner rules, параметров исполнения и ресурсов; запретить unrestricted scripts, external callbacks и автоматическую установку дополнительных компонентов.
+- Сохранять только проверенные и redacted scanner outcomes, доказательства исполнения, request accounting и cleanup.
+- Передавать нормализованные результаты через публичный контракт BeeScan It14.
+- Возвращать CANDIDATE / NO_MATCH / PARTIAL с понятным указанием ограничений и неподтверждённых утверждений.
+- Сохранить существующий investigation CLI, Case semantics и совместимость BS-1–BS-12.
+- Переиспользовать существующие Nuclei и HTTP capabilities, не заменяя их ZAP.
+
+#### Excluded
+
+- Собственный path traversal detector, parameter fuzzer и payload engine.
+- Неограниченный ZAP active scan, unrestricted plugin marketplace и скачивание расширений при исполнении.
+- Предоставление LLM прямого доступа к ZAP API, shell или произвольным HTTP-запросам.
+- Cross-origin scanning, неподтверждённая авторизация и автоматическая эксплуатация.
+- Новый database, scheduler, Web UI, multi-agent runtime или BeeSDK API.
+
+#### Deliverable
+
+`Target + Task + Explicit Scope/Approval → BeeAgent Governed ZAP Profile → Validated External Evidence → BeeScan Evaluation → CANDIDATE / NO_MATCH / PARTIAL + Case + Report`.
+
+#### Acceptance criteria
+
+- Невозможно выполнить активную проверку без явно одобренного профиля.
+- Scanner не выходит за exact origin, approved destination и установленные бюджеты.
+- Проверка контроля фактического HTTP request count проводится независимо от отчёта ZAP.
+- Система прерывает выполнение при нарушении scope, DNS/TLS, лимитов или изоляции.
+- На разрешённой path traversal лаборатории выполняется реальная проверка без challenge-specific implementation.
+- Исправленный и отрицательный scenarios не создают ложных находок.
+- Подмена scanner output, результаты другого run и incomplete evidence отклоняются.
+- Case, результаты, журналы и reports не содержат чувствительного raw HTTP content.
+- Не менее 10 независимых acceptance cases проверяют scanner integration, включая positive, negative, security, compatibility и failure conditions.
+- Старые framework/debug/source-disclosure сценарии сохраняются.
+
+#### Checks
+
+- Targeted/full pytest, Ruff/Pyright, build и hosted CI.
+- Provider integrity, sandbox, scope/IP pinning, request ceilings, timeout и cleanup tests.
+- Реальная end-to-end проверка на разрешённой лаборатории.
+- Negative/patched, malicious scanner output, tampered artifacts и interrupted execution.
+- Сравнение результата с BS-12 baseline.
+- Independent BeeMCP security review перед PR.
+
+#### DoD
+
+BeeAgent использует существующий ZAP scanner engine через enforceable governed provider и получает evidence-backed BeeScan результаты.
+
+Если независимое ограничение сети и запросов не доказано, активный provider не выпускается, а итерация остаётся незавершённой.
+
+Никаких собственных DAST-algorithms, необоснованных зависимостей или изменений версий.
+
+---
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.
