@@ -122,7 +122,9 @@ def named_ai_profile(settings, *, require_key=True):
     return selected
 
 
-def validate_investigation_settings(settings, *, validate_contracts=True):
+def validate_investigation_settings(
+    settings, *, validate_contracts=True, require_ai_key=True
+):
     beescan = settings.get("beescan", {})
     if "investigation" not in beescan:
         return
@@ -137,6 +139,7 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
     }
     if (
         type(config) is not dict
+        or type(require_ai_key) is not bool
         or set(config)
         - {"local_lab_enabled", "ai_profile", "trusted_local_enabled", "adaptive"}
         != {"enabled", "approval", *limits}
@@ -152,12 +155,17 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
         adaptive = config["adaptive"]
         if (
             type(adaptive) is not dict
-            or set(adaptive) != {"enabled", "max_steps", "max_requests"}
+            or set(adaptive) - {"max_depth"} != {"enabled", "max_steps", "max_requests"}
+            or "max_depth" in adaptive
+            and (
+                type(adaptive["max_depth"]) is not int
+                or not 1 <= adaptive["max_depth"] <= 7
+            )
             or type(adaptive["enabled"]) is not bool
             or type(adaptive["max_steps"]) is not int
-            or not 1 <= adaptive["max_steps"] <= 2
+            or not 1 <= adaptive["max_steps"] <= 32
             or type(adaptive["max_requests"]) is not int
-            or not 1 <= adaptive["max_requests"] <= 6
+            or not 1 <= adaptive["max_requests"] <= 32
             or adaptive["enabled"]
             and config.get("trusted_local_enabled") is not True
         ):
@@ -173,7 +181,7 @@ def validate_investigation_settings(settings, *, validate_contracts=True):
         if not enabled or config["enabled"] and config["approval"] is None:
             raise RuntimeError("BeeScan investigation requires independent approval")
     try:
-        named_ai_profile(settings, require_key=active)
+        named_ai_profile(settings, require_key=active and require_ai_key)
         if validate_contracts and config["approval"] is not None:
             InvestigationPolicy.from_config(config["approval"])
     except ImportError, KeyError, TypeError, ValueError:
@@ -910,7 +918,15 @@ def _load_domain(*, local_lab=False, policy=None, local_context=None):
     return domain, revision
 
 
-def _prepare_intent(domain, policy, run_id, *, debug_domain=None, requested_field=None):
+def _prepare_intent(
+    domain,
+    policy,
+    run_id,
+    *,
+    debug_domain=None,
+    requested_field=None,
+    general_budget=None,
+):
     from beescan.domain.models import (
         EngagementScope,
         Mission,
@@ -929,6 +945,11 @@ def _prepare_intent(domain, policy, run_id, *, debug_domain=None, requested_fiel
         else debug_domain.prepare_debug_investigation
     )
     options = {} if debug_domain is None else {"requested_field": requested_field}
+    if general_budget is not None:
+        capability = domain.GENERAL_CAPABILITY
+        budget = general_budget
+        prepare = domain.InvestigationIntent
+        options = {"task_family": domain.GENERAL_TASK}
     return prepare(
         Project(transport.project_id, "Approved web investigation"),
         (
@@ -964,7 +985,11 @@ def _prepare_intent(domain, policy, run_id, *, debug_domain=None, requested_fiel
             budget,
             transport.time_budget_seconds,
         ),
-        at=datetime.now(UTC),
+        **(
+            {"started_at": datetime.now(UTC)}
+            if general_budget is not None
+            else {"at": datetime.now(UTC)}
+        ),
         run_id=run_id,
         provider_id="host-web-capture",
         provider_version="1",
@@ -984,6 +1009,7 @@ def execute_investigation(
     progress=None,
     adaptive=False,
     resume_case_id=None,
+    general=False,
 ):
     from beeagent_module.integrations.beescan.assessment import _write_report
     from beeagent_module.integrations.beescan.detection import _persist
@@ -998,6 +1024,7 @@ def execute_investigation(
         open_directory,
     )
 
+    adaptive = bool(adaptive or general)
     settings = deepcopy(settings)
     run_id, session_id = generate_run_id("investigation"), generate_session_id()
 
@@ -1064,6 +1091,9 @@ def execute_investigation(
     previous_case = resume_snapshot = None
     action_start = 0
     ai_calls = 0
+    general_case = None
+    general_entries = []
+    skipped_resources = []
 
     def authorize(*, resolve=False):
         current_policy = policy
@@ -1212,6 +1242,7 @@ def execute_investigation(
             investigation={
                 "relative_url": selected.relative_url,
                 "body_bytes_max": config["body_bytes_max"],
+                **({"general": True} if general else {}),
             },
             on_attempt=on_attempt,
             deadline=deadline,
@@ -1220,6 +1251,40 @@ def execute_investigation(
             raise ValueError("request_count_unverified")
         authorize()
         captured = _json(raw)
+        if general and (
+            set(captured)
+            == {
+                "origin",
+                "connected_ip",
+                "port",
+                "method",
+                "relative_url",
+                "request_count",
+                "status_code",
+                "skip_reason",
+                "complete",
+            }
+            and all(
+                captured[key] == value
+                for key, value in {
+                    "origin": current_policy.transport.origin,
+                    "connected_ip": current_policy.transport.connected_ip,
+                    "port": current_policy.transport.port,
+                    "method": "GET",
+                    "relative_url": selected.relative_url,
+                    "request_count": 1,
+                    "skip_reason": "unsupported_response_type",
+                    "complete": True,
+                }.items()
+            )
+            and type(captured["status_code"]) is int
+            and 200 <= captured["status_code"] <= 599
+        ):
+            child_status.update(complete=True, skip_reason=captured["skip_reason"])
+            step.update(status="skipped", reason=captured["skip_reason"])
+            _persist(child, "capture_status.json", child_status)
+            _persist(artifacts, "investigation_steps.json", steps)
+            return None, 1
         response_id = generate_run_id("response")
         evidence_ref = generate_run_id("web-source")
         facts = capture_to_facts(
@@ -1233,7 +1298,7 @@ def execute_investigation(
             evidence_ref=evidence_ref,
             elapsed_seconds=int(time.monotonic() - begin),
             body_bytes_max=config["body_bytes_max"],
-            redacted=debug_domain is not None or adaptive and case is None,
+            redacted=general or debug_domain is not None or adaptive and case is None,
         )
         if debug_domain is not None or adaptive:
             from beescan.domain.debug_disclosure import TransientText
@@ -1383,6 +1448,450 @@ def execute_investigation(
         )
         status.update(case_id=case.case_id, metrics=state["metrics"])
 
+    def general_checkpoint(*, pending):
+        if general_case is None or case_artifacts is None or policy is None:
+            return
+        from beeagent_module.integrations.beescan.case_state import save_case
+
+        old_metrics = previous_case["metrics"] if previous_case else {}
+        metrics = {
+            "request_count": old_metrics.get("request_count", 0)
+            + status["request_count"],
+            "request_count_exact": old_metrics.get("request_count_exact", True)
+            and status["request_count_exact"],
+            "capture_launch_count": old_metrics.get("capture_launch_count", 0)
+            + status["capture_launch_count"],
+            "elapsed_seconds": old_metrics.get("elapsed_seconds", 0)
+            + time.monotonic()
+            - started,
+            "ai_calls": old_metrics.get("ai_calls", 0) + ai_calls,
+            "tokens": None,
+            "cost": None,
+            "usage_status": "unavailable",
+        }
+        state = {
+            "schema_version": 2,
+            "case_id": general_case.case_id,
+            "origin": policy.transport.origin,
+            "connected_ip": policy.transport.connected_ip,
+            "dependency_revision": status["dependency_revision"],
+            "objective_id": general_case.objective_id,
+            "requested_field": general_case.requested_field,
+            "segments": (previous_case["segments"] if previous_case else []) + [run_id],
+            "outcomes": [],
+            "entries": (previous_case["entries"] if previous_case else [])
+            + general_entries,
+            "decisions": (previous_case["decisions"] if previous_case else [])
+            + case_decisions,
+            "skipped_resources": list(skipped_resources),
+            "status": status["status"],
+            "reason": status["reason"],
+            "pending": pending,
+            "terminal": status["complete"]
+            or status["reason"] in {"no_eligible_action", "ambiguous_evidence"},
+            "metrics": metrics,
+        }
+        save_case(case_artifacts, state)
+        status.update(case_id=general_case.case_id, metrics=metrics)
+        _persist(case_artifacts, "case_report.json", state)
+        _write_report(
+            case_artifacts,
+            "case_report.md",
+            "# General investigation\n\n```json\n"
+            + json.dumps(state, indent=2)
+            + "\n```\n",
+        )
+
+    def run_general():
+        nonlocal intent, general_case, session, sensitive, ai_calls, ai_profile
+        import importlib
+
+        from beescan.capabilities.catalog import Capability, ToolCatalog, ToolDefinition
+        from beescan.domain.debug_disclosure import TransientText
+
+        from beeagent_module.integrations.beescan.case_state import digest
+
+        current_task = task
+        current_policy = policy
+        current_deadline = deadline
+        current_domain = domain
+        if (
+            type(current_task) is not InvestigationTask
+            or type(current_policy) is not InvestigationPolicy
+            or type(current_deadline) is not float
+            or current_domain is None
+        ):
+            raise PermissionError("investigation_not_approved")
+
+        def next_action(decision):
+            if decision.resource is None:
+                return decision.guidance
+            return (
+                "Continue bounded discovery with evidence-derived resource "
+                + decision.resource.relative_url
+                + " ("
+                + decision.reason
+                + ")."
+            )
+
+        api_domain = importlib.import_module("beescan.domain.general_investigation")
+        api_file = getattr(api_domain, "__file__", None)
+        domain_file = getattr(current_domain, "__file__", None)
+        if (
+            not isinstance(api_file, str)
+            or not isinstance(domain_file, str)
+            or Path(api_file).resolve()
+            != Path(domain_file).resolve().with_name("general_investigation.py")
+        ):
+            raise ImportError("reviewed_it13_revision_unavailable")
+        if "max_depth" not in config["adaptive"]:
+            raise ValueError("general_discovery_limits_missing")
+        field = api_domain.requested_source_field(TransientText(current_task["task"]))
+        intent = _prepare_intent(
+            current_domain,
+            current_policy,
+            run_id,
+            general_budget=config["adaptive"]["max_requests"],
+        )
+        fresh = api_domain.start_general(
+            resume_case_id or run_id,
+            intent,
+            TransientText(current_task["task"]),
+            requested_field=field,
+            max_steps=config["adaptive"]["max_steps"],
+            max_depth=config["adaptive"]["max_depth"],
+        )
+        if previous_case is None:
+            general_case = fresh
+        else:
+            from beescan.domain.general_investigation import Resource, Surface
+
+            if (
+                previous_case["terminal"]
+                or previous_case["origin"] != current_policy.transport.origin
+                or previous_case["connected_ip"]
+                != current_policy.transport.connected_ip
+                or previous_case["objective_id"] != fresh.objective_id
+                or previous_case["requested_field"] != field
+            ):
+                raise PermissionError("general_case_identity_changed")
+            surfaces = []
+            for entry in previous_case["entries"]:
+                raw = dict(entry["surface"])
+                raw["resources"] = tuple(
+                    Resource(**{**item, "evidence_refs": tuple(item["evidence_refs"])})
+                    for item in raw["resources"]
+                )
+                raw["evidence_refs"] = tuple(raw["evidence_refs"])
+                raw["parameter_names"] = tuple(raw["parameter_names"])
+                surfaces.append(Surface(**raw))
+            if any(surface.context_id != intent.binding for surface in surfaces):
+                raise PermissionError("general_case_identity_changed")
+            general_case = api_domain.GeneralCase(
+                resume_case_id,
+                intent,
+                fresh.objective_id,
+                field,
+                tuple(surfaces),
+                min(32, len(surfaces) + config["adaptive"]["max_steps"]),
+                config["adaptive"]["max_depth"],
+            )
+            skipped_resources.extend(previous_case.get("skipped_resources", []))
+        catalog = ToolCatalog(
+            (
+                Capability(
+                    api_domain.CAPABILITY, "Governed same-origin resource discovery"
+                ),
+            ),
+            (ToolDefinition("host-web-capture", (api_domain.CAPABILITY,), "1"),),
+        )
+        status.update(
+            status="INCONCLUSIVE",
+            reason="discovery_incomplete",
+            complete=False,
+            task_family="general_web_research",
+        )
+        general_checkpoint(pending=True)
+        authorize(resolve=True)
+        session = ManagedEgress(
+            current_policy.transport,
+            artifacts=artifacts,
+            assessment_run_id=run_id,
+            seconds=max(1, math.ceil(current_deadline - time.monotonic())),
+        )
+        session.start()
+        if general_case.surfaces:
+            initial = api_domain.decide_general(
+                general_case,
+                catalog=catalog,
+                available_capabilities=(api_domain.CAPABILITY,),
+                at=datetime.now(UTC),
+                excluded_relative_urls=tuple(
+                    item["relative_url"] for item in skipped_resources
+                ),
+            )
+            selected = (
+                intent.request("resource", initial.resource.relative_url)
+                if initial.resource
+                else None
+            )
+            depth = initial.resource.depth if initial.resource else 0
+        else:
+            selected = intent.discovery
+            depth = 0
+        while selected is not None:
+            authorize()
+            if len(general_entries) >= config["adaptive"]["max_steps"]:
+                status.update(reason="step_budget_exhausted")
+                break
+            if status["capture_launch_count"] >= config["adaptive"]["max_requests"]:
+                status.update(reason="request_budget_exhausted")
+                break
+            general_checkpoint(pending=True)
+            facts, count = capture(selected, reauthorize=authorize)
+            if facts is None:
+                skipped_resources.append(
+                    {
+                        "relative_url": selected.relative_url,
+                        "reason": "unsupported_response_type",
+                    }
+                )
+                decision = api_domain.decide_general(
+                    general_case,
+                    catalog=catalog,
+                    available_capabilities=(api_domain.CAPABILITY,),
+                    at=datetime.now(UTC),
+                    excluded_relative_urls=tuple(
+                        item["relative_url"] for item in skipped_resources
+                    ),
+                )
+                case_decisions.append(
+                    {
+                        "reason": decision.reason,
+                        "action_id": decision.resource.action_id
+                        if decision.resource
+                        else None,
+                        "guidance": decision.guidance,
+                    }
+                )
+                status.update(
+                    reason=decision.reason,
+                    next_actions=[next_action(decision)],
+                )
+                if decision.resource is None:
+                    break
+                selected = intent.request("resource", decision.resource.relative_url)
+                depth = decision.resource.depth
+                continue
+            persist_source(facts)
+            if count != 1 or not verify_source(facts):
+                raise ValueError("unauthenticated_investigation_source")
+            surface, answer = api_domain.observe_surface(
+                intent,
+                facts,
+                transient_content.pop(facts.response_id),
+                depth=depth,
+                requested_field=field,
+                at=datetime.now(UTC),
+            )
+            general_case = api_domain.record_surface(general_case, surface)
+            source = source_manifest[-1]
+            general_entries.append(
+                {
+                    "surface": asdict(surface),
+                    "segment_run_id": run_id,
+                    "source": {
+                        **source,
+                        "source_sha256": digest(
+                            snapshot.json(source["run_id"], "source.json")
+                        ),
+                        "marker_sha256": digest(
+                            snapshot.json(source["run_id"], "capture_status.json")
+                        ),
+                    },
+                }
+            )
+            if answer is not None:
+                sensitive = answer
+            preference = None
+            available_resources = [
+                item
+                for item in general_case.resources
+                if item.relative_url
+                not in {item.relative_url for item in general_case.surfaces}
+                and item.depth <= general_case.max_depth
+            ][:64]
+            available = [item.action_id for item in available_resources]
+            if (
+                ai_calls == 0
+                and not surface.source_disclosure
+                and len(available_resources) > 1
+                and len({item.relation for item in available_resources}) == 1
+            ):
+
+                def counted():
+                    nonlocal ai_calls
+                    ai_calls += 1
+
+                try:
+                    assistance = _ai(
+                        settings,
+                        "general_assistance",
+                        {
+                            "resource_count": len(general_case.resources),
+                            "response_count": len(general_case.surfaces),
+                            "source_observed": surface.source_disclosure,
+                            "eligible_action_ids": available,
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["recommendation", "preferred_action_id"],
+                            "properties": {
+                                "recommendation": {
+                                    "type": "string",
+                                    "enum": [
+                                        "continue_bounded_discovery",
+                                        "review_evidence",
+                                    ],
+                                },
+                                "preferred_action_id": {
+                                    "anyOf": [
+                                        {"type": "null"},
+                                        {"type": "string", "enum": available},
+                                    ]
+                                },
+                            },
+                        },
+                        logger,
+                        deadline=current_deadline,
+                        on_call=counted,
+                    )
+                    preference = assistance.get("preferred_action_id")
+                    status["ai_assistance"] = assistance.get("recommendation")
+                except ValueError, RuntimeError:
+                    status["ai_assistance"] = "unavailable"
+            try:
+                decision = api_domain.decide_general(
+                    general_case,
+                    catalog=catalog,
+                    available_capabilities=(api_domain.CAPABILITY,),
+                    at=datetime.now(UTC),
+                    preferred_action_id=preference,
+                    excluded_relative_urls=tuple(
+                        item["relative_url"] for item in skipped_resources
+                    ),
+                )
+            except ValueError:
+                status["ai_assistance"] = "rejected"
+                decision = api_domain.decide_general(
+                    general_case,
+                    catalog=catalog,
+                    available_capabilities=(api_domain.CAPABILITY,),
+                    at=datetime.now(UTC),
+                    excluded_relative_urls=tuple(
+                        item["relative_url"] for item in skipped_resources
+                    ),
+                )
+            case_decisions.append(
+                {
+                    "reason": decision.reason,
+                    "action_id": decision.resource.action_id
+                    if decision.resource
+                    else None,
+                    "guidance": decision.guidance,
+                }
+            )
+            status.update(
+                reason=decision.reason,
+                next_actions=[next_action(decision)],
+                evidence_refs=sorted(
+                    {
+                        ref
+                        for item in general_case.surfaces
+                        for ref in item.evidence_refs
+                    }
+                ),
+            )
+            general_checkpoint(pending=True)
+            if decision.resource is None:
+                if decision.reason in {
+                    "answer_supported",
+                    "source_disclosure_supported",
+                }:
+                    status.update(
+                        status="MATCH",
+                        complete=True,
+                        reason="ok",
+                        disposition="CANDIDATE",
+                        answer=(
+                            "Requested field established from authenticated source; value redacted."
+                            if decision.reason == "answer_supported"
+                            else "Authenticated source/configuration resource observed."
+                        ),
+                    )
+                break
+            selected = intent.request("resource", decision.resource.relative_url)
+            depth = decision.resource.depth
+        close_egress()
+        authorize()
+        update_general_summary()
+        general_checkpoint(pending=False)
+
+    def update_general_summary():
+        if general_case is None:
+            return
+        unresolved = next(
+            (
+                item
+                for item in general_case.surfaces
+                if item.source_disclosure
+                and item.status_code == 200
+                and not item.answer_supported
+                and not item.ambiguous
+            ),
+            None,
+        )
+        source_analysis = None
+        if (
+            unresolved is not None
+            and general_case.requested_field is not None
+            and status["status"] in {"TIMEOUT", "INCONCLUSIVE"}
+        ):
+            source_analysis = {
+                "relative_url": unresolved.relative_url,
+                "status_code": unresolved.status_code,
+                "source_disclosure": True,
+                "answer_supported": False,
+                "reason": "requested_field_not_established",
+            }
+            status["next_actions"] = [
+                "Analyze authenticated source resource "
+                + unresolved.relative_url
+                + " for database connection credential syntax; the requested field was not established."
+            ]
+        status.update(
+            inspected_resources=[
+                {
+                    "relative_url": item.relative_url,
+                    "status_code": item.status_code,
+                    "media_type": item.media_type,
+                    "evidence_refs": list(item.evidence_refs),
+                    "source_disclosure": item.source_disclosure,
+                    "answer_supported": item.answer_supported,
+                    "ambiguous": item.ambiguous,
+                }
+                for item in general_case.surfaces
+            ],
+            skipped_resources=list(skipped_resources),
+            source_analysis=source_analysis,
+            decisions=case_decisions,
+            limitations=[
+                "Only bounded same-origin resources were inspected; absence of disclosure does not establish target safety.",
+                "Sensitive values are transient; candidates require independent human verification.",
+            ],
+        )
+
     def run_adaptive():
         nonlocal intent, case, case_domain, debug_domain, analysis, sensitive
         nonlocal session, action_start, case_history, ai_calls, ai_profile
@@ -1465,6 +1974,9 @@ def execute_investigation(
         )
         session.start()
         facts, _ = capture(intent.discovery, reauthorize=authorize)
+        if facts is None:
+            raise ValueError("invalid_investigation_capture")
+
         persist_source(facts)
         if verify_source(facts) is not True:
             raise ValueError("unauthenticated_investigation_source")
@@ -1624,7 +2136,7 @@ def execute_investigation(
         if local_selected or config.get("enabled") is True:
             if resume_case_id is not None and not adaptive:
                 raise PermissionError("adaptive_required")
-            validate_investigation_settings(settings)
+            validate_investigation_settings(settings, require_ai_key=not general)
             if adaptive:
                 import fcntl
 
@@ -1634,7 +2146,8 @@ def execute_investigation(
 
                 if (
                     not local_selected
-                    or config.get("adaptive", {}).get("enabled") is not True
+                    or not general
+                    and config.get("adaptive", {}).get("enabled") is not True
                 ):
                     raise PermissionError("adaptive_not_approved")
                 validate_identifier(resume_case_id or run_id)
@@ -1722,7 +2235,9 @@ def execute_investigation(
                     status="ERROR",
                 )
                 authorize()
-                if adaptive:
+                if general:
+                    run_general()
+                elif adaptive:
                     run_adaptive()
                 else:
                     ai_profile = named_ai_profile(settings)
@@ -1853,7 +2368,16 @@ def execute_investigation(
                     status="ERROR", reason="cleanup_unverified", complete=False
                 )
 
-    if adaptive and case is None:
+    if general_case is not None:
+        update_general_summary()
+        try:
+            general_checkpoint(pending=status["reason"] == "cleanup_unverified")
+        except OSError, ValueError, RuntimeError:
+            status.update(
+                status="ERROR", reason="case_checkpoint_unverified", complete=False
+            )
+
+    if adaptive and case is None and general_case is None:
         status.update(
             metrics={
                 "request_count": status["request_count"],
@@ -1886,7 +2410,13 @@ def execute_investigation(
         }
         if local_selected:
             result["report_location"] = str(artifacts.artifact_dir() / "report.md")
-            result["disposition"] = "CANDIDATE" if result["findings"] else None
+            result["disposition"] = (
+                "CANDIDATE"
+                if result["findings"]
+                or general
+                and status.get("disposition") == "CANDIDATE"
+                else None
+            )
             status.update(
                 framework=result["framework"],
                 version=result["version"],
@@ -1899,6 +2429,33 @@ def execute_investigation(
         if report is not None:
             _write_report(artifacts, "report.json", report.canonical_json)
             _write_report(artifacts, "report.md", report.markdown)
+        elif general:
+            summary = {
+                "target": policy.transport.origin if policy is not None else None,
+                "objective_id": (
+                    general_case.objective_id if general_case is not None else None
+                ),
+                "status": result["status"],
+                "reason": result["reason"],
+                "disposition": result.get("disposition"),
+                "answer": result.get("answer"),
+                "inspected_resources": result.get("inspected_resources", []),
+                "skipped_resources": result.get("skipped_resources", []),
+                "evidence_refs": result.get("evidence_refs", []),
+                "decisions": result.get("decisions", []),
+                "metrics": result.get("metrics"),
+                "limitations": result.get("limitations", []),
+                "next_actions": result.get("next_actions", []),
+                "source_analysis": result.get("source_analysis"),
+            }
+            _persist(artifacts, "report.json", result)
+            _write_report(
+                artifacts,
+                "report.md",
+                "# General web investigation\n\n## Result\n\n```json\n"
+                + json.dumps(summary, indent=2, sort_keys=True)
+                + "\n```\n",
+            )
         else:
             _persist(artifacts, "report.json", result)
             _write_report(
@@ -1992,7 +2549,7 @@ def execute_investigation(
             os.close(case_lock)
             case_lock = None
     if (
-        debug_domain is not None
+        (debug_domain is not None or general)
         and sensitive is not None
         and status["status"] == "MATCH"
         and status["complete"]
@@ -2004,10 +2561,18 @@ def execute_investigation(
             if publication_snapshot is None:
                 raise OSError("publication_unverified")
             publication_snapshot.verify()
-            if adaptive:
+            if adaptive and not general:
                 if case_snapshot is None:
                     raise OSError("case_unverified")
                 case_snapshot.verify()
+            if general:
+                if general_case is None:
+                    raise OSError("case_unverified")
+
+                from beeagent_module.integrations.beescan.case_state import load_case
+
+                _, verified_case = load_case(storage_dir, general_case.case_id)
+                verified_case.verify()
             authorize()
         except OSError, ValueError, RuntimeError, KeyboardInterrupt:
             status.update(

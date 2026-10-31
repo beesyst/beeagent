@@ -377,7 +377,11 @@ def handle_beescan_cli(
                 from beeagent_module.integrations.beescan.case_state import load_case
 
                 state, _ = load_case(storage_dir, args[2])
-                options.update(adaptive=True, resume_case_id=args[2])
+                options.update(
+                    adaptive=True,
+                    resume_case_id=args[2],
+                    general=state["schema_version"] == 2,
+                )
                 options["task"] = validate_task(
                     {"target": state["origin"], "task": args[4]},
                     settings["beescan"]["investigation"],
@@ -432,6 +436,8 @@ def handle_beescan_cli(
             )
             return 2
         if "task" in options:
+            if "resume_case_id" not in options:
+                options["general"] = not options.get("adaptive", False)
             options["local_operator"] = local_operator
             options["progress"] = lambda stage: print(
                 "BeeScan: " + stage, file=sys.stderr, flush=True
