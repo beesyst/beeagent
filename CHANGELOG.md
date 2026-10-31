@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.85.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.84.0...beeagent-v0.85.0) (2026-10-31)
+
+
+### Features
+
+* **beescan:** add autonomous governed web investigation CLI ([#351](https://github.com/beesyst/beeagent/issues/351)) ([4416fdc](https://github.com/beesyst/beeagent/commit/4416fdc61239611142d41bd6bc135fd8251b79ba))
+
 ## [0.84.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.83.0...beeagent-v0.84.0) (2026-10-29)
 
 
