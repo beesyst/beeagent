@@ -71,6 +71,10 @@ def _load_case(storage_dir, case_id):
     ):
         raise ValueError("invalid_case_checkpoint")
     state = envelope["state"]
+    if type(state.get("schema_version")) is int and state["schema_version"] == 3:
+        from beeagent_module.integrations.beescan.dast import load_dast_case
+
+        return load_dast_case(state, snapshot, case_id)
     if type(state.get("schema_version")) is int and state["schema_version"] == 2:
         return _load_general_case(state, snapshot, case_id)
     if (

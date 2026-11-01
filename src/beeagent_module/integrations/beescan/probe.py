@@ -356,6 +356,7 @@ def handle_beescan_cli(
     if not args or args[0] == "investigate":
         from beeagent_module.integrations.beescan.investigation import (
             execute_investigation,
+            read_task,
             validate_task,
         )
 
@@ -443,18 +444,53 @@ def handle_beescan_cli(
                 "BeeScan: " + stage, file=sys.stderr, flush=True
             )
         try:
-            result = execute_investigation(
+            from beeagent_module.integrations.beescan.dast import (
+                execute_dast_investigation,
+                is_dast_task,
+            )
+
+            selected_task = options.get("task")
+            if (
+                selected_task is None
+                and "task_path" in options
+                and settings.get("beescan", {}).get("dast", {}).get("enabled") is True
+            ):
+                selected_task = read_task(
+                    options["task_path"], settings["beescan"]["investigation"]
+                )
+            execute = execute_investigation
+            if selected_task is not None and is_dast_task(selected_task.task):
+                options["task"] = selected_task
+                options.pop("task_path", None)
+                execute = execute_dast_investigation
+            result = execute(
                 **options,
                 settings=settings,
                 reload_settings=reload_settings,
                 storage_dir=storage_dir,
                 logger=logger,
             )
+        except PermissionError:
+            print(
+                json.dumps(
+                    {
+                        "status": "REFUSED",
+                        "complete": False,
+                        "reason": "active_approval_required",
+                        "request_count": 0,
+                    }
+                )
+            )
+            return 3
         except ImportError, OSError, RuntimeError, ValueError:
             logger.error("BeeScan investigation incomplete")
             return 5
         print(json.dumps(result, sort_keys=True))
-        if result["complete"] and result["status"] in {"MATCH", "NO_MATCH"}:
+        if result["complete"] and result["status"] in {
+            "MATCH",
+            "CANDIDATE",
+            "NO_MATCH",
+        }:
             return 0
         return {"REFUSED": 3, "TIMEOUT": 4}.get(result["status"], 5)
     review_invocation = len(args) == 4 and args[0] == "review"

@@ -21,14 +21,26 @@ ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": "/tmp"}
 
 
 def bounded_process(
-    argv, *, seconds, limit, memory_mb, pass_fds=(), capture_stderr=False
+    argv,
+    *,
+    seconds,
+    limit,
+    memory_mb,
+    pass_fds=(),
+    capture_stderr=False,
+    file_descriptors=64,
+    file_bytes=65536,
 ):
+    if type(file_descriptors) is not int or file_descriptors not in {64, 256}:
+        raise ValueError("invalid_process_descriptor_limit")
+    if type(file_bytes) is not int or file_bytes not in {65536, 16777216}:
+        raise ValueError("invalid_process_file_limit")
     command = [
         "/usr/bin/prlimit",
         f"--as={memory_mb * 1024 * 1024}",
         f"--cpu={max(1, math.ceil(seconds))}",
-        "--nofile=64",
-        "--fsize=65536",
+        f"--nofile={file_descriptors}",
+        f"--fsize={file_bytes}",
         "--core=0",
         "--",
         *argv,

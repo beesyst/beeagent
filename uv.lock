@@ -104,6 +104,7 @@ dependencies = [
     { name = "beesdk" },
     { name = "beeui" },
     { name = "fastapi" },
+    { name = "h11" },
     { name = "jinja2" },
     { name = "langgraph" },
     { name = "pydantic" },
@@ -163,6 +164,7 @@ requires-dist = [
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "h11", specifier = "==0.16.0" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "langgraph", specifier = "==1.2.11" },
     { name = "onnxruntime", marker = "extra == 'docling-cpu'", specifier = "==1.29.0" },
@@ -212,8 +214,8 @@ dependencies = [
 
 [[package]]
 name = "beescan"
-version = "0.13.0"
-source = { git = "https://github.com/beesyst/beescan.git#f5471b79b4f7579a969bc27df442023e26f29ca0" }
+version = "0.14.0"
+source = { git = "https://github.com/beesyst/beescan.git#e61b15df9b9ab45b5b421e5a105ebdfcb04160e6" }
 dependencies = [
     { name = "beesdk" },
 ]

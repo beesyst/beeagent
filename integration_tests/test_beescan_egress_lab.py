@@ -67,10 +67,39 @@ def managed_lab(approved, monkeypatch, request):
 
     monkeypatch.setattr(egress.ManagedEgress, "_spawn", spawn)
     requests = []
+    fixture_root = root / "filesystem"
+    document_root = fixture_root / "www/images"
+    if request.param in {"dast-vulnerable", "dast-fixed"}:
+        document_root.mkdir(parents=True)
+        (document_root / "fixture.txt").write_text("Synthetic public fixture\n")
+        (fixture_root / "etc").mkdir()
+        (fixture_root / "etc/passwd").write_text("root:x:0:0:root:/root:/bin/bash\n")
 
     class Handler(BaseHTTPRequestHandler):
         def respond(self):
             requests.append((self.command, self.path))
+            if request.param in {"dast-vulnerable", "dast-fixed"}:
+                from urllib.parse import parse_qs, urlsplit
+
+                selected = parse_qs(urlsplit(self.path).query).get(
+                    "file", ["fixture.txt"]
+                )[0]
+                candidate = (
+                    (document_root / selected).resolve()
+                    if not selected.startswith("/")
+                    else (fixture_root / selected.lstrip("/")).resolve()
+                )
+                boundary = (
+                    document_root if request.param == "dast-fixed" else fixture_root
+                )
+                allowed = candidate.is_relative_to(boundary) and candidate.is_file()
+                body = candidate.read_bytes() if allowed else b"Not found"
+                self.send_response(200 if allowed else 404)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             body = b"ref: refs/heads/lab-only\n" if self.path == "/.git/HEAD" else b""
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -821,3 +850,832 @@ def test_real_revocation_stops_managed_assessment(managed_lab, monkeypatch, sect
     assert sessions[0].supervisor is not None
     assert sessions[0].helper.poll() is not None
     assert sessions[0].supervisor.poll() is not None
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+@pytest.mark.parametrize("mode", ["keepalive", "separate", "concurrent"])
+def test_dast_preflight_current_egress_has_no_http_ceiling(managed_lab, mode):
+    _settings, root, _requests, _sessions, probe = managed_lab
+    received = []
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            with lock:
+                received.append(self.client_address[1])
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(root / "cert.pem", root / "key.pem")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    policy = replace(
+        probe, origin=f"https://192.0.2.1:{server.server_port}", request_budget=1
+    )
+    script = root / "dast-ceiling.py"
+    script.write_text("""import concurrent.futures,http.client,json,socket,ssl,sys
+port=int(sys.argv[1]);mode=sys.argv[2]
+context=ssl.create_default_context(cafile='/cert.pem')
+def connection():
+ return http.client.HTTPSConnection('192.0.2.1',port,context=context,timeout=1)
+def request(client):
+ client.request('GET','/');response=client.getresponse();response.read()
+ assert response.status==200
+def independent():
+ client=connection()
+ try:request(client)
+ finally:client.close()
+if mode=='keepalive':
+ client=connection()
+ try:
+  request(client);original=client.sock;request(client)
+  assert client.sock is original
+ finally:client.close()
+elif mode=='concurrent':
+ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+  list(pool.map(lambda _:independent(),range(2)))
+else:
+ independent();independent()
+with socket.create_connection(('192.0.2.1',port),timeout=1) as raw:
+ try:context.wrap_socket(raw,server_hostname='wrong.test')
+ except ssl.SSLCertVerificationError:pass
+ else:raise AssertionError('hostname_mismatch_accepted')
+with socket.create_connection(('192.0.2.1',port),timeout=1) as raw:
+ try:ssl.create_default_context().wrap_socket(raw,server_hostname='192.0.2.1')
+ except ssl.SSLCertVerificationError:pass
+ else:raise AssertionError('untrusted_certificate_accepted')
+print(json.dumps({'mode':mode,'client_completed':2,'tls_negative_checks':2}))
+""")
+
+    class Artifacts:
+        def write_json(self, name, data):
+            path = root / name
+            path.write_text(json.dumps(data))
+            return path
+
+    session = egress.ManagedEgress(
+        policy, artifacts=Artifacts(), assessment_run_id="dast-preflight", seconds=10
+    )
+    try:
+        session.start()
+        before = session.inspect("/usr/sbin/nft", "-j", "list", "ruleset")
+        output = session.inspect(
+            "/usr/bin/bwrap",
+            "--unshare-all",
+            "--unshare-user",
+            "--share-net",
+            "--disable-userns",
+            "--cap-drop",
+            "ALL",
+            "--uid",
+            "0",
+            "--gid",
+            "0",
+            "--die-with-parent",
+            "--new-session",
+            "--clearenv",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            str(script),
+            "/client.py",
+            "--ro-bind",
+            str(root / "cert.pem"),
+            "/cert.pem",
+            "--",
+            "/usr/bin/python3",
+            "-I",
+            "/client.py",
+            str(policy.port),
+            mode,
+        )
+        assert json.loads(output)["client_completed"] == 2
+        session.validate(policy)
+        assert before == session.inspect("/usr/sbin/nft", "-j", "list", "ruleset")
+        assert len(received) == 2 > policy.request_budget
+        assert len(set(received)) == (1 if mode == "keepalive" else 2)
+        print(
+            json.dumps(
+                {
+                    "verdict": "NO-GO",
+                    "mode": mode,
+                    "declared_budget": 1,
+                    "target_requests": len(received),
+                    "connections": len(set(received)),
+                    "firewall_unchanged": True,
+                }
+            )
+        )
+    finally:
+        try:
+            session.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert session.evidence["cleanup_verified"]
+    assert session.supervisor is not None and session.supervisor.poll() is not None
+    assert session.helper is not None and session.helper.poll() is not None
+    assert session.temporary is not None and not Path(session.temporary.name).exists()
+    assert egress._active.get() is None
+
+
+@pytest.fixture
+def dast_mediator(managed_lab):
+    from beeagent_module.integrations.beescan.dast_mediation import DastMediation
+
+    _settings, root, requests, _sessions, probe = managed_lab
+    downstream = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    downstream.load_cert_chain(root / "cert.pem", root / "key.pem")
+    upstream = ssl.create_default_context(cafile=str(root / "cert.pem"))
+    endpoint = root / "mediator.sock"
+    mediator = DastMediation(
+        origin=probe.origin,
+        connected_ip="127.0.0.1",
+        request_budget=1,
+        seconds=10,
+        response_bytes=65536,
+        socket_path=endpoint,
+        downstream_tls=downstream,
+        upstream_tls=upstream,
+        authorize=lambda: None,
+        resolve=lambda origin: {"127.0.0.1"},
+    )
+    mediator.start()
+    try:
+        yield mediator, root, requests, probe
+    finally:
+        mediator.close()
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+@pytest.mark.parametrize("mode", ["keepalive", "separate", "concurrent"])
+def test_dast_mediated_hard_ceiling_without_scanner_egress(dast_mediator, mode):
+    from beeagent_module.integrations.beescan.http_runner import bounded_process
+
+    mediator, root, requests, probe = dast_mediator
+    endpoint = mediator.socket_path
+    script = root / "mediated-client.py"
+    script.write_text("""import concurrent.futures,http.client,json,socket,ssl,sys
+port=int(sys.argv[1]);mode=sys.argv[2]
+def connect():
+ raw=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);raw.settimeout(2);raw.connect('/gate.sock')
+ raw.sendall(('CONNECT 192.0.2.1:'+str(port)+' HTTP/1.1\\r\\nHost: 192.0.2.1:'+str(port)+'\\r\\n\\r\\n').encode())
+ data=b''
+ while not data.endswith(b'\\r\\n\\r\\n'):data+=raw.recv(1)
+ assert data.startswith(b'HTTP/1.1 200')
+ return ssl.create_default_context(cafile='/cert.pem').wrap_socket(raw,server_hostname='192.0.2.1')
+def request(stream):
+ stream.sendall(('GET / HTTP/1.1\\r\\nHost: 192.0.2.1:'+str(port)+'\\r\\n\\r\\n').encode())
+ response=http.client.HTTPResponse(stream);response.begin();response.read();return response.status
+def independent():
+ with connect() as stream:return request(stream)
+if mode=='keepalive':
+ with connect() as stream:statuses=[request(stream),request(stream)]
+elif mode=='concurrent':
+ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:statuses=list(pool.map(lambda _:independent(),range(2)))
+else:statuses=[independent(),independent()]
+assert sorted(statuses)==[200,403],statuses
+for family,address in ((socket.AF_INET,'127.0.0.1'),(socket.AF_INET,'192.0.2.1'),(socket.AF_INET6,'::1')):
+ with socket.socket(family) as connection:
+  connection.settimeout(.1)
+  assert connection.connect_ex((address,port))!=0
+print(json.dumps({'statuses':statuses,'direct_connections_denied':3}))
+""")
+    try:
+        code, output = bounded_process(
+            [
+                "/usr/bin/bwrap",
+                "--unshare-all",
+                "--unshare-user",
+                "--disable-userns",
+                "--cap-drop",
+                "ALL",
+                "--uid",
+                "0",
+                "--gid",
+                "0",
+                "--die-with-parent",
+                "--new-session",
+                "--clearenv",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/lib",
+                "/lib",
+                "--ro-bind",
+                "/lib64",
+                "/lib64",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--ro-bind",
+                str(script),
+                "/client.py",
+                "--ro-bind",
+                str(root / "cert.pem"),
+                "/cert.pem",
+                "--ro-bind",
+                str(endpoint),
+                "/gate.sock",
+                "--",
+                "/usr/bin/python3",
+                "-I",
+                "/client.py",
+                str(probe.port),
+                mode,
+            ],
+            seconds=8,
+            limit=8192,
+            memory_mb=256,
+            capture_stderr=True,
+        )
+        assert code == 0, output.decode()
+        assert json.loads(output)["direct_connections_denied"] == 3
+        assert requests == [("GET", "/")]
+        assert mediator.reserved == mediator.completed == 1
+        assert not mediator.failed
+        print(json.dumps({"mode": mode, "target_requests": len(requests), "cap": 1}))
+    finally:
+        mediator.close()
+    assert not endpoint.exists()
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "connect",
+        "host",
+        "absolute",
+        "chunked",
+        "body",
+        "upgrade",
+        "method",
+        "dns",
+        "revoked",
+        "tls",
+        "deadline",
+        "duplicate",
+    ],
+)
+def test_dast_mediation_fail_closed_before_target_http(dast_mediator, attack):
+    mediator, root, requests, probe = dast_mediator
+    authority = f"192.0.2.1:{probe.port}"
+    if attack == "dns":
+        mediator.resolve = lambda origin: {"127.0.0.2"}
+    if attack == "revoked":
+
+        def refuse():
+            raise PermissionError("revoked")
+
+        mediator.authorize = refuse
+    if attack == "tls":
+        mediator.upstream_tls = ssl.create_default_context()
+    raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    raw.settimeout(2)
+    raw.connect(str(mediator.socket_path))
+    stream = raw
+    try:
+        destination = "foreign.invalid:443" if attack == "connect" else authority
+        raw.sendall(
+            f"CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n".encode()
+        )
+        response = bytearray()
+        while not response.endswith(b"\r\n\r\n"):
+            response.extend(raw.recv(1))
+        if attack == "connect":
+            assert response.startswith(b"HTTP/1.1 403")
+        else:
+            assert response.startswith(b"HTTP/1.1 200")
+            stream = ssl.create_default_context(
+                cafile=str(root / "cert.pem")
+            ).wrap_socket(raw, server_hostname="192.0.2.1")
+            if attack == "deadline":
+                mediator.deadline = time.monotonic() - 1
+            host = "foreign.invalid" if attack == "host" else authority
+            method = "POST" if attack == "method" else "GET"
+            target = "https://foreign.invalid/" if attack == "absolute" else "/"
+            extra = {
+                "chunked": "Transfer-Encoding: chunked\r\n",
+                "body": "Content-Length: 1\r\n",
+                "upgrade": "Upgrade: websocket\r\n",
+                "duplicate": f"Host: {authority}\r\n",
+            }.get(attack, "")
+            stream.sendall(
+                f"{method} {target} HTTP/1.1\r\nHost: {host}\r\n{extra}\r\n".encode()
+            )
+            try:
+                result = stream.recv(1024)
+            except ssl.SSLError, ConnectionError:
+                result = b""
+            assert not result or result.startswith(b"HTTP/1.1 403"), result
+    finally:
+        stream.close()
+        raw.close()
+        mediator.close()
+    assert requests == []
+    assert mediator.completed == 0
+    assert not mediator.failed
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+def test_dast_fixed_zap_headless_through_mediation(dast_mediator):
+    from beeagent_module.integrations.beescan.http_runner import bounded_process
+
+    mediator, root, requests, probe = dast_mediator
+    distribution = os.environ.get("BEEAGENT_ZAP_LAB_ROOT")
+    assert distribution, "Pinned ZAP qualification root is required"
+    worker = (
+        Path(__file__).resolve().parents[1]
+        / "src/beeagent_module/integrations/beescan/dast_worker.py"
+    )
+    mediator.deadline = time.monotonic() + 60
+    mediator.budget = 100
+    hosts = root / "hosts"
+    hosts.write_text("127.0.0.1 localhost\n")
+    try:
+        code, output = bounded_process(
+            [
+                "/usr/bin/bwrap",
+                "--unshare-all",
+                "--unshare-user",
+                "--disable-userns",
+                "--hostname",
+                "localhost",
+                "--cap-drop",
+                "ALL",
+                "--uid",
+                "0",
+                "--gid",
+                "0",
+                "--die-with-parent",
+                "--new-session",
+                "--clearenv",
+                "--setenv",
+                "HOME",
+                "/tmp",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/lib",
+                "/lib",
+                "--ro-bind",
+                "/lib64",
+                "/lib64",
+                "--ro-bind",
+                "/etc/java-25-openjdk",
+                "/etc/java-25-openjdk",
+                "--ro-bind",
+                str(hosts),
+                "/etc/hosts",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--ro-bind",
+                str(worker),
+                "/worker.py",
+                "--ro-bind",
+                distribution,
+                "/zap",
+                "--ro-bind",
+                str(mediator.socket_path),
+                "/gate.sock",
+                "--",
+                "/usr/bin/python3",
+                "-I",
+                "/worker.py",
+                json.dumps(
+                    {
+                        "origin": probe.origin,
+                        "entries": ["/?file=fixture.txt"],
+                        "seconds": 55,
+                    }
+                ),
+            ],
+            seconds=58,
+            limit=8192,
+            memory_mb=4096,
+            capture_stderr=True,
+            file_descriptors=256,
+            file_bytes=16777216,
+        )
+        print(
+            json.dumps(
+                {
+                    "code": code,
+                    "target_requests": len(requests),
+                    "reserved": mediator.reserved,
+                    "denied": mediator.denied,
+                    "worker": output.decode(),
+                }
+            )
+        )
+        assert code == 0, output.decode()
+        result = json.loads(output)
+        assert result["complete"] and result["rule_id"] == "6"
+        assert result["alerts"] == []
+        assert 1 <= len(requests) == mediator.completed <= 100
+    finally:
+        mediator.close()
+
+
+@pytest.mark.parametrize(
+    "managed_lab", ["dast-vulnerable", "dast-fixed"], indirect=True
+)
+def test_dast_real_managed_egress_and_paired_contract(
+    managed_lab, monkeypatch, request
+):
+    from datetime import UTC, datetime, timedelta
+
+    from beescan.capabilities.dast import (
+        DastEvidence,
+        DastExecution,
+        DastIntent,
+        DastStatus,
+        ExecutionState,
+        ScannerMatch,
+        ScannerOutcome,
+        normalize_dast,
+    )
+    from beescan.domain.models import (
+        EngagementScope,
+        Mission,
+        Project,
+        Target,
+        TargetKind,
+    )
+
+    from beeagent_module.integrations.beescan.dast_runner import run_zap
+
+    _settings, root, requests, sessions, probe = managed_lab
+
+    class Artifacts:
+        def write_json(self, name, data):
+            path = root / name
+            path.write_text(json.dumps(data))
+            return path
+
+    now = datetime.now(UTC)
+    intent = DastIntent(
+        Project("project", "Local assessment"),
+        Target("target", "project", TargetKind.URL, probe.origin),
+        EngagementScope(
+            "scope",
+            "project",
+            ("target",),
+            "approval",
+            valid_from=now,
+            expires_at=now + timedelta(minutes=5),
+            approved_methods=("active_dast",),
+            max_requests=100,
+            max_seconds=60,
+        ),
+        Mission("mission", "project", "scope", ("web.dast",)),
+        "parent",
+        "child",
+        "zap",
+        "2.17.0",
+        "rule6-v1",
+        ("6",),
+        ("check-1",),
+        100,
+        60,
+        now,
+    )
+    raw, records, count = run_zap(
+        probe,
+        origin=probe.origin,
+        entries=("/?file=fixture.txt",),
+        archive=Path("/tmp/bs13-zap-core.zip"),
+        artifacts=Artifacts(),
+        run_id="child",
+        request_budget=100,
+        seconds=55,
+        authorize=lambda: None,
+        upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
+    )
+    assert raw["complete"]
+    vulnerable = request.node.callspec.params["managed_lab"] == "dast-vulnerable"
+    assert bool(raw["alerts"]) is vulnerable
+    assert len(requests) == count == len(records) > 0
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
+    accepted = records[0]
+    if vulnerable:
+        alert = raw["alerts"][0]
+        accepted = next(
+            item
+            for item in records
+            if item["request_sha256"] == alert["request_sha256"]
+            and item["response_sha256"] == alert["response_sha256"]
+        )
+    import hashlib
+
+    evidence_path = root / "paired_evidence.json"
+    evidence_path.write_text(json.dumps(records))
+    evidence_path.chmod(0o600)
+    evidence = DastEvidence(
+        "ev-1",
+        hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+        accepted["request_sha256"],
+        accepted["response_sha256"],
+    )
+    execution = DastExecution(
+        intent.identity,
+        "child",
+        "zap",
+        "2.17.0",
+        "rule6-v1",
+        ("6",),
+        ExecutionState.COMPLETE,
+        ("check-1",) if vulnerable else (),
+        (evidence,),
+        count,
+        True,
+        datetime.now(UTC),
+    )
+    outcome = ScannerOutcome(
+        intent.identity,
+        "child",
+        "zap",
+        "2.17.0",
+        "rule6-v1",
+        ("6",),
+        (ScannerMatch("6", "check-1", evidence),) if vulnerable else (),
+    )
+    expected = DastStatus.CANDIDATE if vulnerable else DastStatus.PARTIAL
+    assert normalize_dast(intent, execution, outcome).status is expected
+    print(
+        json.dumps(
+            {
+                "target": "vulnerable" if vulnerable else "fixed",
+                "status": expected.value,
+                "requests": count,
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "managed_lab", ["dast-vulnerable", "dast-fixed"], indirect=True
+)
+def test_dast_operator_case_report_and_resume(
+    managed_lab, monkeypatch, request, capsys
+):
+    from datetime import UTC, datetime, timedelta
+
+    from beeagent_module.integrations.beescan import dast_runner
+    from beeagent_module.integrations.beescan.case_state import load_case
+    from beeagent_module.integrations.beescan.local_cli import (
+        _SEAL,
+        _identity,
+        _LocalOperator,
+    )
+    from beeagent_module.integrations.beescan.probe import handle_beescan_cli
+
+    settings, root, requests, sessions, probe = managed_lab
+    now = datetime.now(UTC)
+    probe = replace(probe, valid_from=now, expires_at=now + timedelta(minutes=5))
+    transport = asdict(probe)
+    for key in ("valid_from", "expires_at"):
+        transport[key] = transport[key].isoformat()
+    settings["beescan"]["investigation"] = {
+        "task_chars_max": 4000,
+        "trusted_local_enabled": True,
+    }
+    approval = {
+        "transport": transport,
+        "approved": False,
+        "method": "active_dast",
+        "entries": ["/?file=fixture.txt"],
+        "request_budget": 100,
+        "seconds": 55,
+        "archive": "/tmp/bs13-zap-core.zip",
+    }
+    settings["beescan"]["dast"] = {"enabled": True, "approval": approval}
+    storage = root / "dast-storage"
+    storage.mkdir(mode=0o700)
+    options = {
+        "settings": settings,
+        "reload_settings": lambda: copy.deepcopy(settings),
+        "storage_dir": storage,
+        "logger": logging.getLogger("managed-lab"),
+        "local_operator": _LocalOperator(_identity(), _SEAL),
+    }
+    args = ["investigate", "--target", probe.origin, "--task", "Assess Path Traversal"]
+    assert handle_beescan_cli(args, **options) == 3
+    assert requests == [] and sessions == []
+    capsys.readouterr()
+    approval["approved"] = True
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = False
+    assert handle_beescan_cli(args, **options) == 3
+    assert requests == [] and sessions == []
+    capsys.readouterr()
+    settings["beescan"]["investigation"]["trusted_local_enabled"] = True
+    original = dast_runner.run_zap
+    context = ssl.create_default_context(cafile=str(root / "cert.pem"))
+
+    def run(transport, **kwargs):
+        result = original(transport, **kwargs, upstream_tls=context)
+        assert result[0]["host_complete"], result[0]["denial_reasons"]
+        return result
+
+    monkeypatch.setattr(dast_runner, "run_zap", run)
+    vulnerable = request.node.callspec.params["managed_lab"] == "dast-vulnerable"
+    code = handle_beescan_cli(args, **options)
+    captured = capsys.readouterr()
+    assert code == (0 if vulnerable else 5), captured
+    result = json.loads(captured.out)
+    assert result["status"] == ("CANDIDATE" if vulnerable else "PARTIAL")
+    state, snapshot = load_case(storage, result["case_id"])
+    assert not state["pending"]
+    assert state["status"] == result["status"]
+    assert len(requests) == result["request_count"] <= 100
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
+    report = snapshot.json(result["run_id"], "report.json")
+    assert not any(
+        word in json.dumps(report)
+        for word in ("root:x", "fixture.txt", "Cookie", "passwd")
+    )
+    if vulnerable:
+        before = len(requests)
+        assert (
+            handle_beescan_cli(
+                [
+                    "investigate",
+                    "--resume",
+                    result["case_id"],
+                    "--task",
+                    "Assess Path Traversal",
+                ],
+                **options,
+            )
+            == 0
+        )
+        assert len(requests) == before
+        capsys.readouterr()
+    before = len(requests)
+    approval["request_budget"] = 99
+    assert (
+        handle_beescan_cli(
+            [
+                "investigate",
+                "--resume",
+                result["case_id"],
+                "--task",
+                "Assess Path Traversal",
+            ],
+            **options,
+        )
+        == 3
+    )
+    assert len(requests) == before
+    capsys.readouterr()
+    approval["request_budget"] = 100
+    path = Path(result["report_location"])
+    path.write_text("substituted")
+    with pytest.raises(ValueError, match="dast_report_changed"):
+        load_case(storage, result["case_id"])
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+@pytest.mark.parametrize("fault", ["crash", "timeout", "cancel", "forged", "malformed"])
+def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
+    from beeagent_module.integrations.beescan import dast_runner, http_runner
+
+    _settings, root, requests, sessions, probe = managed_lab
+    original = dast_runner.bounded_process
+    selector_type = http_runner.selectors.DefaultSelector
+
+    class InterruptedSelector(selector_type):
+        def select(self, timeout=None):
+            raise KeyboardInterrupt
+
+    def process(argv, **kwargs):
+        if "/worker.py" not in argv:
+            return original(argv, **kwargs)
+        prefix = argv[: argv.index("--") + 1]
+        program = (
+            "import os;os._exit(7)"
+            if fault == "crash"
+            else "import time;time.sleep(30)"
+        )
+        if fault == "forged":
+            program = 'import json;print(json.dumps({"complete":True,"rule_id":"6","alerts":[{"rule_id":"6","request_sha256":"a"*64,"response_sha256":"b"*64}],"entries":1}))'
+        if fault == "malformed":
+            program = 'print("malformed")'
+        command = [*prefix, "/usr/bin/python3", "-I", "-c", program]
+        kwargs["seconds"] = 1
+        if fault == "cancel":
+            with monkeypatch.context() as scoped:
+                scoped.setattr(
+                    http_runner.selectors, "DefaultSelector", InterruptedSelector
+                )
+                return original(command, **kwargs)
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(dast_runner, "bounded_process", process)
+
+    class Artifacts:
+        def write_json(self, name, data):
+            path = root / name
+            path.write_text(json.dumps(data))
+            return path
+
+    expected = {
+        "crash": ValueError,
+        "timeout": TimeoutError,
+        "cancel": KeyboardInterrupt,
+        "forged": ValueError,
+        "malformed": ValueError,
+    }[fault]
+    with pytest.raises(expected):
+        dast_runner.run_zap(
+            probe,
+            origin=probe.origin,
+            entries=("/",),
+            archive=Path("/tmp/bs13-zap-core.zip"),
+            artifacts=Artifacts(),
+            run_id="failure-test",
+            request_budget=1,
+            seconds=15,
+            authorize=lambda: None,
+            upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
+        )
+    assert requests == []
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
+    status = json.loads((root / "dast_execution_status.json").read_text())
+    assert status["request_count"] == 0 and status["cleanup_verified"]
+    from beeagent_module.integrations.beescan.case_state import load_case
+    from beeagent_module.integrations.beescan.dast import execute_dast_investigation
+    from beeagent_module.integrations.beescan.investigation import InvestigationTask
+    from beeagent_module.integrations.beescan.local_cli import (
+        _SEAL,
+        _identity,
+        _LocalOperator,
+    )
+
+    transport = asdict(probe)
+    for key in ("valid_from", "expires_at"):
+        transport[key] = transport[key].isoformat()
+    _settings["beescan"]["dast"] = {
+        "enabled": True,
+        "approval": {
+            "transport": transport,
+            "approved": True,
+            "method": "active_dast",
+            "entries": ["/"],
+            "request_budget": 1,
+            "seconds": 15,
+            "archive": "/tmp/bs13-zap-core.zip",
+        },
+    }
+    storage = root / "failed-case"
+    storage.mkdir(mode=0o700)
+    _settings["beescan"]["investigation"] = {"trusted_local_enabled": True}
+    result = execute_dast_investigation(
+        task=InvestigationTask(probe.origin, "Assess Path Traversal"),
+        settings=_settings,
+        reload_settings=lambda: copy.deepcopy(_settings),
+        storage_dir=storage,
+        logger=logging.getLogger("managed-lab"),
+        local_operator=_LocalOperator(_identity(), _SEAL),
+    )
+    assert not result["complete"]
+    assert result["status"] == (
+        "PARTIAL" if fault in {"timeout", "cancel"} else "ERROR"
+    )
+    case, _snapshot = load_case(storage, result["case_id"])
+    assert case["pending"] is False
+    assert not requests
