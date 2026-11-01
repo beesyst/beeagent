@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.86.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.85.0...beeagent-v0.86.0) (2026-11-01)
+
+
+### Features
+
+* **beescan:** add governed ZAP path traversal execution ([#354](https://github.com/beesyst/beeagent/issues/354)) ([7c34731](https://github.com/beesyst/beeagent/commit/7c347319b94e63b4daa3128ffb870e74d78cfc98))
+
 ## [0.85.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.84.0...beeagent-v0.85.0) (2026-10-31)
 
 
