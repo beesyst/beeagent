@@ -109,6 +109,9 @@ beescan:
   detection_approval: null
   git_exposure_enabled: false
   git_exposure_approval: null
+  dast:
+    enabled: false
+    approval: null
   investigation:
     enabled: false
     trusted_local_enabled: true

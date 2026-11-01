@@ -1489,7 +1489,7 @@ No new runtime, unnecessary dependency, UI implementation or unrelated version c
 
 ### Iteration BS-13 — Governed ZAP Web Assessment Provider MVP
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
