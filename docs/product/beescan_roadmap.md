@@ -1555,6 +1555,132 @@ BeeAgent использует существующий ZAP scanner engine чер
 
 Никаких собственных DAST-algorithms, необоснованных зависимостей или изменений версий.
 
+### Iteration BS-14 — Autonomous Discovery-to-DAST Investigation MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Unify the existing BS-12 autonomous Web discovery and BS-13 governed ZAP execution into one operator-facing investigation workflow.
+
+An authorized operator supplies Target and Task. BeeAgent discovers suitable HTTP endpoints and parameters, requests an eligible capability decision from BeeScan It15, executes the approved ZAP Path Traversal profile and returns a single evidence-backed Case and report.
+
+Eliminate manual per-parameter URL selection without weakening the existing active-approval, scope or HTTP mediation guarantees.
+
+This increment must demonstrate reusable autonomous assessment behavior across unfamiliar applications, not implement another PortSwigger-specific solution.
+
+#### Depends on
+
+- Completed BS-12 Autonomous Web Investigation CLI MVP.
+- Completed BS-13 Governed ZAP Web Assessment Provider MVP.
+- BeeScan It13/It14 and the paired It15 domain decision contract.
+- Existing managed HTTP capture, ZAP rule ID 6, `DastPolicy`, `DastMediation`, ArtifactAPI, Case/Resume and CLI.
+- Existing AI profiles, trusted-local operator identity and destination/scope enforcement.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Extend the existing `beescan investigate --target URL --task TEXT` flow to support discovery followed by eligible active DAST assessment.
+- Preserve the existing general investigation loop as the default entrypoint instead of bypassing discovery solely because task text matches a fixed vulnerability keyword.
+- Reuse existing governed same-origin discovery, HTTP capture, transient content handling and BeeScan authenticated `Surface` observations.
+- Obtain assessment-action proposals from BeeScan It15 and validate every proposed endpoint, parameter and capability before execution.
+- Use actual observed query parameters and eligible GET-form associations; do not guess lab-specific paths or parameter names.
+- Reuse the existing ZAP provider, rule ID 6, integrity-pinned distribution, execution profile and HTTP mediation.
+- Extend the existing active approval contract to allow explicitly approved, bounded selection of evidence-discovered same-origin entries without requiring the operator to enter each URL manually.
+- Retain the existing exact-entry approval mode for backward compatibility.
+- Keep operator approval host-owned. One valid authorization can cover the permitted assessment profile within its approved scope and budgets without repeated confirmation for each discovered parameter.
+- Reject derived entries outside approved scope, unsupported HTTP methods, ambiguous provenance, unsafe parameter values or unsupported provider profiles.
+- Reuse existing target/IP binding, DNS/TLS checks, independent HTTP request accounting, sandbox, resource limits and verified cleanup.
+- Account for discovery and active assessment against an explicit overall investigation budget; retain independent provider-level enforcement.
+- Integrate discovery, capability decisions and DAST execution into one persistent Investigation Case.
+- Reuse existing checkpoint, artifact and report machinery. Extend schemas only where the existing contracts cannot express the integrated workflow.
+- Preserve separate run/segment identities and exact evidence provenance within the parent Case.
+- Support fresh-process Case inspection and authorized resume, without repeating sufficiently authenticated completed discovery or DAST steps.
+- Produce a single JSON/Markdown investigation report with:
+  - task and authorized target;
+  - observed Web surfaces and selected parameter;
+  - chosen capability and actual provider execution;
+  - findings, status and evidence references;
+  - request counts, elapsed time and available AI usage measurements;
+  - unresolved hypotheses, coverage limits and actionable next steps.
+- Preserve existing restricted Nuclei, legacy discovery, direct ZAP, existing Case schemas and unrelated BeeAgent workflows.
+
+#### Excluded
+
+- Custom scanner algorithms, new payload generation, HTTP fuzzers or a second crawling implementation.
+- Additional ZAP rules, unreviewed provider profiles, new scanner downloads or automatic plugin updates.
+- Universal agent/router frameworks, new orchestration services, databases, queues or graph runtimes.
+- Unrestricted AI commands, arbitrary scanner flags, shell execution or cross-origin target expansion.
+- Automatically treating discovered endpoints as execution authorization.
+- Broad scanning of every discovered parameter without bounded, approved selection.
+- Automatic login, authenticated business-process testing or state-changing operations.
+- Automatic VERIFIED findings, exploitation escalation or Bug Bounty submission.
+- Web UI, BeeUI, BeeSDK and unrelated core refactoring without a concrete blocker.
+- Hardcoded PortSwigger paths, parameter names, known solutions or target-specific payloads.
+
+#### Deliverable
+
+One complete operator-facing workflow:
+
+`Target + Task + Approved Assessment Scope → Governed Discovery → Authenticated Parameter Evidence → BeeScan It15 Capability Decision → BeeAgent Governed ZAP → BeeScan It14 Normalization → Unified Case + Findings + Report`
+
+No manually supplied DAST entry is required when the discovered parameter is eligible under the existing operator-approved assessment scope.
+
+Existing direct DAST execution with an explicit entry remains compatible.
+
+#### Acceptance criteria
+
+- One CLI invocation can discover and assess an eligible parameterized GET endpoint without the operator manually copying its URL into DAST configuration.
+- Discovery precedes DAST selection; task keywords alone do not bypass evidence collection or grant active execution.
+- Different authenticated application surfaces produce different validated endpoint/parameter selections.
+- At least two unfamiliar vulnerable fixtures with distinct endpoint and parameter names produce evidence-backed CANDIDATE outcomes without implementation changes between runs.
+- An independently verified fixed/negative target produces no false CANDIDATE; insufficient check coverage remains PARTIAL rather than unsupported NO_MATCH.
+- A real authorized PortSwigger or equivalent non-hardcoded target demonstrates the complete discovery-to-DAST workflow.
+- No eligible parameter produces a meaningful PARTIAL with observed resources and next steps, not a fabricated assessment.
+- Missing, disabled, expired or mismatched active approval prevents all active DAST requests.
+- The existing exact-entry approval mode continues to function.
+- Discovery-derived entries remain inside the approved origin, path scope, request budget and active profile.
+- Direct connections, connection reuse, concurrency, IPv6, redirects, callbacks and scanner-originated destination changes cannot bypass host mediation.
+- The independent HTTP hard ceiling continues to hold, including a two-request attempt with cap=1.
+- A parameter proposed by AI or malformed external content cannot bypass the source-evidence and authorization checks.
+- Discovery and DAST share a consistent parent Case with independently attributable execution segments.
+- Case Inspect/Resume works after process restart, validates current authority and prevents unnecessary reexecution.
+- Cross-run evidence, changed Scope/Target, tampered checkpoints and incomplete cleanup fail closed.
+- No raw sensitive query values, HTTP responses, cookies, scanner payloads or credentials are persisted or sent to AI.
+- Real request counts and completion states come from host execution evidence rather than ZAP self-reported counters.
+- Existing BS-12/BS-13, Nuclei, framework-version, debug and backup-disclosure regressions pass.
+- No additional scanner execution framework or provider is introduced.
+
+#### Checks
+
+- Paired end-to-end tests on independently designed vulnerable and fixed HTTP/HTTPS fixtures.
+- Previously unseen endpoint and parameter names, GET form discovery and differing Web surfaces.
+- Existing explicit-entry ZAP regression and the new automatically derived-entry flow.
+- Missing/invalid active approval, unsupported parameter, scope drift, DNS/TLS mismatch, redirect, framing and connection-bypass tests.
+- Keep-alive, separate-connection and concurrent hard request-ceiling tests.
+- Process timeout, cancellation, crash, cleanup failure and incomplete coverage scenarios.
+- Host-authenticated source binding, scanner-output substitution, malicious HTTP content and invalid AI action proposals.
+- Single Case creation, artifact publication, fresh-process Inspect/Resume, deduplication and checkpoint tampering.
+- Full BeeAgent and BeeScan pytest suites, targeted integration/security tests, Ruff/Pyright, builds and `git diff --check`.
+- Review of the existing ZAP rule-6 security disposition for the new evidence-derived input path; repeat provider qualification only if the approved profile or dependency graph changes.
+- Inspection of persisted reports, evidence, logs, Case state and transient-sensitive-data boundaries.
+- Real authorized external acceptance, independent BeeMCP review and hosted CI before coordinated merge.
+
+#### DoD
+
+An authorized operator can supply one unfamiliar Web Target and a Path Traversal assessment task through the existing CLI. BeeAgent performs governed discovery, obtains an evidence-backed BeeScan It15 action, selects an eligible parameter automatically, runs the existing ZAP rule-6 capability and produces one complete Investigation Case and report.
+
+At least two distinct unfamiliar vulnerable fixtures and one independently verified fixed/negative fixture pass without lab-specific code changes or manual parameter configuration.
+
+A real authorized external assessment demonstrates the same behavior. Unsupported, ambiguous, unavailable or incomplete assessments produce useful truthful partial results.
+
+All existing approval, destination, HTTP request-budget, isolation, evidence, Case/Resume, redaction and legacy compatibility guarantees remain effective.
+
+No new runtime, scanner algorithm, unnecessary provider, database or unrelated version change occurs.
+
 ---
 
 ## Post-MVP product directions
