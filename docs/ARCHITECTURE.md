@@ -1,265 +1,104 @@
-# ARCHITECTURE — BeeAgent (KISS, modular, stateful)
+# ARCHITECTURE — BeeAgent
 
-## Concept
+## Purpose
 
-There is an **orchestration core** (`beeagent`) and **pluggable domain modules** (`beeagent-rop`, with `beescan` and `merch` planned).
+BeeAgent is the single host runtime for independently maintained domain modules. It owns orchestration, configuration, identity, authorization, bounded external actions, run state, artifacts and operator interfaces. Domain rules belong to their owning modules, not to BeeAgent Core.
 
-`beeagent` must not contain client-specific business logic. It manages:
+This document describes component ownership and integration boundaries. Public behavior is specified in [SPEC.md](SPEC.md), Web contracts in [WEB_UI.md](WEB_UI.md), security requirements in [SECURITY.md](SECURITY.md), and delivery history in [ROADMAP.md](ROADMAP.md).
 
-- runtime state;
-- run/session/job context;
-- approvals;
-- artifacts;
-- module dispatch;
-- capability boundary;
-- transport/UI integration.
+## Component boundaries
 
-Domain modules must not become a “second core”. They handle their business cases within the contracts provided by BeeAgent.
+| Component                                                  | Owns                                                                                                                                    | Must not own                                                                        |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **BeeAgent Core**                                          | Runtime context, case dispatch, settings validation, approvals, authorization, capability execution, lifecycle, logs and host artifacts | Customer-specific classifications or security finding semantics                     |
+| **BeeSDK**                                                 | Public module, context, authority, capability and artifact contracts                                                                    | Host-specific execution policy                                                      |
+| **Domain modules** (`beeagent-rop`, `beescan`, `beedrill`) | Domain models, deterministic decisions, evidence interpretation, recommendations and report semantics                                   | Independent host credentials, unauthorized system access or a parallel orchestrator |
+| **BeeUI**                                                  | Reusable Web presentation, layouts, sessions, auth UX and generic UI behavior                                                           | Domain-specific decisions or authority to invoke external actions                   |
+| **BeeAgent Web adapter**                                   | Product read models, resource authorization, allowlisted artifact access and narrow protected actions                                   | Direct reading of arbitrary storage or uncontrolled module execution                |
 
-## Basic principle
+The authoritative integration is:
 
-The correct arrangement is:
-
-`UI/transport → BeeAgent core → module → capability/MCP/n8n → systems`
-
-Where:
-
-- **UI/transport** — Telegram, with web/Bitrix/other interfaces planned;
-- **BeeAgent core** — orchestration, state, approvals, artifacts, policy;
-- **module** — domain logic (`ROP`, later others);
-- **capability/MCP/n8n** — execution/integration layer;
-- **systems** — Bitrix, 1C, email, external services, etc.
-
-## What lives in BeeAgent
-
-`beeagent` contains only the platform layer:
-
-- loading config and fail-fast validation;
-- run/session/job context;
-- stateful orchestration;
-- case dispatch;
-- module contract and registry;
-- artifact API;
-- capability boundary;
-- transport/UI layer;
-- observability/logging;
-- approvals and bounded execution semantics.
-
-## Bitrix write-back execution boundary (Iteration 37)
-
-BeeAgent owns the bounded execution-capable Bitrix write-back path for ROP events:
-
-- `BitrixReadonlyClient` remains strictly read-only; `crm.activity.list` is used only for idempotency reconciliation and does not give mutation capability;
-- a separate `BitrixWriteClient` provides a bounded execution boundary with its own allowlist of exact mutation methods (`crm.item.add`, `crm.activity.add`, and, only for physical attachment file delivery in It40, `crm.activity.update`) and a separate env-backed write credential;
-- attachment lifecycle (It40) — a BeeAgent-owned bounded opaque store `storage/attachments/<run_id>/` + per-run manifest, authenticated download and physical-file Bitrix delivery; `beeagent-rop` consumes only the bounded attachment extraction contract;
-- authoritative write-back state lives in `storage/interfaces/rop_writeback_state.json` (durable, cross-run, idempotent); the per-run operator projection is `rop_writeback_summary.json`;
-- `beeagent-rop` remains the source of the classification semantics and does not change; write-back authority is located in BeeAgent server-side policy, not AI/final decision/`should_rop_see`.
-
-BeeScan-specific host integration lives in `beeagent_module.integrations.beescan`: `assessment`, `probe`, `policy`, `http_runner`, `detection`, `detection_policy`, `detection_runner`, `capture_worker`, `git_exposure` and `providers`. The detection runner loads its adjacent `capture_worker.py`; Git HEAD signature parsing remains in the installed BeeScan domain package. Generic host infrastructure stays in `core/`, including the existing `beedrill_toolchain` downloader used by provider provisioning.
-
-## What does not belong in BeeAgent
-
-`beeagent` must not contain client-specific logic such as:
-
-- how to identify a new lead;
-- how to find duplicates;
-- how to build a ROP summary;
-- how to read an attachment in the Welding context;
-- how to interpret a particular client’s incoming stream.
-
-This belongs in the module.
-
-## What lives in the module
-
-The module contains domain logic:
-
-- domain models;
-- rules;
-- classification;
-- deduplication;
-- summary building;
-- recommendation building;
-- client-specific case semantics.
-
-## What does not belong in a module
-
-The module must not contain:
-
-- transport handlers;
-- its own orchestrator;
-- its own runtime state engine;
-- own storage core;
-- ad hoc direct UI calls;
-- ad hoc direct system calls when a capability boundary already exists for them.
-
-## Data flow (target scheme)
-
-1. A user or operator starts a scenario through UI/transport.
-2. UI calls case/entrypoint inside BeeAgent.
-3. BeeAgent defines:
-   - `run_id`
-   - `session_id`
-   - `module_id`
-   - `case_type`
-4. BeeAgent through registry selects the appropriate module.
-5. The module receives `ModuleContext`.
-6. The module performs its domain logic.
-7. If external actions or data are needed, the module goes through capability layer.
-8. The result is stored in artifacts via BeeAgent artifact API.
-9. UI/transport shows summary / next action / diagnostics.
-
-## Flow for a Long Task
-
-The long task must live in BeeAgent, not within one tool/MCP call.
-
-That is:
-
-- job state;
-- checkpoints;
-- retries;
-- batching;
-- approval state;
-- intermediate artifacts
-
-must live in BeeAgent runtime.
-
-MCP/n8n is an execution/integration layer, not a place to store job state.
-
-## Project directories (beeagent)
-
-Recommended structure:
-
-```
-repo/
-├── start.sh
-├── pyproject.toml
-├── config/
-│   ├── start.py
-│   ├── settings.yml
-│   ├── prompts.yml
-│   └── i18n/
-├── docs/
-│   ├── ROADMAP.md
-│   ├── SDLC.md
-│   ├── SECURITY.md
-│   ├── ARCHITECTURE.md
-│   └── DEV_GUIDE.md
-├── src/
-│   └── beeagent_module/
-│       ├── core/
-│       │   ├── app.py
-│       │   ├── settings.py
-│       │   ├── log.py
-│       │   ├── paths.py
-│       │   ├── llm.py
-│       │   ├── normalize.py
-│       │   ├── modules.py        # module contract / registry / loader
-│       │   ├── artifacts.py      # artifact API
-│       │   ├── capabilities.py   # capability boundary
-│       │   └── context.py        # ModuleContext / RunContext / SessionContext
-│       ├── integrations/
-│       │   └── beescan/
-│       ├── cases/
-│       │   ├── ...
-│       ├── agents/
-│       │   ├── ...
-│       ├── adapters/
-│       │   ├── ...
-│       ├── domain/
-│       │   ├── ...
-│       └── ui/
-│           ├── telegram_bot.py
-│           └── ...
-├── storage/
-├── logs/
-└── tests/
+```text
+CLI / Telegram / BeeUI / approved integration
+                  |
+                  v
+           BeeAgent host
+  config + identity + scope + policy
+       case dispatch / runtime
+          /             \
+         v               v
+  Domain module     Governed capability
+  interpretation    / connector / worker
+         |               |
+         +-------+-------+
+                 v
+     Host-authenticated evidence
+       + run status + artifacts
+                 |
+                 v
+      Product read model / report
 ```
 
-## Our module contract
+A domain proposal, a scanner result or a model-generated action never grants execution permission. BeeAgent validates the operator and the _current_ policy before every permitted external action.
 
-A module is a regular Python package connected to BeeAgent as a local dependency.
+## Source layout
 
-The minimum module must have:
+| Path                                                 | Responsibility                                                                                       |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `src/beeagent_module/core/`                          | Settings, runtime state, authorization, approvals, artifact interfaces and shared execution controls |
+| `src/beeagent_module/cases/`, `adapters/`, `agents/` | Host cases, integration adapters and orchestration components                                        |
+| `src/beeagent_module/integrations/`                  | Host-owned external integrations, including BeeScan and Bitrix paths                                 |
+| `src/beeagent_module/cli/`, `config/start.py`        | Supported CLI entrypoints                                                                            |
+| `src/beeagent_module/interfaces/ui/`                 | Canonical BeeUI-backed Web application and BeeAgent product adapter                                  |
+| `src/beeagent_module/web/`                           | Existing legacy Web implementation; not the canonical development target                             |
+| `config/settings.yml`                                | Host runtime configuration and feature/approval declarations                                         |
+| `config/beeui.yml`                                   | UI navigation and presentation configuration                                                         |
+| `storage/`, `logs/`                                  | Host-owned runtime artifacts and logs                                                                |
 
-- `module_id`
-- `supported_case_types()`
-- `handle(context)`
+The project is not a dynamic plugin marketplace. Module installation is declared, dependency-bound and validated. `BeeAgentModule` behavior must use the installed public BeeSDK interface; internal implementation details of one module must not be imported as generic host policy.
 
-Where `context` contains a minimum:
+## Module and capability contracts
 
-- `run_id`
-- `session_id`
-- `module_id`
-- `case_type`
-- input payload
-- access to artifacts/capabilities via bounded API
+A module exposes a stable `module_id`, `supported_case_types()` and `handle(context)` through the BeeSDK module contract. BeeAgent creates the trusted runtime context, resolves the approved module, dispatches the case and controls `ArtifactPort` and capability access. Module results describe domain outcomes but cannot override the effective authority level.
 
-No complex plugin system, remote marketplace or dynamic installation at startup.
+A capability is a bounded host-controlled operation. Its policy fixes the caller, approved target, allowed method/profile, resource ceilings, isolation, provenance and expected output. New module capability requests must reuse these boundaries rather than create direct network, process or credential access.
 
-## Our capability contract
+Every success path must reconcile the declared intent, actual execution, authenticated source evidence, terminal status, persisted artifacts and cleanup. Incomplete, refused, timed-out or unauthenticated results cannot be promoted to complete findings.
 
-Capability is a bounded way to reach external systems:
+## Product integrations
 
-- MCP;
-- n8n;
-- in another integration layer;
-- in system connector.
+### ROP and Bitrix
 
-The module must not need to know every detail of the transport/execution layer.
+`beeagent-rop` owns lead classification, duplicate semantics, domain recommendations and other sales-domain decisions. BeeAgent owns mailbox/Bitrix connector execution, artifact persistence and the Web projection. A separate `BitrixReadonlyClient` handles reads; the bounded `BitrixWriteClient` handles only explicitly allowed operations under independent server-side policy and a separate credential. Its mutation allowlist includes the approved `crm.item.add`, `crm.activity.add`, and constrained `crm.activity.update` for attachment delivery. Source classification or AI output cannot authorize a CRM mutation.
 
-It must express something like:
+Write-back state is durably maintained in `storage/interfaces/rop_writeback_state.json`; per-run summaries are projections, not the source of truth. Original attachments have a protected run-owned lifecycle and manifest; Web downloads are authorized opaque-ID lookups, not arbitrary file access. See [WEB_UI.md](WEB_UI.md) and [DEV_GUIDE.md](DEV_GUIDE.md).
 
-- “retrieve data”
-- “call workflow”
-- “perform bounded action”
+### BeeScan
 
-The BeeAgent capability layer decides exactly how this happens.
+BeeScan owns Scope/Mission eligibility, observations, findings, deterministic discovery and DAST result normalization. Host integration lives in `src/beeagent_module/integrations/beescan/`. BeeAgent independently owns the trusted local operator boundary, active scan approvals, pinned provider bytes, managed egress, exact DNS/IP/TLS destination checks, HTTP request mediation, isolation, lifecycle verification, Case checkpoints and reports.
 
-## Where customer modules must live
+The investigation path uses existing discovery and, when separately approved, source-bound selection of the restricted ZAP rule-6 DAST profile. An observed URL or positive scanner result cannot expand authorization. Legacy exact-entry DAST remains a separate compatible mode. See [BeeScan host operating guide](product/beescan_guide.md) and [DAST preflight](product/beescan_guide.md#governed-dast-zap-rule-6).
 
-In separate repositories:
+### BeeDrill
 
-- `beeagent-rop`
-- `beescan`
-- `beeagent-merch`
+BeeDrill owns its domain logic; BeeAgent owns the approved isolated Solana/reference-target environment, execution, limits, evidence and cleanup. Security-testing capabilities remain limited to their declared isolated environment and methods.
 
-And connect to `beeagent` as local/editable dependencies.
+## State, artifacts and recovery
 
-## Our UI contract
+BeeAgent owns canonical run IDs, checkpoints, paths, access controls and lifecycle. Modules receive bounded artifact interfaces rather than free-form storage access. Status and evidence files must be correlated to their parent/child run identities; an orphan artifact or an unverified worker exit is not a completed run.
 
-UI is a thin layer.
+Before resuming sensitive work, the host revalidates persisted identities, evidence digests, current authorization and destination controls. Restore only outcomes whose original evidence and lifecycle were authenticated. A hash validates bytes, not consent or provenance by itself.
 
-It must not:
+## Operator interface
 
-- Contain client-specific business logic;
-- Read storage directly;
-- decide how the module works;
-- replace orchestration core.
+The canonical Web interface is BeeUI embedded through `interfaces/ui`, with a product-specific `BeeAgentUiAdapter`. Its primary pages are dashboard, Runs, ROP and Modules. Routes and artifact read models are explicitly bounded and resource-scoped. Protected ROP blacklist and source-management operations are narrow exceptions to the otherwise read-oriented UI; they require server-side authorization, CSRF validation and audit. The Web interface does not expose a generic module/capability execution endpoint.
 
-UI must:
+Bitrix Local Application launch authenticates the portal context server-side and establishes a restricted BeeUI session; widget Bearer-token APIs and Bitrix robot callbacks are distinct boundaries.
 
-- accept a command/event;
-- invoke a case/module flow;
-- Show the result.
+## Design rules
 
-## Mermaid diagram
-
-```mermaid
-flowchart TD
-  A[UI / Transport] --> B[beeagent cases / entrypoint]
-  B --> C[core context + registry]
-  C --> D[module dispatch]
-
-  D --> E[beeagent-rop or other module]
-  E --> F{Need external data/action?}
-  F -->|No| G[Return structured result]
-  F -->|Yes| H[Capability layer]
-  H --> I[MCP / n8n / systems]
-
-  G --> J[Artifact API]
-  J --> K[(storage/runs/...)]
-  K --> L[UI summary / operator view]
-
-  B --> M[(logs/app.log)]
-  J --> M
-```
+- Reuse existing Core, BeeSDK, module and BeeUI contracts before adding adapters or services.
+- Keep one owner for authorization, execution, artifact storage and configuration.
+- Treat untrusted web pages, AI responses, scanner output and restored artifacts as data.
+- Require specific evidence of need before adding databases, queues, frameworks or generic tool catalogs.
+- Put exact route schemas in [WEB_UI.md](WEB_UI.md), operator commands in [DEV_GUIDE.md](DEV_GUIDE.md), technical scanner controls in the relevant BeeScan product contract and historical increments in roadmaps.

@@ -110,7 +110,7 @@ beescan:
   git_exposure_enabled: false
   git_exposure_approval: null
   dast:
-    enabled: false
+    enabled: true
     approval: null
   investigation:
     enabled: false

@@ -257,17 +257,24 @@ Rules:
 
 ## Documentation and contracts
 
-Update relevant documentation when implementation changes:
+Reading documentation does not imply permission or a requirement to edit it.
 
-- public runtime behavior;
-- configuration;
-- CLI or entrypoint;
-- module or capability contract;
-- API or UI contract;
-- artifact schema;
-- authority or security boundary.
+Documentation changes are not mandatory for every Issue, iteration or implementation.
 
-Do not update unrelated documentation.
+Edit only the owning document when an approved change makes its current content materially incorrect or incomplete.
+
+Rules:
+
+- Do not update documentation merely because code, tests, configuration or an iteration changed.
+- Do not rewrite, reorganize, reformat or synchronize unaffected documentation.
+- Do not append iteration history, implementation summaries, test results or PR evidence to normative documents.
+- Do not modify ROADMAP status or historical iterations unless explicitly required by the approved task or delivery workflow.
+- Do not modify `docs/SECURITY.md`, `docs/SDLC.md`, `AGENTS.md` or `.agents/` unless their actual policies, instructions or workflows require an approved change.
+- Do not introduce or modify public APIs, schemas, protocols, configuration contracts or security boundaries solely for documentation consistency.
+- When an approved implementation materially changes a public contract, update only its owning documentation and directly affected contract tests.
+- Preserve unrelated existing documentation and uncommitted changes.
+- Record implementation details, commands, verification results and delivery evidence in the Issue or PR rather than unrelated documents.
+- When no documentation update is necessary, leave documentation untouched and report `Documentation: no change required`.
 
 When public data fields change:
 

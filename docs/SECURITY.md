@@ -1,603 +1,142 @@
-# SECURITY — beeagent
-
-## BeeDrill AI-assist boundary
-
-BeeDrill AI assistance is optional downstream egress controlled by `beedrill.ai_assist`. BeeAgent sends only bounded `explanation_facts`, stores no credentials in its AI artifact, and treats provider failures and output validation failures as non-authoritative: deterministic BeeDrill truth, exit semantics, capabilities, and Solana authority remain unchanged.
+# SECURITY — BeeAgent
 
 ## Purpose
 
-This document defines the practical security rules for `beeagent`.
+This document defines the stable security requirements for the BeeAgent runtime, integrations, capabilities, operator interfaces and hosted modules. It is a normative engineering policy, not an iteration history, implementation log, deployment checklist or security certification.
 
-The goal is to improve code and runtime safety without creating unnecessary bureaucracy.
+BeeAgent is the host security authority for its modules. A valid domain decision or scanner result does not grant permission to execute an action. Follow [SDLC.md](SDLC.md) for the development process and risk classification; keep exact behavior, configuration, operating procedures and product-specific security contracts in their owning documentation.
 
-This is **not** a formal enterprise security program.
+## Security objectives and threat model
 
-It is a lightweight engineering guide for deciding:
+Protect credentials, user and customer information, approved operation scope, module isolation, external-system integrity, evidence provenance, artifact confidentiality, trusted operator state and the integrity of runtime outcomes.
 
-- what needs security attention;
-- which checks are worth running;
-- how to keep secrets and runtime artifacts safe;
-- how to align security checks with the SDLC-light workflow.
+Treat as untrusted by default: CLI arguments; web requests; restored JSON and Case state; configuration supplied outside the trusted operator boundary; emails and attachments; documents; URLs and filenames; external HTTP and API responses; scanner output; MCP/tool results; third-party model responses; and AI-generated instructions. Content retrieved from an external system is evidence, not policy or authority.
 
-Use this document together with:
+Do not assume a process sandbox, container, language model, module manifest or successful return code establishes a complete security boundary by itself.
 
-- `docs/SDLC.md`
-- `docs/ROADMAP.md`
-- `docs/DEV_GUIDE.md`
+## Security ownership
 
-## Security principles
+- **BeeAgent** owns runtime initialization, operator identity, authorization, configuration, credentials, capability execution, network mediation, process isolation, persistent storage, evidence authentication, audit logging and publishing terminal outcomes.
+- **BeeSDK** defines public contracts and authority interfaces; these are not substitutes for host policy enforcement.
+- **BeeScan and other product modules** own domain semantics and validated proposals; they cannot independently grant host execution permissions.
+- **BeeUI** owns generic presentation and reusable session/presentation mechanisms. BeeAgent supplies product-specific authorization, read-models and bounded actions.
+- The approved capability boundary, not a prompt, provider response or display control, determines what may execute.
 
-Security in `beeagent` should follow these principles:
+Do not introduce a second runtime, security policy engine, storage source of truth or execution gateway without an explicitly approved architectural and security need.
 
-- protect secrets first;
-- validate configuration explicitly;
-- fail fast on invalid required inputs;
-- keep runtime behavior observable but not overexposed;
-- avoid hidden defaults for sensitive behavior;
-- minimize attack surface;
-- prefer simple designs over complex, fragile abstractions;
-- apply security checks proportionally to the change.
+## Core requirements
 
-## What we protect
+### Configuration and secrets
 
-At minimum, the project should protect:
+- `config/settings.yml` is the source of truth for declared runtime behavior; required keys must be validated fail-fast by the host. Security-sensitive defaults must be explicit, documented and restrictive.
+- Credentials and tokens belong to the approved environment or secret provider, not tracked YAML, source code, test fixtures, logs or artifacts. Never log complete environment dumps, webhook URLs, authentication headers or secret-bearing settings.
+- Apply least privilege to secrets and identities. Use distinct credentials for read-only and write operations where supported; do not reuse a read credential as mutation authority.
+- Validate active configuration again at the required execution checkpoints. Reloaded, missing, conflicting, expired or revoked authorization must fail closed.
+- Do not silently downgrade required isolation, validation or permission checks because a dependency or host feature is unavailable.
 
-- API secrets and environment variables;
-- module loading boundaries;
-- MCP/tool/capability boundaries;
-- external connector behavior;
-- attachment/file parsing paths;
-- artifact integrity and predictability;
-- config correctness;
-- dependency hygiene;
-- authority boundaries between read-only, draft-only and execution-capable paths.
+### Identity, authorization and operator control
 
-## Security-sensitive areas in beeagent
+- Establish the actual principal at the trusted entrypoint. CLI OS-operator trust, Web UI session identities, remote API identities and third-party application identities are separate; permission from one boundary must not be silently transferred to another.
+- Require explicit host approval for execution-capable actions, including network scanning, file-system mutations and external write-back. Installed tools, catalog metadata, AI instructions, observed URLs and historical decisions do not grant authority.
+- Bind each approval to the relevant operator, capability/profile, target/scope, allowed methods, resource budgets and validity period. Revalidate at execution, resume and publication boundaries as appropriate.
+- Default Web UI/API views to read-only. Any state-changing endpoint requires authenticated role/permission checks, CSRF protection where cookie authentication is used, server-side scope enforcement, input validation and audit evidence.
+- No Web or remote request may acquire a private trusted-local CLI context by invoking a CLI handler or replaying its serialized data.
+- Refusals, degraded operation and required manual review must be visible to the operator; never silently elevate privileges or fabricate successful completion.
 
-Changes in these areas should be treated more carefully:
+### Network and external capability execution
 
-- `config/settings.yml`
-- `config/start.py`
-- `src/beeagent_module/core/settings.py`
-- `src/beeagent_module/core/secrets.py`
-- `src/beeagent_module/core/app.py`
-- `src/beeagent_module/core/llm.py`
-- `src/beeagent_module/ui/*`
-- `src/beeagent_module/adapters/*`
-- `src/beeagent_module/cases/*`
-- future module registry / capability boundary code
-- dependency files:
-  - `pyproject.toml`
-  - `uv.lock`
+- Deny outbound traffic by default outside the approved capability and destination set. Authorize exact target origin and scope; recheck actual destination, DNS/IP changes, TLS identity, redirects, methods and budget constraints.
+- Prevent SSRF, redirects to unauthorized hosts, direct-egress bypasses, alternative address families and other changes that would escape the approved destination. DNS resolution or a matching URL string alone does not prove connected-endpoint compliance.
+- Enforce independent, hard resource ceilings for requests, time, output, processes and memory. A scanner's own reported request count or CLI flags must not be the only enforcement mechanism.
+- External security tools must use integrity-verified, approved versions and profiles. Run them with least privilege, minimal environment, restricted mounts/filesystem, bounded execution and independently enforced network rules.
+- Container or namespace isolation is insufficient without the appropriate kernel, filesystem, egress and cleanup controls. Fail closed when mandatory restrictions cannot be established or verified.
+- Revalidate approvals and immutable source/evidence identity before using restored checkpoints. Never replay a completed active stage solely because a process restarted.
+- Tool crashes, timeouts, budget exhaustion, incomplete cleanup, missing status markers and read-back failures must remain incomplete or failed; they cannot publish success.
 
-## Core rules
+### Evidence, artifacts and storage
 
-### 1. Config is source of truth
+- Store artifacts only through controlled host interfaces with bounded schemas, allowlisted names and validated run/Case ownership. Treat external content and restored artifacts as untrusted.
+- Protect storage from traversal, symlink substitution, unauthorized ownership, unexpected link counts and unrestricted file access. Apply restrictive permissions and avoid insecure recursive permission changes.
+- Persist evidence and authoritative state before publishing dependent completion or advancing an external checkpoint when the operation's consistency contract requires it. Use verified publication/read-back and recovery paths for multi-stage operations.
+- Preserve exact provenance among source input, execution, target, provider/profile, child runs, evidence and parent Case. Caller-supplied metadata and scanner output cannot authenticate their own origin.
+- Store bounded, redacted projections rather than raw sensitive inputs by default. Raw email, attachments, cookies, credentials, full HTTP bodies, scanner output and private report contents require a separate reviewed retention and access contract.
+- Keep raw secrets, auth headers, full environment dumps and sensitive payloads out of ordinary JSON/JSONL, Markdown, logs, screenshots, AI inputs and public CI/PR artifacts.
+- Keep `CANDIDATE`, `VERIFIED`, `NO_MATCH`, `PARTIAL`, `REFUSED` and error states distinct when relevant. An alert, incomplete check or untrusted review field must not produce a verified result.
 
-Required runtime behavior must be controlled by config, not hidden code defaults.
+### Web UI and operator-facing output
 
-If a new required key is introduced:
+- Reuse the canonical BeeUI-backed BeeAgent Web application, existing session/auth boundary, product adapter and artifact allowlists. Do not create a parallel BeeScan UI server or expose private storage paths directly.
+- Validate pagination, filters, identifiers and query parameters on the server. Escape untrusted text, constrain links to authorized locations and prevent unsafe HTML or script injection.
+- Use explicit authorization and bounded previews for artifact browsing; do not make raw responses, downloaded customer documents or secret evidence publicly accessible.
+- Protected attachment downloads must enforce identity and scope, prevent inline execution and public caching, and avoid filename-controlled filesystem resolution.
+- Security-sensitive evidence disclosure must use a separately reviewed protected presentation path. A working CLI terminal disclosure contract does not automatically permit equivalent Web disclosure.
 
-- it must be explicitly present in `config/settings.yml`;
-- it must be validated in `src/beeagent_module/core/settings.py`;
-- the app must fail fast with a clear error if it is missing or invalid.
+### Connectors, CRM write-back and attachments
 
-### 2. Secrets must not leak
+- Separate read-only observation from mutation capability. Use narrowly allowlisted API operations and dedicated write credentials; application data, model classifications and identity-only matches must never grant external write authority.
+- CRM mutations require authoritative target identity, correct scope, configured permission and validated external prerequisites. Ambiguous targets or responsible users, connector degradation and missing/contradictory evidence must defer work with zero speculative mutation.
+- Preserve durable write intent, idempotent origin identities, reconciliation of uncertain outcomes and bounded retry behavior. Never blindly repeat a remote mutation after a timeout, and never advance a checkpoint past required unpersisted state.
+- Treat emails, attachments and extracted document text as hostile content. Enforce type, size, count and processing limits; use opaque storage identities rather than original filenames or user-provided paths.
+- Process untrusted documents only through an approved bounded, local and isolated extraction path. Missing models, unsupported formats and parser failures must degrade safely, without unapproved external content egress or AI file-upload fallback.
+- Do not let attachment delivery select its own CRM target. Delivery reuses only the trusted target and write-back authority, with independent completion and reconciliation state.
+- Keep product-specific method allowlists, field mappings, attachment handling, idempotency procedures and numeric limits in their product contracts and operating guides, not in this policy.
 
-Secrets must never appear in:
+### AI, tools and prompt injection
 
-- logs;
-- storage artifacts;
-- test snapshots;
-- PR screenshots;
-- example payloads committed to repo.
+- External text, tool responses and retrieved documents are data even when they contain instructions, role markers or claimed authority. They cannot override host policy, approved tasks or execution scope.
+- Validate the structure and permitted effects of AI-generated proposals before any capability call. Do not expose unbounded raw evidence, credentials or customer records to a model provider.
+- AI explanations, recommendations and classifications are non-authoritative; deterministic engines and independently authenticated evidence remain sources of operational truth.
+- An AI provider failure, malformed reply or hallucinated output must not alter permissions, produce fabricated evidence or bypass the normal failure state.
 
-Safe practice:
+### Dependencies and supply chain
 
-- read secrets only from env or approved secret source;
-- load only expected env keys;
-- never dump full env or request headers blindly;
-- never serialize raw secrets into JSON/JSONL.
+- Add dependencies only for a demonstrated need. Review source, provenance, licenses and known security advisories when dependencies or critical tool pins change.
+- Maintain consistency between `pyproject.toml` and `uv.lock` when approved dependency changes require it. Do not commit local editable sibling paths or development credentials as production dependencies.
+- Verify integrity and provenance for external executable tools, templates and model assets under their documented host installation contracts.
+- Do not replace a pinned provider, enable a new scanner profile or expand tool privileges without security-sensitive review and appropriate integration evidence.
 
-Server-to-server callbacks must use a dedicated env-backed secret, accept only bounded identifiers, and re-read authoritative external state before any mutation. When a constrained external robot cannot send a request header, a bounded URL path segment is permitted; query parameters are not.
+## Risk-based verification
 
-### 3. Logs must be useful but safe
+Use the change levels from [SDLC.md](SDLC.md). Select checks based on the actual risk and affected boundary; test counts or the presence of a feature label alone do not establish security.
 
-Logs should be:
+| Level                | Expected verification                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `low-risk`           | Relevant diff and contract review; targeted validation where applicable.                                                    |
+| `runtime-risk`       | Targeted/full regression, representative end-to-end smoke and inspection of changed log/artifact behavior.                  |
+| `security-sensitive` | Runtime checks plus trust-boundary negative tests and applicable static, supply-chain, dynamic or adversarial verification. |
 
-- understandable;
-- sufficient for debugging;
-- free from secret values.
+Apply the following techniques only where justified:
 
-Avoid logging:
+| Technique                  | Typical trigger                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Static analysis / SAST     | Sensitive code paths, parsing, serialization, process/network execution, authority and secrets.             |
+| Software composition / SCA | Dependencies, executable providers, pinned templates or provenance changes.                                 |
+| DAST                       | Exposed HTTP/API functionality or active network-facing behavior changed; authorized targets only.          |
+| IAST                       | An instrumented runtime exists and the security question cannot be answered adequately with simpler checks. |
+| Fuzzing / property tests   | Untrusted parsers, protocol framing, canonicalization, serialization and checkpoint restoration.            |
 
-- API secret values;
-- raw auth headers;
-- full environment dumps;
-- unredacted credentials;
-- raw sensitive payloads from external systems.
+Security-sensitive checks should, as relevant, include expired/missing approval, source or identity substitution, out-of-scope destination, IP/DNS/TLS changes, bypass attempts, budget exhaustion, concurrent requests, provider crash, persistence failure, tampered resume, redaction and verified cleanup. Test the existing permitted path as well as refusal paths.
 
-### 4. Artifacts must be reproducible and safe
+Record exact commands, exit status, meaningful runtime evidence, skipped or inapplicable checks and remaining limitations in the Issue/PR. Never claim that a tool or reviewer executed tests it only inspected as reported evidence.
 
-`start.sh` sets `umask 077`. Core startup creates `storage` and `storage/runs` with mode `0700` and normalizes existing directories only after descriptor-based directory and current-operator ownership checks. Symlinks and foreign-owned directories fail closed; historical artifact permissions and ownership are not recursively changed. The project root remains a trusted operator-controlled location.
+## Vulnerability handling and release gate
 
-Artifacts in `storage/` should be:
+Suspected security vulnerabilities must be reported privately to repository maintainers through an approved channel. Do not include customer secrets, exploit results, raw credentials or private evidence in public Issues, PRs, logs or screenshots. Record the affected boundary, reproducible conditions, impact and mitigation in a restricted location.
 
-- predictable;
-- useful for debugging;
-- consistent with logs;
-- free from secrets.
+A regression that bypasses required authority, scope, isolation, confidentiality or evidence integrity blocks release until fixed or explicitly accepted by an authorized risk owner. Automated security testing and local laboratory success are not proof of production certification or permission to scan third-party systems.
 
-If a new artifact is introduced, ask:
+## Policy maintenance
 
-- does it help reproduce runtime behavior?
-- does it expose anything sensitive?
-- does it need redaction or omission?
+This document is a stable engineering security policy. **Developers and Codex must read and apply it when relevant, but must not modify it merely because a new iteration, feature, test, scanner rule, report field or endpoint was added.**
 
-### 5. External input is untrusted by default
+Update it only for a durable change in the threat model, trust-boundary ownership, mandatory controls, verification policy or disclosure process. Record the reason and impact in the reviewing PR. Put implementation details, current provider pins, numeric limits, exact APIs, product invariants, test evidence and iteration history into their owning contracts, guides, ROADMAPs and PRs.
 
-Treat as untrusted:
+Before removing historical implementation-specific security sections from this file, preserve any still-authoritative rules in the appropriate product documentation. No documentation cleanup may silently relax a runtime control.
 
-- env input;
-- CLI args;
-- config values;
-- tool/MCP responses;
-- external workflow responses;
-- file contents loaded from disk;
-- email and attachment contents;
-- restored JSON artifacts.
+## Related documents
 
-Validate before use where reasonable.
-
-### 6. Keep the trusted surface small
-
-Do not add complexity unless needed.
-
-Good security in this project usually means:
-
-- fewer moving parts;
-- explicit behavior;
-- narrow interfaces;
-- simple validation;
-- limited serialization.
-
-## Security checks in this project
-
-To keep the process simple, use only the checks that fit the change.
-
-## SAST
-
-### What it means here
-
-Static review of source code for risky patterns.
-
-### Use SAST when
-
-Run or consider SAST when a PR changes:
-
-- runtime logic;
-- config parsing;
-- env/secrets handling;
-- module loading;
-- capability boundaries;
-- file/path handling;
-- serialization/deserialization;
-- tool-facing logic;
-- network-sensitive logic.
-
-### Typical things to look for
-
-- secret leakage to logs;
-- unsafe file/path usage;
-- missing validation;
-- overly broad exception swallowing;
-- insecure debug code;
-- dangerous dynamic execution;
-- fragile parsing of untrusted data.
-
-## SCA
-
-### What it means here
-
-Software Composition Analysis: dependency review.
-
-### Use SCA when
-
-Run or consider SCA when:
-
-- `pyproject.toml` changes;
-- `uv.lock` changes;
-- a dependency is added, removed, or upgraded.
-
-### Typical things to look for
-
-- known vulnerable packages;
-- unnecessary packages;
-- overly broad dependency additions;
-- packages with risky maintenance history.
-
-## DAST
-
-### What it means here
-
-Dynamic testing of exposed runtime behavior.
-
-### Use DAST when
-
-Run or consider DAST when a change affects:
-
-- network-facing runtime behavior;
-- MCP/tool surface;
-- external connector behavior;
-- request/response handling;
-- future web/operator shell endpoints.
-
-### Typical things to look for
-
-- malformed input handling;
-- crashes under bad external responses;
-- unsafe error paths;
-- runtime behavior under invalid requests/responses.
-
-## IAST
-
-### What it means here
-
-Interactive testing with runtime instrumentation or deeper runtime observation.
-
-### Use IAST when
-
-Consider IAST only for higher-risk changes such as:
-
-- execution-capable path;
-- complex external connector flow;
-- capability boundary enforcement;
-- high-risk parsing or restore flows.
-
-### Lightweight rule
-
-IAST is **not default** for everyday work. Use it only when a change is clearly security-sensitive and runtime-observable.
-
-## Fuzzing
-
-### What it means here
-
-Feeding unexpected or malformed input to fragile code paths.
-
-### Use fuzzing when
-
-Consider fuzzing for code that parses or restores:
-
-- JSON/JSONL;
-- config-like data;
-- CLI input;
-- attachment-derived text;
-- external tool responses;
-- custom parsing/normalization logic.
-
-### Lightweight rule
-
-Do not fuzz everything. Use fuzzing only for code that can realistically break on malformed input.
-
-## Security levels for PRs
-
-Use these three practical levels.
-
-### Low-risk
-
-Examples:
-
-- docs only;
-- comments only;
-- test-only changes;
-- formatting;
-- non-runtime refactor.
-
-Usually enough:
-
-- normal review;
-- targeted tests if needed.
-
-### Runtime-risk
-
-Examples:
-
-- orchestrator behavior;
-- settings validation;
-- artifact contract;
-- case dispatch;
-- summary generation;
-- session handling.
-
-Usually needed:
-
-- `pytest -q`
-- smoke run
-- log inspection
-- artifact inspection
-- SAST mindset review
-
-### Security-sensitive
-
-Examples:
-
-- secrets/env logic;
-- module loading;
-- external connectors;
-- attachment parsing;
-- new dependencies;
-- execution-capable paths;
-- tool/MCP boundary changes;
-- restore flows from disk/API.
-
-Usually needed:
-
-- all runtime-risk checks;
-- SAST;
-- SCA if dependencies changed;
-- DAST / IAST / fuzzing only if relevant.
-
-## Minimal security checklist for developers
-
-Before opening PR, check:
-
-- are secrets kept out of logs and artifacts?
-- are required config keys validated fail-fast?
-- did I avoid hidden defaults for sensitive behavior?
-- did I keep the change inside the intended scope?
-- did I avoid unnecessary abstraction?
-- if dependencies changed, were they reviewed?
-- if external input is parsed, is the handling robust enough?
-- are artifacts still safe to store and inspect?
-- are authority boundaries still explicit?
-
-## Minimal security checklist for reviewers
-
-During review, ask:
-
-- does this change touch secrets, module loading, external input, dependencies, parsing, or file paths?
-- does it introduce a new trust boundary?
-- are logs still safe?
-- are artifacts still safe?
-- are required validations explicit?
-- is any check from this document missing?
-- is the solution simple enough?
-
-## Secure logging rules
-
-Allowed:
-
-- high-level runtime events;
-- reason codes;
-- artifact paths;
-- non-sensitive config choices;
-- state transitions.
-
-Not allowed:
-
-- raw secret values;
-- full env dumps;
-- raw credentials;
-- debug prints of sensitive payloads;
-- accidental dumps of all config if secrets are included.
-
-## Secure artifact rules
-
-Allowed when useful:
-
-- run metadata;
-- effective non-secret config;
-- summaries;
-- recommendations;
-- session state;
-- diagnostics;
-- read-only evaluation summaries.
-
-Not allowed:
-
-- raw API secrets;
-- full auth headers;
-- env dumps;
-- unsafe snapshots that expose credentials or sensitive client data without need.
-
-## Dependency rules
-
-When dependencies change:
-
-- keep changes intentional and minimal;
-- commit both `pyproject.toml` and `uv.lock`;
-- review why the package is needed;
-- review whether it affects runtime or attack surface.
-
-Do not add dependencies “just in case”.
-
-## Path / file safety rules
-
-When working with files:
-
-- prefer explicit project paths;
-- avoid uncontrolled path building from untrusted input;
-- validate assumptions before reading stored artifacts;
-- do not trust restored JSON blindly;
-- do not parse arbitrary attachments without clear bounds.
-
-## Authority boundary rules
-
-When a change affects what the system can do:
-
-- make the boundary explicit;
-- separate read-only, draft-only and execution-capable paths;
-- do not rely on prompt discipline as the only safety mechanism;
-- do not silently escalate permissions;
-- make denials and restrictions operator-visible.
-
-## Bitrix write-back boundary (Iteration 37)
-
-BeeAgent has a bounded Bitrix CRM write-back path for ROP events. Rules:
-
-- `BitrixReadonlyClient` stays strictly read-only; its allowlist has no mutation methods and includes `crm.activity.list` only for idempotency reconciliation.
-- Reconciliation email matching uses the exact `EMAIL` filter (not `%EMAIL` substring, which some portals treat as returning all entities) and title search is applied only to entity types that have a `title` field (contacts are skipped), so connector errors are not produced by invalid filters and clean senders are detected reliably as `not_found`. Identity evidence (sender email/phone, Contact/Company and related historical CRM relation) is never an executable target: an exact matched Lead/Deal, an exact Contact/Company and a Deal resolved through the bounded read-only `crm.item.list` (`entityTypeId=2`) `contactId`/`companyId` relation all remain identity/candidate evidence with `safe_to_use_as_target=false` and `needs_manual_review=true`. Title/subject similarity never authorizes a target. After successful bounded Lead and related-Deal searches find no executable target, reconciliation emits `identity_only_no_target` with `suitable_target_search=completed_no_target`, which may enter the configured Lead-create path only for `new_lead` or `irrelevant`.
-- Non-authoritative Bitrix candidate/identity evidence never vetoes an independent final `new_lead`: with no trusted exact RFC/outbound target, `weak_match`, `ambiguous`, `duplicate_candidate` and `matched_*` (`safe_to_use_as_target=false`) use the normal configured create path for create-eligible case types; `bitrix_match_status=uplicate_candidate` stays CRM reconciliation evidence and never becomes semantic `case_type=duplicate`; candidate/identity evidence alone never authorizes `attach_existing` (attachment requires exact trusted thread authority); connector errors, malformed prerequisites, conflicting exact RFC targets and unresolved responsible remain fail-closed.
-- Automatic existing-target attachment (Iteration 38) is allowed only for exact trusted thread evidence resolved from canonical write-back state:
-  - normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` ancestry are used as exact thread evidence;
-  - all resolved exact referenced ancestors must agree on a single trusted Lead/Deal; conflicting references fail closed to `ambiguous_thread_target` deferred with zero mutation;
-  - a confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is an authoritative thread root; a thread-resolved attachment
-    (`target_provenance=thread_resolved`) propagates its target to later replies;
-  - legacy records without trusted target provenance are never promoted to thread authority (fail closed);
-  - matching scope is the same `client_id` (not necessarily the same `source_id`);
-  - run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment;
-  - an independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review;
-  - an exact reply in the same batch whose thread root is only planned (not yet confirmed) is deferred as recoverable `pending_thread_root` and resolved after the root is confirmed.
-- A confirmed BeeAgent-created/recovered Lead root in canonical write-back state may be reused across runs only for the exact normalized `client_id` + sender + subject key; multiple distinct historical roots fail closed. Same-run `create_lead` siblings still use pending root resolution, then attach with `target_provenance=sender_subject_resolved`. This is not arbitrary historical CRM target authority, does not reassign an existing CRM entity, and `sender_subject_match` remains thread evidence rather than semantic duplicate proof.
-- Outbound Bitrix correlation (Iteration 39) is strictly READ ONLY (`bitrix_outbound_correlation.json`):
-  - outbound Bitrix activity (`crm.activity.list`, `TYPE_ID=4`) is used only to observe email Message-IDs of outbound activities; no mutation is performed;
-  - inbound `In-Reply-To` / bounded `References` must contain the exact outbound Message-ID for a candidate bridge; restored bridge evidence is revalidated against the current RFC ancestry;
-  - run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment;
-  - an independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review;
-  - an exact reply in the same batch whose thread root is only planned (not yet confirmed) is deferred as recoverable `pending_thread_root` and resolved after the root is confirmed.
-- Outbound Bitrix correlation (Iteration 39) is strictly READ ONLY (`bitrix_outbound_correlation.json`):
-  - outbound Bitrix activity (`crm.activity.list`, `TYPE_ID=4`) is used only to observe email Message-IDs of outbound activities; no mutation is performed;
-  - inbound `In-Reply-To` / bounded `References` must contain the exact outbound Message-ID for a candidate bridge; restored bridge evidence is revalidated against the current RFC ancestry;
-  - outbound Bitrix activity OWNER alone is NOT authority;
-  - the outbound Message-ID is read from the real Bitrix location `SETTINGS.MESSAGE_HEADERS.Message-Id` (header name matched case-insensitively) and
-    from the previously supported legacy locations (`SETTINGS.MESSAGE_ID`, `SETTINGS.EMAIL_MESSAGE_ID`, top-level `MESSAGE_ID`);
-  - a candidate target must match an ALREADY TRUSTED canonical CRM target in the same `client_id` scope, where trusted identity is the canonical CRM entity identity (entity type, entity type ID, entity ID); the outbound activity `RESPONSIBLE_ID` is diagnostic evidence only and can never replace the trusted responsible;
-  - `DIRECTION` must prove outbound (2); numeric-string IDs are bounded-normalized; the same outbound Message-ID observed with conflicting OWNER entities is ambiguous and never becomes bridge evidence;
-  - missing, stale, conflicting or untrusted evidence is deferred with zero mutation (`outbound_candidate_untrusted`); sender, subject, time, `RE:`/`FWD:` and AI output never create target authority;
-  - a proven `target_provenance=bitrix_outbound_exact` target may propagate the same trusted target to the next exact RFC hop.
-- Write access lives in a separate `BitrixWriteClient` with the exact mutation allowlist (`crm.item.add`, `crm.activity.add`) and a dedicated env-backed write credential (`bitrix.writeback.webhook_env`, default `BITRIX_WRITEBACK_WEBHOOK_URL`). When enabled, its env name and normalized URL must both differ from the read-only credential.
-- The tracked production profile enables write-back. Enabled write-back requires `bitrix.enabled: true`, `bitrix.reconciliation.enabled: true`, non-empty configured customer Lead `stageId` values for `new_lead`, `new_lead_assigned` and `irrelevant`, and the dedicated write credential env var. Invalid or missing authority/config fails fast and means zero mutations; explicit disabled and dry-run modes remain zero-write controls.
-- Configured stage IDs are validated against Bitrix (`crm.status.list`) before any POST; invalid or unavailable stage validation means zero mutations (fail closed). When stage validation is unavailable because Bitrix is down, create records stay `pending` and are retried on subsequent write-back executions (durable intent is preserved), while a config-invalid stage defers records until the stage mapping is corrected.
-- Lead creation uses `crm.item.add` with `entityTypeId=1` and bounded deterministic `ORIGINATOR_ID`/`ORIGIN_ID` for idempotency. `crm.lead.add`, broad `crm.item.update` and `crm.item.delete` are never used. Optional config-driven `bitrix.writeback.source_id` sets the Lead `SOURCE_ID` field (e.g. `EMAIL` = "Incoming email"). When the event has a sender email, the Lead `fm` multifield (`EMAIL`/`WORK`) is populated from it so the operator can reply to the original message. When the event carries a sender display name, it is written to the Lead `NAME` field.
-- Email/activity binding uses the official `crm.activity.add` method (email activity, `TYPE_ID=4`) and is gated by `bitrix.writeback.email_attach`. For a trusted exact thread target, the activity uses that target and its recorded responsible without changing the entity responsibility. Before every activity POST, including after timeout or malformed response, read-only `crm.activity.list` checks the stable origin identity; the resulting activity ID is persisted. Each planned record snapshots whether email attachment is required and records its attachment status independently from Lead creation: a created/recovered Lead is delivery-complete only when a required activity has a valid ID. A missing sender, pending/uncertain result, retry exhaustion or terminal attach error stays visibly incomplete according to the bounded retry policy. `bitrix.writeback.email_completed` (boolean, validated fail-fast, default `true`) sets whether the created email activity is completed (`false` creates it as not completed, more visible in the timeline) without weakening the idempotency/attachment control.
-- Before every create POST the executor reconciles by `ORIGINATOR_ID`/`ORIGIN_ID` lookup so an uncertain timeout outcome never produces a duplicate Lead.
-- `should_rop_see` and AI/final decisions never grant execution authority. Delivery planning includes every classified event including `irrelevant`.
-- Ambiguous, inactive, `connector_degraded`, `not_attempted`, malformed or conflicting responsible evidence, unsafe/ambiguous/duplicate reconciliation targets, conflicting thread references and unresolved `existing_deal`/`duplicate` fail closed to an explicit `deferred` outcome; no speculative Lead is created and existing CRM entities are never reassigned. An exact active routing match with a positive `user_id` sets a new Lead `ASSIGNED_BY_ID` and, for a `new_lead`, uses the configured `bitrix.writeback.stages.new_lead_assigned` stage. Configured `bitrix.writeback.user_id_fallback` normally applies only to `not_found`; a genuinely absent legacy/manual routing artifact may use it for missing routing evidence, while a present malformed, incomplete or conflicting artifact never authorizes mutation. The fallback never overrides an exact matched responsible.
-- Durable authoritative write-back intent is persisted to `storage/interfaces/rop_writeback_state.json` before the mailbox checkpoint advances. With write-back enabled, plan persistence failure blocks checkpoint advancement; with write-back disabled it is logged and does not block ingestion. External execution occurs only after checkpoint commit. After any execution transition, summaries for affected original runs are refreshed from canonical state without further Bitrix calls.
-- With `bitrix.writeback.enabled: true`, automatic `rop poll` and `rop run` execute only records owned by their just-persisted run. `rop poll` executes only after durable intent is saved and the applicable mailbox checkpoint advances; `rop run` has no mailbox checkpoint and executes after durable intent persistence. A no-new-mail poll performs no write-back execution. Historical/global pending execution is an explicit operator action: ordinary `rop writeback execute` remains the global executor, while `rop writeback execute --existing-only` is limited to `create_lead` recovery, exact origin-based Lead lookup and missing delivery continuation; it never creates a missing Lead or executes unrelated historical `attach_existing` records. With write-back enabled, `rop run` cannot claim success when reconciliation or durable plan persistence fails before canonical intent exists. Retry-exhausted records (bounded budget exceeded by transient failures) can be re-armed with a fresh retry budget via `rop writeback execute --retry-failed`; terminal failures (permission/config/invalid-field) are never retried. Disabled and dry-run modes perform zero writes.
-- Cross-run stable identity is `client_id + source_id + (message_id → x_email_id → event_id)`. The run-local `event_instance_id` is not used as remote business identity.
-- Credentials, webhook URLs, raw `.eml`, raw attachment bytes and unbounded Bitrix responses never appear in logs, write-back state or write-back summaries.
-
-## Attachment lifecycle security boundary (Iteration 40)
-
-BeeAgent has a bounded opaque attachment lifecycle for ROP mailbox attachments.
-
-Rules:
-
-- accepted MIME attachment bytes are retained only as opaque blobs in the dedicated bounded store `storage/attachments/<run_id>/`; generated blob ids (`att-<sha256[:24]>`) and manifest ids are used for filesystem/URL identity; original filenames are metadata only and never control filesystem location;
-- raw attachment bytes never appear in `normalized_events.json`, classification artifacts, write-back state/summaries, logs, HTML or JSON APIs; the private `_raw_attachments` event key is stripped before any JSON serialization;
-- storage is durable before mailbox checkpoint advancement; required persistence failure blocks checkpoint advancement (fail closed);
-- configured storage bounds (per-file, per-message aggregate, files count) are enforced before decoded payload retention where MIME preflight is available and exactly after decode otherwise; oversized/count-exceeded/ aggregate-exceeded/blocked (`.eml`/`message/rfc822`) files get explicit `storage_status` and are never stored;
-- retention/download/Bitrix delivery are independent from document extraction: `rop.attachments.enabled:false` means zero document parsing while files remain stored, downloadable and eligible for Bitrix delivery;
-- local document extraction is a bounded offline path only:
-  - Docling is the only implemented canonical document engine; each `./start.sh` invocation selects and frozen-syncs its static allowlisted profile before runtime, while reserved Xberg remains absent from dependencies and non-executable; `onnxruntime` is present strictly as the ONNX inference runtime for the local RapidOCR path, not as a second document engine;
-  - only explicitly supported allowlisted content types/sizes are processed: TXT, CSV, PDF, DOCX, XLSX, JPEG, PNG;
-  - untrusted stored blobs are converted through a bounded local subprocess worker with a timeout; parser crash/timeout never becomes the ROP orchestration contract;
-  - inputs are resolved only from the BeeAgent attachment manifest/store; arbitrary URLs and arbitrary filesystem paths are rejected; original filenames never control filesystem identity — format hints are derived only from allowlisted content type;
-  - customer attachment content has zero egress to an external document-reading provider; provider Files API, `input_file`, `input_image` and attachment base64 paths are not used;
-  - JPEG/PNG and scanned PDFs use the local Docling OCR path; the OCR backend is explicitly selected as RapidOCR (`RapidOcrOptions(backend="onnxruntime")`) instead of Docling's implicit auto-selected engine; `onnxruntime` is present strictly as the ONNX inference runtime for the RapidOCR path;
-  - local Docling model assets (layout model plus RapidOCR PP-OCRv5 cyrillic rec/det/dict) are prepared idempotently by normal `./start.sh` when Docling is the active implemented extractor; `./start.sh docling-assets-prepare` remains the explicit maintenance/repair path; runtime runs offline (`HF_HUB_OFFLINE=1`) and never silently downloads models during document processing; missing model/OCR prerequisites degrade explicitly and never fall back to AI file reading;
-  - provisioned RapidOCR PP-OCRv5 cyrillic rec/det/dict assets are sourced from the RapidAI/RapidOCR v3.9.2 release on ModelScope (`https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/`); RapidOCR and the underlying PaddleOCR PP-OCRv5 models are Apache-2.0 licensed; the exact asset URLs are pinned in `src/beeagent_module/core/docling_reader.py`;
-  - malformed/corrupt/unsupported/encrypted documents return bounded degraded results without crashing the ROP batch;
-  - document contents are untrusted data: instructions inside a document never grant tool, mailbox, broker or CRM execution authority;
-  - extraction output is bounded, schema-validated and only feeds the existing attachment extraction contract (`attachment_text_preview`/status/refusal fields);
-- download (`GET /rop/attachments/{attachment_id}/download`) is authenticated and authorized by the existing BeeUI session/auth/scope boundary; lookup is only by safe manifest attachment id (never arbitrary filesystem paths); invalid run/ event/attachment ids, path traversal and unrelated scopes fail closed; response uses forced `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `application/octet-stream` (no inline rendering, no public cache);
-- Bitrix physical file delivery uses only the already-selected trusted/new CRM target and email activity from the existing write-back authority; delivery never selects a target itself; it is gated by the separate `bitrix.writeback.file_attach` switch, has its own `file_attach_status`/ idempotency state, and reads files from the durable local attachment store so a proven unsuccessful Bitrix temporary failure is retryable without mailbox re-ingestion; uncertain file mutations become `reconciliation_required` and are never resent blindly; the write allowlist is extended only with the exact required `crm.activity.update` (FILES/fileData);
-- no credential, webhook URL, raw `.eml` or attachment bytes appear in logs/HTML/ JSON APIs; no arbitrary filesystem download route exists.
-
-## Security and SDLC integration
-
-Use security as part of the normal workflow:
-
-1. identify change level
-2. implement minimally
-3. run required checks
-4. inspect logs/artifacts
-5. document verification in PR
-
-Do not create separate bureaucracy unless the project actually needs it.
-
-## What not to do
-
-Avoid these patterns:
-
-- hidden required defaults in code;
-- logging sensitive runtime state;
-- dependency additions without review;
-- broad refactors mixed with security-sensitive changes;
-- “future-proof” abstractions that increase risk and complexity;
-- marking every PR as requiring every type of security testing.
-
-## Practical defaults
-
-To keep this lightweight:
-
-- most PRs need only normal review + tests + smoke + log/artifact check;
-- code-heavy runtime PRs also need SAST mindset review;
-- dependency PRs need SCA;
-- connector/interface PRs may need DAST or deeper runtime review;
-- fuzzing is targeted, not mandatory everywhere.
-
-## Summary
-
-Security in `beeagent` should stay practical.
-
-The main rules are:
-
-- protect secrets;
-- validate config explicitly;
-- keep logs safe;
-- keep artifacts safe;
-- review dependencies;
-- use only the security checks that match the real risk;
-- keep everything simple enough to maintain.
-
-## BeeScan HTTP probe boundary (BS-1)
-
-Legacy task-file BeeScan investigation requires exact equality between the task target and the independently approved transport origin before domain loading, AI calls, DNS resolution or managed egress creation. A mismatch follows the existing authorization refusal path with zero requests; legacy targets are never rewritten or normalized into authorization. The separately enabled BS-9 direct/interactive CLI instead binds a canonical origin and one validated destination to the actual OS operator and process through an immutable local context. This records requested local scope, never independently verified third-party authorization; settings reload checks and all transport/evidence checkpoints remain mandatory. Current Web routes and generic operator actions cannot obtain this private context. See [trusted local operator CLI](product/beescan_guide.md#bs-9-trusted-local-operator-cli) for the enablement, provenance and trust boundary.
-
-BeeScan HTTP execution is disabled by default and available only through a fixed host CLI/CapabilityCaller using a current trusted OS-operator approval from settings. The host independently enforces exact identity/origin, one-request HEAD profile, DNS pinning, immutable provider digest/version, rootless namespace ownership, exact deny-by-default nftables rules, nested Bubblewrap isolation, minimal environment, resource/output limits and cleanup. Bootstrap remains READ_ONLY and obtains no scanner authority; existing Solana isolation is unchanged.
-
-Only allowlisted host facts and opaque evidence are persisted. Provider output never supplies authority or provenance. Final completion requires a successfully persisted status marker; failures and orphan evidence remain incomplete. The threat model trusts the local operator and namespace supervisor, which must control settings and firewall mutation. Provisioning, reproducible lab checks, SCA advisories and remaining security/delivery gates are documented in [BeeScan operating guide](product/beescan_guide.md).
-
-## BeeScan detection boundary (BS-2)
-
-Detection has a separate disabled-by-default approval. The host revalidates operator, current approval, source HTTP Observation/evidence and exact origin/IP, then performs exactly one fixed GET in the verified BS-1 egress namespace. It discards all response bytes except a bounded complete status/marker header representation. Pinned Nuclei/template processing uses passive HTTP mode in a separate Bubblewrap namespace without any network access; scanner flags alone do not enforce request budgets. Completion requires a validated internal completion matcher and consistent zero/one marker event, followed by public BeeScan normalization/correlation and verified ArtifactAPI writes. Final status replaces an initial incomplete marker atomically. No raw scanner JSON/headers/body/secrets are persisted and no candidate is automatically VERIFIED. The trusted operator controls settings, source storage and namespace administration. Exact provider pins, SCA applicability, source permissions, limits, laboratory evidence and the pending reviewed merged It6 reporting dependency gate are described in the [host operating guide](product/beescan_guide.md#bs-2-restricted-detection).
-
-## BeeScan assessment boundary (BS-3)
-
-`beescan assess` requires the independently active probe and detection approvals, identical operator/Mission/Target/Scope/origin/destination bindings, and the existing provider/namespace/resource controls. The host binds detection only to a freshly completed typed probe Observation validated against its immutable source artifacts; original approvals are never edited. Both original policies and source bytes are revalidated through the existing caller authorization callbacks. Aggregate request/time/output ceilings are derived from the two bounded approvals; no retries or expanded scanner profile are available.
-
-Child IDs and evidence retain their original provenance. The parent starts incomplete, records children as they start, and can complete only after governed execution/cleanup, exact child/source verification, bounded public BeeScan report generation and verified report/status persistence. A missing or contradictory terminal marker/report/child artifact is incomplete. This CLI accepts no review input and cannot create VERIFIED; pending human review remains explicit. Reports and physical artifact access remain host-controlled. See [the operating guide](product/beescan_guide.md#bs-3-authorized-assessment) for dependency, lab, recovery and remaining MVP gates.
-
-## BeeScan passive header signal boundary (BS-4)
-
-Only explicit `beescan assess --http-signals` selects normalized security-header capture from the existing single governed GET. The complete bounded ASCII protocol rejects relevant duplicates, malformed/oversized metadata, missing completion and contradictory HTTPS context. No raw security header values, cookies or bodies cross into persisted evidence. BeeScan owns applicability, effective/missing/ineffective states, informational classification and schema 2 reporting. Host approvals, pinned provider/template, namespace ownership, firewall, certificate validation, fresh source binding and terminal evidence/report read-back remain mandatory and unchanged. A selected assessment cannot report clean success from missing signal facts. The HTTPS test trust mount exists only in laboratory instrumentation; production has no alternate CA or TLS-bypass setting. See [the operating guide](product/beescan_guide.md#bs-4-passive-http-header-signals) for protocol bounds, deterministic parsing and real laboratory reproduction.
-
-## BeeScan Git HEAD exposure boundary (BS-5)
-
-The optional fixed GET `/.git/HEAD` requires explicit CLI selection and its own enabled, current trusted-operator approval. All three policies must agree on identities, origin, connected IP and namespace ownership; selected aggregate execution is bounded to three requests/60 seconds. The existing capture worker and sandbox/firewall/resource mechanisms are reused without a new provider runtime. Strict length-bounded response framing precedes BeeScan-owned signature parsing; only normalized categories and opaque, source/parent/child-bound evidence are persisted. Unsupported encodings, redirects, ambiguous/truncated input, revoked authority, source mutation or persistence/read-back failures cannot establish completion. Missing It8 refuses before network execution. Raw Git references/object IDs never enter host artifacts/logs. Actual HTTP/HTTPS laboratories, independently reviewed immutable integration and hosted CI remain delivery gates, documented in the operating guide.
-
-## BeeScan human review boundary (BS-6)
-
-`beescan review` uses an already installed host environment and bypasses dependency/provider bootstrap. Real/effective UID and the trusted configured operator policy establish attribution independently of historical scan expiry. The enabled/loadable module, complete protected source artifacts, public typed reconstruction, actual candidate identity and exact original report bytes are required. Historical configured approval metadata must remain available; report text cannot supply authority or reconstruct missing historical configuration.
-
-Only strict bounded schema-1 JSON and private owner-controlled UTF-8 text evidence from the fixed review intake directory are accepted. No caller authentication fields or arbitrary paths are allowed. No-follow traversal, owner/mode/single-link/readability/size/digest checks, explicit independent-collection attestation and automated-evidence digest separation precede HostReview construction. Evidence integrity/provenance do not prove substantive vulnerability impact; the authenticated human remains responsible for independent verification, and shared OS accounts do not establish distinct human identities.
-
-The BeeScan-specific review run uses exclusive pair-bound creation, ArtifactAPI, 0700/0600 permissions, staged/fsynced writes, read-back hashes and atomic terminal publication. Sources, intake and outputs are checked again around publication; failures remain incomplete, with no source mutation or silent replacement of an earlier decision. No scans, DNS, provider calls, external mutations or submission occur. Recovery, schemas, limits and the pending immutable dependency/CI/independent-review gates are specified in the [BS-6 operating procedure](product/beescan_guide.md#bs-6-authenticated-offline-review).
-
-## BeeScan managed egress boundary (BS-7)
-
-Only the explicit managed namespace pair in all selected immutable operator approvals enables one assessment-owned rootless pasta session. BeeAgent verifies the fixed Ubuntu package/executable pins and protected host tools, installs the existing exact nftables policy before connectivity, and reuses the existing governed providers rather than creating another assessment runtime. Legacy namespace mode remains available. The provider cannot administer the network namespace, acquire capabilities, control the helper or inject host proxy settings; unused helper forwarding/gateway services are disabled. OS operator, supervisor and integrity-verified helper remain trusted components. Deliberate trusted removal of the mandatory firewall is outside authorized provider execution.
-
-The host binds namespaces in assessment-scoped runtime context, preserves original approval equality/reload/revocation and bounded DNS checks, revalidates namespace/firewall/routes at execution checkpoints and cleanup, kills/reaps helpers and removes bindings/snapshots on every controlled exit. Lifetime alarms and parent-death signals bound authority after host interruption. Completion requires closed, read-back-verified lifecycle evidence before terminal parent publication; offline review snapshots that evidence. No raw packets, routes, responses, credentials or helper stderr are persisted. Supported prerequisites, executable provenance, local real-provider/attack laboratories, recovery and outstanding external-smoke/independent-review gates are specified in [the BS-7 operating procedure](product/beescan_guide.md#bs-7-managed-rootless-egress).
-
-## BeeScan diagnostic disclosure boundary (BS-10)
-
-Debug discovery and diagnostic response bodies are transient and excluded before every source persistence call through a distinct allowlisted `debug-redacted-v1` projection. No raw-dump string replacement is used. Metadata and a run-private HMAC bind authenticated capture to parent/child/request/response/evidence identities; exact read-back and immutable snapshots guard source handoff and final publication. AI receives only operator task classification input. Safe reports and ordinary CLI JSON contain no response values. Terminal disclosure requires successful authenticated analysis, consistent final publication, verified cleanup, unchanged authority and an owner-matching foreground controlling terminal with all standard descriptors attached to the same device. Redirection and all failure paths suppress sensitive output. OS-level recording and Python memory erasure are outside the guarantee. The production It11 dependency gate remains pending; laboratory overlays do not establish reviewed provenance. See [BS-10 operator and evidence contract](product/beescan_debug_disclosure.md).
-
-## BeeScan adaptive Case boundary (BS-11)
-
-Adaptive investigations retain the existing trusted-local operator, governed provider, destination, DNS/TLS, managed-egress and protected-terminal boundaries. It12 proposals carry capability identity and bounded evidence references; they cannot supply executable URLs, methods, payloads or authority. AI interprets only operator task text into a bounded objective; every family receives its own authenticated discovery and original provenance. All adaptive bodies/excerpts remain transient, and ordinary source artifacts use an allowlisted metadata projection before persistence.
-
-Resume independently binds current OS operator authority, settings, dependency, target, destination and budgets. Protected ArtifactAPI checkpoints use atomic fsynced publication/read-back, bounded schema validation, exact action/source/marker digests and verified cleanup evidence; a no-follow directory lock prevents concurrent writers. Only sufficient completed evidence is reusable. Missing, tampered, pending or insufficient state never becomes completion or inherited permission. Integrity digests do not defend against a malicious trusted OS account. Abruptly interrupted pending checkpoints refuse resume; controlled incomplete segments can be continued only after verified cleanup and fresh authorization. See [the BS-11 operator and checkpoint contract](product/beescan_adaptive_investigation.md).
+- [SDLC.md](SDLC.md) — change classification, implementation and review workflow.
+- [DEV_GUIDE.md](DEV_GUIDE.md) — runtime and connector operation details.
+- [WEB_UI.md](WEB_UI.md) — BeeUI integration, sessions, artifact surfaces and product routes.
+- [BeeScan operating guide](product/beescan_guide.md) — scanner approvals, managed execution, verification and recovery.
+- Product contracts and approved Issues — exact integration behavior and acceptance evidence.

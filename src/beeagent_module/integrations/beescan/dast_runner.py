@@ -374,8 +374,18 @@ def run_zap(
             for alert in result["alerts"]:
                 if (
                     type(alert) is not dict
-                    or set(alert) != {"rule_id", "request_sha256", "response_sha256"}
+                    or set(alert)
+                    != {"rule_id", "target", "request_sha256", "response_sha256"}
                     or alert["rule_id"] != "6"
+                    or type(alert["target"]) is not str
+                    or not alert["target"].startswith("/")
+                    or alert["target"].startswith("//")
+                    or len(alert["target"]) > 4096
+                    or any(
+                        ord(value) < 33 or ord(value) > 126 for value in alert["target"]
+                    )
+                    or hashlib.sha256(alert["target"].encode("ascii")).hexdigest()
+                    != alert["request_sha256"]
                     or not any(
                         alert["request_sha256"] == record["request_sha256"]
                         and alert["response_sha256"] == record["response_sha256"]

@@ -1,427 +1,97 @@
-# SDLC — beeagent
+# SDLC — BeeAgent
 
 ## Purpose
 
-This document defines the lightweight SDLC used in `beeagent`.
+BeeAgent uses a lightweight, evidence-driven development process. An Issue defines the approved task, a branch contains the implementation and its fixes, tests and artifacts establish behavior, and a PR records the verified delivery. [ROADMAP.md](ROADMAP.md) defines product increments; [SECURITY.md](SECURITY.md) defines standing security requirements.
 
-The goal is to keep development:
+The goal is useful, reproducible delivery with minimum process overhead.
 
-- disciplined;
-- reproducible;
-- easy to follow;
-- safe enough for real engineering work;
-- free from unnecessary bureaucracy.
+## Principles
 
-`beeagent` uses a practical workflow:
-
-`ROADMAP → Issue → branch → code → tests → artifacts → PR → merge`
-
-This document does not replace `docs/ROADMAP.md`.
-
-- `ROADMAP` defines where the project goes by stages and iterations.
-- `Issue` defines one concrete task.
-- `PR` proves what was actually delivered and how it was verified.
-- `SDLC` defines the working rules for moving changes through the project.
-
-## Core principles
-
-Development in `beeagent` should follow these rules:
-
-- make small, iteration-sized changes;
-- stay inside the current scope;
-- use `config/settings.yml` as runtime source of truth;
-- validate new required config keys fail-fast;
-- prefer simple solutions over flexible but unnecessary abstractions;
-- keep logs understandable;
-- keep artifacts reproducible;
-- do not leak secrets into logs or storage;
-- keep authority boundaries explicit;
-- close work through PR, not only through comments.
+- KISS, YAGNI and DRY: reuse working code and public contracts; do not introduce speculative dependencies, frameworks or configuration.
+- One functional iteration delivers a meaningful end-to-end capability. Fix defects found during that iteration in the same branch before PR, rather than creating new iterations for individual regressions.
+- Preserve the division between BeeAgent host, BeeSDK, domain modules and BeeUI. Assign cross-repository changes explicitly when proven necessary.
+- A working operator entrypoint, correct failure behavior and inspected artifacts matter more than an implementation narrative.
+- Distinguish observed facts, assumptions and limitations. Never assert that a skipped test, external assessment or hosted CI passed.
+- Do not change package versions during ordinary feature/fix/docs work; use the approved release process.
 
 ## Workflow
 
-### 1. ROADMAP
+```text
+ROADMAP + existing implementation
+  -> approved Issue / acceptance criteria
+  -> authorized branch/worktree
+  -> code + focused tests + relevant artifacts
+  -> independent verification and current-branch corrections
+  -> read-only final review
+  -> authorized PR + applicable CI
+  -> review and merge
+  -> release when appropriate
+```
 
-`docs/ROADMAP.md` defines:
+### Plan and implement
 
-- stage;
-- iteration;
-- goal;
-- scope;
-- deliverable;
-- artifacts;
-- checks;
-- DoD.
+Confirm the actual problem and existing capabilities before planning. Define Scope, Excluded, Deliverable, observable Acceptance Criteria, change level and verification. A numbered iteration is justified by a substantial product increment, not a typo, one test, documentation cleanup or a laboratory-specific workaround.
 
-Before coding, the task should be mapped to the current iteration.
+Work in the selected branch and worktree. Preserve unrelated staged, unstaged and untracked changes. Never create/switch branches, commit, push, open PRs, merge or reset without explicit user authorization. Make the smallest complete change needed for the Issue. Do not change another repository without an explicitly approved companion task.
 
-### 2. Issue
+### Verify
 
-Each task should be described in an issue.
+Run tests for the changed behavior and negative paths. For runtime changes, use the actual supported entrypoint and inspect resulting logs/artifacts where applicable. For security-sensitive work, test refusal, authorization, provenance, limits, malformed input, secrets, cleanup and rollback/recovery according to the affected boundary. Pair BeeScan/ROP/BeeDrill tests with the host when their public integration contract changes.
 
-The issue should contain at least:
+Record commands, exit codes, test counts, skipped checks, artifact identities and limitations. An operator-facing feature is not complete merely because unit tests pass. Independent verification reads the implementation and tests, not only the implementer's report. Close current-Issue blockers in the same branch; do not use review as a reason for unrelated refactoring.
 
-- summary;
-- context;
-- scope;
-- deliverable;
-- acceptance criteria;
-- tests;
-- artifacts;
-- notes.
+### Review and deliver
 
-The issue explains **what must be done**.
+Final review compares the full branch/diff with the approved Issue, actual contracts, tests, configuration and artifacts. A read-only BeeMCP reviewer cannot run tests and must label supplied test output as reported evidence. Missing required inspection is `REVIEW INCOMPLETE`, not implicit approval.
 
-### 3. Branch
-
-All implementation work should be done in a separate branch.
-
-Recommended naming:
-
-- `feature/<short-name>`
-- `fix/<short-name>`
-- `docs/<short-name>`
-- `chore/<short-name>`
-
-If useful, include iteration number:
-
-- `feature/iter-11-module-contract`
-- `feature/iter-15-rop-integration`
-
-### 4. Code
-
-Implementation rules:
-
-- stay within the current iteration scope;
-- do not mix unrelated features in one PR;
-- do not add “future architecture” without current need;
-- do not hide required runtime values inside code;
-- do not weaken existing boundaries without reason;
-- do not remove existing checks without reason.
-
-Preferred style:
-
-- KISS;
-- minimal changes;
-- predictable behavior;
-- PEP 8;
-- explicit validation.
-
-### 5. Tests
-
-Every change should be verified at the level appropriate for its risk.
-
-Common checks:
-
-- automated tests (`pytest -q`);
-- smoke run through the expected entrypoint;
-- manual log inspection;
-- manual artifact inspection.
-
-If the change affects runtime behavior, config contract, module loading, case dispatch, MCP/tool boundaries, file parsing, or dependencies, security/quality checks may also be required. See `docs/SECURITY.md`.
-
-### 6. Artifacts
-
-When applicable, the result of the change should be visible through project artifacts.
-
-Typical places:
-
-- `logs/app.log`
-- `storage/runs/<run_id>/...`
-- `storage/artifacts/<run_id>/...`
-- `storage/sessions/...`
-- `storage/telemetry/...`
-- `storage/interfaces/...`
-
-Artifacts should be:
-
-- reproducible;
-- understandable;
-- aligned with logs;
-- aligned with the current iteration.
-
-### 7. Pull Request
-
-A PR is the main evidence that the task is ready.
-
-The PR should contain:
-
-- summary;
-- related issue;
-- iteration reference;
-- scope;
-- changes;
-- tests;
-- artifacts;
-- checklist;
-- notes for reviewer.
-
-The PR explains **what was actually delivered and verified**.
-
-### 8. Merge
-
-A task or iteration item is considered completed only after:
-
-- scope is satisfied;
-- required checks are completed;
-- artifacts/logs are consistent;
-- PR is reviewed;
-- changes are merged.
-
-## Definition of Done
-
-A task is considered done when:
-
-- behavior is implemented within the declared scope;
-- config is read from `config/settings.yml`;
-- new required keys are validated fail-fast in `src/beeagent_module/core/settings.py`;
-- the feature runs through the intended entrypoint;
-- logs are written and remain understandable;
-- artifacts are written when expected;
-- tests and manual checks are completed;
-- secrets do not leak into logs or artifacts;
-- authority boundaries remain explicit;
-- docs are updated if behavior, contract, artifacts, or checks changed;
-- the result is documented in PR and ready for merge.
-
-## Minimal required checks
-
-These are the default checks unless the task clearly does not need some of them.
-
-### Base checks
-
-- `pytest -q`
-- `bash start.sh` or the relevant entrypoint
-- manual inspection of `logs/app.log`
-- manual inspection of relevant files in `storage/`
-
-### Entry-point related checks
-
-If the change affects entrypoint behavior, also run the affected command, for example:
-
-- `uv run python3 config/start.py`
-- `uv run python3 config/start.py shell`
-- `uv run python3 config/start.py draft`
-- `uv run python3 config/start.py mcp`
-
-### Artifact-related checks
-
-If artifacts change, verify:
-
-- file exists where expected;
-- structure is correct;
-- JSON / JSONL fields are consistent;
-- artifacts match logs and scenario.
+Use the existing Issue and PR templates. The PR states what changed, what remained excluded, actual checks, security impact, artifacts, compatible contracts and known limitations. Merge only after mandatory verification, review, applicable CI and explicit authorization. Prefer one coherent squash merge per Issue.
 
 ## Change levels
 
-To avoid bureaucracy, use only three change levels.
+| Level                | Typical change                                                                                                    | Required evidence when applicable                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `low-risk`           | Docs, narrow non-runtime maintenance or isolated test-only changes                                                | Diff check, link/format validation, targeted checks if needed                              |
+| `runtime-risk`       | Runtime behavior, configuration, module/case routing, UI read model, reports and artifacts                        | Relevant pytest, supported-entrypoint smoke, log/artifact inspection, compatibility checks |
+| `security-sensitive` | Authority, secrets, network/capability execution, attachments, parsing, dependencies, active scanning or mutation | Runtime checks plus explicit abuse/refusal cases and risk-matched security review          |
 
-### Low-risk
+Apply SAST/static review to security-relevant source, SCA to dependency/provider changes, DAST to affected authorized network-facing execution, fuzzing/property tests to complex untrusted parsers, and IAST only where a justified instrumented host exists. None is a universal checkbox. Follow [SECURITY.md](SECURITY.md).
 
-Use this when the change is mostly local and does not affect sensitive runtime behavior.
+## Configuration and artifacts
 
-Examples:
+`config/settings.yml` is the source of truth for runtime options; enabled required fields must be validated fail-fast through the existing settings layer. Secrets are environment-backed. If a change affects the operator CLI, execute that command when feasible; if it affects persistence, verify file ownership, schema, read-back, safe content and corresponding status/logs. Do not infer success from a report existing without required terminal evidence.
 
-- docs;
-- comments;
-- non-runtime refactor;
-- test-only additions;
-- small UI text changes.
+Typical host checks, selected according to the Issue:
 
-Usually required:
+```bash
+uv run --frozen pytest -q
+./start.sh <supported-command>
+git diff --check
+```
 
-- automated tests if applicable;
-- targeted smoke check if applicable.
+Integration and real-kernel laboratories are separate explicit checks; run them only against controlled or independently authorized targets. Report missing prerequisites rather than claiming a pass. Update `uv.lock` only when an approved dependency change requires it; do not add a standalone lockfile-validation gate.
 
-### Runtime-risk
+## Documentation ownership
 
-Use this when the change affects normal application behavior.
+- `ROADMAP.md` and product roadmaps: product increments, acceptance and historical status.
+- `SPEC.md` and `ARCHITECTURE.md`: current public behavior and component ownership.
+- `WEB_UI.md` and product operating guides: implemented interface and integration contracts.
+- `DEV_GUIDE.md`: current commands and local developer procedures.
+- `SECURITY.md`: stable security policy, not an implementation changelog.
+- `SDLC.md`: stable process, not an iteration diary.
 
-Examples:
+Update only the owning document when an approved change makes its behavior, contract or instructions materially incomplete or false. Do not append every iteration to normative documents or reformat unrelated documentation. Security/SDLC policy changes require an actual threat-model/control or process change.
 
-- config parsing;
-- orchestrator logic;
-- cases/adapters;
-- module registry;
-- artifact contracts;
-- session handling;
-- summaries and recommendations.
+## Definition of Done
 
-Usually required:
+- Approved Scope and Acceptance Criteria are satisfied by working behavior and explicit failure cases.
+- Required tests and relevant real-entrypoint/artifact checks are recorded, or their absence is a disclosed blocker.
+- Current security controls, authorization, configuration and public contracts remain valid.
+- Cross-repository dependencies, regressions, user-visible limitations and operational prerequisites are identified.
+- Relevant documentation matches the delivered behavior without unrelated churn.
+- Independent verification, final review and applicable CI pass before authorized merge.
+- Ordinary changes leave the package version unchanged (`version not changed`).
 
-- `pytest -q`
-- smoke run
-- log inspection
-- artifact inspection
+## Release
 
-### Security-sensitive
-
-Use this when the change affects trust boundaries or sensitive paths.
-
-Examples:
-
-- env secrets;
-- MCP/tool boundaries;
-- external connectors;
-- file/path handling;
-- attachment parsing;
-- serialization/deserialization;
-- new dependencies;
-- execution-capable paths;
-- authority boundaries.
-
-Usually required:
-
-- all runtime-risk checks;
-- security checks from `docs/SECURITY.md` as applicable.
-
-## Security-aware development rule
-
-Not every task needs every security practice.
-
-Use only what matches the change:
-
-- SAST for code changes;
-- SCA for dependency changes;
-- DAST for network-facing behavior;
-- IAST for high-risk runtime instrumentation cases;
-- fuzzing for parsers, serializers, or fragile input handling.
-
-The goal is not to “tick every box”. The goal is to apply the right check for the right type of change.
-
-See `docs/SECURITY.md`.
-
-## Roadmap update rules
-
-`docs/ROADMAP.md` should be updated when:
-
-- iteration status changes;
-- goal/scope/deliverable changes;
-- DoD changes;
-- artifact contract changes;
-- checks change;
-- stage wording becomes outdated.
-
-Do not update ROADMAP for tiny internal implementation details that do not affect iteration contract.
-
-## Docs update rules
-
-Update docs when the contract changes.
-
-Usually check whether these files need updates:
-
-- `docs/ROADMAP.md`
-- `docs/DEV_GUIDE.md`
-- `docs/SECURITY.md`
-- `README.md`
-
-Update them if one of the following changed:
-
-- config contract;
-- runtime behavior;
-- entrypoint usage;
-- module contract;
-- artifact structure;
-- verification flow;
-- security expectations.
-
-## PR rules
-
-Each PR should include:
-
-- summary;
-- related issue;
-- iteration reference;
-- scope;
-- changes;
-- tests;
-- artifacts;
-- checklist;
-- notes.
-
-Good rule:
-
-- **Issue** explains the task.
-- **PR** explains the delivery.
-- **ROADMAP** explains the iteration-level target.
-
-## Issue rules
-
-Each issue should stay lightweight but useful.
-
-It should answer:
-
-- what needs to be done;
-- why it matters;
-- what is in scope;
-- what result is expected;
-- how it should be verified.
-
-Do not turn the issue into a full implementation diary.
-
-## Comments and evidence
-
-Issue comments are allowed and useful for:
-
-- intermediate findings;
-- links to runs and artifacts;
-- quick verification notes;
-- clarifications.
-
-But comments do not replace the PR.
-
-Main evidence for closing work should stay in the PR.
-
-## KISS rule for process
-
-To keep the process simple:
-
-- one task = one issue when practical;
-- one iteration item = one focused PR when practical;
-- do not mix several roadmap iterations in one PR;
-- do not require documents that nobody will read;
-- do not add process steps unless they help quality or safety.
-
-## Typical developer flow
-
-A normal development cycle in `beeagent` looks like this:
-
-1. open `docs/ROADMAP.md`
-2. select the current iteration
-3. create or refine the issue
-4. create a branch
-5. implement the change
-6. run required tests/checks
-7. inspect logs and artifacts
-8. update docs if needed
-9. open PR
-10. merge after review and DoD satisfaction
-
-## Review checklist mindset
-
-A reviewer should be able to answer:
-
-- does this stay inside the iteration scope?
-- is config still the source of truth?
-- are required keys validated fail-fast?
-- are logs/artifacts understandable?
-- are secrets safe?
-- are authority boundaries still explicit?
-- are tests/checks appropriate for the risk?
-- is the solution simple enough?
-- is the PR enough to prove readiness?
-
-## Summary
-
-`beeagent` uses a lightweight but real SDLC.
-
-The key discipline is:
-
-- small scoped iterations;
-- config as source of truth;
-- fail-fast validation;
-- reproducible artifacts;
-- understandable logs;
-- evidence in PR;
-- security checks only where they actually matter.
+Use Conventional Commits and existing Release Please workflows. Release/version changes are controlled by the approved release process. A local green suite or merged PR is not proof of a published package or deployed production release.

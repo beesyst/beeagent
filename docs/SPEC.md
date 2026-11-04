@@ -1,292 +1,77 @@
 # SPEC — BeeAgent
 
-## 0. Terms
+## Purpose
 
-- Repository: `beeagent`
-- Python package (import): `beeagent_module`
-- Core: BeeAgent’s shared orchestration core
-- Module: a separate domain module connected to BeeAgent (`beeagent-rop`, with `beescan` and `merch` planned)
-- Case: an application scenario invoked by the transport/UI layer
-- Agent: workflow/graph for a specific scenario
-- Adapter: Data access layer
-- Capability: an external execution or integration call (MCP, n8n, API, system)
-- Transport/UI: thin layer of interaction (`telegram`, later web, etc.)
-- Run: one reproducible scenario execution with a `run_id`
-- Artifact: a file in `storage/` recording a run’s result, steps or state
-- Authority: Rights boundary (`read-only`, `draft-only`, `execution-capable`)
+BeeAgent is a stateful, modular agent host for bounded domain workflows. Its product contract is a single runtime that loads independent modules, executes authorized integrations, persists reviewable artifacts and exposes supported operator entrypoints. It does not embed customer-specific classification logic or create a second runtime for each module.
 
-## 1. Purpose
+This file states supported product behavior and non-negotiable boundaries. See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, [SECURITY.md](SECURITY.md) for policy, [WEB_UI.md](WEB_UI.md) for Web APIs and [ROADMAP.md](ROADMAP.md) for delivery history.
 
-Build `BeeAgent` as an explainable, stateful, modular AI orchestration system rather than a “chatbot with tools”.
+## Core behavior
 
-The system must be capable of:
+| Area          | Contract                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Runtime       | Dispatch known cases using validated module/runtime context, with explicit status and run identity                        |
+| Modules       | Use declared packages and BeeSDK-compatible module contracts; disabled, missing or incompatible modules fail closed       |
+| Configuration | `config/settings.yml` is authoritative; `.env` holds secrets; required enabled-path values are validated before execution |
+| Capabilities  | Allowlisted operation, target, method, caller, provider and resource budget; execution authority is host-owned            |
+| Approvals     | Validity and scope are rechecked at sensitive execution checkpoints; module/AI input never overrides policy               |
+| Artifacts     | Host-managed, bounded, access-controlled files and status records under `storage/`; lifecycle and evidence are distinct   |
+| Logs          | Central, understandable operational logs in `logs/app.log`; no secrets or unrestricted external payloads                  |
+| Interfaces    | Existing CLI and Telegram flows, BeeUI-backed Web console and explicitly configured Bitrix integration surfaces           |
+| Verification  | Recorded tests, artifact/log evidence and human review as required by risk and actual functionality                       |
 
-- start and manage scenarios through a single core;
-- work with transport/UI layers without embedding business logic in the UI;
-- connect separate domain modules as Python packages;
-- store state, artifacts, approvals, summaries and traces inside BeeAgent;
-- use AI as a bounded assistive layer rather than a black-box replacement for deterministic logic;
-- use MCP / n8n / external systems as a capability layer rather than a home for domain logic.
+## Module contract
 
-## 2. Development principles
+A supported module supplies `module_id`, `supported_case_types()` and `handle(context)` as defined by BeeSDK. A module may interpret data, select proposals and produce reports. It must not implicitly gain network, filesystem, credential or mutation privileges from its package identity or returned status. BeeAgent owns capability invocation and artifact interfaces.
 
-- KISS: minimum excess abstractions, maximum clear contracts
-- Core must remain universal, domain logic lives in modules
-- `config/settings.yml` — runtime source of truth
-- New required keys are validated fail-fast
-- Logs must be understandable
-- Artifacts must be reproducible
-- Secrets must not enter logs/storage
-- Long-running state must live in BeeAgent rather than within one tool/MCP call
-- UI must be a thin layer
-- The capability boundary must be explicit
-- Execution-capable paths must be bounded and operator-visible
+Installed module selection is explicit in the host configuration. Optional dependency profiles are resolved by the existing bootstrap. Running a module's local tests does not prove host installation or external-target authorization.
 
-## 3. Architecture
+## Capability and authority model
 
-System reference diagram:
+Read-only analysis, approved read access and mutating actions have different risk boundaries. An action must be authorized for its actual principal, module, case, target, method and budget; the absence of one required condition is refusal, not an implicit default. Tools, models, attachments and external documents are never authority sources.
 
-`UI/Transport → BeeAgent core → module/case → capability layer (MCP / n8n / API / systems)`
+External execution requires bounded inputs and outputs, timeout/resource limits, current approval, credential isolation, destination checks and a trustworthy terminal lifecycle. Scanner alerts create candidates, not independently verified security findings. Business decisions do not grant permission to perform CRM mutations.
 
-Where:
+## Supported product flows
 
-- `UI/Transport` is responsible for entry/exit only;
-- `BeeAgent core` is responsible for orchestration, state, approvals, artifacts, policy;
-- `module` is responsible for domain logic;
-- `capability layer` is responsible for external activities and integration.
+### ROP
 
-## 4. What belongs in the core and what does not
+BeeAgent hosts ROP mailbox ingestion, Bitrix reconciliation, run artifacts, review projections and bounded write-back. ROP classification, deduplication and domain recommendations remain owned by `beeagent-rop`.
 
-### 4.1 What must live in `beeagent`
+Bitrix write-back uses a separate server-side execution policy and write credential. The read-only client does not mutate CRM data. Only explicitly supported and idempotency-checked methods are allowed: bounded `crm.item.add`, `crm.activity.add` and attachment-specific `crm.activity.update`. The host checks exact source evidence, responsible routing, existing CRM references, retry/idempotency state and attachment delivery completion. The persistent write-back ledger is `storage/interfaces/rop_writeback_state.json`; `rop_writeback_summary.json` is a per-run projection. Automation is not authorized merely because a classification is confident or `should_rop_see` is true.
 
-- module contract
-- module registry
-- runtime context
-- artifact API
-- case dispatch
-- agent/workflow orchestration
-- logging
-- settings validation
-- transport handling
-- approval/state/session logic
-- capability abstraction
-- bounded authority logic
+Source-management and sender-blacklist actions in the Web console are protected, narrower administrative operations. They do not authorize `rop run`, arbitrary mailbox access or Bitrix write-back.
 
-### 4.2 What must not live in `beeagent`
+### BeeScan
 
-- client-specific ROP business logic
-- welding-specific lead rules
-- client-specific duplicate heuristics
-- client-specific email semantics
-- merchandising-specific business rules
-- beescan-specific business rules
+BeeScan integrates through the existing `beescan` module extra and `./start.sh beescan` host command family. The host supports authorized HTTP assessment, restricted offline Nuclei detection, header signals, optional Git HEAD exposure, reviewed cases and supervised investigations. General investigation can discover candidate resources; the approved discovery-to-DAST mode can select one observed GET parameter and run the existing pinned ZAP rule-6 profile through mediated, budgeted HTTP execution.
 
-This must live in separate modules.
+The domain package remains offline. BeeAgent owns execution approval, operator identity, exact destination, DNS/TLS enforcement, process isolation, request accounting, artifact authenticity, Case checkpoint verification, resume and cleanup. An authorized target is still required; local OS identity does not prove consent from a third-party target owner. Neither DAST claims nor AI creates a `VERIFIED` vulnerability automatically.
 
-## 5. Modular Model
+See [BeeScan host operating guide](product/beescan_guide.md) for supported commands and [DAST preflight](product/beescan_guide.md#governed-dast-zap-rule-6) for the active scanner boundary.
 
-### 5.1 Module
+### BeeDrill
 
-A module is a separate Python package connected to BeeAgent as a local dependency.
+BeeDrill is hosted through explicitly bounded isolated Solana/reference-target capabilities. BeeAgent owns preparation, environment identity, state observation, attack/containment execution where specifically approved, resource limits, cleanup and evidence; there is no generic Solana mutation authority for modules.
 
-Examples:
+## Web and integration contract
 
-- `beeagent-rop`
-- `beescan`
-- `beeagent-merch` / `beeagent-merchandising`
+The canonical UI is BeeUI-backed `src/beeagent_module/interfaces/ui/`, not the legacy `src/beeagent_module/web/` implementation. The Web adapter supplies dashboard, Runs, ROP and Modules views and bounded JSON/HTML projections. Sessions, roles and resource scopes are enforced server-side; visible navigation is not authorization. Auth-disabled development mode is not an acceptable default for public exposure.
 
-### 5.2 What a module must be able to do
+The console is read-oriented except for explicitly implemented, protected ROP blacklist/source-management operations. Sensitive attachment downloads use protected opaque identifiers and forced-download responses, not inline rendering. Bitrix Local Application launch authenticates a current user against one configured portal and creates a constrained session. The separate widget API uses Bearer authentication; a robot callback uses its independently constrained secret or application authentication. None of these routes permits arbitrary module execution.
 
-The module must:
+The authoritative route, query, output, permission and redaction contracts are in [WEB_UI.md](WEB_UI.md).
 
-- have `module_id`
-- declare supported `case_type` values
-- receive `ModuleContext`
-- return a bounded result
-- use BeeAgent artifact/runtime contracts
-- preserve the authority boundary
+## Configuration, secrets and artifacts
 
-For BeeDrill's `isolated_solana_smoke`, BeeAgent injects a caller bound to the host-generated run, session, module, case and read-only module authority. The caller accepts only `solana.isolated_lifecycle` with the fixed `surfpool_local` intent, then owns the offline Surfpool process, fixed local read-only RPC check and cleanup. The returned capability evidence reports the host-applied execution-capable authority without changing the module authority.
+- `config/settings.yml` owns runtime configuration, feature enablement, module registry and bounded approvals. `config/beeui.yml` owns Web presentation/navigation configuration. Do not invent secondary configuration sources.
+- Secrets are environment-backed, never committed or returned through HTTP, logs, report JSON, artifacts or AI prompts.
+- Host artifacts include run-scoped records under `storage/runs/<run_id>/`, interface projections under `storage/interfaces/` and other explicitly owned storage. Persist only allowlisted metadata or protected evidence through the approved artifact interface.
+- Every external side-effect or active assessment has a clearly attributable parent run, independent child steps, actual request counts and truthful terminal status. A report, hash or subprocess exit code without authenticated source and verified cleanup is not a successful execution.
+- A report's fields and schema are defined by its owning module/host contract, not by this general specification.
 
-For BeeDrill's `reference_target_baseline`, the same host-bound caller accepts only `solana.reference_target_baseline` with the fixed `surfpool_local` and `reference_vault` payload. BeeAgent resolves the public BeeDrill package resource itself and returns only bounded canonical economic/control evidence.
+## Entry points and limits
 
-For BeeDrill's `reference_target_attack`, the same caller accepts only `solana.reference_target_attack` with that exact fixed payload and only from the read-only BeeDrill attack case. BeeAgent owns the offline Surfpool lifecycle, target preparation and fixed attack transaction. On success it returns exact target and initial-state identities, a bounded transaction signature, a local slot reference, fixed before/after lamport balances, unsafe-withdraw transition counts and integer gross loss. It returns explicit refusal, timeout or error otherwise; it never accepts module-supplied RPC, executable, path, raw transaction or credential fields.
+The supported entrypoint is `./start.sh`, dispatching via `config/start.py`. Known command families include `web`, `routes`, `rop`, `beescan`, `beedrill`, `auth` and `auth-init` (where configured). Exact flags and prerequisites belong in [DEV_GUIDE.md](DEV_GUIDE.md), not in this product contract.
 
-For BeeDrill's `reference_target_detection`, the same caller accepts only `solana.reference_target_detection` with the fixed `surfpool_local` and `reference_vault` payload from the read-only detection case. BeeAgent installs the fixed `reference_vault_outflow_monitor` before the attack, independently observes `vault_outflow_signal` through the fixed local RPC state read, and returns only detector identity, signal identity, observation status, attack-start slot, and (when observed) first-detection slot. A completed monitoring window without the signal is `not_observed`; runtime and timeout outcomes remain capability errors rather than no-alert evidence.
-
-### 5.3 What a module must not do
-
-The module must not:
-
-- directly control transport/UI;
-- maintain its own separate runtime outside BeeAgent;
-- directly replace core orchestration;
-- silently perform external actions bypassing capability layer;
-- create a hidden execution path.
-
-## 6. Capability layer
-
-BeeAgent works via capability layer for external action.
-
-Capability examples:
-
-- MCP tool call
-- n8n workflow trigger
-- API call
-- file/system operation
-
-### Rule
-
-- domain logic does not live in capability layer;
-- the capability layer does not store the primary state of a long-running task;
-- errors, timeout, refusal must be visible and reproducible.
-
-## 7. Transport / UI
-
-### v0 / Current baseline
-
-- Telegram
-
-### later
-
-- web/operator shell
-- Other transport/UI surfaces
-
-### Rule
-
-Transport/UI:
-
-- invokes cases/module flows;
-- does not read storage directly;
-- Does not store business logic;
-- does not replace orchestration.
-
-## 8. Settings
-
-### Source of Truth
-
-`config/settings.yml`
-
-### Rules
-
-- required keys must be explicitly specified;
-- new required keys are validated in `src/beeagent_module/core/settings.py`;
-- without hidden defaults for important runtime paths.
-
-## 9. Artifacts
-
-All significant results must be reproducible through artifacts in `storage/`.
-
-Typical artifacts:
-
-- `storage/runs/<run_id>/run.json`
-- `storage/runs/<run_id>/steps.json`
-- `storage/runs/<run_id>/...` case/module-specific artifacts
-- `storage/artifacts/<run_id>/report.*`
-- `storage/sessions/...`
-- `storage/telemetry/...`
-
-### Requirements
-
-The artifacts must be:
-
-- understandable;
-- consistent with logs;
-- suitable for manual inspection;
-- safe in their contents.
-
-## 10. Authority model
-
-### Basic modes
-
-- `read-only`
-- `draft-only`
-- `execution-capable`
-
-### Rule
-
-By default, everything must be `read-only` or `draft-only`.
-
-If execution-capable path appears, it must be:
-
-- explicit;
-- bounded;
-- verifiable;
-- visible to the operator;
-- not hidden in prompt or accidental code path.
-
-### Bitrix write-back v0 (ROP, Iteration 37)
-
-BeeAgent has disabled-by-default bounded Bitrix CRM write-back for ROP events.
-
-Behavior:
-
-- Each classified event (including `irrelevant` and `should_rop_see=false`) falls into delivery planning;
-- Each processed event receives outcome `create_lead`, `attach_existing` or `deferred`;
-- new eligible Leads are created through `crm.item.add` with `entityTypeId=1` in the configured customer `stageId`, using the exact matched active responsible user from `rop_recipient_routing.json`; optional `bitrix.writeback.user_id_fallback` (a validated positive Bitrix user ID) is assigned as responsible only when `responsible.status=not_found`; matched, ambiguous, `connector_degraded`, unresolved and not-attempted remain deferred; optional config-driven `source_id` sets the Lead `SOURCE_ID` (for example, `EMAIL` = “Incoming email”);
-- when `bitrix.writeback.email_attach: true`, an email activity (`TYPE_ID=4`) with bounded subject/body/sender is attached through the official `crm.activity.add`; a trusted exact thread target receives the activity with the existing target owner/responsible user without reassigning the CRM entity; `bitrix.writeback.email_completed` (boolean, validated fail-fast, default `true`) determines whether the created email activity is completed (`false` creates it as incomplete, making it more visible in the timeline);
-- planned record snapshots whether email attachment is required. For `create_lead`, a created/recovered CRM entity is delivery-complete only after the required activity has a valid ID; pending, uncertain, exhausted, terminal or sender-unavailable attachment remains an explicit incomplete delivery state;
-- trusted exact thread target is processed through idempotent attach-existing path without creating a new Lead; before every activity POST executor uses read-only `crm.activity.list` with the stable origin identity, including after timeout or malformed response, and persists the returned activity ID;
-- exact sender email/phone may identify an existing Deal only through an exact matched Contact/Company and bounded read-only `crm.item.list` (`entityTypeId=2`) relation filter on `contactId`/`companyId`; identity evidence (sender email/phone, Contact/Company, related historical CRM relation) is never an executable target — an exact matched Lead/Deal, an exact Contact/Company and a related Deal stay identity/candidate evidence with `safe_to_use_as_target=false`, and title/subject similarity is never automatic Deal authority;
-- automatic existing-target attachment is allowed only for exact trusted thread evidence (Iteration 38): normalized `Message-ID`, `In-Reply-To` (preferred) and bounded `References` resolve against canonical write-back state; all resolved exact referenced ancestors must agree on one trusted Lead/Deal; a confirmed BeeAgent-created Lead (`target_provenance=beeagent_created`) is an authoritative thread root, a thread-resolved attachment (`target_provenance=thread_resolved`) propagates the target, legacy records without trusted provenance are never authority, and conflicting exact references fail closed to `ambiguous_thread_target` deferred with zero mutation;
-- an exact Contact/Company is identity evidence, not an executable target. Only after the bounded exact Lead search and related-Deal lookup complete without a target does `identity_only_no_target` with `suitable_target_search=completed_no_target` permit the normal configured `new_lead`/`irrelevant` create path. An independent `new_lead` from a known sender (without exact thread evidence) can create a new Lead; `existing_deal`/`duplicate` without a safe exact target remain deferred/manual-review; run-local `thr_*` IDs, classifier/AI output, subject similarity and `RE:`/`FWD:` markers never authorize attachment; existing target responsible is never reassigned;
-- the email activity body preview is bounded readable plain text: `<!DOCTYPE ...>`, comments, script/style and HTML tags are removed, safe structural HTML boundaries (`p`/`div`/`br`/`li`/list/table...) become readable line breaks, plain-text line breaks are preserved, excessive whitespace is bounded, and the existing `rop.email_preview.body_chars_max` is preserved without a new parsing dependency;
-- `BitrixReadonlyClient` does not contain mutation methods; `crm.activity.list` remains read-only idempotency lookup, while `BitrixWriteClient` is limited only to `crm.item.add` and `crm.activity.add`;
-- when write-back is enabled, the dedicated write credential must differ from the read credential in both env name and normalized webhook URL;
-- unresolved `existing_deal`/`duplicate`, ambiguous/unsafe targets and unresolved responsible users fail closed to `deferred` without speculative creation;
-- the stable cross-run identity is `client_id + source_id + (message_id → x_email_id → event_id)`; `event_instance_id` is not a remote business identity;
-- authoritative write-back intent is durably persisted before the mailbox checkpoint; poll ordering is: durable intent → checkpoint → external execution → original per-run projection refresh. A temporary reconciliation outage is retained as recoverable deferred state and reconciled again from retained run artifacts without mailbox re-ingestion.
-
-Artifacts:
-
-- `storage/interfaces/rop_writeback_state.json` — canonical durable write-back state;
-- `storage/runs/<run_id>/rop_writeback_summary.json` — read-only per-run projection, refreshed for each original affected run after execution/recovery.
-
-With write-back enabled, `rop run` must durably persist the reconciliation-backed plan before it can report success. A projection or post-persistence executor failure never erases canonical intent and remains recoverable through later run, poll or controlled manual execution.
-
-## 11. Stack
-
-Current stack:
-
-- Python 3.14+
-- `uv`
-- `PyYAML`
-- `python-dotenv`
-- `python-telegram-bot`
-- `langgraph`
-- `pytest`
-
-Additional dependencies are added only when actually needed.
-
-## 12. Launch
-
-### Main launch
-
-`start.sh` starts `uv sync` and then `uv run python3 config/start.py`
-
-### Rule
-
-- the primary runtime starts from the `beeagent` repository
-- modules are connected as local dependencies through `uv`
-- the module does not start its own separate runtime by default
-
-## 13. Core maturity criteria
-
-BeeAgent is developing in the right direction if:
-
-- the transport layer is thin;
-- core is not cluttered with client-specific logic;
-- modules connect through a stable contract;
-- the capability boundary is explicit;
-- artifacts and logs explain the behavior;
-- AI does not blur the deterministic path;
-- delivering a new module does not require rewriting the core.
-
-## 14. Next direction
-
-Immediate objective:
-
-- complete module platform v0;
-- connect `beeagent-rop` as the first real domain module;
-- guide the client through Discovery → MVP → Pilot;
-- do not break the universality of core.
+BeeAgent does not provide unapproved remote code execution, arbitrary shell/HTTP actions, a public plugin marketplace, automatic Bug Bounty submissions, or general-purpose CRM mutation from an AI recommendation. New authority-bearing capabilities require an approved public contract and host-enforced controls.

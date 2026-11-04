@@ -71,6 +71,12 @@ def _load_case(storage_dir, case_id):
     ):
         raise ValueError("invalid_case_checkpoint")
     state = envelope["state"]
+    if type(state.get("schema_version")) is int and state["schema_version"] == 4:
+        from beeagent_module.integrations.beescan.discovery_dast import (
+            load_integrated_case,
+        )
+
+        return load_integrated_case(state, snapshot, case_id)
     if type(state.get("schema_version")) is int and state["schema_version"] == 3:
         from beeagent_module.integrations.beescan.dast import load_dast_case
 
@@ -481,6 +487,18 @@ def _load_general_case(state, snapshot, case_id):
             resources=tuple(resources),
             evidence_refs=tuple(raw["evidence_refs"]),
             parameter_names=tuple(raw["parameter_names"]),
+        )
+        from beescan.domain.assessment_selection import ObservedEntry
+
+        raw["assessment_entries"] = tuple(
+            ObservedEntry(
+                **{
+                    **entry,
+                    "parameter_names": tuple(entry["parameter_names"]),
+                    "evidence_refs": tuple(entry["evidence_refs"]),
+                }
+            )
+            for entry in raw.get("assessment_entries", ())
         )
         surface = Surface(**raw)
         source = entry["source"]

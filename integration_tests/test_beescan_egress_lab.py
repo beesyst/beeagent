@@ -18,13 +18,33 @@ import pytest
 
 from beeagent_module.integrations.beescan import detection_runner, egress
 from beeagent_module.integrations.beescan.assessment import execute_approved_assessment
+from beeagent_module.integrations.beescan.dast_runner import snapshot_zap
 from beeagent_module.integrations.beescan.git_exposure import GitExposurePolicy
 from beeagent_module.integrations.beescan.policy import HTTPX_SHA256, ProbePolicy
+from beeagent_module.integrations.beescan.providers import (
+    managed_zap_archive,
+    provider_root,
+)
 from tests import test_beescan_detection
 from tests.settings_support import read_test_settings
 from tests.test_beescan_detection import settings_for
 
 approved = test_beescan_detection.approved
+
+
+def _lab_provider(variable: str, name: str) -> Path:
+    path = Path(os.environ.get(variable, provider_root() / name))
+    if not path.is_file():
+        pytest.fail(f"Pinned laboratory provider unavailable: {path}", pytrace=False)
+    return path
+
+
+@pytest.fixture(scope="session")
+def zap_distribution(tmp_path_factory):
+    archive = managed_zap_archive()
+    if not archive.is_file():
+        pytest.fail(f"Pinned ZAP archive unavailable: {archive}", pytrace=False)
+    return snapshot_zap(archive, tmp_path_factory.mktemp("zap-distribution"))
 
 
 @pytest.fixture(params=[False, True], ids=["http", "https"])
@@ -41,19 +61,12 @@ def managed_lab(approved, monkeypatch, request):
         monkeypatch.setenv(key, "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "")
     monkeypatch.setenv("no_proxy", "")
-    for name in (
-        "BEEAGENT_BEESCAN_PASTA",
-        "BEEAGENT_BEESCAN_LAB_PROVIDER",
-        "BEEAGENT_BEESCAN_NUCLEI",
-    ):
-        if not os.environ.get(name):
-            pytest.fail(
-                f"Explicit pinned laboratory prerequisite required: {name}",
-                pytrace=False,
-            )
+    pasta = _lab_provider("BEEAGENT_BEESCAN_PASTA", "pasta")
+    httpx = _lab_provider("BEEAGENT_BEESCAN_LAB_PROVIDER", "httpx")
+    nuclei = _lab_provider("BEEAGENT_BEESCAN_NUCLEI", "nuclei")
     binary = root / "providers/pasta"
     binary.parent.mkdir(mode=0o700)
-    binary.write_bytes(egress._binary(Path(os.environ["BEEAGENT_BEESCAN_PASTA"])))
+    binary.write_bytes(egress._binary(pasta))
     binary.chmod(0o500)
     monkeypatch.setattr(egress, "executable_path", lambda: binary)
     original_spawn = egress.ManagedEgress._spawn
@@ -69,7 +82,7 @@ def managed_lab(approved, monkeypatch, request):
     requests = []
     fixture_root = root / "filesystem"
     document_root = fixture_root / "www/images"
-    if request.param in {"dast-vulnerable", "dast-fixed"}:
+    if request.param in {"dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"}:
         document_root.mkdir(parents=True)
         (document_root / "fixture.txt").write_text("Synthetic public fixture\n")
         (fixture_root / "etc").mkdir()
@@ -78,12 +91,35 @@ def managed_lab(approved, monkeypatch, request):
     class Handler(BaseHTTPRequestHandler):
         def respond(self):
             requests.append((self.command, self.path))
-            if request.param in {"dast-vulnerable", "dast-fixed"}:
+            if request.param in {
+                "dast-vulnerable",
+                "dast-vulnerable-alt",
+                "dast-fixed",
+            }:
                 from urllib.parse import parse_qs, urlsplit
 
-                selected = parse_qs(urlsplit(self.path).query).get(
-                    "file", ["fixture.txt"]
-                )[0]
+                parsed = urlsplit(self.path)
+                field = "document" if request.param == "dast-vulnerable-alt" else "file"
+                expected = (
+                    "/retrieve" if request.param == "dast-vulnerable-alt" else "/"
+                )
+                if parsed.path == "/" and not parsed.query:
+                    link = (
+                        "/retrieve?document=fixture.txt"
+                        if request.param == "dast-vulnerable-alt"
+                        else "/?file=fixture.txt"
+                    )
+                    body = f'<a href="{link}">fixture</a>'.encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path != expected:
+                    self.send_error(404)
+                    return
+                selected = parse_qs(parsed.query).get(field, ["fixture.txt"])[0]
                 candidate = (
                     (document_root / selected).resolve()
                     if not selected.startswith("/")
@@ -180,7 +216,7 @@ def managed_lab(approved, monkeypatch, request):
             connected_ip="192.0.2.1",
             network_namespace=egress.MANAGED_NET,
             user_namespace=egress.MANAGED_USER,
-            executable=os.environ["BEEAGENT_BEESCAN_NUCLEI"],
+            executable=str(nuclei),
             time_budget_seconds=30,
         )
         settings = settings_for(detection)
@@ -191,7 +227,7 @@ def managed_lab(approved, monkeypatch, request):
             method="http_probe",
             sha256=HTTPX_SHA256,
             provider_version="1.12.0",
-            executable=os.environ["BEEAGENT_BEESCAN_LAB_PROVIDER"],
+            executable=str(httpx),
             time_budget_seconds=10,
         )
         probe = ProbePolicy(**fields)
@@ -1207,12 +1243,10 @@ def test_dast_mediation_fail_closed_before_target_http(dast_mediator, attack):
 
 
 @pytest.mark.parametrize("managed_lab", [True], indirect=True)
-def test_dast_fixed_zap_headless_through_mediation(dast_mediator):
+def test_dast_fixed_zap_headless_through_mediation(dast_mediator, zap_distribution):
     from beeagent_module.integrations.beescan.http_runner import bounded_process
 
     mediator, root, requests, probe = dast_mediator
-    distribution = os.environ.get("BEEAGENT_ZAP_LAB_ROOT")
-    assert distribution, "Pinned ZAP qualification root is required"
     worker = (
         Path(__file__).resolve().parents[1]
         / "src/beeagent_module/integrations/beescan/dast_worker.py"
@@ -1267,7 +1301,7 @@ def test_dast_fixed_zap_headless_through_mediation(dast_mediator):
                 str(worker),
                 "/worker.py",
                 "--ro-bind",
-                distribution,
+                str(zap_distribution),
                 "/zap",
                 "--ro-bind",
                 str(mediator.socket_path),
@@ -1312,7 +1346,9 @@ def test_dast_fixed_zap_headless_through_mediation(dast_mediator):
 
 
 @pytest.mark.parametrize(
-    "managed_lab", ["dast-vulnerable", "dast-fixed"], indirect=True
+    "managed_lab",
+    ["dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"],
+    indirect=True,
 )
 def test_dast_real_managed_egress_and_paired_contract(
     managed_lab, monkeypatch, request
@@ -1377,8 +1413,14 @@ def test_dast_real_managed_egress_and_paired_contract(
     raw, records, count = run_zap(
         probe,
         origin=probe.origin,
-        entries=("/?file=fixture.txt",),
-        archive=Path("/tmp/bs13-zap-core.zip"),
+        entries=(
+            (
+                "/retrieve?document=fixture.txt"
+                if request.node.callspec.params["managed_lab"] == "dast-vulnerable-alt"
+                else "/?file=fixture.txt"
+            ),
+        ),
+        archive=managed_zap_archive(),
         artifacts=Artifacts(),
         run_id="child",
         request_budget=100,
@@ -1387,7 +1429,10 @@ def test_dast_real_managed_egress_and_paired_contract(
         upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
     )
     assert raw["complete"]
-    vulnerable = request.node.callspec.params["managed_lab"] == "dast-vulnerable"
+    vulnerable = request.node.callspec.params["managed_lab"] in {
+        "dast-vulnerable",
+        "dast-vulnerable-alt",
+    }
     assert bool(raw["alerts"]) is vulnerable
     assert len(requests) == count == len(records) > 0
     assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
@@ -1448,7 +1493,9 @@ def test_dast_real_managed_egress_and_paired_contract(
 
 
 @pytest.mark.parametrize(
-    "managed_lab", ["dast-vulnerable", "dast-fixed"], indirect=True
+    "managed_lab",
+    ["dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"],
+    indirect=True,
 )
 def test_dast_operator_case_report_and_resume(
     managed_lab, monkeypatch, request, capsys
@@ -1478,10 +1525,14 @@ def test_dast_operator_case_report_and_resume(
         "transport": transport,
         "approved": False,
         "method": "active_dast",
-        "entries": ["/?file=fixture.txt"],
+        "entries": [
+            "/retrieve?document=fixture.txt"
+            if request.node.callspec.params["managed_lab"] == "dast-vulnerable-alt"
+            else "/?file=fixture.txt"
+        ],
         "request_budget": 100,
         "seconds": 55,
-        "archive": "/tmp/bs13-zap-core.zip",
+        "archive": str(managed_zap_archive()),
     }
     settings["beescan"]["dast"] = {"enabled": True, "approval": approval}
     storage = root / "dast-storage"
@@ -1512,7 +1563,10 @@ def test_dast_operator_case_report_and_resume(
         return result
 
     monkeypatch.setattr(dast_runner, "run_zap", run)
-    vulnerable = request.node.callspec.params["managed_lab"] == "dast-vulnerable"
+    vulnerable = request.node.callspec.params["managed_lab"] in {
+        "dast-vulnerable",
+        "dast-vulnerable-alt",
+    }
     code = handle_beescan_cli(args, **options)
     captured = capsys.readouterr()
     assert code == (0 if vulnerable else 5), captured
@@ -1567,6 +1621,125 @@ def test_dast_operator_case_report_and_resume(
     path.write_text("substituted")
     with pytest.raises(ValueError, match="dast_report_changed"):
         load_case(storage, result["case_id"])
+
+
+@pytest.mark.parametrize(
+    "managed_lab",
+    ["dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"],
+    indirect=True,
+)
+def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, capsys):
+    from datetime import UTC, datetime, timedelta
+
+    from beeagent_module.integrations.beescan import dast_runner
+    from beeagent_module.integrations.beescan.case_state import load_case
+    from beeagent_module.integrations.beescan.local_cli import (
+        _SEAL,
+        _identity,
+        _LocalOperator,
+    )
+    from beeagent_module.integrations.beescan.probe import handle_beescan_cli
+
+    lab_settings, root, requests, sessions, probe = managed_lab
+    settings = read_test_settings()
+    settings["beescan"].update(lab_settings["beescan"])
+    now = datetime.now(UTC)
+    probe = replace(
+        probe,
+        valid_from=now,
+        expires_at=now + timedelta(minutes=5),
+        time_budget_seconds=60,
+    )
+    transport = asdict(probe)
+    for key in ("valid_from", "expires_at"):
+        transport[key] = transport[key].isoformat()
+    settings["beescan"]["investigation"] = {
+        "enabled": True,
+        "approval": None,
+        "local_lab_enabled": True,
+        "trusted_local_enabled": True,
+        "ai_profile": "openrouter",
+        "task_bytes_max": 16384,
+        "task_chars_max": 4000,
+        "timeout_seconds": 60,
+        "input_chars_max": 16000,
+        "output_chars_max": 4000,
+        "body_bytes_max": 73728,
+        "adaptive": {
+            "enabled": True,
+            "max_steps": 4,
+            "max_requests": 32,
+            "max_depth": 2,
+        },
+    }
+    settings["beescan"]["dast"] = {
+        "enabled": True,
+        "approval": {
+            "transport": transport,
+            "approved": True,
+            "method": "active_dast",
+            "entries": [],
+            "entry_selection": "authenticated_discovery",
+            "max_candidates": 1,
+            "request_budget": 100,
+            "seconds": 55,
+        },
+    }
+    storage = root / "autonomous-dast-storage"
+    storage.mkdir(mode=0o700)
+    context = ssl.create_default_context(cafile=str(root / "cert.pem"))
+    original = dast_runner.run_zap
+
+    def run(transport, **kwargs):
+        return original(transport, **kwargs, upstream_tls=context)
+
+    monkeypatch.setattr(dast_runner, "run_zap", run)
+    options = {
+        "settings": settings,
+        "reload_settings": lambda: copy.deepcopy(settings),
+        "storage_dir": storage,
+        "logger": logging.getLogger("managed-lab"),
+        "local_operator": _LocalOperator(_identity(), _SEAL),
+    }
+    args = ["investigate", "--target", probe.origin, "--task", "Assess Path Traversal"]
+    vulnerable = request.node.callspec.params["managed_lab"] in {
+        "dast-vulnerable",
+        "dast-vulnerable-alt",
+    }
+    code = handle_beescan_cli(args, **options)
+    captured = capsys.readouterr()
+    assert code == (0 if vulnerable else 5), captured
+    result = json.loads(captured.out)
+    assert result["status"] == ("CANDIDATE" if vulnerable else "PARTIAL")
+    assert requests[0] == ("GET", "/")
+    state, snapshot = load_case(storage, result["case_id"])
+    assert state["schema_version"] == 4 and not state["pending"]
+    assert state["metrics"]["request_count"] == len(requests) <= 100
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
+    report = snapshot.json(result["run_id"], "report.json")
+    assert bool(report["findings"]) is vulnerable
+    for path in storage.rglob("*"):
+        if path.is_file():
+            assert "fixture.txt" not in path.read_text()
+    before = len(requests)
+    assert handle_beescan_cli(
+        [
+            "investigate",
+            "--resume",
+            result["case_id"],
+            "--task",
+            "Assess Path Traversal",
+        ],
+        **options,
+    ) == (0 if vulnerable else 5)
+    assert len(requests) == before
+    capsys.readouterr()
+    assert (
+        handle_beescan_cli(["investigate", "--inspect", result["case_id"]], **options)
+        == 0
+    )
+    inspected = json.loads(capsys.readouterr().out)
+    assert inspected["schema_version"] == 4
 
 
 @pytest.mark.parametrize("managed_lab", [True], indirect=True)
@@ -1625,7 +1798,7 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
             probe,
             origin=probe.origin,
             entries=("/",),
-            archive=Path("/tmp/bs13-zap-core.zip"),
+            archive=managed_zap_archive(),
             artifacts=Artifacts(),
             run_id="failure-test",
             request_budget=1,
@@ -1658,7 +1831,7 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
             "entries": ["/"],
             "request_budget": 1,
             "seconds": 15,
-            "archive": "/tmp/bs13-zap-core.zip",
+            "archive": str(managed_zap_archive()),
         },
     }
     storage = root / "failed-case"
