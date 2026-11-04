@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 import json
 import logging
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -28,6 +30,7 @@ from beeagent_module.core.runtime_context import (
     generate_run_id,
     generate_session_id,
 )
+from beeagent_module.integrations.beescan import local_cli
 from beeagent_module.integrations.beescan.capture_worker import (
     RESPONSE_FAILURES,
     ResponseLengthExceeded,
@@ -178,7 +181,7 @@ def validate_investigation_settings(
             item.get("id") == "beescan" and item.get("enabled") is True
             for item in settings.get("modules", {}).get("registry", [])
         )
-        if not enabled or config["enabled"] and config["approval"] is None:
+        if not enabled:
             raise RuntimeError("BeeScan investigation requires independent approval")
     try:
         named_ai_profile(settings, require_key=active and require_ai_key)
@@ -926,6 +929,7 @@ def _prepare_intent(
     debug_domain=None,
     requested_field=None,
     general_budget=None,
+    assessment=False,
 ):
     from beescan.domain.models import (
         EngagementScope,
@@ -975,7 +979,7 @@ def _prepare_intent(
             transport.mission_id,
             transport.project_id,
             transport.scope_id,
-            (capability,),
+            (capability, "web.dast") if assessment else (capability,),
         ),
         MissionSpec(
             transport.mission_id,
@@ -995,6 +999,171 @@ def _prepare_intent(
         provider_version="1",
         **options,
     )
+
+
+def _publish_investigation_result(
+    *,
+    status,
+    analysis,
+    explanation,
+    ai_profile,
+    assessment_findings,
+    local_selected,
+    artifacts,
+    general,
+    policy,
+    general_case,
+    integrated,
+    steps,
+    storage_dir,
+    run_id,
+    source_manifest,
+    authorize,
+):
+    from beeagent_module.integrations.beescan.assessment import _write_report
+    from beeagent_module.integrations.beescan.detection import _persist
+    from beeagent_module.integrations.beescan.review_source import AssessmentSnapshot
+
+    accepted = analysis if status["reason"] == "ok" else None
+    result = {
+        **status,
+        "ai_provider": ai_profile["provider"] if ai_profile else None,
+        "ai_model": ai_profile["model"] if ai_profile else None,
+        "framework": accepted.framework if accepted is not None else None,
+        "version": accepted.version if accepted is not None else None,
+        "findings": [asdict(accepted.candidate)]
+        if accepted is not None and accepted.candidate
+        else assessment_findings,
+        "explanation": explanation if accepted is not None else None,
+    }
+    if local_selected:
+        result["report_location"] = str(artifacts.artifact_dir() / "report.md")
+        result["disposition"] = (
+            "CANDIDATE"
+            if result["findings"]
+            or general
+            and status.get("disposition") == "CANDIDATE"
+            else None
+        )
+        status.update(
+            framework=result["framework"],
+            version=result["version"],
+            disposition=result["disposition"],
+            report_location=result["report_location"],
+        )
+    report = accepted.report() if accepted is not None else None
+    _persist(artifacts, "investigation_steps.json", steps)
+    _persist(artifacts, "investigation_result.json", result)
+    if report is not None:
+        _write_report(artifacts, "report.json", report.canonical_json)
+        _write_report(artifacts, "report.md", report.markdown)
+    elif general:
+        summary = {
+            "target": policy.transport.origin if policy is not None else None,
+            "objective_id": general_case.objective_id
+            if general_case is not None
+            else None,
+            "status": result["status"],
+            "reason": result["reason"],
+            "disposition": result.get("disposition"),
+            "answer": result.get("answer"),
+            "inspected_resources": result.get("inspected_resources", []),
+            "skipped_resources": result.get("skipped_resources", []),
+            "evidence_refs": result.get("evidence_refs", []),
+            "decisions": result.get("decisions", []),
+            "metrics": result.get("metrics"),
+            "limitations": result.get("limitations", []),
+            "next_actions": result.get("next_actions", []),
+            "source_analysis": result.get("source_analysis"),
+            **(
+                {
+                    "assessment": result.get("assessment"),
+                    "findings": result["findings"],
+                    "assessment_guidance": result.get("assessment_guidance"),
+                }
+                if integrated
+                else {}
+            ),
+        }
+        _persist(artifacts, "report.json", result)
+        _write_report(
+            artifacts,
+            "report.md",
+            "# General web investigation\n\n## Result\n\n```json\n"
+            + json.dumps(summary, indent=2, sort_keys=True)
+            + "\n```\n",
+        )
+    else:
+        _persist(artifacts, "report.json", result)
+        _write_report(
+            artifacts,
+            "report.md",
+            "# Web investigation\n\nStatus: "
+            + status["status"]
+            + "\n\nReason: "
+            + status["reason"]
+            + "\n",
+        )
+    output = AssessmentSnapshot(storage_dir)
+    for name in (
+        "investigation_steps.json",
+        "investigation_result.json",
+        "report.json",
+        "report.md",
+    ):
+        output.read(run_id, name)
+    if (
+        _json(output.read(run_id, "investigation_steps.json")) != steps
+        or output.json(run_id, "investigation_result.json") != _json(json.dumps(result))
+        or output.json(run_id, "report.json")
+        != (report.data if report is not None else _json(json.dumps(result)))
+        or report is not None
+        and output.read(run_id, "report.md") != report.markdown.encode()
+    ):
+        raise OSError("result_readback_failed")
+    if accepted is not None:
+        if output.json(run_id, "investigation_sources.json") != {
+            "schema_version": 1,
+            "run_id": run_id,
+            "sources": source_manifest,
+        }:
+            raise OSError("manifest_readback_failed")
+        authorize()
+    _persist(artifacts, "investigation_status.pending.json", status)
+    output.verify()
+    if accepted is not None:
+        authorize()
+    os.replace(
+        artifacts.artifact_dir() / "investigation_status.pending.json",
+        artifacts.artifact_dir() / "investigation_status.json",
+    )
+    descriptor = os.open(artifacts.artifact_dir(), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    if output.json(run_id, "investigation_status.json") != status:
+        raise OSError("terminal_readback_failed")
+    output.verify()
+    if accepted is not None:
+        authorize()
+    if integrated:
+        from beeagent_module.integrations.beescan.case_state import digest
+
+        _persist(
+            artifacts,
+            "unified_report_receipt.json",
+            {
+                "report_sha256": digest(output.json(run_id, "report.json")),
+                "markdown_sha256": hashlib.sha256(
+                    output.read(run_id, "report.md")
+                ).hexdigest(),
+                "status_sha256": digest(
+                    output.json(run_id, "investigation_status.json")
+                ),
+            },
+        )
+    return output
 
 
 def execute_investigation(
@@ -1057,6 +1226,7 @@ def execute_investigation(
         return result
 
     artifacts = api(run_id)
+    sensitive_presenter = local_cli.present_sensitive_value
     status: dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_id,
@@ -1081,6 +1251,8 @@ def execute_investigation(
     started = time.monotonic()
     deadline = None
     local_context = None
+    domain = ModuleType("uninitialized_beescan_domain")
+    revision = ""
     debug_domain = sensitive = None
     transient_content: dict[str, Any] = {}
     source_key = os.urandom(32)
@@ -1094,6 +1266,12 @@ def execute_investigation(
     general_case = None
     general_entries = []
     skipped_resources = []
+    from beeagent_module.integrations.beescan.discovery_dast import discovery_selected
+
+    integrated = general and discovery_selected(settings)
+    assessment_state = None
+    assessment_findings = []
+    candidate_target = None
 
     def authorize(*, resolve=False):
         current_policy = policy
@@ -1454,9 +1632,11 @@ def execute_investigation(
         from beeagent_module.integrations.beescan.case_state import save_case
 
         old_metrics = previous_case["metrics"] if previous_case else {}
+        active_count = assessment_state["request_count"] if assessment_state else 0
         metrics = {
             "request_count": old_metrics.get("request_count", 0)
-            + status["request_count"],
+            + status["request_count"]
+            - active_count,
             "request_count_exact": old_metrics.get("request_count_exact", True)
             and status["request_count_exact"],
             "capture_launch_count": old_metrics.get("capture_launch_count", 0)
@@ -1491,6 +1671,14 @@ def execute_investigation(
             or status["reason"] in {"no_eligible_action", "ambiguous_evidence"},
             "metrics": metrics,
         }
+        if integrated:
+            from beeagent_module.integrations.beescan.dast import _current
+            from beeagent_module.integrations.beescan.discovery_dast import wrap_case
+
+            state["status"] = "INCONCLUSIVE"
+            state["terminal"] = assessment_state is not None
+            state = wrap_case(state, assessment_state, _current(settings))
+            metrics = state["metrics"]
         save_case(case_artifacts, state)
         status.update(case_id=general_case.case_id, metrics=metrics)
         _persist(case_artifacts, "case_report.json", state)
@@ -1504,6 +1692,7 @@ def execute_investigation(
 
     def run_general():
         nonlocal intent, general_case, session, sensitive, ai_calls, ai_profile
+        nonlocal assessment_state, assessment_findings, candidate_target
         import importlib
 
         from beescan.capabilities.catalog import Capability, ToolCatalog, ToolDefinition
@@ -1552,6 +1741,7 @@ def execute_investigation(
             current_policy,
             run_id,
             general_budget=config["adaptive"]["max_requests"],
+            assessment=integrated,
         )
         fresh = api_domain.start_general(
             resume_case_id or run_id,
@@ -1584,6 +1774,18 @@ def execute_investigation(
                 )
                 raw["evidence_refs"] = tuple(raw["evidence_refs"])
                 raw["parameter_names"] = tuple(raw["parameter_names"])
+                from beescan.domain.assessment_selection import ObservedEntry
+
+                raw["assessment_entries"] = tuple(
+                    ObservedEntry(
+                        **{
+                            **entry,
+                            "parameter_names": tuple(entry["parameter_names"]),
+                            "evidence_refs": tuple(entry["evidence_refs"]),
+                        }
+                    )
+                    for entry in raw.get("assessment_entries", ())
+                )
                 surfaces.append(Surface(**raw))
             if any(surface.context_id != intent.binding for surface in surfaces):
                 raise PermissionError("general_case_identity_changed")
@@ -1686,14 +1888,45 @@ def execute_investigation(
             persist_source(facts)
             if count != 1 or not verify_source(facts):
                 raise ValueError("unauthenticated_investigation_source")
+            content = transient_content.pop(facts.response_id)
+            observed_entries = ()
+            if integrated:
+                from beescan.domain.assessment_selection import observe_entries
+
+                observed_entries = observe_entries(
+                    intent,
+                    facts,
+                    content,
+                    depth=depth,
+                    at=datetime.now(UTC),
+                )
             surface, answer = api_domain.observe_surface(
                 intent,
                 facts,
-                transient_content.pop(facts.response_id),
+                content,
                 depth=depth,
                 requested_field=field,
                 at=datetime.now(UTC),
             )
+            if integrated:
+                surface = replace(
+                    surface,
+                    resources=tuple(
+                        item
+                        for item in surface.resources
+                        if "?" not in item.relative_url
+                    ),
+                )
+                _persist(
+                    records[facts.response_id][1],
+                    "assessment_observations.json",
+                    {
+                        "source_sha256": digest(
+                            snapshot.json(facts.request.child_run_id, "source.json")
+                        ),
+                        "entries": [asdict(entry) for entry, _ in observed_entries],
+                    },
+                )
             general_case = api_domain.record_surface(general_case, surface)
             source = source_manifest[-1]
             general_entries.append(
@@ -1713,6 +1946,119 @@ def execute_investigation(
             )
             if answer is not None:
                 sensitive = answer
+            if integrated:
+                from beescan.domain.assessment_selection import decide_assessment
+
+                from beeagent_module.integrations.beescan.dast import (
+                    _current,
+                    _plain,
+                    _restore,
+                    execute_dast_investigation,
+                )
+                from beeagent_module.integrations.beescan.discovery_dast import (
+                    SelectedAssessment,
+                )
+
+                active_policy = _current(settings)
+                active_policy.authorize(local_operator, at=datetime.now(UTC))
+                selected_assessment = decide_assessment(
+                    general_case,
+                    tuple(entry for entry, _ in observed_entries),
+                    TransientText(current_task["task"]),
+                    catalog=ToolCatalog(
+                        (Capability("web.dast", "Governed rule-6 assessment"),),
+                        (ToolDefinition("zap", ("web.dast",), "2.17.0"),),
+                    ),
+                    available_capabilities=("web.dast",),
+                    at=datetime.now(UTC),
+                )
+                status["assessment_guidance"] = selected_assessment.guidance
+                if selected_assessment.action is not None:
+                    action = selected_assessment.action
+                    entry = next(
+                        value
+                        for descriptor, value in observed_entries
+                        if descriptor == action.entry
+                    )
+                    close_egress()
+                    authorize()
+                    remaining = (
+                        config["adaptive"]["max_requests"] - status["request_count"]
+                    )
+                    seconds = math.floor(current_deadline - time.monotonic())
+                    if remaining < 1 or seconds < 10:
+                        status.update(reason="request_budget_exhausted", complete=False)
+                        break
+                    assessment_state = {
+                        "action": _plain(action),
+                        "action_id": action.action_id,
+                        "run_id": None,
+                        "pending": True,
+                        "status": "PARTIAL",
+                        "request_count": 0,
+                        "source_sha256": digest(
+                            snapshot.json(action.entry.source_run_id, "source.json")
+                        ),
+                    }
+                    general_checkpoint(pending=True)
+                    observations = snapshot.json(
+                        action.entry.source_run_id, "assessment_observations.json"
+                    )
+                    if _plain(action.entry) not in observations["entries"]:
+                        raise ValueError("assessment_source_changed")
+                    status["request_count_exact"] = False
+
+                    def candidate_handoff(target):
+                        nonlocal candidate_target
+
+                        if type(target) is not str or candidate_target is not None:
+                            raise ValueError("invalid_candidate_handoff")
+                        candidate_target = target
+
+                    execution_result = execute_dast_investigation(
+                        task=current_task,
+                        settings=settings,
+                        reload_settings=reload_settings,
+                        storage_dir=storage_dir,
+                        logger=logger,
+                        local_operator=local_operator,
+                        _assessment=SelectedAssessment(
+                            general_case,
+                            action,
+                            entry,
+                            remaining,
+                            seconds,
+                            authorize,
+                        ),
+                        _candidate_handoff=candidate_handoff,
+                    )
+                    child_id = execution_result["run_id"]
+                    _, execution, _, report = _restore(snapshot, child_id)
+                    assessment_state.update(
+                        run_id=child_id,
+                        pending=False,
+                        status=execution_result["status"],
+                        request_count=execution.request_count,
+                    )
+                    assessment_findings = report.data["findings"]
+                    status.update(
+                        status=execution_result["status"],
+                        complete=execution_result["complete"],
+                        reason=execution_result["reason"],
+                        reproduction=execution_result.get(
+                            "reproduction", "NOT_AVAILABLE"
+                        ),
+                        assessment=assessment_state,
+                        disposition="CANDIDATE" if assessment_findings else None,
+                        request_count=status["request_count"] + execution.request_count,
+                        request_count_exact=True,
+                        evidence_refs=sorted(
+                            set(status["evidence_refs"])
+                            | set(surface.evidence_refs)
+                            | set(report.data["evidence_refs"])
+                        ),
+                    )
+                    break
             preference = None
             available_resources = [
                 item
@@ -1835,6 +2181,8 @@ def execute_investigation(
             depth = decision.resource.depth
         close_egress()
         authorize()
+        if integrated and assessment_state is None:
+            status.update(status="PARTIAL", complete=False)
         update_general_summary()
         general_checkpoint(pending=False)
 
@@ -1910,9 +2258,14 @@ def execute_investigation(
 
         case_domain = importlib.import_module("beescan.domain.investigation_case")
         module_file = getattr(case_domain, "__file__", None)
-        if not isinstance(module_file, str) or Path(module_file).resolve() != Path(
-            domain.__file__
-        ).resolve().with_name("investigation_case.py"):
+        domain_file = getattr(domain, "__file__", None)
+
+        if (
+            not isinstance(module_file, str)
+            or not isinstance(domain_file, str)
+            or Path(module_file).resolve()
+            != Path(domain_file).resolve().with_name("investigation_case.py")
+        ):
             raise ImportError("reviewed_it12_revision_unavailable")
         debug_api = _load_debug_domain(domain)
         field = None
@@ -2132,7 +2485,18 @@ def execute_investigation(
             )
 
     local_selected = task is not None
-    try:
+
+    def execute_approved_workflow():
+        nonlocal ai_profile, analysis, case_artifacts, case_history, case_lock
+        nonlocal deadline, debug_domain, domain, explanation, intent, local_context
+        nonlocal \
+            policy, \
+            previous_case, \
+            resume_snapshot, \
+            revision, \
+            sensitive, \
+            session, \
+            task
         if local_selected or config.get("enabled") is True:
             if resume_case_id is not None and not adaptive:
                 raise PermissionError("adaptive_required")
@@ -2161,10 +2525,45 @@ def execute_investigation(
                     previous_case, resume_snapshot = load_case(
                         storage_dir, resume_case_id
                     )
-                    if len(previous_case["segments"]) >= 8:
+                    if len(previous_case.get("segments", [])) >= 8:
                         raise PermissionError("case_segment_budget_exhausted")
                     resume_snapshot.verify()
                     resume_snapshot.files.pop((resume_case_id, "case.json"))
+                    if previous_case["schema_version"] == 4:
+                        from beescan.domain.web_investigation import _identity
+
+                        from beeagent_module.integrations.beescan.dast import (
+                            _current,
+                            approval_identity,
+                        )
+
+                        active = _current(settings)
+                        active.authorize(local_operator, at=datetime.now(UTC))
+                        current_task = task
+                        if not isinstance(current_task, InvestigationTask):
+                            raise PermissionError("integrated_resume_identity")
+                        if (
+                            not integrated
+                            or previous_case["approval_identity"]
+                            != approval_identity(active)
+                            or current_task.target.rstrip("/")
+                            != previous_case["origin"]
+                            or _identity("objective-", current_task.task)
+                            != previous_case["discovery"]["objective_id"]
+                        ):
+                            raise PermissionError("integrated_resume_identity")
+                        resume_snapshot.verify()
+                        os.close(case_lock)
+                        case_lock = None
+                        return {
+                            "case_id": resume_case_id,
+                            "status": previous_case["status"],
+                            "complete": previous_case["status"]
+                            in {"CANDIDATE", "NO_MATCH"},
+                            "reason": "authenticated_case_reused",
+                            "request_count": 0,
+                            "metrics": previous_case["metrics"],
+                        }
                     case_history = list(previous_case["outcomes"])
             if local_selected:
                 from beeagent_module.integrations.beescan.local_cli import (
@@ -2187,6 +2586,8 @@ def execute_investigation(
                     )
                 _persist(artifacts, "investigation_status.json", status)
             else:
+                if config["approval"] is None:
+                    raise PermissionError("investigation_not_approved")
                 task = read_task(task_path, config)
                 policy = InvestigationPolicy.from_config(config["approval"])
                 if (
@@ -2336,6 +2737,11 @@ def execute_investigation(
                         complete=analysis.status.value in {"match", "no_match"},
                         evidence_refs=list(analysis.evidence_refs),
                     )
+
+    try:
+        reused_case = execute_approved_workflow()
+        if reused_case is not None:
+            return reused_case
     except KeyboardInterrupt:
         status.update(status="INCONCLUSIVE", reason="cancelled", complete=False)
     except TimeoutError:
@@ -2396,122 +2802,24 @@ def execute_investigation(
 
     def publish():
         nonlocal publication_snapshot
-        accepted = analysis if status["reason"] == "ok" else None
-        result = {
-            **status,
-            "ai_provider": ai_profile["provider"] if ai_profile else None,
-            "ai_model": ai_profile["model"] if ai_profile else None,
-            "framework": accepted.framework if accepted is not None else None,
-            "version": accepted.version if accepted is not None else None,
-            "findings": [asdict(accepted.candidate)]
-            if accepted is not None and accepted.candidate
-            else [],
-            "explanation": explanation if accepted is not None else None,
-        }
-        if local_selected:
-            result["report_location"] = str(artifacts.artifact_dir() / "report.md")
-            result["disposition"] = (
-                "CANDIDATE"
-                if result["findings"]
-                or general
-                and status.get("disposition") == "CANDIDATE"
-                else None
-            )
-            status.update(
-                framework=result["framework"],
-                version=result["version"],
-                disposition=result["disposition"],
-                report_location=result["report_location"],
-            )
-        report = accepted.report() if accepted is not None else None
-        _persist(artifacts, "investigation_steps.json", steps)
-        _persist(artifacts, "investigation_result.json", result)
-        if report is not None:
-            _write_report(artifacts, "report.json", report.canonical_json)
-            _write_report(artifacts, "report.md", report.markdown)
-        elif general:
-            summary = {
-                "target": policy.transport.origin if policy is not None else None,
-                "objective_id": (
-                    general_case.objective_id if general_case is not None else None
-                ),
-                "status": result["status"],
-                "reason": result["reason"],
-                "disposition": result.get("disposition"),
-                "answer": result.get("answer"),
-                "inspected_resources": result.get("inspected_resources", []),
-                "skipped_resources": result.get("skipped_resources", []),
-                "evidence_refs": result.get("evidence_refs", []),
-                "decisions": result.get("decisions", []),
-                "metrics": result.get("metrics"),
-                "limitations": result.get("limitations", []),
-                "next_actions": result.get("next_actions", []),
-                "source_analysis": result.get("source_analysis"),
-            }
-            _persist(artifacts, "report.json", result)
-            _write_report(
-                artifacts,
-                "report.md",
-                "# General web investigation\n\n## Result\n\n```json\n"
-                + json.dumps(summary, indent=2, sort_keys=True)
-                + "\n```\n",
-            )
-        else:
-            _persist(artifacts, "report.json", result)
-            _write_report(
-                artifacts,
-                "report.md",
-                "# Web investigation\n\nStatus: "
-                + status["status"]
-                + "\n\nReason: "
-                + status["reason"]
-                + "\n",
-            )
-        output = AssessmentSnapshot(storage_dir)
-        for name in (
-            "investigation_steps.json",
-            "investigation_result.json",
-            "report.json",
-            "report.md",
-        ):
-            output.read(run_id, name)
-        if (
-            _json(output.read(run_id, "investigation_steps.json")) != steps
-            or output.json(run_id, "investigation_result.json")
-            != _json(json.dumps(result))
-            or output.json(run_id, "report.json")
-            != (report.data if report is not None else _json(json.dumps(result)))
-            or report is not None
-            and output.read(run_id, "report.md") != report.markdown.encode()
-        ):
-            raise OSError("result_readback_failed")
-        if accepted is not None:
-            if output.json(run_id, "investigation_sources.json") != {
-                "schema_version": 1,
-                "run_id": run_id,
-                "sources": source_manifest,
-            }:
-                raise OSError("manifest_readback_failed")
-            authorize()
-        _persist(artifacts, "investigation_status.pending.json", status)
-        output.verify()
-        if accepted is not None:
-            authorize()
-        os.replace(
-            artifacts.artifact_dir() / "investigation_status.pending.json",
-            artifacts.artifact_dir() / "investigation_status.json",
+        publication_snapshot = _publish_investigation_result(
+            status=status,
+            analysis=analysis,
+            explanation=explanation,
+            ai_profile=ai_profile,
+            assessment_findings=assessment_findings,
+            local_selected=local_selected,
+            artifacts=artifacts,
+            general=general,
+            policy=policy,
+            general_case=general_case,
+            integrated=integrated,
+            steps=steps,
+            storage_dir=storage_dir,
+            run_id=run_id,
+            source_manifest=source_manifest,
+            authorize=authorize,
         )
-        descriptor = os.open(artifacts.artifact_dir(), os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        if output.json(run_id, "investigation_status.json") != status:
-            raise OSError("terminal_readback_failed")
-        output.verify()
-        if accepted is not None:
-            authorize()
-        publication_snapshot = output
 
     try:
         publish()
@@ -2549,6 +2857,70 @@ def execute_investigation(
             os.close(case_lock)
             case_lock = None
     if (
+        general
+        and candidate_target is not None
+        and status["status"] == "CANDIDATE"
+        and status["complete"]
+        and status["reason"] == "ok"
+    ):
+        try:
+            from beeagent_module.integrations.beescan.case_state import (
+                digest,
+                load_case,
+            )
+
+            authorize()
+            if publication_snapshot is None or general_case is None:
+                raise OSError("publication_unverified")
+            published = AssessmentSnapshot(storage_dir)
+            published.verify()
+            receipt = published.json(run_id, "unified_report_receipt.json")
+            if receipt != {
+                "report_sha256": digest(published.json(run_id, "report.json")),
+                "markdown_sha256": hashlib.sha256(
+                    published.read(run_id, "report.md")
+                ).hexdigest(),
+                "status_sha256": digest(
+                    published.json(run_id, "investigation_status.json")
+                ),
+            }:
+                raise OSError("receipt_unverified")
+            _, verified_case = load_case(storage_dir, general_case.case_id)
+            verified_case.verify()
+            authorize()
+        except OSError, ValueError, RuntimeError, KeyboardInterrupt:
+            status.update(
+                status="ERROR",
+                reason="artifact_incomplete",
+                complete=False,
+                evidence_refs=[],
+            )
+            candidate_target = None
+            publish()
+        else:
+            from beescan.domain.debug_disclosure import SensitiveValue
+
+            try:
+                current_policy = policy
+                if current_policy is None:
+                    raise PermissionError("investigation_not_approved")
+
+                presented = sensitive_presenter(
+                    SensitiveValue(
+                        "GET "
+                        + candidate_target
+                        + " HTTP/1.1\\r\\nHost: "
+                        + urlsplit(current_policy.transport.origin).netloc
+                    ),
+                    local_context,
+                    current_policy,
+                )
+            except OSError, ValueError, PermissionError, KeyboardInterrupt:
+                presented = False
+            status["reproduction"] = "TTY_PRESENTED" if presented else "TTY_REQUIRED"
+            candidate_target = None
+            publish()
+    if (
         (debug_domain is not None or general)
         and sensitive is not None
         and status["status"] == "MATCH"
@@ -2584,11 +2956,7 @@ def execute_investigation(
             publish()
         else:
             try:
-                from beeagent_module.integrations.beescan.local_cli import (
-                    present_sensitive_value,
-                )
-
-                present_sensitive_value(sensitive, local_context, policy)
+                sensitive_presenter(sensitive, local_context, policy)
             except OSError, ValueError, PermissionError, KeyboardInterrupt:
                 pass
     sensitive = None

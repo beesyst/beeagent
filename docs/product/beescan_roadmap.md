@@ -44,7 +44,9 @@ New BeeSDK or BeeUI changes are permitted only for a demonstrated contract block
 
 ## Why BeeScan track is separate
 
-The main BeeAgent ROADMAP contains many completed phases, including the module platform, ROP and BeeDrill. The last confirmed core iteration when this document was created was **Iteration 44.13 — Single-Project Isolated Security Test Execution and Onboarding**.
+The main BeeAgent ROADMAP contains many completed phases, including the module platform, ROP and BeeDrill. BeeAgent maintains independent iteration sequences for shared Core, BeeScan host integration and the operator UI. Their actual progress is recorded in the corresponding roadmaps.
+
+BS iterations are numbered independently from BeeAgent Core, UI and BeeScan domain iterations.
 
 BeeScan will require an independent sequence of host capabilities and security verification.
 
@@ -60,14 +62,6 @@ BS-3
 ```
 
 The `BS` prefix means the BeeScan Host Track inside BeeAgent.
-
-Numbering does not overlap with:
-
-```text
-BeeAgent It0–It44.13
-BeeAgent UI-0, UI-1, ...
-BeeScan It1–It6
-```
 
 A separate BS iteration does not have to share the number of its BeeScan domain iteration.
 
@@ -241,7 +235,7 @@ The UI reads host-approved projections and may invoke only explicitly approved s
 
 HTTP GET/read-only routes never execute a scanner.
 
-## Existing implementation baseline
+## Historical implementation baseline at roadmap creation
 
 The following baseline was verified through BeeMCP before creating this roadmap.
 
@@ -271,7 +265,7 @@ The following baseline was verified through BeeMCP before creating this roadmap.
 - Fixed `web.probe` / `http_probe` profile.
 - Bounded evidence references and distinct SDK result statuses.
 
-Current limitation: no real HTTP execution and no structured HTTP Observation extraction.
+At roadmap creation, real HTTP execution and structured HTTP Observation extraction were not yet implemented. Their subsequent delivery is recorded in the numbered BS iterations below.
 
 ### BeeAgent
 
@@ -293,7 +287,7 @@ The existing Solana capability factory is BeeDrill-specific.
 
 The existing LiteSVM isolation profile uses no-network execution. It cannot be converted into a safe Web scanner merely by enabling unrestricted network access.
 
-### Missing host capabilities
+### Original host integration gaps
 
 - BeeScan optional package registration and real host compatibility smoke.
 - Approved BeeScan Web assessment invocation.
@@ -396,12 +390,9 @@ A BS iteration is complete only when:
 
 ## Product stages
 
-| Stage                                   | Iteration    | Focus                                                                   | Status      |
-| --------------------------------------- | ------------ | ----------------------------------------------------------------------- | ----------- |
-| Stage 1 — Governed HTTP Reconnaissance  | BS-1         | Module integration and real HTTP probe                                  | DONE        |
-| Stage 2 — Restricted Security Detection | BS-2         | Governed Nuclei and candidate evidence                                  | IN PROGRESS |
-| Stage 3 — Operator Assessment MVP       | BS-3         | One-invocation assessment, triage handoff and report artifacts          | IN PROGRESS |
-| Post-MVP                                | Not numbered | UI expansion, monitoring, multi-target assessment and further providers | DEFERRED    |
+The authoritative status of each BS increment is recorded in its numbered iteration. The initial assessment MVP was delivered through BS-1–BS-3; subsequent iterations extend governed Web investigation, evidence, autonomy and DAST execution.
+
+Completion of an individual iteration does not establish unrestricted production readiness or comprehensive vulnerability coverage.
 
 The first BeeScan assessment MVP must be demonstrated by completion of BS-1 through BS-3 together with the matching BeeScan domain iterations.
 
@@ -1557,7 +1548,7 @@ BeeAgent использует существующий ZAP scanner engine чер
 
 ### Iteration BS-14 — Autonomous Discovery-to-DAST Investigation MVP
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
@@ -1772,7 +1763,7 @@ Do not:
 - add generic BeeSDK interfaces without a blocking use case;
 - put BeeScan rules into BeeUI;
 - add a separate React/frontend stack;
-- begin Nuclei before real HTTP reconnaissance is verified;
+- expand Nuclei execution beyond its reviewed restricted offline profile without independent authorization, isolation and evidence validation;
 - declare the MVP complete using mocks alone.
 
 ## Working rule for Issues

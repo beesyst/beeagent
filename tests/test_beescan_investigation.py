@@ -145,7 +145,9 @@ def test_missing_key(settings, monkeypatch):
         host.named_ai_profile(settings)
 
 
-def test_general_validation_allows_missing_key_but_validates_profile(settings, monkeypatch):
+def test_general_validation_allows_missing_key_but_validates_profile(
+    settings, monkeypatch
+):
     settings["beescan"]["investigation"]["trusted_local_enabled"] = True
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     host.validate_investigation_settings(settings, require_ai_key=False)
@@ -191,6 +193,8 @@ def test_fail_fast_configuration(settings, approved, change):
         settings["modules"]["registry"][2]["enabled"] = False
     elif change == "approval":
         config["approval"] = None
+        validate_beescan_settings(settings)
+        return
     elif change == "limits":
         config["body_bytes_max"] = 73729
     elif change == "extra":
@@ -199,6 +203,28 @@ def test_fail_fast_configuration(settings, approved, change):
         config["enabled"] = "true"
     with pytest.raises(RuntimeError):
         validate_beescan_settings(settings)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_nonlocal_investigation_without_approval_refuses_before_network(
+    settings, tmp_path, monkeypatch, enabled
+):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-private-key")
+    settings["beescan"]["investigation"].update(enabled=enabled, approval=None)
+    validate_beescan_settings(settings)
+    monkeypatch.setattr("socket.socket", lambda *_: pytest.fail("No network"))
+    result = host.execute_investigation(
+        task_path=task_file(tmp_path),
+        settings=settings,
+        reload_settings=lambda: settings,
+        storage_dir=tmp_path / "storage",
+        logger=logging.getLogger("test"),
+    )
+    assert result["status"] == "REFUSED"
+    assert result["reason"] == (
+        "authorization_refused" if enabled else "capability_disabled"
+    )
+    assert result["request_count"] == 0
 
 
 @pytest.mark.parametrize("change", ["origin", "expired", "revoked", "mutation", "uid"])

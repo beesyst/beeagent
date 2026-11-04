@@ -30,12 +30,27 @@ class DastPolicy:
     request_budget: int
     seconds: int
     archive: str
+    entry_selection: str = "exact_entry"
+    max_candidates: int = 1
 
     @classmethod
     def from_config(cls, config):
-        if type(config) is not dict or set(config) != set(cls.__dataclass_fields__):
+        if (
+            type(config) is not dict
+            or set(config) - {"entry_selection", "max_candidates", "archive"}
+            != set(cls.__dataclass_fields__)
+            - {"entry_selection", "max_candidates", "archive"}
+            or config.get("entry_selection") == "authenticated_discovery"
+            and config.get("max_candidates") != 1
+        ):
             raise ValueError("invalid_dast_approval")
         values = dict(config)
+        if "archive" not in values:
+            from beeagent_module.integrations.beescan.providers import (
+                managed_zap_archive,
+            )
+
+            values["archive"] = str(managed_zap_archive())
         values["transport"] = ProbePolicy.from_config(values["transport"])
         if type(values["entries"]) is not list:
             raise ValueError("invalid_dast_approval")
@@ -52,7 +67,10 @@ class DastPolicy:
             or not self.transport.origin.startswith("https://")
             or self.transport.network_namespace != "/beeagent-managed/ns/net"
             or type(self.entries) is not tuple
-            or len(self.entries) != 1
+            or self.entry_selection not in {"exact_entry", "authenticated_discovery"}
+            or type(self.max_candidates) is not int
+            or self.max_candidates != 1
+            or len(self.entries) != (1 if self.entry_selection == "exact_entry" else 0)
             or type(self.request_budget) is not int
             or not 1 <= self.request_budget <= 100
             or type(self.seconds) is not int
@@ -97,7 +115,7 @@ def validate_dast_settings(config, enabled, *, validate_contracts=True):
         or set(value) != {"enabled", "approval"}
         or type(value["enabled"]) is not bool
         or value["enabled"]
-        and (not enabled or value["approval"] is None)
+        and not enabled
         or value["approval"] is not None
         and type(value["approval"]) is not dict
     ):
@@ -125,6 +143,7 @@ def _current(settings):
     if (
         not enabled
         or config.get("dast", {}).get("enabled") is not True
+        or config.get("dast", {}).get("approval") is None
         or config.get("investigation", {}).get("trusted_local_enabled") is not True
     ):
         raise PermissionError("active_dast_not_approved")
@@ -133,6 +152,16 @@ def _current(settings):
 
 def _plain(value):
     return json.loads(json.dumps(asdict(value), default=lambda item: item.isoformat()))
+
+
+def approval_identity(policy):
+    binding = _plain(policy)
+    for key in ("valid_from", "expires_at"):
+        binding["transport"].pop(key)
+    if policy.entry_selection == "exact_entry":
+        binding.pop("entry_selection")
+        binding.pop("max_candidates")
+    return hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
 
 
 def _api(storage_dir, run_id, logger):
@@ -315,6 +344,8 @@ def execute_dast_investigation(
     logger,
     local_operator,
     resume_case_id=None,
+    _assessment=None,
+    _candidate_handoff=None,
     **_options,
 ):
     from beescan.capabilities.dast import (
@@ -344,34 +375,55 @@ def execute_dast_investigation(
         "reason": "active_dast_not_approved",
         "request_count": 0,
     }
-    if type(local_operator) is not _LocalOperator or not is_dast_task(task.task):
+    if type(local_operator) is not _LocalOperator or (
+        _assessment is None and not is_dast_task(task.task)
+    ):
         return status
     policy = _current(settings)
     policy.authorize(local_operator, at=datetime.now(UTC))
     if task.target.rstrip("/") != policy.transport.origin:
         return status
+    if (policy.entry_selection == "authenticated_discovery") != (
+        _assessment is not None
+    ):
+        return status
+    entries = policy.entries
+    request_budget, seconds = policy.request_budget, policy.seconds
+    if _assessment is not None:
+        from beeagent_module.integrations.beescan.discovery_dast import (
+            SelectedAssessment,
+        )
+
+        if type(_assessment) is not SelectedAssessment or resume_case_id is not None:
+            raise PermissionError("invalid_discovered_assessment")
+        _assessment.verify(policy)
+        entries = (_assessment.entry.reveal_to_host(),)
+        request_budget = min(request_budget, _assessment.request_budget)
+        seconds = min(seconds, _assessment.seconds)
     run_id = "dast-" + uuid4().hex
-    case_id = resume_case_id or "dast-case-" + uuid4().hex
+    case_id = (
+        _assessment.action.case_id
+        if _assessment is not None
+        else resume_case_id or "dast-case-" + uuid4().hex
+    )
     case_api = _api(storage_dir, case_id, logger)
-    lock = os.open(
-        case_api.artifact_dir(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    lock = (
+        os.open(case_api.artifact_dir(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        if _assessment is None
+        else None
     )
     snapshot = AssessmentSnapshot(storage_dir)
-    binding = _plain(policy)
-    for key in ("valid_from", "expires_at"):
-        binding["transport"].pop(key)
-    approval_identity = hashlib.sha256(
-        json.dumps(binding, sort_keys=True).encode()
-    ).hexdigest()
+    identity = approval_identity(policy)
     segments = []
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if lock is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if resume_case_id:
             previous, snapshot = load_case(storage_dir, case_id)
             if (
                 previous["schema_version"] != 3
                 or previous["origin"] != policy.transport.origin
-                or previous["approval_identity"] != approval_identity
+                or previous["approval_identity"] != identity
             ):
                 raise PermissionError("dast_case_identity")
             segments = previous["segments"]
@@ -389,9 +441,7 @@ def execute_dast_investigation(
         artifacts = _api(storage_dir, run_id, logger)
         transport = policy.transport
         started = datetime.now(UTC)
-        check_id = (
-            "check-" + hashlib.sha256(policy.entries[0].encode()).hexdigest()[:48]
-        )
+        check_id = "check-" + hashlib.sha256(entries[0].encode()).hexdigest()[:48]
         intent = DastIntent(
             Project(transport.project_id, "Approved DAST assessment"),
             Target(
@@ -424,8 +474,8 @@ def execute_dast_investigation(
             "rule6-v1",
             ("6",),
             (check_id,),
-            policy.request_budget,
-            policy.seconds,
+            request_budget,
+            seconds,
             started,
         )
 
@@ -435,6 +485,8 @@ def execute_dast_investigation(
             policy.authorize(local_operator, at=datetime.now(UTC))
             intent.validate_at(datetime.now(UTC))
             snapshot.verify()
+            if _assessment is not None:
+                _assessment.verify(policy)
 
         authorize()
         state = {
@@ -445,25 +497,29 @@ def execute_dast_investigation(
             "segments": [*segments, run_id],
             "pending": True,
             "status": "PARTIAL",
-            "approval_identity": approval_identity,
+            "approval_identity": identity,
         }
         if resume_case_id:
             snapshot.files.pop((case_id, "case.json"))
-        save_case(case_api, state)
+        if _assessment is None:
+            save_case(case_api, state)
         failed_state = None
         reason = "ok"
+        candidate_target = None
         try:
             raw, records, count = run_zap(
                 transport,
                 origin=transport.origin,
-                entries=policy.entries,
+                entries=entries,
                 archive=Path(policy.archive),
                 artifacts=artifacts,
                 run_id=run_id,
-                request_budget=policy.request_budget,
-                seconds=policy.seconds,
+                request_budget=request_budget,
+                seconds=seconds,
                 authorize=authorize,
             )
+            if raw["alerts"]:
+                candidate_target = raw["alerts"][0]["target"]
             authorize()
         except (
             KeyboardInterrupt,
@@ -578,8 +634,9 @@ def execute_dast_investigation(
         else:
             snapshot.verify()
         state.update(pending=False, status=report.data["status"])
-        save_case(case_api, state)
-        load_case(storage_dir, case_id)
+        if _assessment is None:
+            save_case(case_api, state)
+            load_case(storage_dir, case_id)
         status.update(
             status=report.data["status"],
             complete=report.data["status"] in {"CANDIDATE", "NO_MATCH"},
@@ -589,7 +646,18 @@ def execute_dast_investigation(
             request_count=count,
             report_location=str(artifacts.artifact_dir() / "report.md"),
         )
+        if (
+            candidate_target is not None
+            and report.data["status"] == "CANDIDATE"
+            and reason == "ok"
+            and execution.cleanup_verified
+        ):
+            authorize()
+            if _candidate_handoff is not None:
+                _candidate_handoff(candidate_target)
+                status["reproduction"] = "PENDING_PARENT_PUBLICATION"
         _persist(artifacts, "investigation_status.json", status)
         return status
     finally:
-        os.close(lock)
+        if lock is not None:
+            os.close(lock)

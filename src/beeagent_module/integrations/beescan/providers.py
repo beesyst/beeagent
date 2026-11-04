@@ -18,6 +18,7 @@ from beeagent_module.core.beedrill_toolchain import (
 )
 from beeagent_module.core.settings import _is_module_enabled
 from beeagent_module.integrations.beescan import egress
+from beeagent_module.integrations.beescan.dast_runner import CORE_BYTES, CORE_SHA256
 from beeagent_module.integrations.beescan.detection_policy import NUCLEI_SHA256
 from beeagent_module.integrations.beescan.policy import HTTPX_SHA256
 
@@ -43,6 +44,15 @@ PASTA_ARTIFACT = NativeArtifact(
     ("pasta",),
     "egress_prerequisite_unavailable",
 )
+ZAP_ARTIFACT = NativeArtifact(
+    "zap-2.17.0-core",
+    "https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Core.zip",
+    CORE_SHA256,
+    CORE_BYTES,
+    "ZAP_2.17.0_Core.zip",
+    (),
+    "zap_download_unavailable",
+)
 
 
 class ProviderProvisioningError(RuntimeError):
@@ -51,6 +61,10 @@ class ProviderProvisioningError(RuntimeError):
 
 def provider_root() -> Path:
     return Path.home() / ".local/share/beeagent/beescan-providers"
+
+
+def managed_zap_archive() -> Path:
+    return provider_root() / ZAP_ARTIFACT.destination
 
 
 def _secure_root(root: Path) -> None:
@@ -201,6 +215,38 @@ def _install_pasta(root: Path) -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+def _verify_zap_archive(path: Path, *, managed: bool) -> None:
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    )
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or (managed and info.st_uid not in {0, os.getuid()})
+            or info.st_mode & 0o077
+            or info.st_size != CORE_BYTES
+        ):
+            raise ProviderProvisioningError(
+                "ZAP archive integrity or permissions mismatch"
+            )
+        if hashlib.file_digest(stream, "sha256").hexdigest() != CORE_SHA256:
+            raise ProviderProvisioningError("ZAP archive SHA-256 mismatch")
+
+
+def _install_zap(root: Path) -> None:
+    destination = root / ZAP_ARTIFACT.destination
+    if destination.exists() or destination.is_symlink():
+        _verify_zap_archive(destination, managed=True)
+        return
+    with tempfile.TemporaryDirectory(prefix=".zap-", dir=root) as temporary:
+        download = Path(temporary) / "core.zip"
+        _download(ZAP_ARTIFACT, download)
+        download.chmod(0o600)
+        _verify_zap_archive(download, managed=False)
+        os.link(download, destination)
         descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             os.fsync(descriptor)
@@ -258,10 +304,16 @@ def ensure_beescan_providers(settings: dict) -> None:
         )
     )
     investigation = config.get("investigation", {})
+    dast = config.get("dast", {})
+    zap_selected = dast.get("enabled") is True and (
+        not isinstance(dast.get("approval"), dict)
+        or dast["approval"].get("archive", str(managed_zap_archive()))
+        == str(managed_zap_archive())
+    )
     pasta_selected = (
         pasta_selected or investigation.get("trusted_local_enabled") is True
     )
-    if not selected and not pasta_selected:
+    if not selected and not pasta_selected and not zap_selected:
         return
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ProviderProvisioningError("BeeScan native providers require Linux x86_64")
@@ -284,7 +336,7 @@ def ensure_beescan_providers(settings: dict) -> None:
                 managed.append((name, path, digest, size))
             else:
                 _check_provider(name, path, digest, size, root)
-        if not managed and not pasta_selected:
+        if not managed and not pasta_selected and not zap_selected:
             return
         _secure_root(root)
         descriptor = os.open(
@@ -314,6 +366,8 @@ def ensure_beescan_providers(settings: dict) -> None:
                     time.sleep(0.1)
             if pasta_selected:
                 _install_pasta(root)
+            if zap_selected:
+                _install_zap(root)
             for name, path, digest, size in managed:
                 if name == "nuclei":
                     _install_nuclei(root)

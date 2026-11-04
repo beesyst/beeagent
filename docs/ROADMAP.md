@@ -26,21 +26,21 @@ ROADMAP does not duplicate complete process and safety rules:
 
 ## Vision
 
-| Block                          | Statement                                                                                                                                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Product identity**           | `beeagent` is developed as explainable, stateful, modular AI orchestration system with visible operator / interface layers, module contracts and reproducible runtime artifacts.                                  |
-| **Primary objective**          | The objective of the project is not to be a chit-bot with tulus, but to be managed by a core agent who outlines tasks, modules, approvals, artifacts and external workflow/capabilities.                                      |
-| **Execution philosophy**       | The long task, state, batching, retry, checkpoints and policy must live in `beeagent`, not within one MCP/tool call.                                                                                  |
-| **Source of truth**            | Runtime behavior must be determined through `config/settings.yml`, clear validation, stable contracts and reproducible artifacts.                                                                            |
-| **Decision quality principle** | Any meaningful decision or action must be explained by the logs, config and artifacts.                                                                                                                     |
-| **Module principle**           | Business logic must live in separate domain modules (`beeagent-rop`, future `beescan`, `merch`), and core must remain universal.                                                                |
-| **Capability principle**       | MCP / n8n / external systems is execution/integration layer rather than domain logic.                                                                                                       |
-| **Operator principle**         | The system must be suitable for safe operation through simple UI/transport layers and must not require hidden knowledge of the code.                                                                                 |
-| **Product direction**          | Development follows a trajectory: demo skeleton → reusable orchestration core → module platform → first real client module → pilot-ready operator shell → scalable multi-module platform.                        |
-| **AI direction**               | AI is allowed only as bounded assistive layer: classification, summarization, recommendation, intent drafting. AI must not replace deterministic contracts, policy, approval and authority boundaries. |
-| **KISS rule**                  | New possibilities are added only if they reinforce orchestrator, explainability, reusability, module integration or operator usability without swelling core.                                           |
-| **Security rule**              | Secrets, connectors, file parsing, capability execution and artifact contracts only develop through explicit config, fail-fast validation and proportional checks under `docs/SDLC.md` and `docs/SECURITY.md`.   |
-| **Interface rule**             | Any agent-facing / operator-facing surface must be read-only or draft-only by default, and execution-capable path must be explicit and bounded.                                                    |
+| Block                          | Statement                                                                                                                                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Product identity**           | `beeagent` is developed as explainable, stateful, modular AI orchestration system with visible operator / interface layers, module contracts and reproducible runtime artifacts.                               |
+| **Primary objective**          | The objective of the project is not to be a chit-bot with tulus, but to be managed by a core agent who outlines tasks, modules, approvals, artifacts and external workflow/capabilities.                       |
+| **Execution philosophy**       | The long task, state, batching, retry, checkpoints and policy must live in `beeagent`, not within one MCP/tool call.                                                                                           |
+| **Source of truth**            | Runtime behavior must be determined through `config/settings.yml`, clear validation, stable contracts and reproducible artifacts.                                                                              |
+| **Decision quality principle** | Any meaningful decision or action must be explained by the logs, config and artifacts.                                                                                                                         |
+| **Module principle**           | Domain logic lives in independently maintained modules, including `beeagent-rop`, `beedrill` and `beescan`. BeeAgent Core remains reusable and owns runtime, authority, integration and artifact lifecycle.    |
+| **Capability principle**       | MCP / n8n / external systems is execution/integration layer rather than domain logic.                                                                                                                          |
+| **Operator principle**         | The system must be suitable for safe operation through simple UI/transport layers and must not require hidden knowledge of the code.                                                                           |
+| **Product direction**          | Development follows a trajectory: demo skeleton → reusable orchestration core → module platform → first real client module → pilot-ready operator shell → scalable multi-module platform.                      |
+| **AI direction**               | AI is allowed only as bounded assistive layer: classification, summarization, recommendation, intent drafting. AI must not replace deterministic contracts, policy, approval and authority boundaries.         |
+| **KISS rule**                  | New possibilities are added only if they reinforce orchestrator, explainability, reusability, module integration or operator usability without swelling core.                                                  |
+| **Security rule**              | Secrets, connectors, file parsing, capability execution and artifact contracts only develop through explicit config, fail-fast validation and proportional checks under `docs/SDLC.md` and `docs/SECURITY.md`. |
+| **Interface rule**             | Any agent-facing / operator-facing surface must be read-only or draft-only by default, and execution-capable path must be explicit and bounded.                                                                |
 | **Execution authority rule**   | Any execution-capable path must develop through the minimum necessary rights, capability-scoped boundaries and the explicit operator-visible contract.                                                         |
 
 ## Development principles
@@ -136,14 +136,14 @@ For each level, the obligation quality/security checks is defined in:
 
 ## Product phases
 
-| Phase                                     | Status      | What it means                                                                                                                                                                                |
-| ----------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase A — Demo skeleton**               | DONE        | A demonstration runtime: Telegram transport, mock data and basic agents/cases, run artifacts, approval, export. have been created                                                                  |
-| **Phase B — Reusable orchestration core** | DONE        | BeeAgent stopped being just a demo and got reusable cases/adapters/scheduler/observability/multi-agent baseline.                                                                    |
-| **Phase C — Module platform**             | DONE        | Introducing the explicit module contract, registry, runtime context, artifact API and bounded capability layer for external domain modules.                                                             |
-| **Phase D — First real client delivery**  | DONE        | The first real domain module (`beeagent-rop`) is integrated; implemented by controlled source flow, operator artifacts, read-only Bitrix evidence and bounded AI adjudication for ROP MVP.      |
-| **Phase E — Operator / product shell**    | IN PROGRESS | Read-only BeeUI-backed operator shell, auth boundary, ROP dashboard and widget payload baseline have been implemented; stable API, legacy web removal and bounded operator controls remain in UI roadmap. |
-| **Phase F — Multi-module platform**       | FUTURE      | BeeAgent becomes the base for several domain modules (`ROP`, `BeeScan`, `Merch`, etc.) with a single runtime and reusable contracts.                                                           |
+| Phase                                     | Status      | What it means                                                                                                                                                                                                                             |
+| ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase A — Demo skeleton**               | DONE        | A demonstration runtime: Telegram transport, mock data and basic agents/cases, run artifacts, approval, export. have been created                                                                                                         |
+| **Phase B — Reusable orchestration core** | DONE        | BeeAgent stopped being just a demo and got reusable cases/adapters/scheduler/observability/multi-agent baseline.                                                                                                                          |
+| **Phase C — Module platform**             | DONE        | Introducing the explicit module contract, registry, runtime context, artifact API and bounded capability layer for external domain modules.                                                                                               |
+| **Phase D — First real client delivery**  | DONE        | The first real domain module (`beeagent-rop`) is integrated; implemented by controlled source flow, operator artifacts, read-only Bitrix evidence and bounded AI adjudication for ROP MVP.                                                |
+| **Phase E — Operator / product shell**    | IN PROGRESS | BeeUI-backed operator console, authenticated read-models and selected protected ROP actions are implemented. Remaining work is tracked in the UI roadmap, including legacy Web removal, API stabilization and broader operator workflows. |
+| **Phase F — Multi-module platform**       | IN PROGRESS | BeeAgent already integrates ROP, BeeDrill and BeeScan through shared host contracts. Further platform changes require demonstrated cross-module needs.                                                                                    |
 
 ## Stages
 
@@ -152,7 +152,7 @@ For each level, the obligation quality/security checks is defined in:
 - **Stage 3 (Iterations of 11-14)** module platform v0 (module contract, registry, context, artifact API, capability boundary).
 - **Stage 4 (Iterations 15-36)** Integration of the first real domain module (`beeagent-rop`) and development of ROP flow to read-only customer-delivery MVP with source ingestion, artifacts, Bitrix evidence and bounded AI adjudication.
 - **Stage 5 (reference):** remaining core-side operator/product contracts; The detailed development of Web Console and operator UI is carried out in `docs/product/ui_roadmap.md`.
-- **Stage 6 (reference):** multi-module scaling (`beescan`, `merch`, other modules).
+- **Stage 6 (reference):** evidence-driven scaling of the existing ROP, BeeDrill and BeeScan module platform.
 
 ---
 
@@ -10858,18 +10858,13 @@ Stage focus:
 - stable backend contracts;
 - minimal safe actions.
 
-### Expected direction
+### Current direction
 
-Stage must take small steps:
+The BeeUI-backed operator console, authentication boundary, ROP read-models and selected protected actions are already implemented.
 
-- First read-only operator/client summaries;
-- Then stable backend/API contracts;
-- Then minimal safe actions;
-- only then the wider UI.
+Remaining Web, API and operator-control work belongs in `docs/product/ui_roadmap.md`.
 
-### Expected size
-
-Direction: **3-5 iterations**.
+Do not duplicate UI iterations in the Core roadmap or introduce a separate frontend without a demonstrated requirement.
 
 ---
 
@@ -10877,28 +10872,17 @@ Direction: **3-5 iterations**.
 
 ### Purpose of stage
 
-Stage 6 expands `beeagent` from the first client module to the platform of multiple domain modules.
+BeeAgent already hosts ROP, BeeDrill and BeeScan through shared runtime, module, capability and artifact contracts.
 
-Stage focus:
+Further multi-module development must resolve demonstrated cross-module limitations rather than repeat existing integrations.
 
-- `beescan`;
-- `merch`;
-- shared module diagnostics;
-- better tenant/module separation;
-- reusable capability policies.
+### Current direction
 
-### Expected direction
-
-Stage must take small steps:
-
-- First, the second real module;
-- then shared module diagnostics;
-- Then common operator/product contracts;
-- then more mature multi-module platform.
-
-### Expected size
-
-Direction: **4-6 iterations**.
+- Reuse the current BeeSDK and BeeAgent module contracts.
+- Improve shared authority, execution, configuration or artifact behavior only when a concrete module integration requires it.
+- Keep BeeScan-specific host execution in `docs/product/beescan_roadmap.md`.
+- Keep Web and operator integration in `docs/product/ui_roadmap.md`.
+- Do not introduce speculative modules, services, abstractions or a fixed number of additional Core iterations.
 
 ---
 

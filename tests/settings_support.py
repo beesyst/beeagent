@@ -20,6 +20,8 @@ def read_test_settings() -> dict:
             beescan[key] = False
         elif key == "approval" or key.endswith("_approval"):
             beescan[key] = None
+    if "dast" in beescan:
+        beescan["dast"].update(enabled=False, approval=None)
     beescan["investigation"].update(
         enabled=False,
         trusted_local_enabled=False,

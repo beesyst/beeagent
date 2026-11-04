@@ -60,6 +60,138 @@ def distribution(tmp_path, monkeypatch):
     return root, settings, content, archive
 
 
+@pytest.fixture
+def zap_distribution(tmp_path, monkeypatch):
+    content = b"pinned-zap-test-archive"
+    root = tmp_path / "providers"
+    artifact = replace(
+        native.ZAP_ARTIFACT,
+        size=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+    monkeypatch.setattr(native, "ZAP_ARTIFACT", artifact)
+    monkeypatch.setattr(native, "CORE_BYTES", len(content))
+    monkeypatch.setattr(native, "CORE_SHA256", artifact.sha256)
+    monkeypatch.setattr(native, "provider_root", lambda: root)
+    monkeypatch.setattr(native.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(native.platform, "machine", lambda: "x86_64")
+    settings = {
+        "modules": {"registry": [{"id": "beescan", "enabled": True}]},
+        "beescan": {"dast": {"enabled": True, "approval": None}},
+    }
+    return root, settings, content
+
+
+def test_zap_cold_install_and_offline_warm_bootstrap(zap_distribution, monkeypatch):
+    root, settings, content = zap_distribution
+    calls = []
+
+    def fetch(selected, target):
+        assert selected == native.ZAP_ARTIFACT
+        calls.append(target)
+        target.write_bytes(content)
+
+    monkeypatch.setattr(native, "_download", fetch)
+    native.ensure_beescan_providers(settings)
+    archive = native.managed_zap_archive()
+    assert archive.read_bytes() == content
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+    assert calls and archive.parent == root
+    before = archive.stat()
+    monkeypatch.setattr(
+        native, "_download", lambda *_: pytest.fail("network forbidden")
+    )
+    native.ensure_beescan_providers(settings)
+    after = archive.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_mode) == (
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_mode,
+    )
+
+
+def test_zap_disabled_does_not_download_or_create_cache(zap_distribution, monkeypatch):
+    root, settings, _ = zap_distribution
+    settings["beescan"]["dast"]["enabled"] = False
+    monkeypatch.setattr(
+        native, "_download", lambda *_: pytest.fail("download forbidden")
+    )
+    native.ensure_beescan_providers(settings)
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "size", "mode", "symlink"])
+def test_existing_zap_archive_fails_closed_without_replacement(
+    zap_distribution, monkeypatch, mutation
+):
+    root, settings, content = zap_distribution
+    monkeypatch.setattr(
+        native, "_download", lambda _, target: target.write_bytes(content)
+    )
+    native.ensure_beescan_providers(settings)
+    archive = native.managed_zap_archive()
+    if mutation == "bytes":
+        archive.write_bytes(b"corrupt-zap-test-arc")
+    elif mutation == "size":
+        archive.write_bytes(content + b"x")
+    elif mutation == "mode":
+        archive.chmod(0o640)
+    else:
+        archive.unlink()
+        archive.symlink_to(root / "outside")
+    before = archive.lstat()
+    monkeypatch.setattr(native, "_download", lambda *_: pytest.fail("repair forbidden"))
+    with pytest.raises(native.ProviderProvisioningError):
+        native.ensure_beescan_providers(settings)
+    assert archive.lstat() == before
+
+
+def test_interrupted_zap_download_is_not_published(zap_distribution, monkeypatch):
+    root, settings, content = zap_distribution
+
+    def interrupted(_, target):
+        target.write_bytes(content[:3])
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(native, "_download", interrupted)
+    with pytest.raises(native.ProviderProvisioningError):
+        native.ensure_beescan_providers(settings)
+    assert not native.managed_zap_archive().exists()
+    assert sorted(path.name for path in root.iterdir()) == [".bootstrap.lock"]
+
+
+def test_concurrent_zap_bootstrap_installs_once(zap_distribution, monkeypatch):
+    _, settings, content = zap_distribution
+    calls = []
+    barrier = threading.Barrier(2)
+
+    def fetch(_, target):
+        calls.append(target)
+        target.write_bytes(content)
+
+    def bootstrap():
+        barrier.wait(timeout=5)
+        native.ensure_beescan_providers(settings)
+
+    monkeypatch.setattr(native, "_download", fetch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(bootstrap) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+    assert len(calls) == 1
+    assert native.managed_zap_archive().read_bytes() == content
+
+
+def test_explicit_zap_archive_remains_operator_managed(zap_distribution, monkeypatch):
+    root, settings, _ = zap_distribution
+    settings["beescan"]["dast"]["approval"] = {"archive": "/tmp/operator-zap.zip"}
+    monkeypatch.setattr(
+        native, "_download", lambda *_: pytest.fail("download forbidden")
+    )
+    native.ensure_beescan_providers(settings)
+    assert not root.exists()
+
+
 def test_clean_install_and_warm_offline_startup(distribution, monkeypatch):
     root, settings, content, _ = distribution
     native.ensure_beescan_providers(settings)

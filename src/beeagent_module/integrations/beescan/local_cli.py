@@ -90,6 +90,29 @@ def bind_local_run(task, operator, settings, *, run_id):
         raise PermissionError("local_invocation_refused")
     operator.verify()
     origin = canonical_locator(TargetKind.URL, task.target)
+    from beeagent_module.integrations.beescan.discovery_dast import discovery_selected
+
+    if discovery_selected(settings):
+        from beeagent_module.integrations.beescan.dast import _current
+        from beeagent_module.integrations.beescan.http_runner import verify_resolution
+
+        active = _current(settings)
+        active.authorize(operator, at=datetime.now(UTC))
+        if origin != active.transport.origin:
+            raise PermissionError("target_not_approved")
+        verify_resolution(active.transport)
+        return _LocalRun(
+            operator,
+            InvestigationPolicy(
+                active.transport,
+                True,
+                True,
+                True,
+                "GET",
+                "numeric_invalid_v1",
+                3,
+            ),
+        )
     addresses = resolve_addresses(origin)
     allowed = []
     for value in addresses:

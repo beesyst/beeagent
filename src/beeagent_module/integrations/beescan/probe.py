@@ -381,7 +381,7 @@ def handle_beescan_cli(
                 options.update(
                     adaptive=True,
                     resume_case_id=args[2],
-                    general=state["schema_version"] == 2,
+                    general=state["schema_version"] in {2, 4},
                 )
                 options["task"] = validate_task(
                     {"target": state["origin"], "task": args[4]},
@@ -459,7 +459,15 @@ def handle_beescan_cli(
                     options["task_path"], settings["beescan"]["investigation"]
                 )
             execute = execute_investigation
-            if selected_task is not None and is_dast_task(selected_task.task):
+            from beeagent_module.integrations.beescan.discovery_dast import (
+                discovery_selected,
+            )
+
+            if selected_task is not None and discovery_selected(settings):
+                options["task"] = selected_task
+                options.pop("task_path", None)
+                options["general"] = True
+            elif selected_task is not None and is_dast_task(selected_task.task):
                 options["task"] = selected_task
                 options.pop("task_path", None)
                 execute = execute_dast_investigation

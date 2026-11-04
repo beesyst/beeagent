@@ -249,12 +249,13 @@ storage/interfaces/*
 
 ROP source configuration source of truth:
 
-```text
-config/settings.yml
-→ rop.sources[]
-```
+- `config/rop/sources.yml` is the initial source registry.
+- `storage/config/rop/sources.yml` becomes authoritative after the first protected mutation.
+- `config/settings.yml` owns `rop.sources_path` and mailbox polling selection policy.
 
-UI must expose ROP source parameters read-only where useful, but must not create a second source of truth.
+Ordinary UI reads are read-only. Source Add/Edit/Delete, Enable/Disable and mailbox Check require the existing authenticated, CSRF-protected and audited `rop.sources.write` capability.
+
+Credential values and environment-variable references must not be exposed through ordinary API responses, CSV exports, logs or artifacts.
 
 Safe ROP source fields that UI may show:
 
@@ -271,7 +272,6 @@ mailbox.host
 mailbox.port
 mailbox.use_ssl
 mailbox.folder
-mailbox.username_env
 ```
 
 UI must not show:
@@ -310,7 +310,7 @@ Each UI-iteration must:
 For the current BeeAgent UI track this means:
 
 - BeeUI migration, auth boundary, final-decision UX, canonical Queue baseline and embedded Bitrix ROP console are in UI-4-UI-8.5;
-- The next product increment is UI-9 legacy web removal after parity confirmation;
+- UI-8.9 is recorded as DONE. UI-9 legacy Web removal is the next planned cleanup after confirming the required route, authentication, artifact and performance parity.
 - Then complete event-level attachment and Bitrix reconciliation UX;
 - Then stabilize API contract;
 - Then add bounded operator controls above the existing auth boundary;
@@ -3296,7 +3296,7 @@ blacklist sender
 
 ### Iteration UI-8.9 — Request-ready ROP Web projection v2
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
@@ -3307,7 +3307,7 @@ Twist ROP Web read path after UI-8.7 to request-ready materialized read model, s
 - Enter derived ROP Web projection schema v2;
 - Save the small bounded manifest for `latest_run_id`, `run_ids`, `total_runs` and generation/revision metadata;
 - Allow scoped `run_id` access only through validated manifest membership, without reading semantic view payload;
-- materialize request-ready semantic views for `overview`, `queue`, `threads`, `ai_assist`, `sources`, `attachments`, `evidence`, `bitrix`, `recommendations` and dashboard API;
+- Materialize the currently supported `overview`, `queue`, `sources` and dashboard API views. Additional views require demonstrated operator demand and an approved product scope.
 - Segregate projection to semantic view, and period variants to be stored only where period is part of public behavior;
 - materialize Queue as one canonical compact row set without physical duplication of one event between overlapping queue buckets;
 - Save queue membership as bounded row metadata and current filter/sort/pagination semantics;
@@ -3558,7 +3558,7 @@ Add to the existing aggregate Attachment tab event-level submission: Show safe a
 #### Depends on
 
 - UI-8.3 — current canonical Queue toolbar/table baseline;
-- UI-9 — BeeUI-only architecture;
+- Existing canonical BeeUI-backed `src/beeagent_module/interfaces/ui/` implementation and its authorization, read-model and artifact contracts.
 - BeeAgent It25 — Attachment extraction artifacts;
 - `beeagent-rop It15 — Use BeeAgent attachment extraction contract in classification`.
 

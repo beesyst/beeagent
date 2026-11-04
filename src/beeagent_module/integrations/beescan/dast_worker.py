@@ -166,6 +166,7 @@ def main():
             alerts.append(
                 {
                     "rule_id": "6",
+                    "target": target,
                     "request_sha256": hashlib.sha256(
                         target.encode("ascii")
                     ).hexdigest(),
