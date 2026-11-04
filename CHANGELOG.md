@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.87.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.86.0...beeagent-v0.87.0) (2026-11-04)
+
+
+### Features
+
+* **beescan:** autonomous discovery-to-DAST investigation ([#357](https://github.com/beesyst/beeagent/issues/357)) ([7a4162b](https://github.com/beesyst/beeagent/commit/7a4162b1cf5a8528101d41a8143a73a2a46dc9a1))
+
 ## [0.86.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.85.0...beeagent-v0.86.0) (2026-11-01)
 
 
