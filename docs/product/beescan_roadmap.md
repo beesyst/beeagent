@@ -1707,6 +1707,8 @@ Reuse existing governed scanners and execution infrastructure before considering
 - Integrate verification outcomes with BeeScan It16 and the existing parent Case.
 - Preserve fresh-process Inspect/Resume and safe evidence presentation.
 - Retain exact-entry DAST and existing discovery compatibility.
+- Expose only qualified execution-profile metadata required for BeeScan selection: capability, eligible effort modes, investigation roles, accepted input facts, produced evidence and effective execution constraints.
+- Reuse existing authenticated Discovery-to-DAST handoff and Case artifacts; do not create provider-to-provider pipelines or a second workflow engine.
 
 #### Excluded
 
@@ -1732,6 +1734,8 @@ Reuse existing governed scanners and execution infrastructure before considering
 - Failed isolation, mediation or cleanup cannot result in successful completion.
 - Verification evidence is source-bound and safe for later independent review.
 - Historical Case schemas, direct DAST and BS-1–BS-14 behavior remain compatible.
+- Effective profile identity and authorized execution limits are validated independently of the selected Quick, Standard or Deep effort mode.
+- Downstream verification consumes source-bound observations and host-authenticated evidence without duplicating completed sufficient checks.
 
 #### Checks
 
