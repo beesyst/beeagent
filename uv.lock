@@ -214,8 +214,8 @@ dependencies = [
 
 [[package]]
 name = "beescan"
-version = "0.15.0"
-source = { git = "https://github.com/beesyst/beescan.git#6b3fb91f6f81c03af9530da4efc5c6739c752793" }
+version = "0.16.0"
+source = { git = "https://github.com/beesyst/beescan.git#425e539c88fd0d0b8f438f7b0244b43675c8fd7d" }
 dependencies = [
     { name = "beesdk" },
 ]

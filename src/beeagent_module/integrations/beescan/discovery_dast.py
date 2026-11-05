@@ -49,6 +49,7 @@ class SelectedAssessment:
         intent = self.case.intent
         if (
             policy.entry_selection != "authenticated_discovery"
+            or self.action.profile != policy.profile
             or (
                 transport.project_id,
                 transport.scope_id,
@@ -184,6 +185,12 @@ def load_integrated_case(state, snapshot, case_id):
         ):
             raise ValueError("integrated_source_changed")
         intent, execution, _, report = _restore(snapshot, assessment["run_id"])
+        if action.profile == "traversal-nonrecursive-v1":
+            facts = snapshot.json(assessment["run_id"], "dast_evidence.json")[
+                "verification"
+            ]
+            if facts and facts[0]["request_sha256"] != action.entry.entry_sha256:
+                raise ValueError("integrated_verification_source_changed")
         if (
             intent.parent_run_id != case_id
             or intent.target.locator != state["origin"]
@@ -194,7 +201,11 @@ def load_integrated_case(state, snapshot, case_id):
                 intent.target.target_id,
             )
             != (action.project_id, action.scope_id, action.mission_id, action.target_id)
-            or intent.check_ids != ("check-" + action.entry.entry_sha256[:48],)
+            or intent.check_ids != (action.check_id,)
+            or intent.profile != action.profile
+            or intent.rule_ids != (action.rule_id,)
+            or intent.provider_id != action.provider_id
+            or intent.provider_version != action.provider_version
             or assessment["status"] != report.data["status"]
             or assessment["request_count"] != execution.request_count
         ):

@@ -2,6 +2,7 @@ import array
 import hashlib
 import json
 import os
+import re
 import selectors
 import signal
 import socket
@@ -15,6 +16,7 @@ from urllib.parse import urlsplit
 
 from beeagent_module.integrations.beescan import egress
 from beeagent_module.integrations.beescan.dast_mediation import DastMediation
+from beeagent_module.integrations.beescan.dast_worker import verification_targets
 from beeagent_module.integrations.beescan.detection_runner import read_regular
 from beeagent_module.integrations.beescan.http_runner import (
     bounded_process,
@@ -32,6 +34,60 @@ ADDONS = {
     "callhome-release-0.20.0.zap": "a9e499dfa9f2fc85992faba66ab90db48d46b47e4241dc60106c78094412a679",
     "pscan-alpha-0.6.0.zap": "269ff66f0d8a8012f156e90e13238606a8d503b99521170649b62c9aa7295927",
 }
+
+
+def traversal_oracle(body):
+    if type(body) is not bytes or not 1 <= len(body) <= 65536:
+        return False
+    lines = body.splitlines()
+    return (
+        1 <= len(lines) <= 256
+        and all(
+            re.fullmatch(
+                rb"[a-z_][a-z0-9_-]{0,63}:[^:\r\n]{0,128}:"
+                rb"[0-9]{1,10}:[0-9]{1,10}:[^:\r\n]{0,256}:"
+                rb"/[^:\r\n]{0,256}:/[^:\r\n]{0,256}",
+                line,
+            )
+            for line in lines
+        )
+        and any(re.match(rb"root:[^:]*:0:0:", line) for line in lines)
+    )
+
+
+def verification_facts_valid(facts):
+    if type(facts) is not list or len(facts) > 5:
+        return False
+    for item in facts:
+        if (
+            type(item) is not dict
+            or set(item)
+            != {"request_sha256", "response_sha256", "status_code", "oracle"}
+            or type(item["oracle"]) is not bool
+            or type(item["status_code"]) is not int
+            or not 100 <= item["status_code"] <= 599
+            or any(
+                type(item[key]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", item[key]) is None
+                for key in ("request_sha256", "response_sha256")
+            )
+        ):
+            return False
+    return len({item["request_sha256"] for item in facts}) == len(facts)
+
+
+def verification_coverage(facts):
+    if not verification_facts_valid(facts) or len(facts) != 5:
+        return False
+    positive = any(facts[index]["oracle"] for index in (2, 4))
+    allowed_statuses = {200, 400, 404} if positive else {200, 404}
+    return (
+        all(item["status_code"] in allowed_statuses for item in facts)
+        and facts[0]["status_code"] == 200
+        and not any(facts[index]["oracle"] for index in (0, 1, 3))
+        and all(not item["oracle"] or item["status_code"] == 200 for item in facts)
+        and (positive or all(facts[index]["status_code"] == 404 for index in (2, 4)))
+    )
 
 
 def snapshot_zap(archive, directory):
@@ -143,9 +199,11 @@ def run_zap(
     seconds,
     authorize,
     upstream_tls=None,
+    profile="rule6-v1",
 ):
     if (
-        origin != transport.origin
+        profile not in {"rule6-v1", "traversal-nonrecursive-v1"}
+        or origin != transport.origin
         or type(request_budget) is not int
         or not 1 <= request_budget <= 100
         or type(seconds) is not int
@@ -159,6 +217,16 @@ def run_zap(
         )
     ):
         raise ValueError("invalid_zap_request")
+    targets = verification_targets(entries[0]) if profile != "rule6-v1" else ()
+    if targets and len(entries) != 1:
+        raise ValueError("invalid_zap_request")
+    observations = {}
+
+    def observe(target, status, body):
+        if target not in targets or target in observations:
+            raise PermissionError("dast_verification_request_changed")
+        observations[target] = (status, traversal_oracle(body))
+
     authorize()
     verify_resolution(transport)
     session = egress.ManagedEgress(
@@ -306,6 +374,7 @@ def run_zap(
                     else set()
                 ),
                 connect=connect,
+                **({"observe": observe, "allowed_targets": targets} if targets else {}),
             )
             mediator.start()
             worker = Path(__file__).with_name("dast_worker.py")
@@ -326,7 +395,12 @@ def run_zap(
                     "-I",
                     "/worker.py",
                     json.dumps(
-                        {"origin": origin, "entries": entries, "seconds": seconds - 2}
+                        {
+                            "origin": origin,
+                            "entries": entries,
+                            "seconds": seconds - 2,
+                            **({"profile": profile} if targets else {}),
+                        }
                     ),
                 ],
                 seconds=seconds,
@@ -363,11 +437,13 @@ def run_zap(
                 type(result) is not dict
                 or set(result) != {"complete", "rule_id", "alerts", "entries"}
                 or result["complete"] is not True
-                or result["rule_id"] != "6"
+                or result["rule_id"] != ("nonrecursive" if targets else "6")
                 or type(result["entries"]) is not int
                 or result["entries"] != len(entries)
                 or type(result["alerts"]) is not list
                 or len(result["alerts"]) > 32
+                or targets
+                and result["alerts"]
             ):
                 raise ValueError("zap_invalid_result")
             seen = set()
@@ -400,6 +476,33 @@ def run_zap(
             result["host_complete"] = (
                 mediator.denied == 0 and mediator.completed == mediator.reserved
             )
+            if targets:
+                facts = []
+                for target in targets:
+                    digest = hashlib.sha256(target.encode("ascii")).hexdigest()
+                    records = [
+                        item
+                        for item in mediator.records
+                        if item["request_sha256"] == digest
+                    ]
+                    if len(records) != 1 or target not in observations:
+                        break
+                    facts.append({**records[0], "oracle": observations[target][1]})
+                result["verification"] = facts
+                result["host_complete"] = (
+                    result["host_complete"] and len(mediator.records) == 5
+                )
+                covered = result["host_complete"] and verification_coverage(facts)
+                result["alerts"] = [
+                    {
+                        "rule_id": "nonrecursive",
+                        "target": targets[index],
+                        "request_sha256": facts[index]["request_sha256"],
+                        "response_sha256": facts[index]["response_sha256"],
+                    }
+                    for index in (2, 4)
+                    if covered and facts[index]["oracle"]
+                ][:1]
             result["denial_reasons"] = dict(mediator.denial_reasons)
             authorize()
             failure = "ok"
@@ -413,35 +516,45 @@ def run_zap(
                 failure = str(error)
             raise
         finally:
-            if mediator is not None:
-                mediator.close()
+            mediation_closed = mediator is None
             try:
-                if broker is not None:
-                    try:
-                        os.killpg(broker.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    broker.wait(timeout=2)
-                    if broker.stdout is not None:
-                        broker.stdout.close()
+                if mediator is not None:
+                    mediator.close()
+                    mediation_closed = True
             finally:
-                session.close()
-                from beeagent_module.integrations.beescan.detection import _persist
+                try:
+                    if broker is not None:
+                        try:
+                            os.killpg(broker.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        broker.wait(timeout=2)
+                        if broker.stdout is not None:
+                            broker.stdout.close()
+                finally:
+                    session.close()
+                    from beeagent_module.integrations.beescan.detection import _persist
 
-                _persist(
-                    artifacts,
-                    "dast_execution_status.json",
-                    {
-                        "schema_version": 1,
-                        "run_id": run_id,
-                        "exit_code": code,
-                        "reason": failure,
-                        "request_count": mediator.reserved if mediator else 0,
-                        "completed_count": mediator.completed if mediator else 0,
-                        "denial_reasons": dict(mediator.denial_reasons)
-                        if mediator
-                        else {},
-                        "cleanup_verified": session.closed
-                        and session.evidence.get("cleanup_verified") is True,
-                    },
-                )
+                    cleanup = (
+                        mediation_closed
+                        and session.closed
+                        and session.evidence.get("cleanup_verified") is True
+                        and (broker is None or broker.poll() is not None)
+                    )
+                    _persist(
+                        artifacts,
+                        "dast_execution_status.json",
+                        {
+                            "schema_version": 1,
+                            "run_id": run_id,
+                            "exit_code": code,
+                            "reason": failure if cleanup else "cleanup_unverified",
+                            "request_count": mediator.reserved if mediator else 0,
+                            "completed_count": mediator.completed if mediator else 0,
+                            "denial_reasons": dict(mediator.denial_reasons)
+                            if mediator
+                            else {},
+                            "cleanup_verified": cleanup,
+                            **({"profile": profile} if targets else {}),
+                        },
+                    )

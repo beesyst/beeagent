@@ -26,6 +26,8 @@ class DastMediation:
         resolve,
         upstream_tls,
         connect=None,
+        observe=None,
+        allowed_targets=(),
     ):
         parsed = urlsplit(origin)
         if (
@@ -45,6 +47,14 @@ class DastMediation:
             or not 1024 <= response_bytes <= 262144
             or upstream_tls.verify_mode != ssl.CERT_REQUIRED
             or not upstream_tls.check_hostname
+            or observe is not None
+            and not callable(observe)
+            or type(allowed_targets) is not tuple
+            or len(allowed_targets) > 8
+            or any(
+                type(target) is not str or not target.startswith("/")
+                for target in allowed_targets
+            )
         ):
             raise ValueError("invalid_dast_mediation")
         ipaddress.ip_address(connected_ip)
@@ -62,6 +72,9 @@ class DastMediation:
         self.resolve = resolve
         self.upstream_tls = upstream_tls
         self.connect = connect
+        self.observe = observe
+        self.allowed_targets = allowed_targets
+        self.seen_targets = set()
         self.downstream_tls = downstream_tls
         self.lock = threading.RLock()
         self.sockets = set()
@@ -172,6 +185,8 @@ class DastMediation:
             or parsed.fragment
             or len(target) > 4096
             or re.search(r"[\x00-\x20\x7f\\]", target)
+            or self.allowed_targets
+            and target not in self.allowed_targets
         ):
             raise PermissionError("dast_request_scope")
         with self.lock:
@@ -181,6 +196,10 @@ class DastMediation:
                 raise PermissionError("dast_dns_changed")
             if self.reserved >= self.budget:
                 raise PermissionError("dast_request_budget")
+            if self.allowed_targets:
+                if target in self.seen_targets:
+                    raise PermissionError("dast_verification_repeated")
+                self.seen_targets.add(target)
             self.reserved += 1
         family = socket.AF_INET6 if ":" in self.connected_ip else socket.AF_INET
         raw = self.track(
@@ -234,10 +253,16 @@ class DastMediation:
                     raise ValueError("dast_response_limit")
                 body.extend(event.data)
             with self.lock:
+                if self.observe is not None:
+                    self.observe(target, response.status_code, bytes(body))
                 self.completed += 1
                 self.records.append(
                     {
-                        "request_sha256": hashlib.sha256(request.target).hexdigest(),
+                        "request_sha256": hashlib.sha256(
+                            target.encode("ascii")
+                            if self.allowed_targets
+                            else request.target
+                        ).hexdigest(),
                         "response_sha256": hashlib.sha256(body).hexdigest(),
                         "status_code": response.status_code,
                     }
