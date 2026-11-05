@@ -1674,6 +1674,385 @@ No new runtime, scanner algorithm, unnecessary provider, database or unrelated v
 
 ---
 
+## Stage 10 — Verification, Operator Workspace and Challenge Readiness
+
+### Iteration BS-15 — Governed Path Traversal Verification MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Extend the completed BS-14 autonomous Discovery-to-DAST execution with reproducible, evidence-backed Path Traversal verification.
+
+Reuse existing governed scanners and execution infrastructure before considering any additional provider.
+
+#### Depends on
+
+- Completed BS-13/BS-14 ZAP, HTTP mediation, managed egress and unified Case.
+- BeeScan It16 offline verification contract.
+- Qualification of existing approved ZAP rule-6 behavior against the identified coverage gaps.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Audit the existing pinned ZAP rule-6 profile against relevant Path Traversal techniques, including non-recursive filtering bypass.
+- Prefer existing supported provider capabilities and approved profiles over a custom scanner implementation.
+- Add only demonstrated missing approved execution profiles or narrowly scoped provider integration.
+- Preserve source-bound endpoint/parameter selection from BS-14.
+- Execute approved verification checks through host-enforced exact origin, method, destination and request/time budgets.
+- Independently validate execution completion, observed results, evidence relationships and cleanup.
+- Integrate verification outcomes with BeeScan It16 and the existing parent Case.
+- Preserve fresh-process Inspect/Resume and safe evidence presentation.
+- Retain exact-entry DAST and existing discovery compatibility.
+
+#### Excluded
+
+- A generic HTTP fuzzer, new scanner framework or unrestricted ZAP active scan.
+- Arbitrary LLM-generated payload execution.
+- Automatic file enumeration, credential extraction or cross-origin requests.
+- Automatic VERIFIED Findings or bounty submission.
+- New database, Web UI or unrelated runtime changes.
+
+#### Deliverable
+
+`Target + Task + Approved Scope → Discovery → Approved Path Traversal Checks → Authenticated Verification Evidence → Finding / PARTIAL + Case + Report`
+
+#### Acceptance criteria
+
+- Existing rule-6 qualification establishes which required techniques it actually supports.
+- Multiple materially different supported techniques execute without laboratory-specific code.
+- At least one previously unsupported traversal-filter scenario is handled by an approved verified capability.
+- Vulnerable and fixed fixtures produce correct positive/negative results.
+- Unsupported checks remain PARTIAL, not falsely NO_MATCH.
+- Host-measured request counts and budget ceilings remain authoritative.
+- Unauthorized, expired, foreign, malformed or tampered actions send no target requests.
+- Failed isolation, mediation or cleanup cannot result in successful completion.
+- Verification evidence is source-bound and safe for later independent review.
+- Historical Case schemas, direct DAST and BS-1–BS-14 behavior remain compatible.
+
+#### Checks
+
+- Provider/profile qualification and applicable dependency security review.
+- Positive, fixed, ambiguous and refusal integration fixtures.
+- At least one unfamiliar authorized external Path Traversal laboratory.
+- Request-budget, DNS/TLS, direct-egress, cleanup and evidence-substitution tests.
+- Fresh-process Inspect/Resume and report inspection.
+- Full pytest, applicable static/security checks and hosted CI.
+- Independent BeeMCP source review.
+
+#### DoD
+
+BeeAgent executes reusable authorized Path Traversal verification through reviewed provider profiles and produces reproducible evidence with BeeScan It16.
+
+No unnecessary scanner engine, arbitrary execution interface, weakened security control or unrelated version change is introduced.
+
+### Iteration BS-16 — BeeScan Web Chat and Investigation Workspace MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Deliver the first usable chat-first BeeScan operator workspace inside the existing BeeAgent/BeeUI Web Console.
+
+Allow an authenticated operator to create, monitor, inspect and continue supported investigations using Target and natural-language Task, without switching to CLI for ordinary supported workflows.
+
+#### Depends on
+
+- Completed BS-14 unified Case and BS-15 verification integration.
+- Existing BeeAgent `interfaces/ui` and canonical BeeUI application.
+- Existing BeeUI session, authentication, CSRF and protected-action contracts.
+- Existing BeeScan Case, report and evidence artifacts.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add a BeeScan workspace to the canonical BeeUI-backed BeeAgent Web Console.
+- Provide a chat-first Target + Task investigation intake.
+- Reuse existing approved Target/Scope/Mission and provider configuration.
+- Define one authenticated, server-authorized Web investigation action boundary.
+- Bind Web actions to the authenticated principal, approved scope, current capability policy and exact Case.
+- Reuse the existing BeeAgent investigation implementation rather than invoking shell commands or starting a second runtime.
+- Support start, status, read-only inspect and authorized compatible Case continuation.
+- Display bounded investigation timeline, actions, selected tools, statuses, Findings, evidence references and current report.
+- Support Quick, Standard and Deep as fixed bounded investigation-effort profiles within existing authorization and runtime ceilings.
+- Display actual request count, elapsed time, AI usage availability, completed steps, supported coverage and limitations.
+- Provide safe read-only Case history and refreshable progress without requiring WebSocket infrastructure.
+- Distinguish operator messages, system actions, evidence-backed decisions and AI explanations.
+- Preserve RU/EN presentation conventions where already supported.
+
+#### Excluded
+
+- A second Web server, frontend framework, database or execution runtime.
+- Reusing the trusted-local TTY operator token as Web authorization.
+- Arbitrary user-supplied shell commands, provider flags or request payloads.
+- Automatic authorization from chat text or selected investigation depth.
+- Unrestricted active scans, autonomous bounty submission or hidden browser execution.
+- Editable workflow graphs, provider marketplace and generic playbook designer.
+- Raw sensitive HTTP response bodies, cookies, credentials or protected terminal-only disclosures in Web output.
+
+#### Deliverable
+
+`Authenticated BeeUI Chat → Approved BeeAgent Investigation Action → Existing BeeScan/BeeAgent Case → Live Status + Evidence + Findings + Report`
+
+#### Acceptance criteria
+
+- An authorized Web operator can start a supported investigation with Target and Task.
+- Normal Web use does not require manually editing JSON or entering per-endpoint DAST URLs.
+- The current effective Target/Scope/Approval is clearly visible.
+- Quick/Standard/Deep modify only reviewed budgets and supported depth, never execution authority.
+- Chat continuation uses existing Case identities; incompatible objectives require a new authorized Case.
+- Read-only progress and Case inspection create zero target requests.
+- Refused, timed-out, partial and completed investigations remain distinguishable.
+- Web approval cannot be forged through JSON, headers, cookies, chat text or UI state.
+- Active DAST retains its independent explicit approval and runtime enforcement.
+- Different authenticated principals cannot access one another's unauthorized Cases or evidence.
+- Legacy CLI, ROP, BeeDrill and existing UI routes remain compatible.
+- End-to-end Web investigation succeeds against an authorized local test target.
+
+#### Checks
+
+- Browser/TestClient start, inspect, resume and polling E2E.
+- Auth, CSRF, resource ownership and role/scope denial tests.
+- Malformed Target/Task, prompt-injection and replay tests.
+- Quick/Standard/Deep budget and approval tests.
+- Cross-principal Case/artifact access isolation.
+- Missing, partial, corrupted and historical Case rendering.
+- No GET mutation, path traversal, secret leakage or raw response exposure.
+- Full pytest, Web smoke, independent review and hosted CI.
+
+#### DoD
+
+An operator can use one BeeUI-backed BeeScan chat workspace to start and continue existing authorized investigation workflows and inspect their real results.
+
+The Web interface reuses BeeAgent execution, Case, authentication and artifact ownership without bypassing local-CLI security boundaries or introducing a parallel runtime.
+
+No unrelated version change occurs.
+
+### Iteration BS-17 — Reviewed Evidence and Bug Bounty Report Workflow
+
+**Status:** PLANNED
+
+#### Goal
+
+Provide an end-to-end operator workflow for reviewing BeeScan Findings, authenticating independent verification evidence and exporting reproducible Bug Bounty reports.
+
+Reuse existing BeeAgent ArtifactAPI, Case, FindingReview and BeeUI workspace rather than building a new reporting service.
+
+#### Depends on
+
+- BeeScan It17 reporting and evidence-package contract.
+- Completed BS-16 BeeScan Web Workspace.
+- Existing BeeAgent authorization, artifact storage and reviewed-case integration.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Reuse existing Case, Finding and report artifacts.
+- Expose supported Finding summaries, statuses and source evidence through authenticated BeeUI read-models.
+- Provide safe evidence metadata inspection and authorized reviewed-case actions.
+- Associate reviewer identity, explicit disposition, independent evidence and decision basis.
+- Require independent evidence authentication before accepting VERIFIED disposition.
+- Generate versioned Markdown/JSON vulnerability reports through BeeScan It17.
+- Present reproducible steps, affected scope, evidence, observed impact, limitations and remediation guidance.
+- Make incomplete or unverified fields explicitly visible to the operator.
+- Provide protected report preview and allowlisted export.
+- Preserve original Case evidence, immutable finding provenance and existing CLI review compatibility.
+
+#### Excluded
+
+- Automatic finding verification from AI or scanner claims.
+- Automatic HackerOne submission or platform credential management.
+- User-controlled raw artifact paths, unrestricted downloads or sensitive body disclosure.
+- A new report database, renderer service or customer portal.
+- Automatic severity escalation based on model-generated impact claims.
+
+#### Deliverable
+
+`Case + Finding + Authenticated Human Review → Reviewed Evidence Package → Bug Bounty Report Preview / Export`
+
+#### Acceptance criteria
+
+- A supported Finding can be reviewed from the BeeScan workspace.
+- VERIFIED requires the existing independently authenticated reviewer/evidence contract.
+- A candidate without sufficient verification evidence cannot become submission-ready.
+- Reports accurately reflect original Scope, Target, Finding, reproduction and limitations.
+- Report previews and downloads expose only authorized allowlisted content.
+- Report generation and inspection cause zero target requests.
+- Reports remain available across fresh process restart.
+- Foreign Case, altered evidence, unauthorized review and invalid export requests fail closed.
+- Existing CLI, legacy Case schemas and unrelated BeeAgent UI behavior remain compatible.
+- At least one real authorized laboratory finding produces a reviewable, reproducible report.
+
+#### Checks
+
+- Reviewed, candidate-only, rejected, partial and negative report fixtures.
+- Authorization, reviewer identity, evidence binding and report-tampering tests.
+- XSS, Markdown injection, path traversal and export authorization tests.
+- Browser-level report preview/export E2E.
+- Real Case/Findings/artifact inspection.
+- Full pytest, applicable security checks, independent review and hosted CI.
+
+#### DoD
+
+The operator can move from a genuine BeeScan Finding to independently reviewed evidence and a complete exportable vulnerability report without manually assembling disconnected artifacts.
+
+No unverified claim, hidden evidence or forbidden sensitive data is promoted into a submission-ready report.
+
+### Iteration BS-18 — Governed Multi-Principal Access Control Assessment MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Enable authorized comparative access-control testing for selected IDOR/BOLA and role-based permission scenarios using independently governed test principals.
+
+Introduce the smallest real execution capability required by BeeScan It18.
+
+#### Depends on
+
+- BeeScan It18 authorization-verification contract.
+- Existing BeeAgent HTTP execution, approval and evidence infrastructure.
+- A verified requirement for two separate authorized test principals.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Support two explicitly authorized test-principal contexts within one approved assessment.
+- Keep authentication material isolated from BeeScan, AI inputs, ordinary reports and unrelated runs.
+- Bind each principal to approved Target, Scope, session context, resource ownership and request budget.
+- Collect comparable authenticated baseline and cross-principal HTTP facts.
+- Support only reviewed, bounded read-only verification profiles in the initial implementation.
+- Reject foreign object sets, unauthorized principals, unsupported methods and unsafe destinations.
+- Authenticate evidence for each principal and prevent context substitution.
+- Reuse BeeScan It18 for access-control evaluation and existing Case/report infrastructure.
+- Preserve independent request/time accounting and verified cleanup.
+
+#### Excluded
+
+- Arbitrary login automation, credential guessing or account takeover.
+- Unapproved object enumeration or access to real users' private resources.
+- State-changing transactions and unrestricted privilege escalation.
+- A general browser automation runtime or new scanner framework.
+- Automatic VERIFIED Findings or unsupervised submission.
+
+#### Deliverable
+
+`Approved Test Principals + Object Authorization Expectations → Governed Comparative Requests → BeeScan Access-Control Evidence → Finding / PARTIAL + Report`
+
+#### Acceptance criteria
+
+- Two independently authorized test principals can execute a supported comparative assessment.
+- Principal-specific credentials, requests and evidence remain correctly isolated.
+- At least one horizontal and one vertical authorization scenario are evaluated.
+- Fixed, intentionally public and ambiguous resources do not produce false positive Findings.
+- Missing principal authority, object ownership or expected permissions stops verification.
+- No network request occurs outside either principal's exact approved scope.
+- Request budgets, DNS/TLS, isolation, expiry and cleanup remain enforced.
+- Existing single-principal investigation, DAST, Case and Web Chat behavior remains compatible.
+- A real authorized PortSwigger access-control workflow succeeds without laboratory-specific execution code.
+
+#### Checks
+
+- Horizontal, vertical, fixed, public and incomplete fixtures.
+- Credential isolation, principal substitution and cross-session leakage tests.
+- Request limits, expired authority, DNS/TLS, refusal and cleanup tests.
+- Web Chat/Case/Report integration and protected review E2E.
+- Full pytest, independent security review and hosted CI.
+
+#### DoD
+
+BeeAgent can perform a governed comparative access-control assessment through two authorized test-principal contexts and provide independent evidence to BeeScan It18.
+
+No unrelated authentication system, arbitrary scanner or authority expansion is introduced.
+
+### Iteration BS-19 — Bounded Multi-Step Execution and Training Acceptance
+
+**Status:** PLANNED
+
+#### Goal
+
+Complete the host-side execution and operator workflow for BeeScan It19 adaptive multi-step investigations, then demonstrate the agreed pre-bounty educational acceptance gate.
+
+Improve composition and evidence-based decisions rather than adding challenge-specific execution code.
+
+#### Depends on
+
+- Completed BS-15–BS-18 functional integrations.
+- BeeScan It19 adaptive investigation domain contract.
+- Existing governed execution, Case/Resume, Web Chat, evidence review and report generation.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Reuse the existing BeeAgent investigation runtime and supported governed capabilities.
+- Execute bounded sequences of independently authorized BeeScan-proposed actions.
+- Revalidate approval, destination, profile and budget before every action.
+- Preserve completed-action identity, provenance, cumulative metrics and Case continuation.
+- Integrate multi-step progress and next-action recommendations into the BeeScan Web Chat.
+- Produce final evidence-backed Case summaries and reviewed reports for supported Findings.
+- Maintain a reproducible educational benchmark with scenario identity, completion state, required manual interventions and evidence references.
+- Evaluate previously unfamiliar PortSwigger scenarios and a selected complete Hacker101 CTF level.
+
+#### Excluded
+
+- A new workflow engine, unrestricted LLM shell access or generic browser automation.
+- Automatic exploitation beyond approved profiles.
+- Challenge-specific paths, flags, credentials or solutions.
+- Unrestricted credential attacks, scope expansion or external-target discovery.
+- Automatic Bug Bounty submission.
+- Artificial promotion of incomplete challenges into successful results.
+
+#### Deliverable
+
+`Target + Task + Scope + Depth Profile → Adaptive Governed Investigation → Evidence-Backed Findings / PARTIAL → Reviewed Report`
+
+#### Acceptance criteria
+
+- Supported multi-step investigations execute with correct source and approval dependencies.
+- Web Chat displays current progress, evidence, limitations and meaningful next actions.
+- Quick/Standard/Deep stay within effective operator-approved budgets.
+- Case/Resume avoids unnecessary repeat execution and rejects invalid checkpoints.
+- At least 20 distinct PortSwigger scenarios across multiple vulnerability families complete under the agreed independent acceptance procedure.
+- At least one Hacker101 CTF level is completed with all flags independently validated.
+- No scenario relies on hardcoded laboratory-specific implementation.
+- Fixed, unsupported, partial and negative scenarios remain accurately classified.
+- Every successful Finding retains reproducible evidence and reviewable reporting.
+- Existing security boundaries, provider pins, legacy integrations and unrelated modules remain compatible.
+
+#### Checks
+
+- Multi-step, cancellation, timeout, refusal, resume and deduplication E2E.
+- Authorized and unauthorized Web Chat workflow tests.
+- Cumulative PortSwigger/Hacker101 acceptance matrix.
+- Full pytest, integration tests, package/build verification and applicable SAST/SCA/DAST checks.
+- Actual artifact, metrics and security-policy review.
+- Independent BeeMCP final review and hosted CI.
+
+#### DoD
+
+BeeAgent and BeeScan deliver a usable chat-first, evidence-driven training assessment platform that meets the declared educational acceptance gate.
+
+Every claimed solved scenario has independent completion evidence, and every unresolved scenario has an accurate PARTIAL/ERROR/REFUSED disposition.
+
+Real Bug Bounty readiness is evaluated separately against target-program rules, supported coverage and operator review requirements.
+
+---
+
 ## Post-MVP product directions
 
 These are candidate directions, not approved iterations.
