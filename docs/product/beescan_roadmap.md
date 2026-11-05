@@ -1678,7 +1678,7 @@ No new runtime, scanner algorithm, unnecessary provider, database or unrelated v
 
 ### Iteration BS-15 — Governed Path Traversal Verification MVP
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
