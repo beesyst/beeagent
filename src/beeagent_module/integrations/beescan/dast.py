@@ -32,14 +32,15 @@ class DastPolicy:
     archive: str
     entry_selection: str = "exact_entry"
     max_candidates: int = 1
+    profile: str = "rule6-v1"
 
     @classmethod
     def from_config(cls, config):
         if (
             type(config) is not dict
-            or set(config) - {"entry_selection", "max_candidates", "archive"}
+            or set(config) - {"entry_selection", "max_candidates", "archive", "profile"}
             != set(cls.__dataclass_fields__)
-            - {"entry_selection", "max_candidates", "archive"}
+            - {"entry_selection", "max_candidates", "archive", "profile"}
             or config.get("entry_selection") == "authenticated_discovery"
             and config.get("max_candidates") != 1
         ):
@@ -64,6 +65,9 @@ class DastPolicy:
             type(self.transport) is not ProbePolicy
             or type(self.approved) is not bool
             or self.method != "active_dast"
+            or self.profile not in {"rule6-v1", "traversal-nonrecursive-v1"}
+            or self.profile != "rule6-v1"
+            and self.entry_selection != "authenticated_discovery"
             or not self.transport.origin.startswith("https://")
             or self.transport.network_namespace != "/beeagent-managed/ns/net"
             or type(self.entries) is not tuple
@@ -156,6 +160,8 @@ def _plain(value):
 
 def approval_identity(policy):
     binding = _plain(policy)
+    if policy.profile == "rule6-v1":
+        binding.pop("profile")
     for key in ("valid_from", "expires_at"):
         binding["transport"].pop(key)
     if policy.entry_selection == "exact_entry":
@@ -251,9 +257,13 @@ def _restore(snapshot, run_id):
     )
     outcome = ScannerOutcome(**outcome)
     records = snapshot.json(run_id, "dast_evidence.json")
+    verification = intent.profile == "traversal-nonrecursive-v1"
+    fields = {"schema_version", "run_id", "intent_id", "requests"}
+    if verification:
+        fields.add("verification")
     if (
-        set(records) != {"schema_version", "run_id", "intent_id", "requests"}
-        or records["schema_version"] != 1
+        set(records) != fields
+        or records["schema_version"] != (2 if verification else 1)
         or records["run_id"] != run_id
         or records["intent_id"] != intent.identity
         or type(records["requests"]) is not list
@@ -274,6 +284,48 @@ def _restore(snapshot, run_id):
         ):
             raise ValueError("invalid_dast_evidence")
     content = snapshot.read(run_id, "dast_evidence.json")
+    if verification:
+        from beeagent_module.integrations.beescan.dast_runner import (
+            verification_coverage,
+            verification_facts_valid,
+        )
+
+        facts = records["verification"]
+        if not verification_facts_valid(facts):
+            raise ValueError("dast_verification_changed")
+        covered = (
+            verification_coverage(facts)
+            and execution.state is ExecutionState.COMPLETE
+            and execution.request_count == 5
+        )
+        positives = {
+            facts[index]["request_sha256"]
+            for index in (2, 4)
+            if covered and facts[index]["oracle"]
+        }
+        terminal = snapshot.json(run_id, "dast_execution_status.json")
+        if (
+            execution.covered_checks != (intent.check_ids if covered else ())
+            or any(
+                {
+                    key: item[key]
+                    for key in ("request_sha256", "response_sha256", "status_code")
+                }
+                not in records["requests"]
+                for item in facts
+            )
+            or bool(outcome.matches) != bool(positives)
+            or any(
+                match.evidence.request_sha256 not in positives
+                for match in outcome.matches
+            )
+            or terminal.get("profile") != intent.profile
+            or terminal.get("request_count") != execution.request_count
+            or terminal.get("cleanup_verified") is not execution.cleanup_verified
+            or covered
+            and terminal.get("exit_code") != 0
+        ):
+            raise ValueError("dast_verification_changed")
     for evidence in execution.evidence:
         if evidence.artifact_sha256 != hashlib.sha256(content).hexdigest() or not any(
             item["request_sha256"] == evidence.request_sha256
@@ -285,6 +337,8 @@ def _restore(snapshot, run_id):
     if (
         lifecycle.get("cleanup_verified") is not True
         or lifecycle.get("state") != "closed"
+        or verification
+        and lifecycle.get("enforcement_verified") is not True
     ):
         raise ValueError("dast_cleanup_unverified")
     report = build_dast_report(intent, execution, outcome)
@@ -366,7 +420,10 @@ def execute_dast_investigation(
     )
 
     from beeagent_module.integrations.beescan.case_state import load_case, save_case
-    from beeagent_module.integrations.beescan.dast_runner import run_zap
+    from beeagent_module.integrations.beescan.dast_runner import (
+        run_zap,
+        verification_coverage,
+    )
     from beeagent_module.integrations.beescan.local_cli import _LocalOperator
 
     status = {
@@ -441,7 +498,12 @@ def execute_dast_investigation(
         artifacts = _api(storage_dir, run_id, logger)
         transport = policy.transport
         started = datetime.now(UTC)
-        check_id = "check-" + hashlib.sha256(entries[0].encode()).hexdigest()[:48]
+        check_id = (
+            _assessment.action.check_id
+            if _assessment is not None
+            else "check-" + hashlib.sha256(entries[0].encode()).hexdigest()[:48]
+        )
+        rule_id = "6" if policy.profile == "rule6-v1" else "nonrecursive"
         intent = DastIntent(
             Project(transport.project_id, "Approved DAST assessment"),
             Target(
@@ -471,8 +533,8 @@ def execute_dast_investigation(
             run_id,
             "zap",
             "2.17.0",
-            "rule6-v1",
-            ("6",),
+            policy.profile,
+            (rule_id,),
             (check_id,),
             request_budget,
             seconds,
@@ -517,9 +579,19 @@ def execute_dast_investigation(
                 request_budget=request_budget,
                 seconds=seconds,
                 authorize=authorize,
+                **({"profile": policy.profile} if policy.profile != "rule6-v1" else {}),
             )
             if raw["alerts"]:
                 candidate_target = raw["alerts"][0]["target"]
+            if policy.profile != "rule6-v1":
+                if not raw["host_complete"]:
+                    reason = (
+                        "request_budget_exhausted"
+                        if raw.get("denial_reasons", {}).get("dast_request_budget")
+                        else "verification_execution_incomplete"
+                    )
+                elif not verification_coverage(raw.get("verification", [])):
+                    reason = "verification_controls_ambiguous"
             authorize()
         except (
             KeyboardInterrupt,
@@ -546,10 +618,15 @@ def execute_dast_investigation(
             records, count = (), terminal["request_count"]
         snapshot.verify()
         safe = {
-            "schema_version": 1,
+            "schema_version": 2 if policy.profile != "rule6-v1" else 1,
             "run_id": run_id,
             "intent_id": intent.identity,
             "requests": list(records),
+            **(
+                {"verification": raw.get("verification", [])}
+                if policy.profile != "rule6-v1"
+                else {}
+            ),
         }
         _persist(artifacts, "dast_evidence.json", safe)
         if AssessmentSnapshot(storage_dir).json(run_id, "dast_evidence.json") != safe:
@@ -583,31 +660,42 @@ def execute_dast_investigation(
                 and item.response_sha256 == alert["response_sha256"]
             )
             if not matches:
-                matches.append(ScannerMatch("6", check_id, bound))
+                matches.append(ScannerMatch(rule_id, check_id, bound))
         lifecycle = artifacts.read_json("egress_lifecycle.json")
         if type(lifecycle) is not dict:
             raise ValueError("dast_cleanup_unverified")
+        covered = bool(matches) or (
+            policy.profile != "rule6-v1"
+            and raw["host_complete"]
+            and verification_coverage(raw.get("verification", []))
+        )
         execution = DastExecution(
             intent.identity,
             run_id,
             "zap",
             "2.17.0",
-            "rule6-v1",
-            ("6",),
+            policy.profile,
+            (rule_id,),
             failed_state
             or (
                 ExecutionState.COMPLETE
                 if raw["host_complete"]
                 else ExecutionState.BUDGET
             ),
-            (check_id,) if matches else (),
+            (check_id,) if covered else (),
             evidence,
             count,
             lifecycle.get("cleanup_verified") is True,
             datetime.now(UTC),
         )
         outcome = ScannerOutcome(
-            intent.identity, run_id, "zap", "2.17.0", "rule6-v1", ("6",), tuple(matches)
+            intent.identity,
+            run_id,
+            "zap",
+            "2.17.0",
+            policy.profile,
+            (rule_id,),
+            tuple(matches),
         )
         report = build_dast_report(intent, execution, outcome)
         _persist(

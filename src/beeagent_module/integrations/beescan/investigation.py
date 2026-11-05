@@ -1947,6 +1947,7 @@ def execute_investigation(
             if answer is not None:
                 sensitive = answer
             if integrated:
+                from beescan.capabilities.catalog import TRAVERSAL_NONRECURSIVE
                 from beescan.domain.assessment_selection import decide_assessment
 
                 from beeagent_module.integrations.beescan.dast import (
@@ -1968,8 +1969,11 @@ def execute_investigation(
                     catalog=ToolCatalog(
                         (Capability("web.dast", "Governed rule-6 assessment"),),
                         (ToolDefinition("zap", ("web.dast",), "2.17.0"),),
+                        (TRAVERSAL_NONRECURSIVE,),
                     ),
                     available_capabilities=("web.dast",),
+                    profile=active_policy.profile,
+                    available_profiles=(active_policy.profile,),
                     at=datetime.now(UTC),
                 )
                 status["assessment_guidance"] = selected_assessment.guidance

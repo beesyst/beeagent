@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import select
 import signal
 import socket
@@ -11,6 +12,39 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+
+def verification_targets(entry):
+    if type(entry) is not str or re.search(r"[^A-Za-z0-9_./?=&~:-]", entry):
+        raise ValueError("zap_verification_entry")
+    parsed = urllib.parse.urlsplit(entry)
+    pairs = parsed.query.split("&")
+    if (
+        not re.fullmatch(r"/(?:[A-Za-z0-9_.~-]+/)*[A-Za-z0-9_.~-]*", parsed.path)
+        or any(part in {".", ".."} for part in parsed.path.split("/"))
+        or parsed.scheme
+        or parsed.netloc
+        or parsed.fragment
+        or not 1 <= len(pairs) <= 8
+        or len(entry) > 512
+        or any(
+            re.fullmatch(r"[A-Za-z][A-Za-z0-9_~-]{0,63}=[A-Za-z0-9_.~-]{1,64}", pair)
+            is None
+            for pair in pairs
+        )
+        or len({pair.split("=")[0] for pair in pairs}) != len(pairs)
+    ):
+        raise ValueError("zap_verification_entry")
+    parameter = pairs[0].split("=")[0]
+    targets = [entry]
+    for depth in (2, 6):
+        for filename in ("beeagent-traversal-control-missing", "passwd"):
+            query = [
+                parameter + "=" + "....//" * depth + "etc/" + filename,
+                *pairs[1:],
+            ]
+            targets.append(parsed.path + "?" + "&".join(query))
+    return tuple(targets)
 
 
 class Relay(socketserver.BaseRequestHandler):
@@ -33,6 +67,9 @@ class Relay(socketserver.BaseRequestHandler):
 
 def main():
     config = json.loads(sys.argv[1])
+    profile = config.get("profile", "rule6-v1")
+    if profile not in {"rule6-v1", "traversal-nonrecursive-v1"}:
+        raise ValueError("zap_profile")
     signal.alarm(config["seconds"])
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 8091), Relay)
     server.daemon_threads = True
@@ -106,6 +143,39 @@ def main():
                 if child.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError("zap_start_failed") from None
                 time.sleep(0.1)
+        if profile == "traversal-nonrecursive-v1":
+            if len(config["entries"]) != 1:
+                raise ValueError("zap_verification_entry")
+            authority = urllib.parse.urlsplit(config["origin"]).netloc
+            api("pscan", "action", "disableAllScanners")
+            for target in verification_targets(config["entries"][0]):
+                request = (
+                    "GET "
+                    + config["origin"]
+                    + target
+                    + " HTTP/1.1\r\n"
+                    + "Host: "
+                    + authority
+                    + "\r\nConnection: close\r\n\r\n"
+                )
+                api(
+                    "core",
+                    "action",
+                    "sendRequest",
+                    request=request,
+                    followRedirects="false",
+                )
+            print(
+                json.dumps(
+                    {
+                        "complete": True,
+                        "rule_id": "nonrecursive",
+                        "alerts": [],
+                        "entries": 1,
+                    }
+                )
+            )
+            return
         policy = "beeagent-path-traversal-v1"
         api("pscan", "action", "disableAllScanners")
         api("ascan", "action", "addScanPolicy", scanPolicyName=policy)

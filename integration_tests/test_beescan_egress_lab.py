@@ -82,7 +82,11 @@ def managed_lab(approved, monkeypatch, request):
     requests = []
     fixture_root = root / "filesystem"
     document_root = fixture_root / "www/images"
-    if request.param in {"dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"}:
+    nonrecursive = str(request.param).startswith("dast-nonrecursive")
+    if (
+        request.param in {"dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"}
+        or nonrecursive
+    ):
         document_root.mkdir(parents=True)
         (document_root / "fixture.txt").write_text("Synthetic public fixture\n")
         (fixture_root / "etc").mkdir()
@@ -91,7 +95,7 @@ def managed_lab(approved, monkeypatch, request):
     class Handler(BaseHTTPRequestHandler):
         def respond(self):
             requests.append((self.command, self.path))
-            if request.param in {
+            if nonrecursive or request.param in {
                 "dast-vulnerable",
                 "dast-vulnerable-alt",
                 "dast-fixed",
@@ -99,14 +103,13 @@ def managed_lab(approved, monkeypatch, request):
                 from urllib.parse import parse_qs, urlsplit
 
                 parsed = urlsplit(self.path)
-                field = "document" if request.param == "dast-vulnerable-alt" else "file"
-                expected = (
-                    "/retrieve" if request.param == "dast-vulnerable-alt" else "/"
-                )
+                alternate = str(request.param).endswith("-alt")
+                field = "document" if alternate else "file"
+                expected = "/retrieve" if alternate else "/"
                 if parsed.path == "/" and not parsed.query:
                     link = (
                         "/retrieve?document=fixture.txt"
-                        if request.param == "dast-vulnerable-alt"
+                        if alternate
                         else "/?file=fixture.txt"
                     )
                     body = f'<a href="{link}">fixture</a>'.encode()
@@ -120,16 +123,22 @@ def managed_lab(approved, monkeypatch, request):
                     self.send_error(404)
                     return
                 selected = parse_qs(parsed.query).get(field, ["fixture.txt"])[0]
+                if nonrecursive:
+                    selected = selected.replace("../", "")
                 candidate = (
                     (document_root / selected).resolve()
                     if not selected.startswith("/")
                     else (fixture_root / selected.lstrip("/")).resolve()
                 )
                 boundary = (
-                    document_root if request.param == "dast-fixed" else fixture_root
+                    document_root if "fixed" in str(request.param) else fixture_root
                 )
                 allowed = candidate.is_relative_to(boundary) and candidate.is_file()
                 body = candidate.read_bytes() if allowed else b"Not found"
+                if request.param == "dast-nonrecursive-reflection":
+                    body, allowed = selected.encode(), True
+                if request.param == "dast-nonrecursive-ambiguous":
+                    body, allowed = (fixture_root / "etc/passwd").read_bytes(), True
                 self.send_response(200 if allowed else 404)
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(len(body)))
@@ -1180,11 +1189,14 @@ print(json.dumps({'statuses':statuses,'direct_connections_denied':3}))
         "tls",
         "deadline",
         "duplicate",
+        "target",
     ],
 )
 def test_dast_mediation_fail_closed_before_target_http(dast_mediator, attack):
     mediator, root, requests, probe = dast_mediator
     authority = f"192.0.2.1:{probe.port}"
+    if attack == "target":
+        mediator.allowed_targets = ("/selected?file=one",)
     if attack == "dns":
         mediator.resolve = lambda origin: {"127.0.0.2"}
     if attack == "revoked":
@@ -1239,6 +1251,59 @@ def test_dast_mediation_fail_closed_before_target_http(dast_mediator, attack):
         mediator.close()
     assert requests == []
     assert mediator.completed == 0
+    assert not mediator.failed
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+def test_dast_mediation_binds_absolute_form_to_canonical_target(dast_mediator):
+    import hashlib
+    import http.client
+
+    mediator, root, requests, probe = dast_mediator
+    target = "/selected?file=one"
+    mediator.allowed_targets = (target,)
+    authority = f"192.0.2.1:{probe.port}"
+
+    def request(value):
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.settimeout(2)
+        raw.connect(str(mediator.socket_path))
+        stream = raw
+        try:
+            raw.sendall(
+                f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode()
+            )
+            response = bytearray()
+            while not response.endswith(b"\r\n\r\n"):
+                response.extend(raw.recv(1))
+            assert response.startswith(b"HTTP/1.1 200")
+            stream = ssl.create_default_context(
+                cafile=str(root / "cert.pem")
+            ).wrap_socket(raw, server_hostname="192.0.2.1")
+            stream.sendall(
+                f"GET {value} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n".encode()
+            )
+            response = http.client.HTTPResponse(stream)
+            response.begin()
+            return response.status, response.read()
+        finally:
+            stream.close()
+            raw.close()
+
+    status, body = request(probe.origin + target)
+    assert status == 200
+    assert requests == [("GET", target)]
+    assert mediator.records == [
+        {
+            "request_sha256": hashlib.sha256(target.encode()).hexdigest(),
+            "response_sha256": hashlib.sha256(body).hexdigest(),
+            "status_code": 200,
+        }
+    ]
+    status, body = request("https://foreign.invalid" + target)
+    assert status == 403 and body == b""
+    assert requests == [("GET", target)]
+    assert mediator.completed == mediator.reserved == 1
     assert not mediator.failed
 
 
@@ -1625,7 +1690,18 @@ def test_dast_operator_case_report_and_resume(
 
 @pytest.mark.parametrize(
     "managed_lab",
-    ["dast-vulnerable", "dast-vulnerable-alt", "dast-fixed"],
+    [
+        "dast-vulnerable",
+        "dast-vulnerable-alt",
+        "dast-fixed",
+        "dast-nonrecursive",
+        "dast-nonrecursive-alt",
+        "dast-nonrecursive-fixed",
+        "dast-nonrecursive-fixed-alt",
+        "dast-nonrecursive-reflection",
+        "dast-nonrecursive-ambiguous",
+        "dast-nonrecursive-budget",
+    ],
     indirect=True,
 )
 def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, capsys):
@@ -1685,6 +1761,12 @@ def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, cap
             "seconds": 55,
         },
     }
+    fixture = request.node.callspec.params["managed_lab"]
+    nonrecursive = fixture.startswith("dast-nonrecursive")
+    if nonrecursive:
+        settings["beescan"]["dast"]["approval"]["profile"] = "traversal-nonrecursive-v1"
+    if fixture == "dast-nonrecursive-budget":
+        settings["beescan"]["dast"]["approval"]["request_budget"] = 3
     storage = root / "autonomous-dast-storage"
     storage.mkdir(mode=0o700)
     context = ssl.create_default_context(cafile=str(root / "cert.pem"))
@@ -1702,15 +1784,25 @@ def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, cap
         "local_operator": _LocalOperator(_identity(), _SEAL),
     }
     args = ["investigate", "--target", probe.origin, "--task", "Assess Path Traversal"]
-    vulnerable = request.node.callspec.params["managed_lab"] in {
+    vulnerable = fixture in {
         "dast-vulnerable",
         "dast-vulnerable-alt",
+        "dast-nonrecursive",
+        "dast-nonrecursive-alt",
     }
+    expected = (
+        "CANDIDATE"
+        if vulnerable
+        else "NO_MATCH"
+        if nonrecursive
+        and fixture not in {"dast-nonrecursive-ambiguous", "dast-nonrecursive-budget"}
+        else "PARTIAL"
+    )
     code = handle_beescan_cli(args, **options)
     captured = capsys.readouterr()
-    assert code == (0 if vulnerable else 5), captured
+    assert code == (0 if expected in {"CANDIDATE", "NO_MATCH"} else 5), captured
     result = json.loads(captured.out)
-    assert result["status"] == ("CANDIDATE" if vulnerable else "PARTIAL")
+    assert result["status"] == expected
     assert requests[0] == ("GET", "/")
     state, snapshot = load_case(storage, result["case_id"])
     assert state["schema_version"] == 4 and not state["pending"]
@@ -1718,6 +1810,28 @@ def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, cap
     assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
     report = snapshot.json(result["run_id"], "report.json")
     assert bool(report["findings"]) is vulnerable
+    if nonrecursive:
+        from beeagent_module.integrations.beescan.dast_worker import (
+            verification_targets,
+        )
+
+        entry = (
+            "/retrieve?document=fixture.txt"
+            if fixture.endswith("-alt")
+            else "/?file=fixture.txt"
+        )
+        limit = 3 if fixture == "dast-nonrecursive-budget" else 5
+        assert requests[1:] == [
+            ("GET", target) for target in verification_targets(entry)[:limit]
+        ]
+        active = state["assessment"]
+        evidence = snapshot.json(active["run_id"], "dast_evidence.json")
+        assert len(evidence["verification"]) == limit
+        assert evidence["verification"][2]["oracle"] is vulnerable or fixture in {
+            "dast-nonrecursive-ambiguous",
+            "dast-nonrecursive-budget",
+        }
+        assert active["action"]["profile"] == "traversal-nonrecursive-v1"
     for path in storage.rglob("*"):
         if path.is_file():
             assert "fixture.txt" not in path.read_text()
@@ -1731,7 +1845,7 @@ def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, cap
             "Assess Path Traversal",
         ],
         **options,
-    ) == (0 if vulnerable else 5)
+    ) == (0 if expected in {"CANDIDATE", "NO_MATCH"} else 5)
     assert len(requests) == before
     capsys.readouterr()
     assert (
@@ -1740,11 +1854,84 @@ def test_dast_autonomous_discovery_to_zap(managed_lab, monkeypatch, request, cap
     )
     inspected = json.loads(capsys.readouterr().out)
     assert inspected["schema_version"] == 4
+    if nonrecursive:
+        resume_input = root / "resume_input.json"
+        resume_input.write_text(
+            json.dumps(
+                {
+                    "settings": settings,
+                    "storage": str(storage),
+                    "case": result["case_id"],
+                }
+            )
+        )
+        resume_input.chmod(0o600)
+        script = """import copy,json,logging,sys
+from pathlib import Path
+from beeagent_module.integrations.beescan.local_cli import _LocalOperator,_identity,_SEAL
+from beeagent_module.integrations.beescan.probe import handle_beescan_cli
+v=json.loads(Path(sys.argv[1]).read_text())
+sys.exit(handle_beescan_cli(['investigate','--resume',v['case'],'--task','Assess Path Traversal'],settings=v['settings'],reload_settings=lambda:copy.deepcopy(v['settings']),storage_dir=Path(v['storage']),logger=logging.getLogger('resume'),local_operator=_LocalOperator(_identity(),_SEAL)))
+"""
+        resumed = subprocess.run(
+            [sys.executable, "-c", script, str(resume_input)],
+            capture_output=True,
+            timeout=15,
+        )
+        assert resumed.returncode == (
+            0 if expected in {"CANDIDATE", "NO_MATCH"} else 5
+        ), resumed.stderr.decode()
+        assert json.loads(resumed.stdout)["reason"] == "authenticated_case_reused"
+        assert len(requests) == before
+        from beeagent_module.integrations.beescan.case_state import digest
+
+        case_path = storage / "runs" / result["case_id"] / "module-beescan/case.json"
+        original_case = case_path.read_bytes()
+        for field in ("profile", "scope_id", "mission_id", "case_id"):
+            envelope = json.loads(original_case)
+            envelope["state"]["assessment"]["action"][field] = "foreign"
+            envelope["sha256"] = digest(envelope["state"])
+            case_path.write_text(json.dumps(envelope))
+            with pytest.raises(ValueError):
+                load_case(storage, result["case_id"])
+        case_path.write_bytes(original_case)
+        evidence_path = (
+            storage
+            / "runs"
+            / state["assessment"]["run_id"]
+            / "module-beescan/dast_evidence.json"
+        )
+        original_evidence = evidence_path.read_bytes()
+        altered = json.loads(original_evidence)
+        altered["verification"][0]["oracle"] = not altered["verification"][0]["oracle"]
+        evidence_path.write_text(json.dumps(altered))
+        with pytest.raises(ValueError):
+            load_case(storage, result["case_id"])
+        evidence_path.write_bytes(original_evidence)
+        active_approval = settings["beescan"]["dast"]["approval"]
+        active_approval["profile"] = "rule6-v1"
+        assert (
+            handle_beescan_cli(
+                [
+                    "investigate",
+                    "--resume",
+                    result["case_id"],
+                    "--task",
+                    "Assess Path Traversal",
+                ],
+                **options,
+            )
+            == 3
+        )
+        capsys.readouterr()
+        active_approval["profile"] = "traversal-nonrecursive-v1"
+        assert len(requests) == before
 
 
 @pytest.mark.parametrize("managed_lab", [True], indirect=True)
 @pytest.mark.parametrize("fault", ["crash", "timeout", "cancel", "forged", "malformed"])
-def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
+@pytest.mark.parametrize("profile", ["rule6-v1", "traversal-nonrecursive-v1"])
+def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault, profile):
     from beeagent_module.integrations.beescan import dast_runner, http_runner
 
     _settings, root, requests, sessions, probe = managed_lab
@@ -1797,7 +1984,7 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
         dast_runner.run_zap(
             probe,
             origin=probe.origin,
-            entries=("/",),
+            entries=("/",) if profile == "rule6-v1" else ("/?file=fixture.txt",),
             archive=managed_zap_archive(),
             artifacts=Artifacts(),
             run_id="failure-test",
@@ -1805,11 +1992,14 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
             seconds=15,
             authorize=lambda: None,
             upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
+            **({"profile": profile} if profile != "rule6-v1" else {}),
         )
     assert requests == []
     assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
     status = json.loads((root / "dast_execution_status.json").read_text())
     assert status["request_count"] == 0 and status["cleanup_verified"]
+    if profile != "rule6-v1":
+        return
     from beeagent_module.integrations.beescan.case_state import load_case
     from beeagent_module.integrations.beescan.dast import execute_dast_investigation
     from beeagent_module.integrations.beescan.investigation import InvestigationTask
@@ -1852,3 +2042,46 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault):
     case, _snapshot = load_case(storage, result["case_id"])
     assert case["pending"] is False
     assert not requests
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+def test_dast_managed_cleanup_failure_never_completes(managed_lab, monkeypatch):
+    from beeagent_module.integrations.beescan import dast_runner
+    from beeagent_module.integrations.beescan.dast_mediation import DastMediation
+
+    _, root, requests, sessions, probe = managed_lab
+    close = DastMediation.close
+
+    def failed_close(self):
+        close(self)
+        raise RuntimeError("dast_cleanup_unverified")
+
+    monkeypatch.setattr(DastMediation, "close", failed_close)
+
+    class Artifacts:
+        def write_json(self, name, data):
+            path = root / name
+            path.write_text(json.dumps(data))
+            return path
+
+    with pytest.raises(RuntimeError, match="dast_cleanup_unverified"):
+        dast_runner.run_zap(
+            probe,
+            origin=probe.origin,
+            entries=("/read?file=one",),
+            archive=managed_zap_archive(),
+            artifacts=Artifacts(),
+            run_id="cleanup-failure",
+            request_budget=10,
+            seconds=55,
+            authorize=lambda: None,
+            upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
+            profile="traversal-nonrecursive-v1",
+        )
+    assert len(requests) == 5
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
+    assert sessions[0].helper.poll() is not None
+    assert sessions[0].supervisor.poll() is not None
+    status = json.loads((root / "dast_execution_status.json").read_text())
+    assert status["cleanup_verified"] is False
+    assert status["reason"] == "cleanup_unverified"
