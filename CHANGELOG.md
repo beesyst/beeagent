@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.87.0...beeagent-v0.88.0) (2026-11-05)
+
+
+### Features
+
+* **beescan:** add governed nonrecursive traversal verification ([#360](https://github.com/beesyst/beeagent/issues/360)) ([47190b3](https://github.com/beesyst/beeagent/commit/47190b3f848b294589f00f16d76798490c57f039))
+
 ## [0.87.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.86.0...beeagent-v0.87.0) (2026-11-04)
 
 
