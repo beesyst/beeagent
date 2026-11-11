@@ -66,11 +66,14 @@ from beeagent_module.core.rop_sources import (
     update_rop_source_display_name,
     write_rop_sources_audit,
 )
+from beeagent_module.integrations.beescan.web import WebInvestigations
 from beeagent_module.interfaces.ui.artifacts import (
     is_artifact_id_allowed,
     list_available_artifact_ids,
     resolve_artifact_path,
 )
+from beeagent_module.interfaces.ui.beescan import hide_beescan, web_actor, workspace
+from beeagent_module.interfaces.ui.bitrix_embed import is_bitrix_principal_user_id
 from beeagent_module.interfaces.ui.bounded_read import read_artifact_preview
 from beeagent_module.interfaces.ui.locale import get_current_locale, resolve_locale, t
 from beeagent_module.interfaces.ui.read_model import (
@@ -84,8 +87,6 @@ from beeagent_module.interfaces.ui.read_model import (
     build_runs_list,
     normalize_rop_recommendation_hrefs,
 )
-from beeagent_module.interfaces.ui.bitrix_embed import is_bitrix_principal_user_id
-
 from beeagent_module.interfaces.ui.rop_event_detail import (
     build_rop_event_detail_page_model,
 )
@@ -564,7 +565,6 @@ def extract_rop_query_params(
     if period and period not in ALLOWED_PERIODS:
         errors.append(f"Invalid period '{period}'")
 
-
     allowed_filter_keys = frozenset(
         {
             "date_from",
@@ -593,10 +593,8 @@ def extract_rop_query_params(
     if "classification" in filter_params and "case_type" not in filter_params:
         filter_params["case_type"] = filter_params.pop("classification")
 
-
     filter_errors = validate_filter_params(filter_params)
     errors.extend(filter_errors)
-
 
     page_raw = query.get("page")
     page_size_raw = query.get("page_size")
@@ -607,7 +605,6 @@ def extract_rop_query_params(
         page_raw, page_size_raw, sort_raw, order_raw
     )
     errors.extend(pag_errors)
-
 
     if not any("page" in e for e in pag_errors):
         try:
@@ -655,13 +652,20 @@ class BeeAgentUiAdapter:
     ) -> None:
         self._storage_dir = storage_dir
         self._settings = settings
+        from beeagent_module.core.settings import load_settings
+
+        self.beescan = WebInvestigations(
+            storage_dir,
+            settings,
+            lambda: load_settings(get_project_root() / "config/settings.yml"),
+        )
 
         self.metadata = AdapterMetadata(
             product_id="beeagent",
             title="BeeAgent",
             version=_product_version(),
             capabilities=("bounded_actions", "read_only"),
-            supported_pages=("/", "/runs", "/rop", "/modules"),
+            supported_pages=("/", "/runs", "/rop", "/modules", "/beescan"),
         )
 
     def get_dashboard(self) -> AdapterResult | AdapterErrorResult:
@@ -670,6 +674,7 @@ class BeeAgentUiAdapter:
                 self._storage_dir,
                 locale=get_current_locale(),
             )
+            data = hide_beescan(self._storage_dir, data)
             return ok_result(data)
         except Exception as exc:
             logger.exception("BeeAgent dashboard adapter failed")
@@ -681,6 +686,7 @@ class BeeAgentUiAdapter:
                 self._storage_dir,
                 locale=get_current_locale(),
             )
+            data = hide_beescan(self._storage_dir, data)
             return ok_result(data)
         except Exception as exc:
             return error_result_from_exception(exc)
@@ -775,6 +781,8 @@ class BeeAgentUiAdapter:
     def preview_action(
         self, action_id: str, payload: dict[str, Any]
     ) -> AdapterResult | AdapterErrorResult:
+        if action_id in {"beescan_start", "beescan_resume"}:
+            return ok_result({"execution_authorized": False})
         if action_id in {
             "rop_source_add",
             "rop_source_update",
@@ -801,6 +809,15 @@ class BeeAgentUiAdapter:
         payload: dict[str, Any],
         actor: dict[str, str] | None = None,
     ) -> AdapterResult | AdapterErrorResult:
+        if action_id in {"beescan_start", "beescan_resume"}:
+            try:
+                return ok_result(self.beescan.start(action_id, payload, actor))
+            except PermissionError:
+                return error_result(
+                    "permission_denied", "BeeScan authorization refused"
+                )
+            except OSError, ValueError, RuntimeError, KeyError, TypeError:
+                return error_result("invalid_input", "BeeScan action refused")
         if action_id in {
             "rop_source_add",
             "rop_source_update",
@@ -1370,6 +1387,8 @@ class BeeAgentUiAdapter:
         self, page_id: str, query: Mapping[str, str]
     ) -> AdapterResult | AdapterErrorResult:
         try:
+            if page_id == "beescan":
+                return ok_result(workspace(self.beescan, query, web_actor.get()))
             if page_id in {"rop", "rop_dashboard"}:
                 tab = query.get("tab", "overview")
                 allowed_tabs = frozenset(
@@ -1542,15 +1561,12 @@ class BeeAgentUiAdapter:
                 run_id = query.get("run_id")
                 period = query.get("period")
                 if tab == "queue":
-
-
                     period = "all"
                 if run_id is not None:
                     try:
                         validate_run_id(run_id)
                     except Exception:
                         return error_result("invalid_run_id", "Invalid run_id")
-
 
                 filter_params, pagination_params, param_errors = (
                     extract_rop_query_params(query)

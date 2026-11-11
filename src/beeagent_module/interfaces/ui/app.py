@@ -31,14 +31,18 @@ from beeagent_module.core.attachment_store import (
 )
 from beeagent_module.core.authorization import (
     EXTERNAL_PRINCIPAL_SCOPES,
-    SCOPE_ROP_SOURCES_WRITE,
     SCOPE_ROP_BLACKLIST_WRITE,
+    SCOPE_ROP_SOURCES_WRITE,
     SCOPE_WILDCARD,
     has_rop_capability_authority,
     home_path,
     is_resource_allowed,
 )
 from beeagent_module.core.paths import get_project_root
+from beeagent_module.core.rop_bitrix_blacklist import (
+    process_bitrix_lead_update_event,
+    process_blacklist_stage_trigger,
+)
 from beeagent_module.core.rop_final_decision import (
     find_final_decision,
     load_or_build_final_decisions,
@@ -47,15 +51,12 @@ from beeagent_module.core.rop_sender_blacklist import (
     SenderBlacklistError,
     load_sender_blacklist_entries,
 )
-from beeagent_module.core.rop_bitrix_blacklist import (
-    process_bitrix_lead_update_event,
-    process_blacklist_stage_trigger,
-)
 from beeagent_module.core.rop_sources import RopSourcesError, load_rop_sources
 from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
 )
+from beeagent_module.interfaces.ui.beescan import is_beescan_run
 from beeagent_module.interfaces.ui.bitrix_embed import (
     EMBEDDED_SESSION_AGE_MAX_SECONDS,
     MAX_FORM_BODY_BYTES,
@@ -315,8 +316,91 @@ def build_beeui_app(
 
     _setup_beeagent_auth(app, beeui_settings, logger)
     _register_custom_routes(app, adapter, logger)
+    _register_beescan_boundary(app, adapter)
 
     return app
+
+
+def _register_beescan_boundary(app, adapter):
+    from beeagent_module.integrations.beescan.web import principal
+    from beeagent_module.interfaces.ui.beescan import presentation, web_actor
+
+    @app.middleware("http")
+    async def beescan_boundary(request, call_next):
+        path = request.url.path
+        parts = path.strip("/").split("/")
+        generic_run = None
+        if len(parts) >= 2 and parts[0] == "runs":
+            generic_run = parts[1]
+        elif len(parts) >= 3 and parts[:2] == ["api", "runs"]:
+            generic_run = parts[2]
+        candidate = generic_run or request.query_params.get("run_id")
+        if (
+            candidate
+            and is_beescan_run(adapter._storage_dir, candidate)
+            and (path != "/beescan" and not path.startswith("/api/beescan/"))
+        ):
+            return _forbidden_response()
+        is_workspace = path == "/beescan" or path.startswith("/api/beescan/")
+        service = getattr(app.state, "beeui_auth_service", None)
+        session = (
+            service.verify_session(request.cookies.get(service.cookie_name()))
+            if service and service.enabled
+            else None
+        )
+        actor = (
+            {"user_id": session.user_id, "role": session.role.value}
+            if session
+            else None
+        )
+        if is_workspace:
+            if actor is None:
+                return _unauthenticated_response(request)
+            try:
+                principal(adapter._settings, actor)
+                if path == "/beescan":
+                    query = dict(request.query_params)
+                    if (
+                        set(query) - {"lang", "run_id", "q", "tab"}
+                        or query.get("tab", "investigation")
+                        not in {"investigation", "results"}
+                        or len(query.get("q", "")) > 128
+                    ):
+                        return _forbidden_response()
+                    if query.get("run_id"):
+                        await run_in_threadpool(
+                            adapter.beescan.inspect, query["run_id"], actor
+                        )
+            except OSError, ValueError, KeyError, TypeError:
+                return _forbidden_response()
+        token = web_actor.set(actor)
+        try:
+            response = await call_next(request)
+            if is_workspace:
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+        finally:
+            web_actor.reset(token)
+
+    @app.get("/api/beescan/status", include_in_schema=False)
+    async def beescan_status(request: Request):
+        if set(request.query_params) != {"run_id"}:
+            return _error_json("invalid_params", status_code=400)
+        try:
+            data = adapter.beescan.inspect(
+                request.query_params["run_id"], web_actor.get()
+            )
+            from beeui_module.pages.router import resolve_locale
+
+            locale = resolve_locale(request, app.state.beeagent_beeui_ui_config.locale)
+            settings = adapter.beescan.reload_settings()
+            data["presentation"] = presentation(
+                data, settings["beescan"]["investigation"], locale, settings=settings
+            )
+            return _ok_json(data)
+        except OSError, ValueError, PermissionError, KeyError, TypeError:
+            return _forbidden_response()
 
 
 def _setup_beeagent_auth(
@@ -565,7 +649,7 @@ def _beeagent_navigation_visibility(
 ) -> bool:
     scopes = _request_scopes(request)
     if scopes is None:
-        return True
+        return canonical_path != "/beescan"
     if not scopes:
         return False
     return is_resource_allowed(
@@ -737,9 +821,6 @@ def _register_rop_html_polish(app: FastAPI) -> None:
             cookie_param=request.cookies.get("beeui_lang"),
         )
         path = request.url.path
-
-
-
 
         if path == "/rop" and "lang" not in request.query_params:
             from urllib.parse import quote
@@ -1487,7 +1568,11 @@ def _register_bitrix_widget_routes(
             runs_dir = storage_dir / "runs"
             if runs_dir.is_dir():
                 run_dirs = sorted(
-                    (d for d in runs_dir.iterdir() if d.is_dir()),
+                    (
+                        d
+                        for d in runs_dir.iterdir()
+                        if d.is_dir() and not is_beescan_run(storage_dir, d.name)
+                    ),
                     key=lambda d: d.stat().st_mtime,
                     reverse=True,
                 )
@@ -1587,7 +1672,11 @@ def _register_bitrix_widget_routes(
             runs_dir = storage_dir / "runs"
             if runs_dir.is_dir():
                 run_dirs = sorted(
-                    (d for d in runs_dir.iterdir() if d.is_dir()),
+                    (
+                        d
+                        for d in runs_dir.iterdir()
+                        if d.is_dir() and not is_beescan_run(storage_dir, d.name)
+                    ),
                     key=lambda d: d.stat().st_mtime,
                     reverse=True,
                 )

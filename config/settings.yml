@@ -36,7 +36,14 @@ web:
       - id: operator
         username: operator
         role: operator
-        scopes: ["dashboard", "rop", "rop.blacklist.write", "runs", "modules"]
+        scopes:
+          - dashboard
+          - rop
+          - rop.blacklist.write
+          - runs
+          - modules
+          - beescan
+          - beescan.investigate
         token_env: BEEAGENT_WEB_OPERATOR_TOKEN
 
 telegram:
@@ -113,10 +120,13 @@ beescan:
     enabled: true
     approval: null
   investigation:
-    enabled: false
+    enabled: true
     trusted_local_enabled: true
     local_lab_enabled: false
     approval: null
+    web:
+      enabled: false
+      principal_ids: [operator]
     ai_profile: openrouter
     task_bytes_max: 8192
     task_chars_max: 2000

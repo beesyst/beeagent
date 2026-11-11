@@ -33,6 +33,8 @@ def has_rop_capability_authority(
 
 
 def _classify_path(path: str) -> tuple[str, str | None]:
+    if path == "/beescan" or path.startswith("/api/beescan/"):
+        return "beescan", None
     if path == "/":
         return SURFACE_DASHBOARD, None
     if path == "/rop" or path.startswith("/rop/"):
@@ -92,6 +94,11 @@ def is_resource_allowed(
     requested_run_id: str | None = None,
 ) -> bool:
     scope_set = frozenset(scopes)
+    if (
+        path in {"/api/actions/preview", "/api/actions/execute"}
+        and "beescan" in scope_set
+    ):
+        return True
     if SCOPE_WILDCARD in scope_set:
         return True
 
@@ -100,6 +107,8 @@ def is_resource_allowed(
 
     if surface == SURFACE_DASHBOARD:
         return SURFACE_DASHBOARD in scope_set
+    if surface == "beescan":
+        return "beescan" in scope_set
 
     if surface == SURFACE_ROP:
         if SURFACE_ROP not in scope_set:
@@ -126,6 +135,8 @@ def home_path(scopes: Iterable[str]) -> str | None:
         return "/"
     if SURFACE_ROP in scope_set:
         return "/rop"
+    if "beescan" in scope_set:
+        return "/beescan"
     if SURFACE_RUNS in scope_set:
         return "/runs"
     if SURFACE_MODULES in scope_set:

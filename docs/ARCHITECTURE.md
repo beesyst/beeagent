@@ -91,7 +91,7 @@ Before resuming sensitive work, the host revalidates persisted identities, evide
 
 ## Operator interface
 
-The canonical Web interface is BeeUI embedded through `interfaces/ui`, with a product-specific `BeeAgentUiAdapter`. Its primary pages are dashboard, Runs, ROP and Modules. Routes and artifact read models are explicitly bounded and resource-scoped. Protected ROP blacklist and source-management operations are narrow exceptions to the otherwise read-oriented UI; they require server-side authorization, CSRF validation and audit. The Web interface does not expose a generic module/capability execution endpoint.
+The canonical Web interface is BeeUI embedded through `interfaces/ui`, with a product-specific `BeeAgentUiAdapter`. Its primary pages are dashboard, Runs, ROP, Modules and the BeeScan investigation workspace. Routes and artifact read models are explicitly bounded and resource-scoped. Protected ROP management and independently approved BeeScan start/resume require server-side authorization, CSRF validation and attributable host evidence. BeeScan binds the verified Web principal to the existing investigation and signed Case ownership without borrowing trusted-local CLI identity. The Web interface does not expose a generic module/capability execution endpoint.
 
 Bitrix Local Application launch authenticates the portal context server-side and establishes a restricted BeeUI session; widget Bearer-token APIs and Bitrix robot callbacks are distinct boundaries.
 
