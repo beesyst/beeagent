@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.88.0...beeagent-v0.89.0) (2026-11-11)
+
+
+### Features
+
+* **beescan:** add governed web investigation workspace ([#363](https://github.com/beesyst/beeagent/issues/363)) ([0961989](https://github.com/beesyst/beeagent/commit/0961989eb9b2cdb5b23e9306edc50d6a37f0e320))
+
 ## [0.88.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.87.0...beeagent-v0.88.0) (2026-11-05)
 
 
