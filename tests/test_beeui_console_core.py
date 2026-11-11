@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 from beeui_module.adapters.envelopes import AdapterErrorResult
 from beeui_module.pages.config import load_beeui_config
-from beeagent_module.interfaces.ui.read_model import build_rop_dashboard_read_model
-from beeagent_module.interfaces.ui.read_model import build_run_detail
 
+from beeagent_module.interfaces.ui.read_model import (
+    build_rop_dashboard_read_model,
+    build_run_detail,
+)
 from tests.beeui_console_support import (
     _build_settings,
     _client,
@@ -71,6 +74,7 @@ def test_console_navigation_is_flat() -> None:
         (resolve_localized_text(item.title, "en", "en"), item.path, item.icon)
         for item in config.navigation
     ] == [
+        ("BeeScan", "/beescan", "shield"),
         ("Dashboard", "/", "dashboard"),
         ("ROP", "/rop", "users"),
         ("Runs", "/runs", "activity"),
@@ -81,12 +85,13 @@ def test_console_navigation_is_flat() -> None:
         route_prefix="", navigation=config.navigation, active_path="/rop"
     )
     assert [item["path"] for item in navigation] == [
+        "/beescan",
         "/",
         "/rop",
         "/runs",
         "/modules",
     ]
-    assert [item["active"] for item in navigation] == [False, True, False, False]
+    assert [item["active"] for item in navigation] == [False, False, True, False, False]
 
 
 def test_beeui_app_builds(tmp_path: Path) -> None:

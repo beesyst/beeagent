@@ -144,7 +144,13 @@ def validate_investigation_settings(
         type(config) is not dict
         or type(require_ai_key) is not bool
         or set(config)
-        - {"local_lab_enabled", "ai_profile", "trusted_local_enabled", "adaptive"}
+        - {
+            "local_lab_enabled",
+            "ai_profile",
+            "trusted_local_enabled",
+            "adaptive",
+            "web",
+        }
         != {"enabled", "approval", *limits}
         or type(config["enabled"]) is not bool
         or type(config.get("local_lab_enabled", False)) is not bool
@@ -175,6 +181,9 @@ def validate_investigation_settings(
             raise RuntimeError("Invalid beescan.investigation.adaptive settings")
     if config["approval"] is not None and type(config["approval"]) is not dict:
         raise RuntimeError("Invalid beescan.investigation approval")
+    from beeagent_module.integrations.beescan.web import validate_web_settings
+
+    validate_web_settings(settings)
     active = config["enabled"] or config.get("trusted_local_enabled", False)
     if active:
         enabled = any(
@@ -1171,6 +1180,7 @@ def execute_investigation(
     task_path=None,
     task=None,
     local_operator=None,
+    web_invocation=None,
     settings,
     reload_settings,
     storage_dir,
@@ -1195,7 +1205,16 @@ def execute_investigation(
 
     adaptive = bool(adaptive or general)
     settings = deepcopy(settings)
-    run_id, session_id = generate_run_id("investigation"), generate_session_id()
+    if web_invocation is not None:
+        from beeagent_module.integrations.beescan.web import _WebInvocation
+
+        if type(web_invocation) is not _WebInvocation or local_operator is not None:
+            raise PermissionError("web_invocation_refused")
+        web_invocation.verify()
+    run_id = (
+        web_invocation.run_id if web_invocation else generate_run_id("investigation")
+    )
+    session_id = generate_session_id()
 
     def api(child_run_id):
         Path(storage_dir).mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1223,6 +1242,8 @@ def execute_investigation(
             logger,
         )
         result.artifact_dir().chmod(0o700)
+        if web_invocation is not None:
+            web_invocation.bind(result, child_run_id)
         return result
 
     artifacts = api(run_id)
@@ -1239,6 +1260,8 @@ def execute_investigation(
         "evidence_refs": [],
         "integration_status": "BLOCKED",
     }
+    if web_invocation is not None:
+        status.update(status="RUNNING", reason="execution_pending")
     _persist(artifacts, "investigation_status.json", status)
     config = settings.get("beescan", {}).get("investigation", {})
     steps: list[dict[str, Any]] = []
@@ -1947,7 +1970,10 @@ def execute_investigation(
             if answer is not None:
                 sensitive = answer
             if integrated:
-                from beescan.capabilities.catalog import TRAVERSAL_NONRECURSIVE
+                from beescan.capabilities.catalog import (
+                    TRAVERSAL_NONRECURSIVE,
+                    EffortMode,
+                )
                 from beescan.domain.assessment_selection import decide_assessment
 
                 from beeagent_module.integrations.beescan.dast import (
@@ -1961,7 +1987,9 @@ def execute_investigation(
                 )
 
                 active_policy = _current(settings)
-                active_policy.authorize(local_operator, at=datetime.now(UTC))
+                active_policy.authorize(
+                    web_invocation or local_operator, at=datetime.now(UTC)
+                )
                 selected_assessment = decide_assessment(
                     general_case,
                     tuple(entry for entry, _ in observed_entries),
@@ -1974,6 +2002,11 @@ def execute_investigation(
                     available_capabilities=("web.dast",),
                     profile=active_policy.profile,
                     available_profiles=(active_policy.profile,),
+                    mode=(
+                        EffortMode(web_invocation.mode)
+                        if web_invocation is not None
+                        else EffortMode.STANDARD
+                    ),
                     at=datetime.now(UTC),
                 )
                 status["assessment_guidance"] = selected_assessment.guidance
@@ -2026,6 +2059,7 @@ def execute_investigation(
                         storage_dir=storage_dir,
                         logger=logger,
                         local_operator=local_operator,
+                        web_invocation=web_invocation,
                         _assessment=SelectedAssessment(
                             general_case,
                             action,
@@ -2542,7 +2576,9 @@ def execute_investigation(
                         )
 
                         active = _current(settings)
-                        active.authorize(local_operator, at=datetime.now(UTC))
+                        active.authorize(
+                            web_invocation or local_operator, at=datetime.now(UTC)
+                        )
                         current_task = task
                         if not isinstance(current_task, InvestigationTask):
                             raise PermissionError("integrated_resume_identity")
@@ -2577,9 +2613,14 @@ def execute_investigation(
                 if task_path is not None or type(task) is not InvestigationTask:
                     raise PermissionError("local_invocation_refused")
                 task = validate_task(asdict(task), config)
-                local_context = bind_local_run(
-                    task, local_operator, settings, run_id=resume_case_id or run_id
-                )
+                if web_invocation is not None:
+                    if not general or task != web_invocation.task:
+                        raise PermissionError("web_invocation_refused")
+                    local_context = web_invocation
+                else:
+                    local_context = bind_local_run(
+                        task, local_operator, settings, run_id=resume_case_id or run_id
+                    )
                 policy = local_context.policy
                 status["execution_context"] = local_context.provenance()
                 if adaptive:

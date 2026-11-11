@@ -397,6 +397,7 @@ def execute_dast_investigation(
     storage_dir,
     logger,
     local_operator,
+    web_invocation=None,
     resume_case_id=None,
     _assessment=None,
     _candidate_handoff=None,
@@ -432,12 +433,19 @@ def execute_dast_investigation(
         "reason": "active_dast_not_approved",
         "request_count": 0,
     }
-    if type(local_operator) is not _LocalOperator or (
-        _assessment is None and not is_dast_task(task.task)
+    from beeagent_module.integrations.beescan.web import _WebInvocation
+
+    web_selected = type(web_invocation) is _WebInvocation and _assessment is not None
+    if (
+        (web_selected and local_operator is not None)
+        or (not web_selected and type(local_operator) is not _LocalOperator)
+        or (_assessment is None and not is_dast_task(task.task))
     ):
         return status
     policy = _current(settings)
-    policy.authorize(local_operator, at=datetime.now(UTC))
+    policy.authorize(
+        web_invocation if web_selected else local_operator, at=datetime.now(UTC)
+    )
     if task.target.rstrip("/") != policy.transport.origin:
         return status
     if (policy.entry_selection == "authenticated_discovery") != (
@@ -496,6 +504,8 @@ def execute_dast_investigation(
             if len(segments) >= 8:
                 raise PermissionError("dast_case_budget")
         artifacts = _api(storage_dir, run_id, logger)
+        if web_selected and type(web_invocation) is _WebInvocation:
+            web_invocation.bind(artifacts, run_id)
         transport = policy.transport
         started = datetime.now(UTC)
         check_id = (
@@ -544,7 +554,10 @@ def execute_dast_investigation(
         def authorize():
             if reload_settings() != settings or _current(settings) != policy:
                 raise PermissionError("approval_changed")
-            policy.authorize(local_operator, at=datetime.now(UTC))
+            policy.authorize(
+                web_invocation if web_selected else local_operator,
+                at=datetime.now(UTC),
+            )
             intent.validate_at(datetime.now(UTC))
             snapshot.verify()
             if _assessment is not None:

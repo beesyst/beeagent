@@ -37,6 +37,11 @@ components:
 
 navigation:
   - title:
+      en: BeeScan
+      ru: BeeScan
+    path: /beescan
+    icon: shield
+  - title:
       en: Dashboard
       ru: Дашборд
     path: /
@@ -62,6 +67,35 @@ data_sources: {}
 blocks: {}
 
 pages:
+  - id: beescan
+    path: /beescan
+    route:
+      mode: adapter
+    title:
+      en: BeeScan
+      ru: BeeScan
+    subtitle:
+      en: Security investigations and results
+      ru: Исследования безопасности и результаты
+    tabs:
+      variant: fill_icons
+      progressive: true
+      surface: separated
+      active_param: tab
+      items:
+        - id: investigation
+          title:
+            en: Investigation
+            ru: Исследование
+          href: /beescan?tab=investigation
+          icon: messages
+        - id: results
+          title:
+            en: Results
+            ru: Результаты
+          href: /beescan?tab=results
+          icon: report
+    blocks: []
   - id: dashboard
     path: /
     title:
