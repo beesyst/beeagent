@@ -30,6 +30,8 @@ def read_test_settings() -> dict:
         ai_profile="openrouter",
     )
     beescan["investigation"]["adaptive"]["enabled"] = False
+    if "web" in beescan["investigation"]:
+        beescan["investigation"]["web"]["enabled"] = False
     settings["beedrill"]["ai_assist"].update(enabled=False)
     settings["beedrill"]["ai_assist"].pop("ai_profile", None)
     rop = settings["rop"]

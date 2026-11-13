@@ -56,7 +56,7 @@ def traversal_oracle(body):
 
 
 def verification_facts_valid(facts):
-    if type(facts) is not list or len(facts) > 5:
+    if type(facts) is not list or len(facts) > 9:
         return False
     for item in facts:
         if (
@@ -76,8 +76,8 @@ def verification_facts_valid(facts):
     return len({item["request_sha256"] for item in facts}) == len(facts)
 
 
-def verification_coverage(facts):
-    if not verification_facts_valid(facts) or len(facts) != 5:
+def _verification_coverage(facts):
+    if len(facts) != 5:
         return False
     positive = any(facts[index]["oracle"] for index in (2, 4))
     allowed_statuses = {200, 400, 404} if positive else {200, 404}
@@ -88,6 +88,35 @@ def verification_coverage(facts):
         and all(not item["oracle"] or item["status_code"] == 200 for item in facts)
         and (positive or all(facts[index]["status_code"] == 404 for index in (2, 4)))
     )
+
+
+def verification_fallback_required(facts):
+    return (
+        verification_facts_valid(facts)
+        and len(facts) == 5
+        and facts[0]["status_code"] == 200
+        and not any(item["oracle"] for item in facts)
+        and facts[2]["status_code"] == facts[4]["status_code"] == 400
+        and all(facts[index]["status_code"] in {200, 400, 404} for index in (1, 3))
+    )
+
+
+def verification_coverage(facts):
+    if not verification_facts_valid(facts):
+        return False
+    if len(facts) == 5:
+        return _verification_coverage(facts)
+    return verification_fallback_required(facts[:5]) and _verification_coverage(
+        [facts[0], *facts[5:]]
+    )
+
+
+def verification_match_indexes(facts):
+    if not verification_coverage(facts):
+        return ()
+    if len(facts) == 9:
+        return tuple(index for index in (6, 8) if facts[index]["oracle"])
+    return tuple(index for index in (2, 4) if facts[index]["oracle"])
 
 
 def snapshot_zap(archive, directory):
@@ -217,7 +246,12 @@ def run_zap(
         )
     ):
         raise ValueError("invalid_zap_request")
-    targets = verification_targets(entries[0]) if profile != "rule6-v1" else ()
+    targets = (
+        verification_targets(entries[0])
+        + verification_targets(entries[0], "superfluous-url-decode")[1:]
+        if profile != "rule6-v1"
+        else ()
+    )
     if targets and len(entries) != 1:
         raise ValueError("invalid_zap_request")
     observations = {}
@@ -235,6 +269,14 @@ def run_zap(
     broker = mediator = None
     code = None
     failure = "execution_incomplete"
+    worker_diagnostic = {
+        "phase": "worker",
+        "reason_code": failure,
+        "exit_code": None,
+        "signal": None,
+        "mediator_failed": False,
+    }
+    mediator_diagnostic = {"phase": "none", "exception_category": None}
     with tempfile.TemporaryDirectory(prefix="bee-zap-") as temporary:
         directory = Path(temporary)
         root = snapshot_zap(archive, directory)
@@ -410,6 +452,9 @@ def run_zap(
                 file_bytes=16777216,
                 capture_stderr=False,
             )
+            worker_diagnostic["exit_code"] = code
+            worker_diagnostic["signal"] = -code if code is not None and code < 0 else None
+            worker_diagnostic["mediator_failed"] = mediator.failed
             if code or mediator.failed:
                 try:
                     diagnostic = json.loads(output)
@@ -427,10 +472,14 @@ def run_zap(
                         "zap_api_limit",
                         "zap_scan_incomplete",
                         "zap_alert_limit",
+                        "zap_send_request",
                     }:
                         failure = diagnostic["failure"]
                 except ValueError:
                     pass
+                if mediator.failed:
+                    failure = "dast_mediator_failed"
+                worker_diagnostic["reason_code"] = failure
                 raise ValueError("zap_execution_incomplete")
             result = json.loads(output)
             if (
@@ -489,9 +538,9 @@ def run_zap(
                         break
                     facts.append({**records[0], "oracle": observations[target][1]})
                 result["verification"] = facts
-                result["host_complete"] = (
-                    result["host_complete"] and len(mediator.records) == 5
-                )
+                result["host_complete"] = result["host_complete"] and len(
+                    mediator.records
+                ) == len(facts)
                 covered = result["host_complete"] and verification_coverage(facts)
                 result["alerts"] = [
                     {
@@ -500,10 +549,10 @@ def run_zap(
                         "request_sha256": facts[index]["request_sha256"],
                         "response_sha256": facts[index]["response_sha256"],
                     }
-                    for index in (2, 4)
-                    if covered and facts[index]["oracle"]
+                    for index in verification_match_indexes(facts)
                 ][:1]
             result["denial_reasons"] = dict(mediator.denial_reasons)
+            worker_diagnostic["reason_code"] = "ok"
             authorize()
             failure = "ok"
             return result, tuple(mediator.records), mediator.reserved
@@ -514,6 +563,7 @@ def run_zap(
                 "zap_duplicate_alert",
             }:
                 failure = str(error)
+                worker_diagnostic["reason_code"] = failure
             raise
         finally:
             mediation_closed = mediator is None
@@ -521,6 +571,7 @@ def run_zap(
                 if mediator is not None:
                     mediator.close()
                     mediation_closed = True
+                    mediator_diagnostic = dict(mediator.failure_diagnostic)
             finally:
                 try:
                     if broker is not None:
@@ -549,6 +600,8 @@ def run_zap(
                             "run_id": run_id,
                             "exit_code": code,
                             "reason": failure if cleanup else "cleanup_unverified",
+                            "worker_diagnostic": worker_diagnostic,
+                            "mediator_diagnostic": mediator_diagnostic,
                             "request_count": mediator.reserved if mediator else 0,
                             "completed_count": mediator.completed if mediator else 0,
                             "denial_reasons": dict(mediator.denial_reasons)

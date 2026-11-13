@@ -123,7 +123,15 @@ def managed_lab(approved, monkeypatch, request):
                     self.send_error(404)
                     return
                 selected = parse_qs(parsed.query).get(field, ["fixture.txt"])[0]
-                if nonrecursive:
+                doubledecode = "doubledecode" in str(request.param)
+                if doubledecode and selected != "fixture.txt" and "%" not in selected:
+                    self.send_error(400)
+                    return
+                if doubledecode:
+                    from urllib.parse import unquote
+
+                    selected = unquote(selected)
+                elif nonrecursive:
                     selected = selected.replace("../", "")
                 candidate = (
                     (document_root / selected).resolve()
@@ -1998,6 +2006,17 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault, profile):
     assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
     status = json.loads((root / "dast_execution_status.json").read_text())
     assert status["request_count"] == 0 and status["cleanup_verified"]
+    diagnostic = status["worker_diagnostic"]
+    assert diagnostic["phase"] == "worker"
+    assert (diagnostic["exit_code"] is None) is (fault in {"timeout", "cancel"})
+    assert diagnostic["signal"] is None
+    assert diagnostic["mediator_failed"] is False
+    assert diagnostic["reason_code"] in {
+        "execution_incomplete",
+        "zap_invalid_result",
+        "zap_unauthenticated_alert",
+        "zap_worker_failed",
+    }
     if profile != "rule6-v1":
         return
     from beeagent_module.integrations.beescan.case_state import load_case
@@ -2042,6 +2061,56 @@ def test_dast_managed_failure_cleanup(managed_lab, monkeypatch, fault, profile):
     case, _snapshot = load_case(storage, result["case_id"])
     assert case["pending"] is False
     assert not requests
+
+
+@pytest.mark.parametrize("managed_lab", [True], indirect=True)
+def test_dast_response_body_oserror_preserves_safe_phase_diagnostic(
+    managed_lab, monkeypatch
+):
+    from beeagent_module.integrations.beescan import dast_runner
+    from beeagent_module.integrations.beescan.dast_mediation import DastMediation
+
+    _settings, root, requests, sessions, probe = managed_lab
+    original = DastMediation.event
+
+    def interrupted(self, protocol, connection, *, read_size=1):
+        if self.failure_diagnostic["phase"] == "response_body":
+            raise OSError("private transport failure")
+        return original(self, protocol, connection, read_size=read_size)
+
+    monkeypatch.setattr(DastMediation, "event", interrupted)
+
+    class Artifacts:
+        def write_json(self, name, data):
+            path = root / name
+            path.write_text(json.dumps(data))
+            return path
+
+    with pytest.raises(ValueError, match="zap_execution_incomplete"):
+        dast_runner.run_zap(
+            probe,
+            origin=probe.origin,
+            entries=("/?file=fixture.txt",),
+            archive=managed_zap_archive(),
+            artifacts=Artifacts(),
+            run_id="response-body-oserror",
+            request_budget=10,
+            seconds=55,
+            authorize=lambda: None,
+            upstream_tls=ssl.create_default_context(cafile=str(root / "cert.pem")),
+            profile="traversal-nonrecursive-v1",
+        )
+    status = json.loads((root / "dast_execution_status.json").read_text())
+    assert status["request_count"] == 1
+    assert status["completed_count"] == 0
+    assert status["denial_reasons"].get("OSError", 0) >= 1
+    assert status["mediator_diagnostic"] == {
+        "phase": "response_body",
+        "exception_category": "OSError",
+    }
+    assert status["cleanup_verified"]
+    assert len(requests) == 1
+    assert sessions[0].closed and sessions[0].evidence["cleanup_verified"]
 
 
 @pytest.mark.parametrize("managed_lab", [True], indirect=True)

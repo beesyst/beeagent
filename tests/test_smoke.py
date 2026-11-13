@@ -211,6 +211,8 @@ bitrix:
         encoding="utf-8",
     )
 
+    config_dir.chmod(0o700)
+    settings_file.chmod(0o600)
     settings = load_settings(settings_file)
     ensure_dirs(tmp_path)
 

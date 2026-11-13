@@ -781,7 +781,14 @@ class BeeAgentUiAdapter:
     def preview_action(
         self, action_id: str, payload: dict[str, Any]
     ) -> AdapterResult | AdapterErrorResult:
-        if action_id in {"beescan_start", "beescan_resume"}:
+        if action_id in {
+            "beescan_start",
+            "beescan_resume",
+            "beescan_rename",
+            "beescan_archive",
+            "beescan_review",
+            "beescan_report_prepare",
+        }:
             return ok_result({"execution_authorized": False})
         if action_id in {
             "rop_source_add",
@@ -809,10 +816,42 @@ class BeeAgentUiAdapter:
         payload: dict[str, Any],
         actor: dict[str, str] | None = None,
     ) -> AdapterResult | AdapterErrorResult:
-        if action_id in {"beescan_start", "beescan_resume"}:
+        if action_id in {
+            "beescan_start",
+            "beescan_resume",
+            "beescan_rename",
+            "beescan_archive",
+            "beescan_review",
+            "beescan_report_prepare",
+        }:
             try:
+                if action_id in {"beescan_rename", "beescan_archive"}:
+                    return ok_result(self.beescan.manage(action_id, payload, actor))
+                if action_id in {"beescan_review", "beescan_report_prepare"}:
+                    from beeagent_module.integrations.beescan.review import (
+                        execute_web_review,
+                    )
+
+                    return ok_result(
+                        execute_web_review(self.beescan, action_id, payload, actor)
+                    )
                 return ok_result(self.beescan.start(action_id, payload, actor))
-            except PermissionError:
+            except ImportError:
+                return error_result(
+                    "unavailable", "BeeScan report contract unavailable"
+                )
+            except PermissionError as error:
+                reason = str(error)
+                if reason in {
+                    "target_excluded",
+                    "internal_destination_denied",
+                    "dns_changed",
+                    "dns_unverified",
+                    "web_dast_profile_unsupported",
+                }:
+                    return error_result(
+                        "permission_denied", "BeeScan REFUSED: " + reason
+                    )
                 return error_result(
                     "permission_denied", "BeeScan authorization refused"
                 )

@@ -359,7 +359,7 @@ def test_supported_plan_uses_transport_and_no_target_data(settings, monkeypatch)
     )
     assert len(calls) == 1
     assert calls[0]["provider"] == "openai_compatible"
-    assert calls[0]["timeout_seconds"] == 20
+    assert calls[0]["timeout_seconds"] == settings["beescan"]["investigation"]["timeout_seconds"]
     assert "target" not in calls[0]["prompt"]
 
 
@@ -1491,7 +1491,14 @@ def editable_dependency(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "get_project_root", lambda: project)
     direct = {"url": expected.as_uri(), "dir_info": {"editable": True}}
     distribution = SimpleNamespace(read_text=lambda _: json.dumps(direct))
-    monkeypatch.setattr(importlib.metadata, "distribution", lambda _: distribution)
+    original_distribution = importlib.metadata.distribution
+    monkeypatch.setattr(
+        importlib.metadata,
+        "distribution",
+        lambda name: (
+            distribution if name == "beescan" else original_distribution(name)
+        ),
+    )
     for name in (
         "beescan",
         "beescan.domain.models",

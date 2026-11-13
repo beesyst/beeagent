@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -137,7 +137,15 @@ def is_dast_task(task):
     )
 
 
-def _current(settings):
+def _current(settings, *, web_invocation=None):
+    web_policy = False
+    if web_invocation is not None:
+        from beeagent_module.integrations.beescan.web import _WebInvocation
+
+        if type(web_invocation) is not _WebInvocation:
+            raise PermissionError("web_invocation_refused")
+        web_invocation.verify()
+        web_policy = web_invocation.dynamic
     enabled = any(
         item.get("id") == "beescan" and item.get("enabled") is True
         for item in settings.get("modules", {}).get("registry", [])
@@ -149,6 +157,7 @@ def _current(settings):
         or config.get("dast", {}).get("enabled") is not True
         or config.get("dast", {}).get("approval") is None
         or config.get("investigation", {}).get("trusted_local_enabled") is not True
+        and not web_policy
     ):
         raise PermissionError("active_dast_not_approved")
     return DastPolicy.from_config(config["dast"]["approval"])
@@ -288,6 +297,7 @@ def _restore(snapshot, run_id):
         from beeagent_module.integrations.beescan.dast_runner import (
             verification_coverage,
             verification_facts_valid,
+            verification_match_indexes,
         )
 
         facts = records["verification"]
@@ -296,12 +306,12 @@ def _restore(snapshot, run_id):
         covered = (
             verification_coverage(facts)
             and execution.state is ExecutionState.COMPLETE
-            and execution.request_count == 5
+            and execution.request_count in {5, 9}
         )
         positives = {
             facts[index]["request_sha256"]
-            for index in (2, 4)
-            if covered and facts[index]["oracle"]
+            for index in verification_match_indexes(facts)
+            if covered
         }
         terminal = snapshot.json(run_id, "dast_execution_status.json")
         if (
@@ -442,7 +452,7 @@ def execute_dast_investigation(
         or (_assessment is None and not is_dast_task(task.task))
     ):
         return status
-    policy = _current(settings)
+    policy = _current(settings, web_invocation=web_invocation)
     policy.authorize(
         web_invocation if web_selected else local_operator, at=datetime.now(UTC)
     )
@@ -552,7 +562,10 @@ def execute_dast_investigation(
         )
 
         def authorize():
-            if reload_settings() != settings or _current(settings) != policy:
+            if (
+                reload_settings() != settings
+                or _current(settings, web_invocation=web_invocation) != policy
+            ):
                 raise PermissionError("approval_changed")
             policy.authorize(
                 web_invocation if web_selected else local_operator,
@@ -613,6 +626,10 @@ def execute_dast_investigation(
             ValueError,
             RuntimeError,
         ) as error:
+            if web_selected:
+                from beeagent_module.integrations.beescan.web import record_failure
+
+                record_failure(storage_dir, logger, run_id, error, "active_dast")
             terminal = artifacts.read_json("dast_execution_status.json")
             if (
                 type(terminal) is not dict
@@ -710,30 +727,54 @@ def execute_dast_investigation(
             (rule_id,),
             tuple(matches),
         )
-        report = build_dast_report(intent, execution, outcome)
-        _persist(
-            artifacts,
-            "dast_handoff.json",
-            {
-                "intent": _plain(intent),
-                "execution": _plain(execution),
-                "outcome": _plain(outcome),
-            },
-        )
-        for name, content in (
-            ("report.json", report.canonical_json),
-            ("report.md", report.markdown),
-        ):
-            path = artifacts.write_text(name, content)
-            path.chmod(0o600)
-            with path.open("rb") as stream:
-                os.fsync(stream.fileno())
-        checked = AssessmentSnapshot(storage_dir)
-        _restore(checked, run_id)
-        if failed_state is None:
-            authorize()
-        else:
-            snapshot.verify()
+        report = None
+        for _ in range(2):
+            report = build_dast_report(intent, execution, outcome)
+            _persist(
+                artifacts,
+                "dast_handoff.json",
+                {
+                    "intent": _plain(intent),
+                    "execution": _plain(execution),
+                    "outcome": _plain(outcome),
+                },
+            )
+            for name, content in (
+                ("report.json", report.canonical_json),
+                ("report.md", report.markdown),
+            ):
+                path = artifacts.write_text(name, content)
+                path.chmod(0o600)
+                with path.open("rb") as stream:
+                    os.fsync(stream.fileno())
+            checked = AssessmentSnapshot(storage_dir)
+            _restore(checked, run_id)
+            try:
+                if failed_state is None:
+                    authorize()
+                    if (
+                        candidate_target is not None
+                        and report.data["status"] == "CANDIDATE"
+                    ):
+                        authorize()
+                else:
+                    snapshot.verify()
+            except TimeoutError as error:
+                if web_selected:
+                    from beeagent_module.integrations.beescan.web import record_failure
+
+                    record_failure(
+                        storage_dir, logger, run_id, error, "dast_publication"
+                    )
+                failed_state = ExecutionState.TIMEOUT
+                reason = "timeout"
+                execution = replace(execution, state=failed_state, covered_checks=())
+                outcome = replace(outcome, matches=())
+                candidate_target = None
+            else:
+                break
+        if report is None:
+            raise RuntimeError("dast_report_unavailable")
         state.update(pending=False, status=report.data["status"])
         if _assessment is None:
             save_case(case_api, state)
@@ -753,7 +794,6 @@ def execute_dast_investigation(
             and reason == "ok"
             and execution.cleanup_verified
         ):
-            authorize()
             if _candidate_handoff is not None:
                 _candidate_handoff(candidate_target)
                 status["reproduction"] = "PENDING_PARENT_PUBLICATION"

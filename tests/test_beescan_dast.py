@@ -8,9 +8,14 @@ import pytest
 from beeagent_module.integrations.beescan.dast import DastPolicy, approval_identity
 from beeagent_module.integrations.beescan.dast_runner import (
     traversal_oracle,
+    verification_fallback_required,
+    verification_match_indexes,
     verification_coverage,
 )
-from beeagent_module.integrations.beescan.dast_worker import verification_targets
+from beeagent_module.integrations.beescan.dast_worker import (
+    fallback_required,
+    verification_targets,
+)
 from beeagent_module.integrations.beescan.policy import HTTPX_SHA256, ProbePolicy
 from tests.test_beescan_detection import approved as approved
 
@@ -87,6 +92,17 @@ def test_fixed_targets_preserve_source_parameter_and_structure(entry):
     assert all("....//" in target for target in targets[1:])
     if "&" in entry:
         assert all(target.endswith("&format=text") for target in targets)
+
+
+def test_superfluous_decode_targets_preserve_encoded_source_parameter():
+    entry = "/image?filename=one.jpg&format=text"
+    targets = verification_targets(entry, "superfluous-url-decode")
+    assert len(set(targets)) == 5 and targets[0] == entry
+    assert all(target.split("?")[0] == "/image" for target in targets)
+    assert all("%252f" in target for target in targets[1:])
+    assert all(target.endswith("&format=text") for target in targets)
+    assert fallback_required((200, 400, 400, 400, 400))
+    assert not fallback_required((200, 404, 400, 404, 404))
 
 
 @pytest.mark.parametrize(
@@ -194,3 +210,46 @@ def test_positive_target_without_oracle_is_not_complete_negative():
     ]
 
     assert not verification_coverage(facts)
+
+
+def test_superfluous_decode_fallback_requires_ambiguous_primary_controls():
+    primary = [
+        {
+            "request_sha256": hashlib.sha256(f"first-{index}".encode()).hexdigest(),
+            "response_sha256": "a" * 64,
+            "status_code": 200 if index == 0 else 400,
+            "oracle": False,
+        }
+        for index in range(5)
+    ]
+    fallback = [
+        {
+            "request_sha256": hashlib.sha256(f"second-{index}".encode()).hexdigest(),
+            "response_sha256": "b" * 64,
+            "status_code": 200 if index in {0, 2} else 404,
+            "oracle": index == 2,
+        }
+        for index in range(5)
+    ]
+    assert verification_fallback_required(primary)
+    facts = primary + fallback[1:]
+    assert verification_coverage(facts)
+    assert verification_match_indexes(facts) == (6,)
+    assert not verification_coverage(fallback + fallback)
+    assert not verification_coverage(
+        primary + [{**item, "oracle": True} for item in fallback[1:]]
+    )
+
+
+def test_incomplete_verification_evidence_cannot_be_covered():
+    assert verification_coverage([]) is False
+    assert verification_coverage(
+        [
+            {
+                "request_sha256": "a" * 64,
+                "response_sha256": "b" * 64,
+                "status_code": 200,
+                "oracle": False,
+            }
+        ]
+    ) is False

@@ -177,6 +177,10 @@ def validate_investigation_settings(
             or not 1 <= adaptive["max_requests"] <= 32
             or adaptive["enabled"]
             and config.get("trusted_local_enabled") is not True
+            and not (
+                config.get("web", {}).get("enabled") is True
+                and "target_policy" in beescan
+            )
         ):
             raise RuntimeError("Invalid beescan.investigation.adaptive settings")
     if config["approval"] is not None and type(config["approval"]) is not dict:
@@ -804,10 +808,16 @@ def _load_domain(*, local_lab=False, policy=None, local_context=None):
             raise PermissionError("local_laboratory_not_approved")
         if editable_local:
             from beeagent_module.integrations.beescan.local_cli import _LocalRun
+            from beeagent_module.integrations.beescan.web import _WebInvocation
 
-            if type(local_context) is not _LocalRun:
+            if (
+                type(local_context) is _LocalRun
+                or type(local_context) is _WebInvocation
+                and (local_lab is True or local_context.dynamic)
+            ):
+                local_context.verify(policy)
+            else:
                 raise PermissionError("local_invocation_refused")
-            local_context.verify(policy)
         policy.authorize(policy.transport.origin, at=datetime.now(UTC))
         address = ip_address(policy.transport.connected_ip)
         if any(address in network for network in LAB_NETWORKS):
@@ -1698,9 +1708,14 @@ def execute_investigation(
             from beeagent_module.integrations.beescan.dast import _current
             from beeagent_module.integrations.beescan.discovery_dast import wrap_case
 
-            state["status"] = "INCONCLUSIVE"
+            if state["status"] not in {"ERROR", "TIMEOUT", "REFUSED"}:
+                state["status"] = "INCONCLUSIVE"
             state["terminal"] = assessment_state is not None
-            state = wrap_case(state, assessment_state, _current(settings))
+            state = wrap_case(
+                state,
+                assessment_state,
+                _current(settings, web_invocation=web_invocation),
+            )
             metrics = state["metrics"]
         save_case(case_artifacts, state)
         status.update(case_id=general_case.case_id, metrics=metrics)
@@ -1986,7 +2001,7 @@ def execute_investigation(
                     SelectedAssessment,
                 )
 
-                active_policy = _current(settings)
+                active_policy = _current(settings, web_invocation=web_invocation)
                 active_policy.authorize(
                     web_invocation or local_operator, at=datetime.now(UTC)
                 )
@@ -2575,7 +2590,7 @@ def execute_investigation(
                             approval_identity,
                         )
 
-                        active = _current(settings)
+                        active = _current(settings, web_invocation=web_invocation)
                         active.authorize(
                             web_invocation or local_operator, at=datetime.now(UTC)
                         )
@@ -2789,11 +2804,32 @@ def execute_investigation(
             return reused_case
     except KeyboardInterrupt:
         status.update(status="INCONCLUSIVE", reason="cancelled", complete=False)
-    except TimeoutError:
+    except TimeoutError as error:
+        if web_invocation is not None:
+            from beeagent_module.integrations.beescan.web import record_failure
+
+            record_failure(storage_dir, logger, run_id, error, "investigation")
         status.update(status="TIMEOUT", reason="investigation_deadline", complete=False)
-    except PermissionError:
-        status.update(status="REFUSED", reason="authorization_refused", complete=False)
+    except PermissionError as error:
+        reason = str(error)
+        status.update(
+            status="REFUSED",
+            reason=reason
+            if reason
+            in {
+                "target_excluded",
+                "internal_destination_denied",
+                "dns_changed",
+                "dns_unverified",
+            }
+            else "authorization_refused",
+            complete=False,
+        )
     except (OSError, ValueError, RuntimeError, ImportError) as error:
+        if web_invocation is not None:
+            from beeagent_module.integrations.beescan.web import record_failure
+
+            record_failure(storage_dir, logger, run_id, error, "investigation")
         reason = str(error)
         safe_reason = (
             reason

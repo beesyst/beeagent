@@ -1840,7 +1840,7 @@ No unrelated version change occurs.
 
 ### Iteration BS-17 — Reviewed Evidence and Bug Bounty Report Workflow
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 

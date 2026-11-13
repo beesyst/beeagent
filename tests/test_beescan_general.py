@@ -833,3 +833,40 @@ def test_discovery_mode_requires_enabled_dast(discovery_dast):
 
     state["dast"]["enabled"] = False
     assert not discovery_selected(settings)
+
+
+@pytest.mark.parametrize("matched", [False, True])
+@pytest.mark.parametrize("expire_after_restore", [1, 2])
+def test_integrated_deadline_preserves_case_and_accounting(
+    discovery_dast, monkeypatch, matched, expire_after_restore
+):
+    from beeagent_module.integrations.beescan import dast
+
+    run, state, calls, harness, _ = discovery_dast
+    state["assessment_body"] = '<img src="/retrieve?document=record-7">'
+    state["matched"] = matched
+    original_restore = dast._restore
+    original_clock = host.time.monotonic
+    expired = False
+    restores = 0
+
+    def restore(*args, **kwargs):
+        nonlocal expired, restores
+        result = original_restore(*args, **kwargs)
+        restores += 1
+        expired = restores >= expire_after_restore
+        return result
+
+    monkeypatch.setattr(dast, "_restore", restore)
+    monkeypatch.setattr(
+        host.time, "monotonic", lambda: original_clock() + (120 if expired else 0)
+    )
+    result = run("Assess Path Traversal")
+    assert result["status"] == "TIMEOUT"
+    assert result["reason"] == "investigation_deadline"
+    assert result["request_count"] == 2 and calls == ["/"]
+    case, snapshot = load_case(harness.root, result["case_id"])
+    assert case["status"] == "TIMEOUT" and case["pending"] is False
+    assert case["assessment"]["request_count"] == 1
+    assert case["metrics"]["request_count"] == 2
+    assert snapshot.json(result["run_id"], "report.json")["status"] == "TIMEOUT"

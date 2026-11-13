@@ -50,7 +50,7 @@ class DastMediation:
             or observe is not None
             and not callable(observe)
             or type(allowed_targets) is not tuple
-            or len(allowed_targets) > 8
+            or len(allowed_targets) > 10
             or any(
                 type(target) is not str or not target.startswith("/")
                 for target in allowed_targets
@@ -83,6 +83,7 @@ class DastMediation:
         self.completed = 0
         self.denied = 0
         self.denial_reasons = {}
+        self.failure_diagnostic = {"phase": "none", "exception_category": None}
         self.failed = False
         self.closed = False
         self.records = []
@@ -116,7 +117,7 @@ class DastMediation:
         seconds = self.deadline - time.monotonic()
         if self.closed or seconds <= 0:
             raise PermissionError("dast_deadline")
-        return min(seconds, 2)
+        return min(seconds, 10)
 
     def track(self, connection):
         with self.lock:
@@ -202,6 +203,7 @@ class DastMediation:
                 self.seen_targets.add(target)
             self.reserved += 1
         family = socket.AF_INET6 if ":" in self.connected_ip else socket.AF_INET
+        self.failure_diagnostic = {"phase": "connection_establishment", "exception_category": None}
         raw = self.track(
             self.connect()
             if self.connect is not None
@@ -212,12 +214,14 @@ class DastMediation:
             raw.settimeout(self.remaining())
             if self.connect is None:
                 raw.connect((self.connected_ip, self.port))
+            self.failure_diagnostic = {"phase": "tls_handshake", "exception_category": None}
             stream = self.track(
                 self.upstream_tls.wrap_socket(raw, server_hostname=self.hostname)
             )
             protocol = h11.Connection(h11.CLIENT, max_incomplete_event_size=8192)
             self.authorize()
             self.remaining()
+            self.failure_diagnostic = {"phase": "request_write", "exception_category": None}
             stream.sendall(
                 protocol.send(
                     h11.Request(
@@ -233,6 +237,7 @@ class DastMediation:
                 )
                 + protocol.send(h11.EndOfMessage())
             )
+            self.failure_diagnostic = {"phase": "response_headers", "exception_category": None}
             response = self.event(protocol, stream, read_size=4096)
             if (
                 not isinstance(response, h11.Response)
@@ -242,6 +247,7 @@ class DastMediation:
             ):
                 raise ValueError("dast_response_status")
             body = bytearray()
+            self.failure_diagnostic = {"phase": "response_body", "exception_category": None}
             while True:
                 event = self.event(protocol, stream, read_size=4096)
                 if isinstance(event, h11.EndOfMessage):
@@ -253,6 +259,7 @@ class DastMediation:
                     raise ValueError("dast_response_limit")
                 body.extend(event.data)
             with self.lock:
+                self.failure_diagnostic = {"phase": "none", "exception_category": None}
                 if self.observe is not None:
                     self.observe(target, response.status_code, bytes(body))
                 self.completed += 1
@@ -320,6 +327,10 @@ class DastMediation:
             pass
         except (OSError, ValueError, TypeError, h11.ProtocolError) as error:
             with self.lock:
+                self.failure_diagnostic = {
+                    "phase": self.failure_diagnostic["phase"],
+                    "exception_category": type(error).__name__,
+                }
                 self.denied += 1
                 reason = (
                     str(error)

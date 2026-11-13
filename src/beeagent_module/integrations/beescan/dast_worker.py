@@ -2,7 +2,6 @@ import hashlib
 import json
 import re
 import select
-import signal
 import socket
 import socketserver
 import subprocess
@@ -14,12 +13,14 @@ import urllib.parse
 import urllib.request
 
 
-def verification_targets(entry):
+def verification_targets(entry, technique="nonrecursive"):
     if type(entry) is not str or re.search(r"[^A-Za-z0-9_./?=&~:-]", entry):
         raise ValueError("zap_verification_entry")
     parsed = urllib.parse.urlsplit(entry)
     pairs = parsed.query.split("&")
     if (
+        technique not in {"nonrecursive", "superfluous-url-decode"}
+        or
         not re.fullmatch(r"/(?:[A-Za-z0-9_.~-]+/)*[A-Za-z0-9_.~-]*", parsed.path)
         or any(part in {".", ".."} for part in parsed.path.split("/"))
         or parsed.scheme
@@ -37,24 +38,36 @@ def verification_targets(entry):
         raise ValueError("zap_verification_entry")
     parameter = pairs[0].split("=")[0]
     targets = [entry]
+    sequence = "....//" if technique == "nonrecursive" else "..%252f"
     for depth in (2, 6):
         for filename in ("beeagent-traversal-control-missing", "passwd"):
             query = [
-                parameter + "=" + "....//" * depth + "etc/" + filename,
+                parameter + "=" + sequence * depth + "etc/" + filename,
                 *pairs[1:],
             ]
             targets.append(parsed.path + "?" + "&".join(query))
     return tuple(targets)
 
 
+def fallback_required(statuses):
+    return (
+        type(statuses) is tuple
+        and len(statuses) == 5
+        and all(type(status) is int for status in statuses)
+        and statuses[0] == 200
+        and statuses[2] == statuses[4] == 400
+        and all(statuses[index] in {200, 400, 404} for index in (1, 3))
+    )
+
+
 class Relay(socketserver.BaseRequestHandler):
     def handle(self):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
-            upstream.settimeout(2)
+            upstream.settimeout(10)
             upstream.connect("/gate.sock")
             pair = (self.request, upstream)
             while True:
-                ready, _, _ = select.select(pair, [], [], 2)
+                ready, _, _ = select.select(pair, [], [], 10)
                 if not ready:
                     continue
                 for source in ready:
@@ -70,7 +83,6 @@ def main():
     profile = config.get("profile", "rule6-v1")
     if profile not in {"rule6-v1", "traversal-nonrecursive-v1"}:
         raise ValueError("zap_profile")
-    signal.alarm(config["seconds"])
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 8091), Relay)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -82,7 +94,7 @@ def main():
         "network.connection.httpProxy.port": "8091",
         "network.connection.httpProxy.authEnabled": "false",
         "network.connection.socksProxy.enabled": "false",
-        "network.connection.timeoutInSecs": "2",
+        "network.connection.timeoutInSecs": "10",
         "autoupdate.checkOnStart": "false",
         "autoupdate.downloadNewRelease": "false",
         "autoupdate.installAddonUpdates": "false",
@@ -148,7 +160,7 @@ def main():
                 raise ValueError("zap_verification_entry")
             authority = urllib.parse.urlsplit(config["origin"]).netloc
             api("pscan", "action", "disableAllScanners")
-            for target in verification_targets(config["entries"][0]):
+            def send(target):
                 request = (
                     "GET "
                     + config["origin"]
@@ -158,13 +170,40 @@ def main():
                     + authority
                     + "\r\nConnection: close\r\n\r\n"
                 )
-                api(
+                response = api(
                     "core",
                     "action",
                     "sendRequest",
                     request=request,
                     followRedirects="false",
                 )
+                messages = response.get("sendRequest")
+                if (
+                    type(messages) is not list
+                    or len(messages) != 1
+                    or type(messages[0]) is not dict
+                ):
+                    raise ValueError("zap_send_request")
+                header = messages[0].get("responseHeader")
+                if type(header) is not str:
+                    raise ValueError("zap_send_request")
+                match = re.fullmatch(
+                    r"HTTP/1\.[01] ([1-5][0-9]{2})(?: [^\r\n]{0,128})?",
+                    header.splitlines()[0] if header.splitlines() else "",
+                )
+                if match is None:
+                    raise ValueError("zap_send_request")
+                return int(match.group(1))
+
+            statuses = tuple(
+                send(target)
+                for target in verification_targets(config["entries"][0])
+            )
+            if fallback_required(statuses):
+                for target in verification_targets(
+                    config["entries"][0], "superfluous-url-decode"
+                )[1:]:
+                    send(target)
             print(
                 json.dumps(
                     {
