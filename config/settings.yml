@@ -110,6 +110,8 @@ modules:
       install_extra: "beescan"
 
 beescan:
+  target_policy:
+    excluded_targets: []
   probe_enabled: false
   approval: null
   detection_enabled: false
@@ -125,12 +127,12 @@ beescan:
     local_lab_enabled: false
     approval: null
     web:
-      enabled: false
-      principal_ids: [operator]
+      enabled: true
+      principal_ids: [admin, operator]
     ai_profile: openrouter
     task_bytes_max: 8192
     task_chars_max: 2000
-    timeout_seconds: 20
+    timeout_seconds: 45
     input_chars_max: 8000
     output_chars_max: 2000
     body_bytes_max: 73728

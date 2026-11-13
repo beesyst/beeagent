@@ -75,6 +75,8 @@ class SelectedAssessment:
 def wrap_case(discovery, assessment, policy):
     count = assessment["request_count"] if assessment else 0
     status = assessment["status"] if assessment else "PARTIAL"
+    if discovery["status"] in {"ERROR", "TIMEOUT", "REFUSED"}:
+        status = discovery["status"]
     return {
         "schema_version": 4,
         "case_id": discovery["case_id"],
@@ -213,7 +215,12 @@ def load_integrated_case(state, snapshot, case_id):
     expected_count = discovery["metrics"]["request_count"] + (
         assessment["request_count"] if assessment else 0
     )
-    if state["status"] != (assessment["status"] if assessment else "PARTIAL") or state[
+    expected_status = (
+        discovery["status"]
+        if discovery["status"] in {"ERROR", "TIMEOUT", "REFUSED"}
+        else assessment["status"] if assessment else "PARTIAL"
+    )
+    if state["status"] != expected_status or state[
         "metrics"
     ] != {**discovery["metrics"], "request_count": expected_count}:
         raise ValueError("integrated_metrics_changed")

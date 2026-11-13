@@ -11,6 +11,8 @@ Use this guide to install, run and verify BeeAgent and its supported modules. It
 - `pyproject.toml` defines package requirements and optional extras; `uv.lock` pins resolved dependencies. Do not hardcode package versions, Git revisions or dependency source paths in development instructions.
 - `config/settings.yml` controls enabled modules, execution approvals and runtime behavior. `.env` provides credentials. Never store actual secrets in YAML or documentation.
 
+The settings loader accepts only a regular, singly linked configuration file owned by root or the authorized service/configuration owner, without group/world write permission or symlink components. Its parent directories must also be root/owner controlled and not group/world writable; a system sticky temporary-directory ancestor is permitted. Use owner-only writes and grant a non-root service only the read access it needs, for example mode `0640` for a root-owned file with the service's read group. Web roles, including application admin, do not grant OS configuration ownership. Configuration protection is checked before YAML is read; unsafe paths fail closed.
+
 From the BeeAgent repository root:
 
 ```bash
@@ -51,7 +53,7 @@ Commands that read a target, send network traffic, modify CRM or operate a secur
 ## Configuration and module lifecycle
 
 1. Configure the intended module under `modules.registry` in `config/settings.yml`. Use its declared `install_extra` when present.
-2. Configure that module's separate feature enablement, provider identity and approval fields. Disabled modules or approval-null active paths must not execute external actions.
+2. Configure that module's separate feature enablement, provider identity and execution policy. BeeScan Web may derive bounded per-run approval from its configured target policy; legacy CLI/task-file approvals remain separate. Disabled modules must not execute external actions.
 3. Supply secrets only through environment references. Use existing bootstrap/rotation helpers where supported.
 4. Run the intended command and inspect actual terminal status, logs and allowlisted artifacts.
 

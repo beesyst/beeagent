@@ -7,7 +7,9 @@ import math
 import os
 import re
 import secrets
+import stat
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -28,10 +30,59 @@ from beeagent_module.integrations.beescan.review_source import (
 
 PROFILES = {
     "quick": {"max_steps": 2, "max_requests": 2, "max_depth": 1},
-    "standard": {"max_steps": 8, "max_requests": 8, "max_depth": 3},
+    "standard": {"max_steps": 8, "max_requests": 10, "max_depth": 3},
     "deep": {"max_steps": 16, "max_requests": 20, "max_depth": 4},
 }
 _SEAL = object()
+
+
+def record_failure(storage, logger, run_id, error, phase):
+    from beeagent_module.integrations.beescan.assessment import _write_report
+    from beeagent_module.integrations.beescan.dast import _api
+
+    category = next(
+        (
+            name
+            for kind, name in (
+                (TimeoutError, "deadline"),
+                (PermissionError, "authorization"),
+                (OSError, "storage"),
+                (ValueError, "validation"),
+                (RuntimeError, "runtime"),
+            )
+            if isinstance(error, kind)
+        ),
+        "unexpected",
+    )
+    logger.error(
+        "BeeScan Web failure: run_id=%s category=%s phase=%s",
+        run_id,
+        category,
+        phase,
+    )
+    try:
+        lines = [
+            f"{datetime.now(UTC).isoformat()} run_id={run_id} "
+            f"category={category} phase={phase}",
+            "Traceback (frames only; exception values and source omitted):",
+        ]
+        for frame, line in islice(traceback.walk_tb(error.__traceback__), 32):
+            filename = os.path.basename(frame.f_code.co_filename)
+            filename = re.sub(r"[^a-zA-Z0-9_.-]", "_", filename)[:96]
+            function = re.sub(r"[^a-zA-Z0-9_]", "_", frame.f_code.co_name)[:96]
+            lines.append(f"  {filename}:{line} in {function}")
+        snapshot = AssessmentSnapshot(storage)
+        try:
+            previous = snapshot.read(run_id, "web_failure.log").decode("utf-8")
+        except FileNotFoundError:
+            previous = ""
+        _write_report(
+            _api(storage, run_id, logger),
+            "web_failure.log",
+            previous[-32768:] + "\n".join(lines) + "\n",
+        )
+    except Exception:
+        logger.error("BeeScan Web diagnostic unavailable: run_id=%s", run_id)
 
 
 def validate_web_settings(settings):
@@ -60,10 +111,15 @@ def validate_web_settings(settings):
             or settings.get("web", {}).get("auth", {}).get("enabled") is not True
             or config.get("enabled") is not True
             or config.get("approval") is None
+            and "target_policy" not in settings.get("beescan", {})
             or not config.get("adaptive", {}).get("max_depth")
         )
     ):
         raise RuntimeError("Invalid beescan.investigation.web settings")
+    if "target_policy" in settings.get("beescan", {}):
+        from beeagent_module.integrations.beescan.policy import target_exclusions
+
+        target_exclusions(settings)
 
 
 def principal(settings, actor, *, execute=False):
@@ -125,12 +181,30 @@ class _WebInvocation:
         self.case_id = case_id
         self.seal = seal
         self.settings = deepcopy(service.reload_settings())
-        self.policy = InvestigationPolicy.from_config(
-            self.settings["beescan"]["investigation"]["approval"]
-        )
+        self.created_at = datetime.now(UTC).isoformat()
+        self._verify_authority()
+        self.dynamic = "target_policy" in self.settings["beescan"]
+        if self.dynamic:
+            from beeagent_module.integrations.beescan.policy import web_execution_policy
+
+            bound = None
+            if case_id != run_id:
+                owned = _read_owned(service.storage, self.settings, case_id, self.actor)
+                bound = owned.get("destination_ip")
+                if bound is None:
+                    state, snapshot = load_case(service.storage, case_id)
+                    bound = state.get("discovery", state).get("connected_ip")
+                    snapshot.verify()
+            self.policy = web_execution_policy(
+                self.settings, task.target, case_id, connected_ip=bound
+            )
+        else:
+            self.policy = InvestigationPolicy.from_config(
+                self.settings["beescan"]["investigation"]["approval"]
+            )
         self.verify()
 
-    def verify(self, policy=None):
+    def _verify_authority(self):
         if self.seal is not _SEAL or self.service.reload_settings() != self.settings:
             raise PermissionError("web_authority_changed")
         actor_id = principal(self.settings, self.actor, execute=True)
@@ -144,15 +218,44 @@ class _WebInvocation:
                 p.get("id") == "beescan" and p.get("enabled") is True
                 for p in self.settings.get("modules", {}).get("registry", [])
             )
-            or policy is not None
-            and policy != self.policy
         ):
             raise PermissionError("web_investigation_not_approved")
+
+    def verify(self, policy=None):
+        self._verify_authority()
+        if policy is not None and policy != self.policy:
+            raise PermissionError("web_investigation_not_approved")
         self.policy.authorize(self.task.target, at=datetime.now(UTC))
+        if self.dynamic:
+            from beeagent_module.integrations.beescan.policy import check_web_target
+
+            check_web_target(
+                self.settings,
+                self.task.target,
+                connected_ip=self.policy.transport.connected_ip,
+            )
 
     def effective_settings(self):
         self.verify()
         result = deepcopy(self.settings)
+        if self.dynamic:
+            from beeagent_module.integrations.beescan.dast import _plain
+
+            config = result["beescan"]["investigation"]
+            config["approval"] = _plain(self.policy)
+            active = result["beescan"].get("dast", {})
+            if active.get("enabled") is True and self.task.target.startswith("https:"):
+                active["approval"] = {
+                    "transport": _plain(self.policy)["transport"],
+                    "approved": True,
+                    "method": "active_dast",
+                    "entries": [],
+                    "entry_selection": "authenticated_discovery",
+                    "max_candidates": 1,
+                    "profile": "traversal-nonrecursive-v1",
+                    "request_budget": 10,
+                    "seconds": min(55, max(10, config["timeout_seconds"])),
+                }
         limits = result["beescan"]["investigation"]["adaptive"]
         for key, maximum in PROFILES[self.mode].items():
             limits[key] = min(limits[key], maximum)
@@ -179,12 +282,19 @@ class _WebInvocation:
             "mode": self.mode,
             "authority_sha256": digest(self.settings["beescan"]),
         }
+        if self.dynamic:
+            binding["destination_ip"] = self.policy.transport.connected_ip
         path = api.artifact_dir() / "web_owner.json"
         if path.exists():
             old = _read_owned(self.service.storage, self.settings, run_id, self.actor)
+            if "created_at" in old:
+                binding["created_at"] = old["created_at"]
+            if "destination_ip" not in old:
+                binding.pop("destination_ip", None)
             if old != binding:
                 raise PermissionError("web_binding_changed")
         else:
+            binding["created_at"] = self.created_at
             _persist(
                 api,
                 "web_owner.json",
@@ -238,22 +348,51 @@ class WebInvestigations:
             {key: payload[key] for key in ("target", "task")},
             current["beescan"]["investigation"],
         )
+        if "target_policy" in current["beescan"]:
+            from beescan.domain.locators import canonical_locator
+            from beescan.domain.models import TargetKind
+
+            from beeagent_module.integrations.beescan.investigation import (
+                InvestigationTask,
+            )
+
+            task = InvestigationTask(
+                canonical_locator(TargetKind.URL, task.target), task.task
+            )
         run_id = self._run_id(actor, payload["nonce"])
         case_id = payload.get("case_id", run_id)
-        invocation = _WebInvocation(
-            self, actor, task, payload["mode"], run_id, case_id, _SEAL
-        )
-        from beeagent_module.integrations.beescan.dast import _current, is_dast_task
+        try:
+            invocation = _WebInvocation(
+                self, actor, task, payload["mode"], run_id, case_id, _SEAL
+            )
+            from beeagent_module.integrations.beescan.dast import _current, is_dast_task
 
-        if is_dast_task(task.task):
-            active = _current(current)
-            active.authorize(invocation, at=datetime.now(UTC))
-            if (
-                active.entry_selection != "authenticated_discovery"
-                or active.profile == "traversal-nonrecursive-v1"
-                and payload["mode"] == "quick"
-            ):
-                raise PermissionError("web_dast_profile_unsupported")
+            if is_dast_task(task.task):
+                if invocation.dynamic and not task.target.startswith("https:"):
+                    raise PermissionError("web_dast_profile_unsupported")
+                active = _current(
+                    invocation.effective_settings(), web_invocation=invocation
+                )
+                active.authorize(invocation, at=datetime.now(UTC))
+                if (
+                    active.entry_selection != "authenticated_discovery"
+                    or active.profile == "traversal-nonrecursive-v1"
+                    and payload["mode"] == "quick"
+                ):
+                    raise PermissionError("web_dast_profile_unsupported")
+        except PermissionError as error:
+            if "target_policy" not in current["beescan"] or str(error) not in {
+                "target_excluded",
+                "internal_destination_denied",
+                "dns_changed",
+                "dns_unverified",
+                "web_dast_profile_unsupported",
+                "active_dast_not_approved",
+            }:
+                raise
+            return self._refuse(
+                current, actor, task, payload["mode"], run_id, str(error)
+            )
         prior = None
         reused = None
         if action == "beescan_resume":
@@ -348,6 +487,70 @@ class WebInvestigations:
             raise
         return {"case_id": case_id, "run_id": run_id, "status": "QUEUED"}
 
+    def _refuse(self, settings, actor, task, mode, run_id, reason):
+        from beeagent_module.integrations.beescan.dast import _api
+
+        principal_id = principal(settings, actor, execute=True)
+        if self.reload_settings() != settings:
+            raise PermissionError("web_authority_changed")
+        self.storage.mkdir(mode=0o700, parents=True, exist_ok=True)
+        root = open_directory(self.storage)
+        try:
+            try:
+                os.mkdir("runs", 0o700, dir_fd=root)
+            except FileExistsError:
+                pass
+            runs = open_child(root, "runs")
+        finally:
+            os.close(root)
+        try:
+            fcntl.flock(runs, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.mkdir(run_id, 0o700, dir_fd=runs)
+            api = _api(self.storage, run_id, self.logger)
+            binding = {
+                "run_id": run_id,
+                "case_id": run_id,
+                "created_at": datetime.now(UTC).isoformat(),
+                "principal_id": principal_id,
+                "task_sha256": digest(task.task),
+                "target": task.target,
+                "mode": mode,
+                "authority_sha256": digest(settings["beescan"]),
+            }
+            intake = {
+                "case_id": run_id,
+                "target": task.target,
+                "task": task.task,
+                "mode": mode,
+            }
+            _persist(
+                api,
+                "web_owner.json",
+                {"binding": binding, "signature": _sign(settings, binding)},
+            )
+            _persist(
+                api,
+                "web_intake.json",
+                {"intake": intake, "signature": _sign(settings, intake)},
+            )
+            _persist(
+                api,
+                "investigation_status.json",
+                {
+                    "run_id": run_id,
+                    "case_id": run_id,
+                    "status": "REFUSED",
+                    "complete": False,
+                    "request_count": 0,
+                    "request_count_exact": True,
+                    "reason": reason,
+                },
+            )
+            os.fsync(runs)
+        finally:
+            os.close(runs)
+        return {"case_id": run_id, "run_id": run_id, "status": "REFUSED"}
+
     def _receipt(self, snapshot, settings):
         cases = [key for key in snapshot.files if key[1] == "case.json"]
         if len(cases) != 1:
@@ -370,6 +573,7 @@ class WebInvestigations:
         return {"files": values, "signature": _sign(settings, values)}
 
     def _execute(self, invocation, prior, lock):
+        phase = "execution"
         try:
             result = execute_investigation(
                 task=invocation.task,
@@ -382,21 +586,45 @@ class WebInvestigations:
                 resume_case_id=invocation.case_id if prior else None,
             )
             if result.get("case_id"):
+                phase = "case_authentication"
                 _, snapshot = load_case(self.storage, invocation.case_id)
                 from beeagent_module.integrations.beescan.dast import _api
 
                 api = _api(self.storage, invocation.case_id, self.logger)
+                phase = "receipt_publication"
                 _persist(
                     api,
                     "web_receipt.json",
                     self._receipt(snapshot, invocation.settings),
                 )
             self.logger.info("BeeScan Web completed: run_id=%s", invocation.run_id)
-        except Exception:
-            self.logger.error("BeeScan Web incomplete: run_id=%s", invocation.run_id)
+        except Exception as error:
+            record_failure(self.storage, self.logger, invocation.run_id, error, phase)
             try:
                 from beeagent_module.integrations.beescan.dast import _api
 
+                snapshot = AssessmentSnapshot(self.storage)
+                try:
+                    published = snapshot.json(
+                        invocation.run_id, "investigation_status.json"
+                    )
+                except FileNotFoundError:
+                    published = {}
+                if published.get("status") in {"ERROR", "REFUSED", "TIMEOUT"}:
+                    snapshot.verify()
+                    return
+                if published.get("status") not in {None, "QUEUED", "RUNNING"}:
+                    try:
+                        state, source = load_case(self.storage, invocation.case_id)
+                        source.verify()
+                        snapshot.verify()
+                        if state["status"] == published["status"]:
+                            return
+                    except OSError, ValueError, RuntimeError:
+                        pass
+                count = published.get("request_count")
+                if type(count) is not int or not 0 <= count <= 256:
+                    count = None
                 api = _api(self.storage, invocation.run_id, self.logger)
                 _persist(
                     api,
@@ -407,7 +635,7 @@ class WebInvestigations:
                         "status": "ERROR",
                         "reason": "web_execution_incomplete",
                         "complete": False,
-                        "request_count": None,
+                        "request_count": count,
                         "request_count_exact": False,
                     },
                 )
@@ -416,20 +644,51 @@ class WebInvestigations:
         finally:
             os.close(lock)
 
-    def inspect(self, run_id, actor, *, latest=True):
+    def inspect(self, run_id, actor, *, latest=True, summary=False):
         for _ in range(2):
             try:
-                return self._inspect(run_id, actor, latest=latest)
+                return self._inspect(run_id, actor, latest=latest, **({"summary": True} if summary else {}))
             except ValueError as exc:
                 if str(exc) not in {"assessment_source_changed", "web_status_changed"}:
                     raise
-        return self._inspect(run_id, actor, latest=latest)
+        return self._inspect(run_id, actor, latest=latest, **({"summary": True} if summary else {}))
 
-    def _inspect(self, run_id, actor, *, latest=True):
+    def _inspect(self, run_id, actor, *, latest=True, summary=False):
         current = self.reload_settings()
         owned = _read_owned(self.storage, current, run_id, actor)
         snapshot = AssessmentSnapshot(self.storage)
         status = snapshot.json(run_id, "investigation_status.json")
+        if summary:
+            metadata = self.case_metadata(owned["case_id"], actor)
+            try:
+                intake_record = snapshot.json(owned["case_id"], "web_intake.json")
+                intake = intake_record["intake"]
+                if intake_record.get("signature") != _sign(current, intake):
+                    raise PermissionError("web_intake_changed")
+            except FileNotFoundError:
+                intake = None
+            findings = []
+            try:
+                receipt = snapshot.json(owned["case_id"], "web_receipt.json")
+                if receipt.get("signature") != _sign(current, receipt["files"]):
+                    raise PermissionError("web_checkpoint_changed")
+                result = snapshot.json(run_id, "investigation_result.json")
+                for name in ("investigation_status.json", "investigation_result.json"):
+                    if receipt["files"].get(run_id + "/" + name) != hashlib.sha256(snapshot.read(run_id, name)).hexdigest():
+                        raise PermissionError("web_checkpoint_changed")
+                findings = result.get("findings", [])[:16]
+            except FileNotFoundError:
+                pass
+            snapshot.verify()
+            return {
+                "case_id": owned["case_id"], "run_id": run_id,
+                "status": status["status"], "mode": owned["mode"],
+                "intake": intake, "findings": findings,
+                "display_title": metadata.get("title") or (intake["task"] if intake else owned["case_id"]),
+                "archived": metadata.get("archived", False),
+                "created_at": owned.get("created_at"),
+                "report_readiness": "unavailable",
+            }
         if status.get("status") not in {
             "QUEUED",
             "RUNNING",
@@ -686,6 +945,20 @@ class WebInvestigations:
                 for finding in data["findings"]
             )
             data["completed_steps"] = completed
+        metadata = self.case_metadata(owned["case_id"], actor)
+        data["display_title"] = metadata.get("title") or (
+            data["intake"]["task"] if data["intake"] else owned["case_id"]
+        )
+        data["archived"] = metadata.get("archived", False)
+        data["report_readiness"] = "unavailable"
+        if authenticated and data["findings"]:
+            from beeagent_module.integrations.beescan.review import inspect_web_reports
+
+            readiness = []
+            for finding in data["findings"]:
+                report_status = inspect_web_reports(self, owned["case_id"], finding["finding_id"], actor)
+                readiness.append(report_status["reports"][-1]["report_readiness"] if report_status["reports"] else "review_required")
+            data["report_readiness"] = ", ".join(sorted(set(readiness)))
         encoded = json.dumps(data, allow_nan=False)
         if len(encoded.encode()) > 65536:
             raise ValueError("web_projection_limit")
@@ -699,22 +972,107 @@ class WebInvestigations:
             return []
         result = []
         seen = set()
+        def recency(path):
+            try:
+                info = path.stat(follow_symlinks=False)
+                if not stat.S_ISDIR(info.st_mode):
+                    return (-1, path.name)
+                return (info.st_mtime_ns, path.name)
+            except OSError:
+                return (-1, path.name)
+
         for path in sorted(
-            islice(root.iterdir(), 500), key=lambda p: p.name, reverse=True
+            (path for path in root.iterdir() if path.name.startswith("web-")),
+            key=recency,
+            reverse=True,
         ):
-            if not path.name.startswith("web-"):
-                continue
             try:
                 binding = _read_owned(
                     self.storage, self.reload_settings(), path.name, actor
                 )
-                view = self.inspect(binding["case_id"], actor)
+                if binding["case_id"] != path.name:
+                    continue
+                view = self.inspect(binding["case_id"], actor, summary=True)
                 if view["case_id"] in seen:
                     continue
                 seen.add(view["case_id"])
+                if view.get("archived"):
+                    continue
+                view.setdefault("created_at", binding.get("created_at"))
                 result.append(view)
             except OSError, ValueError, TypeError, KeyError:
                 continue
-            if len(result) == 25:
-                break
-        return result
+        return sorted(result, key=lambda row: (row.get("created_at") or "", row["case_id"]), reverse=True)
+
+    def case_metadata(self, case_id, actor):
+        current = self.reload_settings()
+        _read_owned(self.storage, current, case_id, actor)
+        try:
+            record = AssessmentSnapshot(self.storage).json(case_id, "web_metadata.json")
+        except FileNotFoundError:
+            return {}
+        value = record.get("value")
+        if (
+            type(value) is not dict
+            or set(value) != {"case_id", "title", "archived"}
+            or value["case_id"] != case_id
+            or type(value["title"]) is not str
+            or len(value["title"]) > 160
+            or type(value["archived"]) is not bool
+            or record.get("signature") != _sign(current, value)
+        ):
+            raise PermissionError("web_metadata_changed")
+        return value
+
+    def manage(self, action, payload, actor):
+        current = self.reload_settings()
+        principal(current, actor, execute=True)
+        expected = {"case_id", "title"} if action == "beescan_rename" else {"case_id", "confirmation"}
+        if action not in {"beescan_rename", "beescan_archive"} or type(payload) is not dict or set(payload) != expected:
+            raise ValueError("invalid_case_management")
+        case_id = payload["case_id"]
+        root = open_directory(self.storage / "runs")
+        try:
+            fcntl.flock(root, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            view = self.inspect(case_id, actor)
+            if view["status"] in {"QUEUED", "RUNNING"}:
+                raise PermissionError("case_active")
+            metadata = self.case_metadata(case_id, actor)
+            title = payload.get("title", metadata.get("title", ""))
+            if type(title) is not str or not title.strip() and action == "beescan_rename" or len(title) > 160 or any(ord(c) < 32 for c in title):
+                raise ValueError("invalid_case_title")
+            if action == "beescan_archive" and payload["confirmation"] != "ARCHIVE":
+                raise PermissionError("archive_confirmation_required")
+            value = {"case_id": case_id, "title": title.strip(), "archived": action == "beescan_archive" or metadata.get("archived", False)}
+            self._publish_metadata(case_id, {"value": value, "signature": _sign(current, value)})
+            return {"case_id": case_id, "archived": value["archived"]}
+        finally:
+            os.close(root)
+
+    def _publish_metadata(self, case_id, record):
+        from beeagent_module.integrations.beescan.detection_runner import read_regular
+
+        directory = open_directory(self.storage / "runs" / case_id / "module-beescan")
+        temporary = "web-metadata-" + secrets.token_hex(16) + ".pending"
+        try:
+            try:
+                previous = os.stat("web_metadata.json", dir_fd=directory, follow_symlinks=False)
+                if not stat.S_ISREG(previous.st_mode) or previous.st_nlink != 1 or previous.st_uid != os.getuid():
+                    raise PermissionError("unsafe_web_metadata")
+            except FileNotFoundError:
+                pass
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(json.dumps(record, sort_keys=True).encode())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, "web_metadata.json", src_dir_fd=directory, dst_dir_fd=directory)
+            os.fsync(directory)
+            if json.loads(read_regular("web_metadata.json", limit=131072, dir_fd=directory, owner_uid=os.getuid())) != record:
+                raise OSError("web_metadata_readback_failed")
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            os.close(directory)

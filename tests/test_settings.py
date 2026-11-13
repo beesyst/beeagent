@@ -25,8 +25,11 @@ def _isolated_global_ai(request, monkeypatch, isolated_ai_settings, tmp_path):
         settings = isolated_ai_settings(read_test_settings(), request.param)
         config = tmp_path / "settings-loader" / "config"
         config.mkdir(parents=True, exist_ok=True)
+        config.parent.chmod(0o700)
+        config.chmod(0o700)
         path = config / "settings.yml"
         path.write_text(yaml.safe_dump(settings))
+        path.chmod(0o600)
         return load_settings(path)
 
     monkeypatch.setattr(f"{__name__}.load_test_settings", load_isolated)
@@ -653,6 +656,7 @@ def test_independent_tests_ignore_operator_settings(
         module["enabled"] = module["id"] == "beescan" or modules_enabled
     config = tmp_path / "config"
     (config / "rop").mkdir(parents=True)
+    config.chmod(0o700)
     (config / "prompts.yml").write_bytes(
         (_project_root() / "config/prompts.yml").read_bytes()
     )
@@ -661,6 +665,7 @@ def test_independent_tests_ignore_operator_settings(
     )
     operator_path = config / "settings.yml"
     operator_path.write_text(yaml.safe_dump(settings))
+    operator_path.chmod(0o600)
     runtime_load_settings(operator_path)
     nodes = [
         "test_settings.py::test_load_settings_uses_ai_source_of_truth_without_llm",

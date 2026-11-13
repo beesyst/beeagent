@@ -485,3 +485,41 @@ def load_assessment(storage_dir, assessment_run_id, settings):
     contains(parent, {"result": expected.data["result"]})
     snapshot.verify()
     return assessment, snapshot
+
+
+def load_web_dast(service, settings, case_id, finding_id, actor):
+    from beescan.domain.assessment_selection import AssessmentAction, ObservedEntry
+    from beescan.domain.reviewed_case import DastReviewInput
+
+    from beeagent_module.integrations.beescan.case_state import load_case
+    from beeagent_module.integrations.beescan.dast import _restore
+    from beeagent_module.integrations.beescan.web import _read_owned
+
+    binding = _read_owned(service.storage, settings, case_id, actor)
+    if binding["case_id"] != case_id:
+        raise PermissionError("exact_web_case_required")
+    state, snapshot = load_case(service.storage, case_id)
+    if (
+        state["schema_version"] not in {3, 4}
+        or state["status"] != "CANDIDATE"
+        or state["pending"] is not False
+    ):
+        raise ValueError("completed_dast_candidate_required")
+    if snapshot.json(case_id, "web_receipt.json") != service._receipt(
+        snapshot, settings
+    ):
+        raise PermissionError("web_source_authentication_failed")
+    action = None
+    if state["schema_version"] == 4:
+        raw = dict(state["assessment"]["action"])
+        entry = dict(raw["entry"])
+        for key in ("parameter_names", "evidence_refs"):
+            entry[key] = tuple(entry[key])
+        action = AssessmentAction(**{**raw, "entry": ObservedEntry(**entry)})
+        child = state["assessment"]["run_id"]
+    else:
+        child = state["segments"][-1]
+    intent, execution, outcome, _ = _restore(snapshot, child)
+    source = DastReviewInput(intent, execution, outcome, finding_id, action)
+    snapshot.verify()
+    return source, snapshot

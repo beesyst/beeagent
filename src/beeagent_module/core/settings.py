@@ -103,6 +103,10 @@ def load_settings(settings_path: Path, *, bootstrap: bool = False) -> dict:
     if not settings_path.exists():
         raise RuntimeError(f"Settings file not found: {settings_path}")
 
+    from beeagent_module.integrations.beescan.policy import validate_target_policy_file
+
+    validate_target_policy_file(settings_path)
+
     with settings_path.open("r", encoding="utf-8") as file:
         content = yaml.safe_load(file)
 

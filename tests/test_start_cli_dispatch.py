@@ -1213,8 +1213,9 @@ def beescan_bootstrap_project(monkeypatch, tmp_path):
         "detection_enabled": False,
         "detection_approval": None,
     }
-    (tmp_path / "config").mkdir()
+    (tmp_path / "config").mkdir(mode=0o700)
     (tmp_path / "config/settings.yml").write_text(yaml.safe_dump(settings))
+    (tmp_path / "config/settings.yml").chmod(0o600)
     monkeypatch.setattr(start_module, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(start_module, "sync_env_with_example", lambda *_: None)
     monkeypatch.setattr(start_module, "load_dotenv", lambda *_a, **_k: None)

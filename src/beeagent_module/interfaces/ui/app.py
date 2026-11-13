@@ -361,7 +361,8 @@ def _register_beescan_boundary(app, adapter):
                 if path == "/beescan":
                     query = dict(request.query_params)
                     if (
-                        set(query) - {"lang", "run_id", "q", "tab"}
+                        set(query)
+                        - {"lang", "run_id", "q", "tab", "page", "status", "sort"}
                         or query.get("tab", "investigation")
                         not in {"investigation", "results"}
                         or len(query.get("q", "")) > 128
@@ -400,6 +401,53 @@ def _register_beescan_boundary(app, adapter):
             )
             return _ok_json(data)
         except OSError, ValueError, PermissionError, KeyError, TypeError:
+            return _forbidden_response()
+
+    @app.get("/api/beescan/report", include_in_schema=False)
+    async def beescan_report(request: Request):
+        from beeagent_module.integrations.beescan.review import inspect_web_reports
+
+        query = dict(request.query_params)
+        if (
+            len(request.query_params.multi_items()) != 5
+            or set(query)
+            != {
+                "case_id",
+                "finding_id",
+                "report_run_id",
+                "format",
+                "download",
+            }
+            or query["download"] not in {"true", "false"}
+        ):
+            return _error_json("invalid_params", status_code=400)
+        try:
+            content = await run_in_threadpool(
+                inspect_web_reports,
+                adapter.beescan,
+                query["case_id"],
+                query["finding_id"],
+                web_actor.get(),
+                report_run_id=query["report_run_id"],
+                artifact=query["format"],
+            )
+            if type(content) is not bytes:
+                raise ValueError("report_unavailable")
+            if query["download"] == "false":
+                return _ok_json({"content": content.decode("utf-8")})
+            suffix = "json" if query["format"] == "json" else "md"
+            return Response(
+                content,
+                media_type="application/json" if suffix == "json" else "text/markdown",
+                headers={
+                    "Content-Disposition": "attachment; filename=vulnerability."
+                    + suffix,
+                    "Content-Security-Policy": "sandbox; default-src 'none'",
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except OSError, ValueError, PermissionError, KeyError, TypeError, ImportError:
             return _forbidden_response()
 
 

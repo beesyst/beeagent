@@ -59,13 +59,34 @@ def _workspace_context(service, query, actor):
 
     settings = service.reload_settings()
     actor_id = principal(settings, actor)
-    if set(query) - {"lang", "run_id", "q", "tab"}:
+    if set(query) - {"lang", "run_id", "q", "tab", "page", "status", "sort"}:
         raise ValueError("invalid_beescan_query")
     if query.get("tab", "investigation") not in {"investigation", "results"}:
         raise ValueError("invalid_beescan_tab")
     search = query.get("q", "")
     if type(search) is not str or len(search) > 128:
         raise ValueError("invalid_beescan_search")
+    page = query.get("page", "1")
+    if not isinstance(page, str) or not page.isdecimal() or not 1 <= int(page) <= 10000:
+        raise ValueError("invalid_beescan_page")
+    status_filter = query.get("status", "")
+    if status_filter not in {
+        "",
+        "QUEUED",
+        "RUNNING",
+        "CANDIDATE",
+        "NO_MATCH",
+        "PARTIAL",
+        "ERROR",
+        "REFUSED",
+        "TIMEOUT",
+        "INCONCLUSIVE",
+        "MATCH",
+    }:
+        raise ValueError("invalid_beescan_status")
+    sort = query.get("sort", "recent")
+    if sort not in {"recent", "title"}:
+        raise ValueError("invalid_beescan_sort")
     ru = query.get("lang") == "ru"
     labels = {
         "title": ("Исследование BeeScan", "BeeScan investigation"),
@@ -111,6 +132,7 @@ def _workspace_context(service, query, actor):
     }
     labels = {key: values[0 if ru else 1] for key, values in labels.items()}
     config = settings["beescan"]["investigation"]
+    dynamic = "target_policy" in settings["beescan"]
     approval = config.get("approval") or {}
     transport = approval.get("transport", {})
     target_approved = False
@@ -121,6 +143,16 @@ def _workspace_context(service, query, actor):
         target_approved = True
     except PermissionError, ValueError, TypeError, KeyError:
         pass
+    if dynamic:
+        from beeagent_module.integrations.beescan.policy import target_exclusions
+
+        target_exclusions(settings)
+        target_approved = True
+        labels["disabled"] = (
+            "Выполнение недоступно: проверьте права и runtime."
+            if ru
+            else "Execution unavailable: check permissions and runtime."
+        )
     enabled = False
     try:
         principal(settings, actor, execute=True)
@@ -138,32 +170,44 @@ def _workspace_context(service, query, actor):
         pass
     selected = service.inspect(query["run_id"], actor) if query.get("run_id") else None
     records = service.history(actor)
-    if selected and not any(row["case_id"] == selected["case_id"] for row in records):
-        records.insert(0, selected)
     records = [
         row
         for row in records
         if search.casefold()
         in (
-            (row["intake"]["task"] if row["intake"] else row["case_id"])
+            row.get("display_title", row["case_id"])
             + " "
             + row["status"]
+            + " "
+            + (row["intake"]["target"] if row["intake"] else "")
         ).casefold()
     ]
+    if status_filter:
+        records = [row for row in records if row["status"] == status_filter]
+    if sort == "title":
+        records.sort(
+            key=lambda row: (
+                row.get("display_title", row["case_id"])
+            ).casefold()
+        )
     search_empty = bool(search and not records)
-    if selected and not any(row["case_id"] == selected["case_id"] for row in records):
-        records.insert(0, selected)
-    records = records[:25]
+    total_records = len(records)
+    offset = (int(page) - 1) * 25
+    records = records[offset : offset + 25]
     return {
         "search_empty": search_empty,
         "title": labels["title"],
         "labels": labels,
         "selected": selected,
         "records": records,
+        "page": int(page),
+        "total_records": total_records,
+        "status_filter": status_filter,
+        "sort": sort,
         "search": search,
         "enabled": enabled,
         "nonce": service.nonce(actor),
-        "target": transport.get("origin", ""),
+        "target": "" if dynamic else transport.get("origin", ""),
         "task_chars_max": config["task_chars_max"],
         "modes": list(PROFILES),
         "approval": {
@@ -243,8 +287,11 @@ def presentation(selected, config, locale="en", *, settings=None):
         "context": inspection(selected, config, locale, settings=settings),
         "messages": messages,
         "values": values,
-        "complete": selected["evidence_authenticated"]
-        and selected["status"] not in {"QUEUED", "RUNNING"},
+        "complete": selected["status"] in {"ERROR", "REFUSED", "TIMEOUT"}
+        or (
+            selected["evidence_authenticated"]
+            and selected["status"] not in {"QUEUED", "RUNNING"}
+        ),
     }
 
 
@@ -304,7 +351,33 @@ def inspection(selected, config, locale="en", *, settings=None):
             ],
         }
     ]
-    if settings is not None:
+    dynamic = settings is not None and "target_policy" in settings.get("beescan", {})
+    if dynamic:
+        sections[0] = {
+            "id": "execution",
+            "title": "Выполнение" if ru else "Execution",
+            "items": [
+                item(
+                    "target",
+                    "Цель кейса" if ru else "Case Target",
+                    intake["target"] if intake else None,
+                ),
+                item(
+                    "execution-status",
+                    "Состояние" if ru else "State",
+                    selected["status"]
+                    if selected
+                    else ("Готово к запуску" if ru else "Ready for intake"),
+                    selected.get("reason") or "" if selected else "",
+                ),
+                item(
+                    "execution-policy",
+                    "Управление" if ru else "Execution policy",
+                    "Серверная политика" if ru else "Server managed",
+                ),
+            ],
+        }
+    if settings is not None and not dynamic:
         import os
 
         from beeagent_module.integrations.beescan.dast import _current
@@ -440,7 +513,31 @@ def inspection(selected, config, locale="en", *, settings=None):
             },
         ]
     )
-    return {"title": "Контекст" if ru else "Context", "sections": sections}
+    from urllib.parse import urlsplit
+
+    advanced = "\n".join(
+        section["title"] + ": " + "; ".join(
+            entry["label"] + " = " + entry["value"]
+            for entry in section["items"]
+        )
+        for section in sections
+    )[:4096]
+    return {
+        "title": "Контекст" if ru else "Context",
+        "sections": [{
+            "id": "summary",
+            "title": "Сводка" if ru else "Summary",
+            "items": [
+                item("target", "Цель" if ru else "Target", urlsplit(intake["target"]).netloc if intake else unavailable),
+                item("status", "Статус" if ru else "Status", selected["status"], selected.get("reason") or ""),
+                item("operation", "Действие" if ru else "Operation", selected["steps"][-1]["step"] if selected["steps"] else unavailable),
+                item("requests", "Запросы" if ru else "Requests", selected["request_count"]),
+                item("findings", "Находки" if ru else "Findings", len(selected["findings"])),
+                item("report", "Отчёт" if ru else "Report", selected.get("report_readiness", unavailable)),
+                item("advanced", "Подробности" if ru else "Details", "Технические сведения" if ru else "Technical details", advanced),
+            ],
+        }],
+    }
 
 
 def workspace(service, query, actor):
@@ -454,31 +551,114 @@ def workspace(service, query, actor):
     config = service.reload_settings()["beescan"]["investigation"]
     tab = query.get("tab", "investigation")
     href = "/beescan?" + urlencode({"lang": locale, "tab": tab})
-    history_href = href + (
-        "&" + urlencode({"q": model["search"]}) if model["search"] else ""
-    )
+    history_href = href + "&" + urlencode({
+        "q": model["search"],
+        "status": model["status_filter"],
+        "sort": model["sort"],
+        "page": model["page"],
+    })
     if tab == "results":
+        table_query = {
+            "lang": locale,
+            "tab": "results",
+            **({"q": model["search"]} if model["search"] else {}),
+            **({"status": model["status_filter"]} if model["status_filter"] else {}),
+            **({"sort": model["sort"]} if model["sort"] != "recent" else {}),
+        }
+        table_href = "/beescan?" + urlencode(table_query)
+        pages = max(1, (model["total_records"] + 24) // 25)
         context = inspection(
             selected, config, locale, settings=service.reload_settings()
         )
         layout = [
             {
-                "type": "quick_links",
+                "type": "data_table",
                 "width": 12,
+                "id": "beescan-cases",
                 "title": labels["cases"],
-                "items": [
+                "mobile": "md",
+                "toolbar": {
+                    "hidden": {"lang": locale, "tab": "results"},
+                    "fields": [
+                        {"name": "q", "type": "text", "label": labels["search"], "value": model["search"]},
+                        {
+                            "name": "status",
+                            "type": "select",
+                            "label": "Статус" if ru else "Status",
+                            "value": model["status_filter"],
+                            "options": [
+                                {"value": "", "label": "Все" if ru else "All"},
+                                *[{"value": value, "label": value} for value in ("CANDIDATE", "NO_MATCH", "MATCH", "PARTIAL", "ERROR", "REFUSED", "TIMEOUT", "INCONCLUSIVE")],
+                            ],
+                        },
+                        {
+                            "name": "sort",
+                            "type": "select",
+                            "label": "Сортировка" if ru else "Sort",
+                            "value": model["sort"],
+                            "options": [
+                                {"value": "recent", "label": "Сначала новые" if ru else "Recent first"},
+                                {"value": "title", "label": "Название" if ru else "Title"},
+                            ],
+                        },
+                    ],
+                    "apply": {"label": "Применить" if ru else "Apply", "href": "/beescan"},
+                },
+                "columns": [
+                    {"key": "title", "label": "Название" if ru else "Case title", "cell": "text"},
+                    {"key": "target", "label": labels["target"], "cell": "text"},
+                    {"key": "created", "label": "Дата" if ru else "Created", "cell": "text"},
+                    {"key": "mode", "label": labels["mode"], "cell": "text"},
+                    {"key": "status", "label": "Статус" if ru else "Status", "cell": "text"},
+                    {"key": "findings", "label": "Находки" if ru else "Findings", "cell": "text"},
+                    {"key": "report", "label": "Отчёт" if ru else "Report", "cell": "text"},
+                    {"key": "actions", "label": "", "cell": "actions"},
+                ],
+                "rows": [
                     {
-                        "label": (
-                            row["intake"]["task"] if row["intake"] else row["case_id"]
-                        )
-                        + " · "
-                        + row["status"],
-                        "href": history_href
-                        + "&"
-                        + urlencode({"run_id": row["run_id"]}),
+                        "title": {"label": row.get("display_title", row["case_id"])},
+                        "created": {"label": row.get("created_at", "—")},
+                        "target": {"label": row["intake"]["target"] if row["intake"] else "—"},
+                        "mode": {"label": row["mode"].title()},
+                        "status": {"label": row["status"]},
+                        "findings": {"label": str(len(row["findings"]))},
+                        "report": {"label": row.get("report_readiness", "unavailable")},
+                        "actions": [
+                            {
+                                "href": table_href + "&" + urlencode({"run_id": row["run_id"], "page": model["page"]}),
+                                "label": "Подробнее" if ru else "Details",
+                            }
+                            ,{
+                                "action_id": "beescan_rename",
+                                "label": "Переименовать" if ru else "Rename",
+                                "flow": "direct_execute",
+                                "args": {"case_id": row["case_id"]},
+                                "fields": [{"name": "title", "label": "Название" if ru else "Title", "type": "text", "required": True, "max_length": 160, "value": row.get("display_title", row["case_id"])[:160]}],
+                            },
+                            {
+                                "action_id": "beescan_archive",
+                                "label": "Архивировать" if ru else "Archive",
+                                "flow": "direct_execute",
+                                "confirmation": "Archive Case?",
+                                "args": {"case_id": row["case_id"]},
+                                "fields": [{"name": "confirmation", "label": "Введите ARCHIVE" if ru else "Type ARCHIVE", "type": "text", "required": True, "value": ""}],
+                            },
+                        ],
                     }
                     for row in model["records"]
                 ],
+                "pagination": {
+                    "label": "Страницы" if ru else "Pages",
+                    "pages": [
+                        {
+                            "number": number,
+                            "label": str(number),
+                            "href": table_href + "&" + urlencode({"page": number}),
+                            "active": number == model["page"],
+                        }
+                        for number in range(1, pages + 1)
+                    ],
+                },
             }
         ]
         if not selected:
@@ -514,6 +694,7 @@ def workspace(service, query, actor):
                 }
                 for section in context["sections"]
             )
+        layout.extend(review_workspace(service, selected, actor, locale))
         return {"layout": layout}
     layout = []
     normalized = (
@@ -544,9 +725,9 @@ def workspace(service, query, actor):
                 "protocols": ["http", "https"],
                 "origin_only": True,
                 "invalid_message": (
-                    "Укажите разрешённый HTTP(S) origin. Другие типы целей пока не поддерживаются."
+                    "Укажите публичный HTTP(S) origin. Другие типы целей пока не поддерживаются."
                     if ru
-                    else "Enter an approved HTTP(S) origin. Other target types are not supported yet."
+                    else "Enter a public HTTP(S) origin. Other target types are not supported yet."
                 ),
             },
             {
@@ -612,7 +793,7 @@ def workspace(service, query, actor):
             "history": [
                 {
                     "id": row["case_id"],
-                    "title": row["intake"]["task"] if row["intake"] else row["case_id"],
+                    "title": row.get("display_title", row["case_id"]),
                     "href": history_href + "&" + urlencode({"run_id": row["run_id"]}),
                     "active": bool(selected and selected["case_id"] == row["case_id"]),
                     "status": row["status"],
@@ -657,3 +838,316 @@ def workspace(service, query, actor):
         }
     )
     return {"layout": layout}
+
+
+def review_workspace(service, selected, actor, locale):
+    from urllib.parse import urlencode
+
+    from beeagent_module.integrations.beescan.review import (
+        ATTESTATION,
+        _web_authority,
+        inspect_web_reports,
+    )
+
+    if (
+        not selected
+        or not selected["evidence_authenticated"]
+        or selected["case_status"] != "CANDIDATE"
+    ):
+        return []
+    ru = locale == "ru"
+    mutable = True
+    try:
+        _web_authority(service, service.reload_settings(), actor, mutate=True)
+    except PermissionError:
+        mutable = False
+    translated = {
+        "Finding": "Находка",
+        "Review": "Проверка",
+        "Readiness": "Готовность",
+        "Submission eligible": "Готов к ручной отправке",
+        "Missing information": "Недостающие данные",
+        "Evidence": "Доказательства",
+        "Target": "Цель",
+        "Endpoint": "Endpoint",
+        "Parameters": "Параметры",
+        "Prerequisites": "Предусловия",
+        "Reproduction": "Воспроизведение",
+        "Expected": "Ожидаемое поведение",
+        "Observed": "Наблюдаемое поведение",
+        "Impact": "Влияние",
+        "Program requirements": "Требования программы",
+        "Remediation": "Рекомендации",
+    }
+    rows, links, previews = [], [], []
+    for finding in selected["findings"]:
+        status = inspect_web_reports(
+            service, selected["case_id"], finding["finding_id"], actor
+        )
+        args = {"case_id": selected["case_id"], "finding_id": finding["finding_id"]}
+        actions = []
+        if mutable and status["review_id"] is None:
+            actions.append(
+                {
+                    "action_id": "beescan_review",
+                    "label": "Проверить" if ru else "Review",
+                    "flow": "direct_execute",
+                    "args": args,
+                    "fields": [
+                        {
+                            "name": "disposition",
+                            "label": "Решение" if ru else "Disposition",
+                            "type": "radio",
+                            "required": True,
+                            "value": "inconclusive",
+                            "options": [
+                                {"value": value, "label": value.upper()}
+                                for value in ("inconclusive", "rejected", "verified")
+                            ],
+                        },
+                        {
+                            "name": "decision_basis",
+                            "label": "Основание решения" if ru else "Decision basis",
+                            "type": "text",
+                            "required": True,
+                            "max_length": 512,
+                            "value": "",
+                        },
+                        {
+                            "name": "evidence_text",
+                            "label": "Независимые доказательства без секретов"
+                            if ru
+                            else "Independent evidence without secrets",
+                            "type": "text",
+                            "required": False,
+                            "max_length": 4096,
+                            "value": "",
+                        },
+                        {
+                            "name": "independence_attestation",
+                            "label": "Подтверждение независимости"
+                            if ru
+                            else "Independence attestation",
+                            "type": "radio",
+                            "required": True,
+                            "value": "unconfirmed",
+                            "options": [
+                                {
+                                    "value": "unconfirmed",
+                                    "label": "Не подтверждено" if ru else "Unconfirmed",
+                                },
+                                {
+                                    "value": ATTESTATION,
+                                    "label": "Я собрал доказательства независимо от автоматического исследования для этой находки."
+                                    if ru
+                                    else ATTESTATION,
+                                },
+                            ],
+                        },
+                    ],
+                }
+            )
+        if mutable:
+            fields = [
+                {
+                    "name": key,
+                    "label": translated.get(label, label) if ru else label,
+                    "type": "text",
+                    "required": False,
+                    "max_length": maximum,
+                    "value": "",
+                }
+                for key, label, maximum in (
+                    ("prerequisites", "Предусловия" if ru else "Prerequisites", 6144),
+                    (
+                        "reproduction_steps",
+                        "Шаг воспроизведения" if ru else "Reproduction step",
+                        6144,
+                    ),
+                    (
+                        "expected_behavior",
+                        "Ожидаемое поведение" if ru else "Expected behavior",
+                        1024,
+                    ),
+                    (
+                        "observed_behavior",
+                        "Наблюдаемое поведение" if ru else "Observed behavior",
+                        1024,
+                    ),
+                    (
+                        "impact",
+                        "Подтверждённое влияние" if ru else "Supported impact",
+                        1024,
+                    ),
+                    ("remediation", "Рекомендации" if ru else "Remediation", 1024),
+                    (
+                        "program_requirements",
+                        "Требования программы" if ru else "Program requirements",
+                        1024,
+                    ),
+                )
+            ]
+            fields.extend(
+                {
+                    "name": key,
+                    "label": translated.get(label, label) if ru else label,
+                    "type": "radio",
+                    "required": True,
+                    "value": "false",
+                    "options": [
+                        {
+                            "value": "false",
+                            "label": "Не подтверждено" if ru else "Unconfirmed",
+                        },
+                        {
+                            "value": "true",
+                            "label": "Подтверждаю" if ru else "I confirm",
+                        },
+                    ],
+                }
+                for key, label in (
+                    (
+                        "reproduction_confirmed",
+                        "Воспроизведение" if ru else "Reproduction",
+                    ),
+                    ("impact_confirmed", "Влияние" if ru else "Impact"),
+                    (
+                        "program_confirmed",
+                        "Правила программы" if ru else "Program rules",
+                    ),
+                )
+            )
+            actions.append(
+                {
+                    "action_id": "beescan_report_prepare",
+                    "flow": "direct_execute",
+                    "label": "Подготовить отчёт" if ru else "Prepare report",
+                    "args": {**args, "review_id": status["review_id"] or ""},
+                    "fields": fields,
+                }
+            )
+        latest = status["reports"][-1] if status["reports"] else None
+        rows.append(
+            {
+                "finding": {"label": finding["finding_id"]},
+                "review": {"label": status["review_disposition"]},
+                "readiness": {
+                    "label": latest["report_readiness"] if latest else "unavailable"
+                },
+                "eligible": {
+                    "label": str(latest["submission_eligible"]) if latest else "False"
+                },
+                "missing": {
+                    "label": ", ".join(latest["missing_information"])
+                    if latest
+                    else "reproduction, impact, program_requirements"
+                },
+                "evidence": {"label": ", ".join(status.get("evidence_refs", []))},
+                "actions": actions,
+            }
+        )
+        if latest:
+            import json
+
+            report_data = json.loads(
+                inspect_web_reports(
+                    service,
+                    selected["case_id"],
+                    finding["finding_id"],
+                    actor,
+                    report_run_id=latest["report_run_id"],
+                    artifact="json",
+                )
+            )
+            assertions = report_data["operator_assertions"]
+            previews.append(
+                {
+                    "type": "state_grid",
+                    "width": 12,
+                    "title": "Предпросмотр отчёта" if ru else "Report preview",
+                    "items": [
+                        {
+                            "label": translated.get(label, label) if ru else label,
+                            "value": value or ("Недоступно" if ru else "Unavailable"),
+                        }
+                        for label, value in (
+                            ("Target", report_data["origin"]),
+                            ("Endpoint", report_data["endpoint_path"]),
+                            ("Parameters", ", ".join(report_data["parameter_names"])),
+                            ("Prerequisites", "; ".join(assertions["prerequisites"])),
+                            (
+                                "Reproduction",
+                                "; ".join(assertions["reproduction_steps"]),
+                            ),
+                            ("Expected", assertions["expected_behavior"]),
+                            ("Observed", assertions["observed_behavior"]),
+                            ("Impact", assertions["impact"]),
+                            (
+                                "Program requirements",
+                                assertions["program_requirements"],
+                            ),
+                            ("Remediation", assertions["remediation"]),
+                        )
+                    ],
+                }
+            )
+        for report in status["reports"]:
+            for output in (
+                "json",
+                "markdown",
+                *(("draft",) if report["submission_eligible"] else ()),
+            ):
+                links.append(
+                    {
+                        "label": str(report["revision"] + 1) + " · " + output.upper(),
+                        "href": "/api/beescan/report?"
+                        + urlencode(
+                            {
+                                **args,
+                                "report_run_id": report["report_run_id"],
+                                "format": output,
+                                "download": "true",
+                            }
+                        ),
+                    }
+                )
+    if not rows:
+        return []
+    layout = [
+        {
+            "type": "data_table",
+            "width": 12,
+            "id": "beescan-reviews",
+            "title": "Независимая проверка и отчёты"
+            if ru
+            else "Independent review and reports",
+            "columns": [
+                {
+                    "key": key,
+                    "label": translated.get(label, label) if ru else label,
+                    "cell": "actions" if key == "actions" else "text",
+                }
+                for key, label in (
+                    ("finding", "Finding"),
+                    ("review", "Review"),
+                    ("readiness", "Readiness"),
+                    ("eligible", "Submission eligible"),
+                    ("missing", "Missing information"),
+                    ("evidence", "Evidence"),
+                    ("actions", ""),
+                )
+            ],
+            "rows": rows,
+        }
+    ]
+    layout.extend(previews)
+    if links:
+        layout.append(
+            {
+                "type": "quick_links",
+                "width": 12,
+                "title": "Скачать отчёты" if ru else "Download reports",
+                "items": links,
+            }
+        )
+    return layout
