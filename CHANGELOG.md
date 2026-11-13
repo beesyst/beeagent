@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.90.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.89.0...beeagent-v0.90.0) (2026-11-13)
+
+
+### Features
+
+* **beescan:** complete web investigation and reporting workflow ([#366](https://github.com/beesyst/beeagent/issues/366)) ([6fa8dc0](https://github.com/beesyst/beeagent/commit/6fa8dc07f46ce176e2108cc29b88f773168d3c8d))
+
 ## [0.89.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.88.0...beeagent-v0.89.0) (2026-11-11)
 
 
