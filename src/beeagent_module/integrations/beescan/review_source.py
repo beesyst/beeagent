@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -80,9 +81,28 @@ class AssessmentSnapshot:
                 child = open_child(descriptor, part)
                 os.close(descriptor)
                 descriptor = child
-            raw = read_regular(
-                name, limit=131072, dir_fd=descriptor, owner_uid=os.getuid()
-            )
+            try:
+                raw = read_regular(
+                    name, limit=131072, dir_fd=descriptor, owner_uid=os.getuid()
+                )
+            except PermissionError as error:
+                if name not in {
+                    "investigation_status.json",
+                    "investigation_steps.json",
+                }:
+                    raise
+                if str(error) == "invalid_owned_asset":
+                    info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_uid != os.getuid()
+                        or info.st_mode & 0o077
+                        or info.st_nlink != 1
+                    ):
+                        raise
+                elif str(error) != "owned_asset_changed":
+                    raise
+                raise ValueError("assessment_source_changed") from None
         finally:
             os.close(descriptor)
         key = (run_id, name)
@@ -499,6 +519,34 @@ def load_web_dast(service, settings, case_id, finding_id, actor):
     if binding["case_id"] != case_id:
         raise PermissionError("exact_web_case_required")
     state, snapshot = load_case(service.storage, case_id)
+    if state["schema_version"] in {5, 6}:
+        from beescan.domain.access_control import AccessReviewInput
+
+        from beeagent_module.integrations.beescan.access_control import restore
+
+        if snapshot.json(case_id, "web_receipt.json") != service._receipt(
+            snapshot, settings
+        ):
+            raise PermissionError("web_source_authentication_failed")
+        names = (
+            state["comparisons"]
+            if state["schema_version"] == 6
+            else ["access_control.json"]
+        )
+        sources = [restore(snapshot.json(case_id, name)) for name in names]
+        from beescan.domain.access_control import evaluate_access
+
+        selected = [
+            (i, e)
+            for i, e in sources
+            if any(f.finding_id == finding_id for f in evaluate_access(i, e).findings)
+        ]
+        if len(selected) != 1:
+            raise ValueError("original_access_candidate_required")
+        intent, execution = selected[0]
+        source = AccessReviewInput(intent, execution, finding_id)
+        snapshot.verify()
+        return source, snapshot
     if (
         state["schema_version"] not in {3, 4}
         or state["status"] != "CANDIDATE"

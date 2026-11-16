@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any, overload
 from uuid import uuid4
 
+from beescan.domain.access_control import AccessFindingReview, AccessReviewInput
+from beescan.domain.reviewed_case import DastFindingReview, DastReviewInput
+from beescan.domain.triage import HostReview, ReviewDisposition
+
 from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.module_registry import ModuleRegistry
@@ -625,8 +629,20 @@ def _read_web_package(service, settings, actor, run_id, source, snapshot, kind):
     return binding, package
 
 
+def _web_review_type(
+    source: AccessReviewInput | DastReviewInput,
+    disposition: ReviewDisposition,
+    basis: str,
+    host: HostReview,
+) -> AccessFindingReview | DastFindingReview:
+    if type(source) is DastReviewInput:
+        return DastFindingReview(source, disposition, basis, host)
+    if type(source) is not AccessReviewInput:
+        raise ValueError("unsupported_review_source")
+    return AccessFindingReview(source, disposition, basis, host)
+
+
 def _load_web_review(service, settings, actor, source, snapshot):
-    from beescan.domain.reviewed_case import DastFindingReview
     from beescan.domain.triage import HostReview, ReviewDisposition
 
     run_id = _web_review_id(source.intent.parent_run_id, source.finding_id)
@@ -649,7 +665,7 @@ def _load_web_review(service, settings, actor, source, snapshot):
         != (ATTESTATION if host.independent_evidence_refs else None)
     ):
         raise ValueError("web_review_identity_changed")
-    return DastFindingReview(
+    return _web_review_type(
         source, ReviewDisposition(record["disposition"]), record["decision_basis"], host
     )
 
@@ -693,7 +709,6 @@ def execute_web_review(service, action, payload, actor):
 
     from beescan.domain.models import validate_identifier
     from beescan.domain.reviewed_case import (
-        DastFindingReview,
         build_vulnerability_report,
     )
     from beescan.domain.triage import HostReview, ReviewDisposition
@@ -787,7 +802,7 @@ def execute_web_review(service, action, payload, actor):
                 True,
                 (review_id + "-e",) if evidence else (),
             )
-            review = DastFindingReview(source, disposition, basis, host)
+            review = _web_review_type(source, disposition, basis, host)
             claim = "he-" + evidence_digest[:48]
             if evidence:
                 os.mkdir(claim, mode=0o700, dir_fd=runs)

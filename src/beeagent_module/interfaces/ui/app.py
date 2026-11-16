@@ -166,6 +166,13 @@ def _event_detail_error_status(code: str) -> int:
     return 500
 
 
+def _beescan_in_progress_error(error: Exception) -> bool:
+    return isinstance(error, ValueError) and str(error) in {
+        "assessment_source_changed",
+        "web_status_changed",
+    }
+
+
 def build_beeui_settings(agent_settings: dict[str, Any]) -> dict[str, Any]:
     web_cfg = agent_settings.get("web", {})
     log_cfg = agent_settings.get("logging", {})
@@ -372,7 +379,11 @@ def _register_beescan_boundary(app, adapter):
                         await run_in_threadpool(
                             adapter.beescan.inspect, query["run_id"], actor
                         )
-            except OSError, ValueError, KeyError, TypeError:
+            except ValueError as error:
+                if _beescan_in_progress_error(error):
+                    return _error_json("case_updating", status_code=409)
+                return _forbidden_response()
+            except OSError, KeyError, TypeError:
                 return _forbidden_response()
         token = web_actor.set(actor)
         try:
@@ -400,7 +411,11 @@ def _register_beescan_boundary(app, adapter):
                 data, settings["beescan"]["investigation"], locale, settings=settings
             )
             return _ok_json(data)
-        except OSError, ValueError, PermissionError, KeyError, TypeError:
+        except ValueError as error:
+            if _beescan_in_progress_error(error):
+                return _error_json("case_updating", status_code=409)
+            return _forbidden_response()
+        except OSError, PermissionError, KeyError, TypeError:
             return _forbidden_response()
 
     @app.get("/api/beescan/report", include_in_schema=False)

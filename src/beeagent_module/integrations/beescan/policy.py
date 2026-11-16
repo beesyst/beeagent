@@ -94,15 +94,9 @@ def public_destination(value):
     )
 
 
-def check_web_target(settings, target, *, connected_ip=None):
-    from beescan.domain.locators import canonical_locator
-    from beescan.domain.models import TargetKind
-
-    from beeagent_module.integrations.beescan.http_runner import resolve_addresses
-
+def check_target_exclusions(settings, target, *, addresses=()):
     exclusions = target_exclusions(settings)
-    origin = canonical_locator(TargetKind.URL, target)
-    host = urlsplit(origin).hostname
+    host = urlsplit(target).hostname
     if host is None:
         raise ValueError("invalid_target")
     for kind, value in exclusions:
@@ -113,6 +107,30 @@ def check_web_target(settings, target, *, connected_ip=None):
             and (host == value or host.endswith("." + value))
         ):
             raise PermissionError("target_excluded")
+    for raw in addresses:
+        address = ip_address(raw)
+        for kind, value in exclusions:
+            if (
+                kind == "address"
+                and address == value
+                or kind == "network"
+                and address.version == value.version
+                and address in value
+            ):
+                raise PermissionError("target_excluded")
+
+
+def check_web_target(settings, target, *, connected_ip=None):
+    from beescan.domain.locators import canonical_locator
+    from beescan.domain.models import TargetKind
+
+    from beeagent_module.integrations.beescan.http_runner import resolve_addresses
+
+    origin = canonical_locator(TargetKind.URL, target)
+    host = urlsplit(origin).hostname
+    if host is None:
+        raise PermissionError("invalid_target")
+    check_target_exclusions(settings, origin)
     try:
         literal = ip_address(host)
     except ValueError:
@@ -126,17 +144,8 @@ def check_web_target(settings, target, *, connected_ip=None):
         addresses = resolve_addresses(origin)
     if not addresses or len(addresses) > 16:
         raise PermissionError("dns_unverified")
+    check_target_exclusions(settings, origin, addresses=addresses)
     for raw in addresses:
-        address = ip_address(raw)
-        for kind, value in exclusions:
-            if (
-                kind == "address"
-                and address == value
-                or kind == "network"
-                and address.version == value.version
-                and address in value
-            ):
-                raise PermissionError("target_excluded")
         if not public_destination(raw):
             raise PermissionError("internal_destination_denied")
     if connected_ip is not None and connected_ip not in addresses:
@@ -330,6 +339,7 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
         "investigation",
         "dast",
         "target_policy",
+        "access_control",
     } not in (
         {"probe_enabled", "approval"},
         {"probe_enabled", "approval", "detection_enabled", "detection_approval"},
@@ -345,6 +355,11 @@ def validate_beescan_settings(settings: dict, *, validate_contracts=True) -> Non
         raise RuntimeError("Invalid beescan settings")
     if "target_policy" in config:
         target_exclusions(settings)
+    from beeagent_module.integrations.beescan.access_control import (
+        validate_access_settings,
+    )
+
+    validate_access_settings(settings, validate_contracts=validate_contracts)
     if type(config["probe_enabled"]) is not bool:
         raise RuntimeError("Invalid beescan.probe_enabled")
     from beeagent_module.integrations.beescan.dast import validate_dast_settings

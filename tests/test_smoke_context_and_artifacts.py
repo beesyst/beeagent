@@ -3,6 +3,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 
+import pytest
+
+from beeagent_module.core import artifact_api
 from beeagent_module.core.artifact_api import ArtifactAPI
 from beeagent_module.core.module_contract import AuthorityLevel
 from beeagent_module.core.runtime_context import (
@@ -120,6 +123,33 @@ def test_smoke_multiple_modules_same_run() -> None:
         run_dir = storage_dir / "runs" / run_id
         assert (run_dir / "module-beeagent-rop").exists()
         assert (run_dir / "module-beescan").exists()
+
+
+def test_json_overwrite_is_atomic_and_preserves_previous_artifact(tmp_path, monkeypatch):
+    context = RuntimeContext(
+        run_id="atomic-run",
+        session_id="atomic-session",
+        case_type="test",
+        module_id="beescan",
+        authority=AuthorityLevel.READ_ONLY,
+    )
+    api = ArtifactAPI(context, tmp_path, logging.getLogger("atomic-artifact"))
+    api.write_json("investigation_status.json", {"status": "RUNNING"})
+    target = api.artifact_dir() / "investigation_status.json"
+    original = target.read_bytes()
+    replace = artifact_api.os.replace
+
+    def interrupted(source, destination):
+        assert source != destination
+        assert source.read_text(encoding="utf-8") == '{\n  "status": "NO_MATCH"\n}'
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(artifact_api.os, "replace", interrupted)
+    with pytest.raises(OSError, match="interrupted"):
+        api.write_json("investigation_status.json", {"status": "NO_MATCH"})
+    assert target.read_bytes() == original
+    assert not list(api.artifact_dir().glob("*.pending"))
+    monkeypatch.setattr(artifact_api.os, "replace", replace)
 
 
 def test_smoke_context_authority_levels() -> None:

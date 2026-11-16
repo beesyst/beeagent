@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from beeagent_module.core.runtime_context import RuntimeContext
 
@@ -44,12 +46,36 @@ class ArtifactAPI:
     ) -> Path:
         self._validate_filename(filename)
         artifact_path = self._artifact_dir / filename
+        encoded = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+        pending_path = artifact_path.with_name(
+            f".{artifact_path.name}.{uuid4().hex}.pending"
+        )
 
         try:
-            artifact_path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            descriptor = os.open(
+                pending_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
             )
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(encoded)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except BaseException:
+                try:
+                    pending_path.unlink()
+                except FileNotFoundError:
+                    pass
+                raise
+            os.replace(pending_path, artifact_path)
+            directory = os.open(
+                self._artifact_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
             self._logger.info(
                 "artifact written: module_id=%s run_id=%s file=%s path=%s",
                 self._context.module_id,
@@ -66,6 +92,11 @@ class ArtifactAPI:
                 e,
             )
             raise
+        finally:
+            try:
+                pending_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def write_text(self, filename: str, content: str) -> Path:
         self._validate_filename(filename)
