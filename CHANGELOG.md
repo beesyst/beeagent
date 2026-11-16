@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.90.0...beeagent-v0.91.0) (2026-11-16)
+
+
+### Features
+
+* **beescan:** govern two-principal Web access assessments ([#369](https://github.com/beesyst/beeagent/issues/369)) ([cf7ddd9](https://github.com/beesyst/beeagent/commit/cf7ddd981a42ba6ebe09e5fe0a5eba924789e612))
+
 ## [0.90.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.89.0...beeagent-v0.90.0) (2026-11-13)
 
 
