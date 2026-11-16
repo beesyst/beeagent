@@ -1982,7 +1982,194 @@ BeeAgent can perform a governed comparative access-control assessment through tw
 
 No unrelated authentication system, arbitrary scanner or authority expansion is introduced.
 
-### Iteration BS-19 — Bounded Multi-Step Execution and Training Acceptance
+### Iteration BS-19 — BeeScan Conversational Security Workspace MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Turn the existing BeeScan Investigation Workspace into a persistent, chat-first security assistant.
+
+An operator can ask security questions, manage authorized investigation context, execute supported assessments, inspect evidence and continue the same Case across multiple distinct investigation runs.
+
+The Web UI becomes the primary interface for Case-specific Target, Scope, sessions and task context without requiring per-target YAML edits.
+
+#### Depends on
+
+- Completed BS-16–BS-18.
+- Existing BeeAgent AI runtime and AI profile selection.
+- Existing BeeScan Investigation, Case/Resume and ArtifactAPI.
+- Existing authenticated Web actions and evidence receipts.
+- Existing Human Review, Report and Export.
+- BeeUI Iteration 13.17.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+**1. Persistent conversation**
+
+- Reuse the existing BeeAgent Case and ArtifactAPI.
+- Preserve one stable parent Case identity across multiple messages and investigation runs.
+- Persist bounded operator messages, assistant responses, host events and child-run references.
+- Preserve message ordering, timestamps, actor identity and provenance.
+- Distinguish continuing a Case with a new investigation from resuming an interrupted run.
+- Allow additional messages after CANDIDATE, NO_MATCH, PARTIAL, ERROR and completed runs.
+- Preserve prior Findings, evidence, reviews and reports without rewriting their authenticated source artifacts.
+- Support bounded history pagination and safe Case restoration after restart.
+- Keep historical Cases backward-compatible.
+
+**2. Conversational interaction**
+
+- Support `Ask` and `Investigate` intents.
+- Ask answers security questions using the existing authorized AI runtime without initiating target requests.
+- Support follow-up questions using bounded prior conversation context.
+- Explain existing Findings and evidence without repeating target execution.
+- Investigate selects only existing supported BeeScan capabilities.
+- Require an explicit protected operator action for active assessment.
+- Never derive scanning authority from a user message or AI intent alone.
+- Display unsupported requests and missing prerequisites clearly.
+
+**3. Editable Case context**
+
+Support protected addition, replacement and removal of:
+
+- Target: exact canonical HTTP(S) origin.
+- Authorization Scope: approved scope and authority reference.
+- Accounts/Sessions: independently identified test principals.
+- Bearer credentials.
+- Cookie-based authenticated sessions.
+- Existing approved test profiles.
+- Bounded source observations and resource references.
+- Uploaded supported files and screenshots.
+- Investigation effort: Quick, Standard or Deep.
+
+- Make context available before the first message and during an existing conversation.
+- Display compact removable context items above the composer.
+- Persist non-secret context with provenance and revision identity.
+- Bind each investigation run to an immutable snapshot of its effective context.
+- Context changes must not silently modify an already running assessment.
+- Changed Target, Scope or principal authority requires fresh validation before execution.
+- Context is not itself execution authority.
+
+**4. Web-managed session lifecycle**
+
+- Reuse existing BeeAgent authorization, principal and governed HTTP execution boundaries.
+- Allow operators to provide approved Bearer or Cookie sessions through protected Web input.
+- Bind credentials to the current operator, exact origin and authorized Case/session.
+- Store credentials only in bounded host-owned ephemeral state for the initial MVP.
+- Persist opaque references and non-secret labels, never plaintext credentials.
+- Clear temporary browser secret inputs after submission.
+- Require re-provisioning when ephemeral credentials expire or after restart.
+- Support Cookie authentication for eligible governed read-only HTTP requests.
+- Preserve existing two-principal Bearer verification behavior.
+- Never treat the presence of a Cookie as proof of authenticated identity or object ownership.
+- Do not automatically enable single-session IDOR verification or arbitrary header injection.
+
+**5. Attachments and observations**
+
+- Support bounded TXT, MD, JSON and HAR attachments.
+- Support PNG/JPEG screenshots.
+- Store originals through the existing protected host artifact lifecycle.
+- Validate size, type, content, ownership and storage path.
+- Display attachment identity and metadata as removable Case context.
+- Treat imported scanner outputs and observations as untrusted reference material.
+- Do not promote uploaded claims into authenticated target evidence.
+- Reuse existing document extraction when applicable; do not build a new parser.
+- Avoid uncontrolled OCR or additional extraction engines.
+
+**6. Governed investigation continuation**
+
+- Start a supported investigation from the current authorized Case context.
+- Persist the new investigation as a distinct child run.
+- Reuse existing capability selection, ManagedEgress, provider isolation and budget enforcement.
+- Revalidate authority before every active execution.
+- Preserve prior completed evidence without replaying sufficient checks.
+- Allow the operator to enrich context after PARTIAL and initiate a new bounded investigation.
+- Preserve truthful CANDIDATE, NO_MATCH, PARTIAL, ERROR and REFUSED semantics.
+- Keep Review, Report and Export connected to the exact original Finding and child run.
+- Do not create a second execution engine or Case Store.
+
+**7. Web UX integration**
+
+- Use the generic BeeUI `chat_workspace` from Iteration 13.17.
+- Keep Case history and search in the left panel.
+- Keep conversation as the primary central surface.
+- Preserve optional right-side evidence/context inspection.
+- Place the `+` context menu to the left of the message input.
+- Place Quick/Standard/Deep and the primary action on the right.
+- Use compact context chips and protected contextual forms.
+- Keep the composer enabled after an investigation completes.
+- Provide explicit feedback for Ask, Investigate, missing authority and unsupported capabilities.
+- Preserve responsive mobile layout, RU/EN and light/dark themes.
+
+#### Excluded
+
+- New scanner engines, generic browser automation or unrestricted tools.
+- Full SPA crawler or arbitrary API route enumeration.
+- New access-control verification techniques beyond existing approved profiles.
+- Unrestricted Cookie or Authorization header forwarding.
+- Persistent credential vault or automatic browser login.
+- Model fine-tuning or universal Knowledge Base.
+- New generic orchestration framework or second Case database.
+- Automatic VERIFIED findings or Bug Bounty submission.
+- BeeSDK changes without a demonstrated blocker.
+
+#### Deliverable
+
+`Persistent Case + Conversation + Editable Authorized Context → Ask / Governed Investigation → Child Runs + Evidence → Review / Report → Continued Conversation`
+
+#### Acceptance criteria
+
+- An operator creates a Case by asking an ordinary security question without a Target.
+- Ask produces a real AI response through the configured provider without target HTTP requests.
+- Follow-up questions reuse bounded conversation history.
+- The operator adds Target and approved Scope through `+`.
+- The operator adds an authorized Bearer or Cookie session without editing YAML.
+- A Cookie-authenticated read-only request succeeds on a supported authorized test endpoint when valid identity evidence exists.
+- The operator executes an existing supported BeeScan assessment through the same chat.
+- A PARTIAL result preserves conversation and Case identity.
+- Additional context can be attached and a new governed investigation started within that Case.
+- Previous Findings, evidence and reports remain accessible and authenticated.
+- A completed Case can receive new Ask messages without active scanning.
+- Restart restores non-secret context, conversation, child runs and report references.
+- Expired ephemeral secrets require re-provisioning after restart.
+- Changed Scope or Target cannot reuse previous execution authority.
+- Foreign operators cannot access another operator's Case or secrets.
+- Review, Report and Ask perform zero additional target requests.
+- Unsupported capabilities cannot produce fabricated CANDIDATE or VERIFIED results.
+- Existing BS-15–BS-18 Web and CLI workflows remain compatible.
+
+#### Checks
+
+- Persistent Case, child-run and ordered-message tests.
+- Ask follow-up and real configured AI-provider smoke.
+- Governed active investigation E2E.
+- Bearer and Cookie identity/origin isolation tests.
+- Protected context mutation and CSRF tests.
+- Missing, expired, foreign and substituted credentials.
+- Attachment size, MIME, path, escaping and injection tests.
+- Interrupted run, restart, resume and context-revision tests.
+- Historical Case compatibility.
+- Review/Report/Export provenance and zero-target-request regression.
+- Full BeeAgent pytest and package build.
+- Real HTTP/TLS Web integration.
+- RU/EN, light/dark, desktop and mobile browser acceptance.
+- Independent BeeMCP review and hosted CI.
+
+#### DoD
+
+BeeScan Web functions as a persistent security conversation, not a one-shot investigation form.
+
+The operator can ask questions, attach authorized context, execute supported assessments, enrich an incomplete Case, initiate another investigation and inspect preserved evidence without creating a new Case or editing per-target YAML.
+
+All active requests remain governed by BeeAgent authority, approved capabilities and current execution limits.
+
+No second runtime, Case Store, scanner or credential vault is introduced.
+
+### Iteration BS-20 — Bounded Multi-Step Execution and Training Acceptance
 
 **Status:** PLANNED
 
