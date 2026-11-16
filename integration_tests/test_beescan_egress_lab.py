@@ -80,6 +80,11 @@ def managed_lab(approved, monkeypatch, request):
 
     monkeypatch.setattr(egress.ManagedEgress, "_spawn", spawn)
     requests = []
+    access_application = (
+        request.getfixturevalue("access_application")
+        if str(request.param).startswith("access-")
+        else None
+    )
     fixture_root = root / "filesystem"
     document_root = fixture_root / "www/images"
     nonrecursive = str(request.param).startswith("dast-nonrecursive")
@@ -95,6 +100,28 @@ def managed_lab(approved, monkeypatch, request):
     class Handler(BaseHTTPRequestHandler):
         def respond(self):
             requests.append((self.command, self.path))
+            if access_application is not None:
+                authorization = self.headers.get("Authorization", "")
+                credential = (
+                    authorization.removeprefix("Bearer ")
+                    if authorization.startswith("Bearer ")
+                    else None
+                )
+                status, result = access_application.get(self.path, credential)
+                body = (
+                    result.encode()
+                    if type(result) is str
+                    else json.dumps(result).encode()
+                )
+                self.send_response(status)
+                self.send_header(
+                    "Content-Type",
+                    "text/html" if type(result) is str else "application/json",
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if nonrecursive or request.param in {
                 "dast-vulnerable",
                 "dast-vulnerable-alt",

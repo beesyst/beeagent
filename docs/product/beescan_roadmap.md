@@ -1913,7 +1913,7 @@ No unverified claim, hidden evidence or forbidden sensitive data is promoted int
 
 ### Iteration BS-18 — Governed Multi-Principal Access Control Assessment MVP
 
-**Status:** PLANNED
+**Status:** DONE
 
 #### Goal
 
@@ -1965,7 +1965,8 @@ Introduce the smallest real execution capability required by BeeScan It18.
 - No network request occurs outside either principal's exact approved scope.
 - Request budgets, DNS/TLS, isolation, expiry and cleanup remain enforced.
 - Existing single-principal investigation, DAST, Case and Web Chat behavior remains compatible.
-- A real authorized PortSwigger access-control workflow succeeds without laboratory-specific execution code.
+- A real governed HTTP end-to-end assessment with two independently authorized test principals succeeds without laboratory-specific execution code, covering positive and negative access-control cases.
+- PortSwigger scenarios requiring unsupported single-session or Cookie authentication remain explicitly unverified and are not claimed as completed.
 
 #### Checks
 

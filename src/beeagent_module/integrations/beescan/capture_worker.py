@@ -122,7 +122,22 @@ def capture(config):
         else:
             stream = connection
         try:
-            request = f"GET {path} HTTP/1.1\r\nHost: {origin.netloc}\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: BeeAgent-BS2\r\n\r\n"
+            authentication = ""
+            if config.get("authenticated") is True:
+                if not investigation:
+                    raise ValueError("invalid_authentication_context")
+                with open("/authentication", "rb") as credential:
+                    value = credential.read(4097)
+                if not 1 <= len(value) <= 4096 or any(c < 33 or c > 126 for c in value):
+                    raise ValueError("invalid_authentication_context")
+                authentication = (
+                    "Authorization: Bearer " + value.decode("ascii") + "\r\n"
+                )
+            request = (
+                f"GET {path} HTTP/1.1\r\nHost: {origin.netloc}\r\n"
+                "Connection: close\r\nAccept: */*\r\nUser-Agent: BeeAgent-BS2\r\n"
+                f"{authentication}\r\n"
+            )
             if investigation:
                 with open("/attempt", "r+b", buffering=0) as marker:
                     marker.write(b"1")
@@ -293,8 +308,9 @@ def read_investigation_response(stream, *, limit, general=False):
     length = headers.get("content-length", "")
     if "content-length" not in headers:
         raise ValueError("response_length_missing")
-    if re.fullmatch(r"[0-9]{1,6}", length) is None:
+    if not length.isdecimal():
         raise ValueError("invalid_response_length")
+    normalized_length = length.lstrip("0") or "0"
     content_type = headers.get("content-type", "").lower()
     untyped_error = status == 500 and "content-type" not in headers
     media_pattern = (
@@ -323,8 +339,14 @@ def read_investigation_response(stream, *, limit, general=False):
         ):
             raise ValueError("response_json_status_404")
         raise ValueError("unsupported_response_type")
-    if int(length) > limit:
-        raise ResponseLengthExceeded(int(length))
+    maximum = str(limit)
+    if len(normalized_length) > len(maximum) or (
+        len(normalized_length) == len(maximum) and normalized_length > maximum
+    ):
+        raise ResponseLengthExceeded(
+            int(normalized_length) if len(normalized_length) <= 19 else limit + 1
+        )
+    expected_length = int(normalized_length)
     body = bytearray()
     while True:
         chunk = stream.recv(min(4096, limit + 1 - len(body)))
@@ -333,7 +355,7 @@ def read_investigation_response(stream, *, limit, general=False):
         body.extend(chunk)
         if len(body) > limit:
             raise ValueError("response_body_limit")
-    if len(body) != int(length):
+    if len(body) != expected_length:
         raise ValueError("incomplete_response_body")
     text = body.decode("utf-8")
     if any(ord(c) < 32 and c not in "\r\n\t" or ord(c) == 127 for c in text):

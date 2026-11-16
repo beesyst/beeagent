@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import threading
+import time
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -526,6 +527,115 @@ def test_replay_concurrency_ownership_and_generic_isolation(tmp_path, monkeypatc
         release.set()
         service.executor.shutdown(wait=True)
     assert execute(client, headers, data).json()["ok"] is False
+
+
+def test_authenticated_profile_routes_discovery_and_progress_polling(tmp_path, monkeypatch):
+    from beeagent_module.integrations.beescan import access_discovery
+    from beeagent_module.integrations.beescan.dast import _api
+    from beeagent_module.integrations.beescan.detection import _persist
+    from tests.beescan_access_support import autonomous_profile
+
+    settings, storage, app = setup_app(tmp_path, monkeypatch)
+    settings["beescan"]["investigation"]["local_lab_enabled"] = True
+    profile = autonomous_profile("http://127.0.0.1:18080")
+    settings["beescan"]["access_control"] = {"profiles": [profile]}
+    monkeypatch.setenv("BEEAGENT_ACCESS_A", "synthetic-a")
+    monkeypatch.setenv("BEEAGENT_ACCESS_B", "synthetic-b")
+    service = app.state.beeagent_adapter.beescan
+    started, release = threading.Event(), threading.Event()
+    discovered = []
+
+    def execute_discovery(current_service, invocation):
+        discovered.append(invocation.profile_id)
+        api = _api(storage, invocation.run_id, logging.getLogger("progress-polling"))
+        started.set()
+        for count in range(32):
+            _persist(
+                api,
+                "investigation_status.json",
+                {
+                    "run_id": invocation.run_id,
+                    "case_id": invocation.case_id,
+                    "status": "RUNNING",
+                    "complete": False,
+                    "reason": "comparison_pending",
+                    "request_count": count,
+                    "request_count_exact": True,
+                },
+            )
+            time.sleep(0.002)
+        assert release.wait(5)
+        return {}
+
+    monkeypatch.setattr(access_discovery, "execute_discovery", execute_discovery)
+    client, headers = authenticated(app)
+    actor = {"user_id": "alice", "role": "operator"}
+    denied = execute(
+        client,
+        headers,
+        {
+            **payload(app),
+            "task": "Assess BOLA with two accounts",
+            "mode": "deep",
+        },
+    )
+    assert denied.json()["ok"] is False
+    request = {
+        **payload(app),
+        "task": "Assess BOLA with two accounts",
+        "mode": "deep",
+        "nonce": service.nonce(actor),
+        "test_profile_id": profile["profile_id"],
+    }
+    page = client.get("/beescan")
+    assert page.status_code == 200
+    assert "Test principals (required for two-principal access-control assessment)" in page.text
+    assert profile["profile_id"] in page.text
+    response = execute(client, headers, request)
+    assert response.status_code == 200 and response.json()["ok"], response.text
+    run_id = response.json()["data"]["run_id"]
+    assert started.wait(5)
+    failures = []
+    inspect = service.inspect
+
+    def tracked_inspect(*args, **kwargs):
+        try:
+            return inspect(*args, **kwargs)
+        except Exception as error:
+            failures.append(type(error).__name__ + ":" + str(error))
+            raise
+
+    service.inspect = tracked_inspect
+    try:
+        responses = [
+            client.get("/api/beescan/status", params={"run_id": run_id})
+            for _ in range(20)
+        ]
+        statuses = [response.status_code for response in responses]
+        diagnostics = [
+            (response.status_code, response.text[:256].replace("synthetic-a", "***"))
+            for response in responses
+            if response.status_code not in {200, 409}
+        ]
+        assert all(status in {200, 409} for status in statuses), (diagnostics, failures)
+        intake = json.loads(
+            (storage / "runs" / run_id / "module-beescan" / "web_intake.json").read_text()
+        )
+        assert intake["intake"]["test_profile_id"] == profile["profile_id"]
+        assert discovered == [profile["profile_id"]]
+        bob, bob_headers = authenticated(app, "bob")
+        rejected = execute(
+            bob,
+            bob_headers,
+            {
+                **request,
+                "nonce": service.nonce({"user_id": "bob", "role": "operator"}),
+            },
+        )
+        assert rejected.json()["ok"] is False
+    finally:
+        release.set()
+        service.executor.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("lang", ["en", "ru"])

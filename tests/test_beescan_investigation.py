@@ -463,6 +463,25 @@ def test_general_binary_response_is_skipped_before_body_read():
     }
 
 
+def test_seven_digit_content_length_is_bounded_before_body_read():
+    with pytest.raises(ResponseLengthExceeded) as error:
+        read_investigation_response(
+            Stream(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                b"Content-Length: 1000000\r\n\r\n"
+            ),
+            limit=1024,
+        )
+    assert error.value.content_length == 1000000
+
+
+@pytest.mark.parametrize("length", [b"", b"-1", b"1x"])
+def test_malformed_content_length_is_refused(length):
+    raw = raw_response().replace(b"Content-Length: 5", b"Content-Length: " + length)
+    with pytest.raises(ValueError, match="^invalid_response_length$"):
+        read_investigation_response(Stream(raw), limit=1024)
+
+
 @pytest.mark.parametrize(
     "body,media",
     [

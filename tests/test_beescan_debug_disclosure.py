@@ -1,10 +1,10 @@
-import fcntl
 import json
 import logging
 import os
 import pty
 import select
-import termios
+import subprocess
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -426,35 +426,60 @@ def test_non_tty_never_reveals(settings, monkeypatch, redirected):
 
 
 def test_real_controlling_tty_only(settings, monkeypatch):
-    SensitiveValue = pytest.importorskip(
-        "beescan.domain.debug_disclosure"
-    ).SensitiveValue
-    policy = configure_approved(settings, monkeypatch)
+    pytest.importorskip("beescan.domain.debug_disclosure")
+    configure_approved(settings, monkeypatch)
+
+    child = """
+import fcntl
+import json
+import os
+import sys
+import termios
+
+from beescan.domain.debug_disclosure import SensitiveValue
+from beeagent_module.integrations.beescan import local_cli
+from beeagent_module.integrations.beescan.investigation import InvestigationPolicy
+
+policy = InvestigationPolicy.from_config(json.load(sys.stdin))
+
+terminal = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY)
+fcntl.ioctl(terminal, termios.TIOCSCTTY, 0)
+
+for descriptor in (0, 1, 2):
+    os.dup2(terminal, descriptor)
+
+if terminal > 2:
+    os.close(terminal)
+
+context = local_cli._LocalRun(
+    local_cli._LocalOperator(local_cli._identity(), local_cli._SEAL),
+    policy,
+)
+
+success = local_cli.present_sensitive_value(
+    SensitiveValue(sys.argv[2]), context, policy
+)
+sys.exit(0 if success else 1)
+"""
+
     master, slave = pty.openpty()
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.close(master)
-            os.setsid()
-            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-            for descriptor in (0, 1, 2):
-                os.dup2(slave, descriptor)
-            context = local_cli._LocalRun(
-                local_cli._LocalOperator(local_cli._identity(), local_cli._SEAL), policy
-            )
-            success = local_cli.present_sensitive_value(
-                SensitiveValue(CANARY), context, policy
-            )
-            os._exit(0 if success else 1)
-        except BaseException:
-            os._exit(2)
-    os.close(slave)
     try:
+        result = subprocess.run(
+            [sys.executable, "-c", child, os.ttyname(slave), CANARY],
+            input=json.dumps(settings["beescan"]["investigation"]["approval"]),
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=5,
+            check=False,
+        )
+
+        assert result.returncode == 0
         assert select.select([master], [], [], 5)[0]
-        output = os.read(master, 4096)
-        assert output == (CANARY + "\r\n").encode()
-        assert os.waitpid(pid, 0)[1] == 0
+        assert os.read(master, 4096) == (CANARY + "\r\n").encode()
     finally:
+        os.close(slave)
         os.close(master)
 
 

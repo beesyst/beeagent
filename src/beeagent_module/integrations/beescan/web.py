@@ -34,6 +34,13 @@ PROFILES = {
     "deep": {"max_steps": 16, "max_requests": 20, "max_depth": 4},
 }
 _SEAL = object()
+_TWO_PRINCIPAL_TASK = re.compile(
+    r"\b(?:two[ -]?(?:principal|account)s?|idor|bola)\b", re.IGNORECASE
+)
+
+
+def _requires_test_profile(task):
+    return bool(_TWO_PRINCIPAL_TASK.search(task))
 
 
 def record_failure(storage, logger, run_id, error, phase):
@@ -172,7 +179,9 @@ def _read_owned(storage, settings, run_id, actor):
 
 
 class _WebInvocation:
-    def __init__(self, service, actor, task, mode, run_id, case_id, seal):
+    def __init__(
+        self, service, actor, task, mode, run_id, case_id, seal, profile_id=""
+    ):
         self.service = service
         self.actor = dict(actor)
         self.task = task
@@ -181,9 +190,37 @@ class _WebInvocation:
         self.case_id = case_id
         self.seal = seal
         self.settings = deepcopy(service.reload_settings())
+        self.profile_id = profile_id
+        self.profile = None
+        self.credential_bindings = None
+        if profile_id:
+            from beeagent_module.integrations.beescan.access_control import (
+                select_profile,
+            )
+
+            self.profile, values = select_profile(
+                self.settings, profile_id, self.actor, task.target
+            )
+            if mode == "quick" and not self.profile.get("discovery"):
+                raise PermissionError("test_profile_requires_standard_mode")
+            limits = self.settings["beescan"]["investigation"]["adaptive"]
+            if not self.profile.get("discovery") and (
+                min(limits["max_requests"], PROFILES[mode]["max_requests"]) < 8
+                or min(limits["max_steps"], PROFILES[mode]["max_steps"]) < 8
+            ):
+                raise PermissionError("test_profile_budget_insufficient")
+            self.credential_bindings = [
+                hmac.digest(_key(self.settings), value.encode(), "sha256").hex()
+                for value in values
+            ]
         self.created_at = datetime.now(UTC).isoformat()
         self._verify_authority()
         self.dynamic = "target_policy" in self.settings["beescan"]
+        if self.profile and self.profile["local_lab"]:
+            config = self.settings["beescan"]["investigation"]
+            if config.get("local_lab_enabled") is not True:
+                raise PermissionError("local_lab_not_approved")
+            self.dynamic = False
         if self.dynamic:
             from beeagent_module.integrations.beescan.policy import web_execution_policy
 
@@ -223,6 +260,37 @@ class _WebInvocation:
 
     def verify(self, policy=None):
         self._verify_authority()
+        if self.profile_id:
+            from beeagent_module.integrations.beescan.access_control import (
+                select_profile,
+            )
+
+            profile, values = select_profile(
+                self.service.reload_settings(),
+                self.profile_id,
+                self.actor,
+                self.task.target,
+            )
+            if profile != self.profile or self.credential_bindings != [
+                hmac.digest(_key(self.settings), value.encode(), "sha256").hex()
+                for value in values
+            ]:
+                raise PermissionError("test_principal_authority_changed")
+            if profile["local_lab"] and not self.policy.transport.allow_private_lab:
+                raise PermissionError("local_lab_not_approved")
+            if profile["local_lab"] and "target_policy" in self.settings["beescan"]:
+                from beeagent_module.integrations.beescan.http_runner import (
+                    resolve_addresses,
+                )
+                from beeagent_module.integrations.beescan.policy import (
+                    check_target_exclusions,
+                )
+
+                check_target_exclusions(
+                    self.settings,
+                    self.task.target,
+                    addresses=resolve_addresses(self.task.target),
+                )
         if policy is not None and policy != self.policy:
             raise PermissionError("web_investigation_not_approved")
         self.policy.authorize(self.task.target, at=datetime.now(UTC))
@@ -282,6 +350,9 @@ class _WebInvocation:
             "mode": self.mode,
             "authority_sha256": digest(self.settings["beescan"]),
         }
+        if self.profile_id:
+            binding["test_profile_id"] = self.profile_id
+            binding["credential_bindings"] = self.credential_bindings
         if self.dynamic:
             binding["destination_ip"] = self.policy.transport.connected_ip
         path = api.artifact_dir() / "web_owner.json"
@@ -334,6 +405,8 @@ class WebInvestigations:
         current = self.reload_settings()
         principal(current, actor, execute=True)
         expected = {"target", "task", "mode", "nonce"}
+        if type(payload) is dict and "test_profile_id" in payload:
+            expected.add("test_profile_id")
         if action == "beescan_resume":
             expected.add("case_id")
         if (
@@ -342,12 +415,16 @@ class WebInvestigations:
             or set(payload) != expected
             or type(payload["mode"]) is not str
             or payload["mode"] not in PROFILES
+            or "test_profile_id" in payload
+            and type(payload["test_profile_id"]) is not str
         ):
             raise ValueError("invalid_web_action")
         task = validate_task(
             {key: payload[key] for key in ("target", "task")},
             current["beescan"]["investigation"],
         )
+        if not payload.get("test_profile_id") and _requires_test_profile(task.task):
+            raise PermissionError("test_principal_selection_required")
         if "target_policy" in current["beescan"]:
             from beescan.domain.locators import canonical_locator
             from beescan.domain.models import TargetKind
@@ -363,11 +440,18 @@ class WebInvestigations:
         case_id = payload.get("case_id", run_id)
         try:
             invocation = _WebInvocation(
-                self, actor, task, payload["mode"], run_id, case_id, _SEAL
+                self,
+                actor,
+                task,
+                payload["mode"],
+                run_id,
+                case_id,
+                _SEAL,
+                payload.get("test_profile_id", ""),
             )
             from beeagent_module.integrations.beescan.dast import _current, is_dast_task
 
-            if is_dast_task(task.task):
+            if not invocation.profile_id and is_dast_task(task.task):
                 if invocation.dynamic and not task.target.startswith("https:"):
                     raise PermissionError("web_dast_profile_unsupported")
                 active = _current(
@@ -397,6 +481,11 @@ class WebInvestigations:
         reused = None
         if action == "beescan_resume":
             prior = _read_owned(self.storage, current, case_id, actor)
+            if (
+                prior.get("test_profile_id", "") != invocation.profile_id
+                or prior.get("credential_bindings") != invocation.credential_bindings
+            ):
+                raise PermissionError("web_resume_test_principals_changed")
             if any(
                 prior[key] != value
                 for key, value in {
@@ -414,6 +503,10 @@ class WebInvestigations:
             snapshot.verify()
             if state["pending"]:
                 raise PermissionError("web_checkpoint_pending")
+            if state["schema_version"] in {5, 6} and state["profile_sha256"] != digest(
+                invocation.profile
+            ):
+                raise PermissionError("web_resume_test_profile_changed")
             if state.get("terminal") or state["status"] in {"CANDIDATE", "NO_MATCH"}:
                 discovery = state.get("discovery", state)
                 reused = {
@@ -447,6 +540,8 @@ class WebInvestigations:
                     "task": task.task,
                     "mode": payload["mode"],
                 }
+                if invocation.profile_id:
+                    intake["test_profile_id"] = invocation.profile_id
                 _persist(
                     api,
                     "web_intake.json",
@@ -575,16 +670,30 @@ class WebInvestigations:
     def _execute(self, invocation, prior, lock):
         phase = "execution"
         try:
-            result = execute_investigation(
-                task=invocation.task,
-                web_invocation=invocation,
-                settings=invocation.effective_settings(),
-                reload_settings=invocation.effective_settings,
-                storage_dir=self.storage,
-                logger=self.logger,
-                general=True,
-                resume_case_id=invocation.case_id if prior else None,
-            )
+            if invocation.profile_id:
+                from beeagent_module.integrations.beescan.access_control import (
+                    execute_access,
+                )
+
+                if invocation.profile.get("discovery"):
+                    from beeagent_module.integrations.beescan.access_discovery import (
+                        execute_discovery,
+                    )
+
+                    result = execute_discovery(self, invocation)
+                else:
+                    result = execute_access(self, invocation)
+            else:
+                result = execute_investigation(
+                    task=invocation.task,
+                    web_invocation=invocation,
+                    settings=invocation.effective_settings(),
+                    reload_settings=invocation.effective_settings,
+                    storage_dir=self.storage,
+                    logger=self.logger,
+                    general=True,
+                    resume_case_id=invocation.case_id if prior else None,
+                )
             if result.get("case_id"):
                 phase = "case_authentication"
                 _, snapshot = load_case(self.storage, invocation.case_id)
@@ -647,11 +756,18 @@ class WebInvestigations:
     def inspect(self, run_id, actor, *, latest=True, summary=False):
         for _ in range(2):
             try:
-                return self._inspect(run_id, actor, latest=latest, **({"summary": True} if summary else {}))
+                return self._inspect(
+                    run_id,
+                    actor,
+                    latest=latest,
+                    **({"summary": True} if summary else {}),
+                )
             except ValueError as exc:
                 if str(exc) not in {"assessment_source_changed", "web_status_changed"}:
                     raise
-        return self._inspect(run_id, actor, latest=latest, **({"summary": True} if summary else {}))
+        return self._inspect(
+            run_id, actor, latest=latest, **({"summary": True} if summary else {})
+        )
 
     def _inspect(self, run_id, actor, *, latest=True, summary=False):
         current = self.reload_settings()
@@ -674,17 +790,24 @@ class WebInvestigations:
                     raise PermissionError("web_checkpoint_changed")
                 result = snapshot.json(run_id, "investigation_result.json")
                 for name in ("investigation_status.json", "investigation_result.json"):
-                    if receipt["files"].get(run_id + "/" + name) != hashlib.sha256(snapshot.read(run_id, name)).hexdigest():
+                    if (
+                        receipt["files"].get(run_id + "/" + name)
+                        != hashlib.sha256(snapshot.read(run_id, name)).hexdigest()
+                    ):
                         raise PermissionError("web_checkpoint_changed")
                 findings = result.get("findings", [])[:16]
             except FileNotFoundError:
                 pass
             snapshot.verify()
             return {
-                "case_id": owned["case_id"], "run_id": run_id,
-                "status": status["status"], "mode": owned["mode"],
-                "intake": intake, "findings": findings,
-                "display_title": metadata.get("title") or (intake["task"] if intake else owned["case_id"]),
+                "case_id": owned["case_id"],
+                "run_id": run_id,
+                "status": status["status"],
+                "mode": owned["mode"],
+                "intake": intake,
+                "findings": findings,
+                "display_title": metadata.get("title")
+                or (intake["task"] if intake else owned["case_id"]),
                 "archived": metadata.get("archived", False),
                 "created_at": owned.get("created_at"),
                 "report_readiness": "unavailable",
@@ -804,7 +927,9 @@ class WebInvestigations:
             {
                 "finding_id": finding["finding_id"],
                 "status": finding["status"],
-                "title": "External DAST candidate",
+                "title": "Access-control candidate"
+                if state and state["schema_version"] in {5, 6}
+                else "External DAST candidate",
             }
             for finding in (result.get("findings", [])[:16] if authenticated else [])
             if type(finding) is dict
@@ -849,7 +974,16 @@ class WebInvestigations:
         ]
         if any(
             step["step"]
-            not in {"discovery", "resource", "baseline", "mutation", "diagnostic"}
+            not in {
+                "discovery",
+                "resource",
+                "baseline",
+                "mutation",
+                "diagnostic",
+                "identity",
+                "hypothesis",
+                "comparison",
+            }
             or step["status"]
             not in {"incomplete", "captured", "authenticated", "skipped"}
             or step["request_count"] not in {None, 0, 1}
@@ -887,7 +1021,12 @@ class WebInvestigations:
             if (
                 type(intake) is not dict
                 or set(record) != {"intake", "signature"}
-                or set(intake) != {"case_id", "target", "task", "mode"}
+                or set(intake)
+                not in (
+                    {"case_id", "target", "task", "mode"},
+                    {"case_id", "target", "task", "mode", "test_profile_id"},
+                )
+                or intake.get("test_profile_id", "") != owned.get("test_profile_id", "")
                 or record["signature"] != _sign(current, intake)
                 or intake["case_id"] != owned["case_id"]
                 or intake["target"] != owned["target"]
@@ -956,8 +1095,14 @@ class WebInvestigations:
 
             readiness = []
             for finding in data["findings"]:
-                report_status = inspect_web_reports(self, owned["case_id"], finding["finding_id"], actor)
-                readiness.append(report_status["reports"][-1]["report_readiness"] if report_status["reports"] else "review_required")
+                report_status = inspect_web_reports(
+                    self, owned["case_id"], finding["finding_id"], actor
+                )
+                readiness.append(
+                    report_status["reports"][-1]["report_readiness"]
+                    if report_status["reports"]
+                    else "review_required"
+                )
             data["report_readiness"] = ", ".join(sorted(set(readiness)))
         encoded = json.dumps(data, allow_nan=False)
         if len(encoded.encode()) > 65536:
@@ -972,6 +1117,7 @@ class WebInvestigations:
             return []
         result = []
         seen = set()
+
         def recency(path):
             try:
                 info = path.stat(follow_symlinks=False)
@@ -1002,7 +1148,11 @@ class WebInvestigations:
                 result.append(view)
             except OSError, ValueError, TypeError, KeyError:
                 continue
-        return sorted(result, key=lambda row: (row.get("created_at") or "", row["case_id"]), reverse=True)
+        return sorted(
+            result,
+            key=lambda row: (row.get("created_at") or "", row["case_id"]),
+            reverse=True,
+        )
 
     def case_metadata(self, case_id, actor):
         current = self.reload_settings()
@@ -1027,8 +1177,16 @@ class WebInvestigations:
     def manage(self, action, payload, actor):
         current = self.reload_settings()
         principal(current, actor, execute=True)
-        expected = {"case_id", "title"} if action == "beescan_rename" else {"case_id", "confirmation"}
-        if action not in {"beescan_rename", "beescan_archive"} or type(payload) is not dict or set(payload) != expected:
+        expected = (
+            {"case_id", "title"}
+            if action == "beescan_rename"
+            else {"case_id", "confirmation"}
+        )
+        if (
+            action not in {"beescan_rename", "beescan_archive"}
+            or type(payload) is not dict
+            or set(payload) != expected
+        ):
             raise ValueError("invalid_case_management")
         case_id = payload["case_id"]
         root = open_directory(self.storage / "runs")
@@ -1039,12 +1197,25 @@ class WebInvestigations:
                 raise PermissionError("case_active")
             metadata = self.case_metadata(case_id, actor)
             title = payload.get("title", metadata.get("title", ""))
-            if type(title) is not str or not title.strip() and action == "beescan_rename" or len(title) > 160 or any(ord(c) < 32 for c in title):
+            if (
+                type(title) is not str
+                or not title.strip()
+                and action == "beescan_rename"
+                or len(title) > 160
+                or any(ord(c) < 32 for c in title)
+            ):
                 raise ValueError("invalid_case_title")
             if action == "beescan_archive" and payload["confirmation"] != "ARCHIVE":
                 raise PermissionError("archive_confirmation_required")
-            value = {"case_id": case_id, "title": title.strip(), "archived": action == "beescan_archive" or metadata.get("archived", False)}
-            self._publish_metadata(case_id, {"value": value, "signature": _sign(current, value)})
+            value = {
+                "case_id": case_id,
+                "title": title.strip(),
+                "archived": action == "beescan_archive"
+                or metadata.get("archived", False),
+            }
+            self._publish_metadata(
+                case_id, {"value": value, "signature": _sign(current, value)}
+            )
             return {"case_id": case_id, "archived": value["archived"]}
         finally:
             os.close(root)
@@ -1056,19 +1227,45 @@ class WebInvestigations:
         temporary = "web-metadata-" + secrets.token_hex(16) + ".pending"
         try:
             try:
-                previous = os.stat("web_metadata.json", dir_fd=directory, follow_symlinks=False)
-                if not stat.S_ISREG(previous.st_mode) or previous.st_nlink != 1 or previous.st_uid != os.getuid():
+                previous = os.stat(
+                    "web_metadata.json", dir_fd=directory, follow_symlinks=False
+                )
+                if (
+                    not stat.S_ISREG(previous.st_mode)
+                    or previous.st_nlink != 1
+                    or previous.st_uid != os.getuid()
+                ):
                     raise PermissionError("unsafe_web_metadata")
             except FileNotFoundError:
                 pass
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(json.dumps(record, sort_keys=True).encode())
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, "web_metadata.json", src_dir_fd=directory, dst_dir_fd=directory)
+            os.replace(
+                temporary,
+                "web_metadata.json",
+                src_dir_fd=directory,
+                dst_dir_fd=directory,
+            )
             os.fsync(directory)
-            if json.loads(read_regular("web_metadata.json", limit=131072, dir_fd=directory, owner_uid=os.getuid())) != record:
+            if (
+                json.loads(
+                    read_regular(
+                        "web_metadata.json",
+                        limit=131072,
+                        dir_fd=directory,
+                        owner_uid=os.getuid(),
+                    )
+                )
+                != record
+            ):
                 raise OSError("web_metadata_readback_failed")
         finally:
             try:

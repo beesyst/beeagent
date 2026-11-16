@@ -235,7 +235,15 @@ def run_detection_provider(
     investigation=None,
     on_attempt=None,
     deadline=None,
+    authentication=None,
 ):
+    if authentication is not None and (
+        investigation is None
+        or type(authentication) is not str
+        or not 1 <= len(authentication) <= 4096
+        or any(ord(c) < 33 or ord(c) > 126 for c in authentication)
+    ):
+        raise ValueError("invalid_authentication_context")
     if type(git_exposure) is not bool or (git_exposure and http_signals):
         raise ValueError("invalid_capture_selection")
     if investigation is not None and (
@@ -244,7 +252,8 @@ def run_detection_provider(
         or not callable(on_attempt)
         or type(investigation) is not dict
         or set(investigation) - {"general"} != {"relative_url", "body_bytes_max"}
-        or "general" in investigation and investigation["general"] is not True
+        or "general" in investigation
+        and investigation["general"] is not True
         or type(investigation["body_bytes_max"]) is not int
         or not 1024 <= investigation["body_bytes_max"] <= 73728
     ):
@@ -286,6 +295,7 @@ def run_detection_provider(
             raise PermissionError("isolation_unavailable")
     user_fd = _open_namespace(policy.user_namespace, 0x10000000, policy.operator_uid)
     net_fd = None
+    auth_fd = None
     try:
         net_fd = _open_namespace(
             policy.network_namespace, 0x40000000, policy.operator_uid
@@ -375,6 +385,28 @@ def run_detection_provider(
                 marker.write_bytes(b"0")
                 marker.chmod(0o600)
                 capture_sandbox += ["--bind", str(marker), "/attempt"]
+            if authentication is not None:
+                auth_fd = os.memfd_create(
+                    "beescan-auth", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+                )
+                os.write(auth_fd, authentication.encode("ascii"))
+                os.lseek(auth_fd, 0, os.SEEK_SET)
+                fcntl.fcntl(
+                    auth_fd,
+                    fcntl.F_ADD_SEALS,
+                    fcntl.F_SEAL_WRITE
+                    | fcntl.F_SEAL_GROW
+                    | fcntl.F_SEAL_SHRINK
+                    | fcntl.F_SEAL_SEAL,
+                )
+                capture_sandbox += [
+                    "--perms",
+                    "0400",
+                    "--ro-bind-data",
+                    str(auth_fd),
+                    "/authentication",
+                ]
+                descriptors += (auth_fd,)
             if git_exposure:
                 from beescan.domain import git_head_signature
 
@@ -404,6 +436,8 @@ def run_detection_provider(
                 config["git_exposure"] = True
             if investigation is not None:
                 config.update(investigation=True, **investigation)
+            if authentication is not None:
+                config["authenticated"] = True
             try:
                 code, raw_capture = run(
                     [
@@ -441,7 +475,9 @@ def run_detection_provider(
             if code:
                 if investigation is not None and code == 5:
                     try:
-                        failure = json.loads(raw_capture, object_pairs_hook=_unique_object)
+                        failure = json.loads(
+                            raw_capture, object_pairs_hook=_unique_object
+                        )
                     except ValueError, UnicodeError:
                         failure = None
                     if (
@@ -483,6 +519,8 @@ def run_detection_provider(
                 raise ValueError("provider_failed")
             return output, capture
     finally:
+        if auth_fd is not None:
+            os.close(auth_fd)
         try:
             if net_fd is not None:
                 os.close(net_fd)
