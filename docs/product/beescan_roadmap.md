@@ -2052,73 +2052,25 @@ The operator can continuously ask security questions, enrich an authorized Case,
 
 No second runtime, storage system, credential vault or scanner is introduced.
 
-### Iteration BS-20 — BeeScan Security Knowledge Base MVP
+### Iteration BS-20 — Autonomous Governed Multi-Family Web Investigation
 
 **Status:** PLANNED
 
 #### Goal
 
-Provide a persistent, searchable security knowledge base for BeeScan Ask and future governed investigations.
+Deliver the host-side execution and Web operator workflow for BeeScan It19 autonomous multi-family investigations.
 
-#### Scope
+Enable an operator to provide an authorized Target, Scope and natural-language Task, select Quick/Standard/Deep, and run a bounded investigation that automatically discovers relevant resources, executes eligible verification capabilities, collects evidence and generates reviewable Findings and coverage reports.
 
-- Store original approved documents and normalized Markdown.
-- Reuse BeeAgent's existing document extraction capability.
-- Support Markdown, TXT, PDF, DOCX and operator-created notes.
-- Add SQLite FTS5 indexing and bounded source-backed retrieval.
-- Integrate retrieved knowledge into authorized AI answers.
-- Preserve source identity, provenance, ownership and revision history.
-- Support human-approved knowledge candidates from reviewed Cases.
-- Keep retrieved content separate from execution authority.
-
-#### Excluded
-
-- Model fine-tuning and automatic vulnerability verification.
-- Separate vector database or external indexing service.
-- Arbitrary crawling or automatic execution of imported techniques.
-- Automatic publication of sensitive Case evidence.
-
-#### Deliverable
-
-`Approved Documents / Reviewed Cases → Normalized Knowledge → Search → Cited AI Answers`
-
-#### Acceptance criteria
-
-- Supported documents can be imported, searched and cited.
-- Repeated imports are deduplicated by stable source identity.
-- Untrusted instructions from documents cannot grant runtime authority.
-- Foreign, rejected and incomplete Case evidence is not promoted automatically.
-- Original documents and normalized knowledge remain traceable.
-- Search and answer generation work after restart.
-- Existing BeeScan investigations remain unaffected.
-
-#### Checks
-
-- Import, extraction, indexing and search tests.
-- Provenance, deduplication and access-control tests.
-- Injection, redaction and corrupted-document tests.
-- Retrieval quality checks with known security questions.
-- Full pytest, integration tests and security review.
-
-#### DoD
-
-BeeScan can answer security questions using persistent, cited operator-approved knowledge without treating retrieved documents as execution policy.
-
-### Iteration BS-21 — Bounded Multi-Step Execution and Training Acceptance
-
-**Status:** PLANNED
-
-#### Goal
-
-Complete the host-side execution and operator workflow for BeeScan It19 adaptive multi-step investigations, then demonstrate the agreed pre-bounty educational acceptance gate.
-
-Improve composition and evidence-based decisions rather than adding challenge-specific execution code.
+Demonstrate practical vulnerability discovery on previously unfamiliar authorized training targets without introducing a second scanner or orchestration runtime.
 
 #### Depends on
 
-- Completed BS-15–BS-18 functional integrations.
-- BeeScan It19 adaptive investigation domain contract.
-- Existing governed execution, Case/Resume, Web Chat, evidence review and report generation.
+- Completed BS-15–BS-19 integrations.
+- BeeScan It19 multi-family domain decisions.
+- Existing BeeAgent ManagedEgress, Case/ArtifactAPI, authorization, checkpoints and governed HTTP execution.
+- Existing Information Disclosure, Path Traversal and Access Control integrations.
+- Existing persistent BeeScan Web Conversation, Human Review and Report workflows.
 
 #### Change level
 
@@ -2126,57 +2078,288 @@ Improve composition and evidence-based decisions rather than adding challenge-sp
 
 #### Scope
 
-- Reuse the existing BeeAgent investigation runtime and supported governed capabilities.
-- Execute bounded sequences of independently authorized BeeScan-proposed actions.
-- Revalidate approval, destination, profile and budget before every action.
-- Preserve completed-action identity, provenance, cumulative metrics and Case continuation.
-- Integrate multi-step progress and next-action recommendations into the BeeScan Web Chat.
-- Produce final evidence-backed Case summaries and reviewed reports for supported Findings.
-- Maintain a reproducible educational benchmark with scenario identity, completion state, required manual interventions and evidence references.
-- Evaluate previously unfamiliar PortSwigger scenarios and a selected complete Hacker101 CTF level.
+- Reuse existing BeeAgent investigation orchestration, governed HTTP execution and provider integrations.
+- Integrate BeeScan It19 multi-family decision contracts into the existing authorized investigation workflow.
+- Support bounded autonomous sequences:
+  - Discovery.
+  - Evidence normalization.
+  - Eligible verification selection.
+  - Governed verification execution.
+  - Evidence evaluation.
+  - Next justified action or evidence-backed stop.
+- Automatically reuse existing supported Information Disclosure, Path Traversal and Access Control capabilities.
+- Execute only BeeScan-supported, host-authorized and profile-qualified actions.
+- Revalidate current operator authority, exact Target, Scope, destination, capability, session binding, provider availability and remaining budgets before each active action.
+- Reuse existing DNS/IP/TLS protections, ManagedEgress, isolation, request accounting and cleanup.
+- Reuse approved parent Case identity, immutable child-run evidence, context snapshots and authenticated checkpoints.
+- Preserve action identity, cumulative request metrics, deduplication and safe Case continuation.
+- Prevent repeated execution of already completed sufficient actions during Resume or subsequent investigation steps.
+- Extend existing Access Control execution for bounded unauthenticated administrative-function verification.
+- Use source-backed administrative resource selection and sufficient authenticated/anonymous comparative controls.
+- Require an independently established restricted-access expectation before accepting an administrative-access Finding.
+- Keep administrative verification read-only; do not execute delete, update, permission-changing or other state-mutating operations.
+- Preserve existing two-principal IDOR/BOLA execution and credential isolation.
+- Support bounded single-session access-control verification only when BeeScan can establish sufficient independently authenticated resource ownership and expected-access evidence.
+- Do not perform arbitrary object-ID guessing or treat Cookie/Bearer presence as ownership proof.
+- Preserve existing ephemeral credential handling and origin/session binding.
+- Allow automatic execution of eligible steps within the operator's approved Scope and budgets without separate approval for every HTTP request.
+- Require an explicit authorized Investigate action; ordinary Ask remains non-executing.
+- Preserve Quick/Standard/Deep limits and stop predictably when a budget or supported action set is exhausted.
+- Continue other eligible verification families after a supported NO_MATCH or family-specific PARTIAL where authorization and budgets permit.
+- Preserve completed evidence when another action is refused, unsupported or incomplete.
+- Integrate progress, current verification family, evidence references, coverage and next-action guidance into the existing BeeScan Web Chat.
+- Produce one parent Case summary with linked child-run evidence, Findings, coverage and explicit limitations.
+- Reuse existing Human Review, Markdown/JSON Report and protected Export workflows.
+- Preserve historical CLI/Web Cases and unrelated BeeAgent modules.
+- Maintain an independent educational benchmark recording scenario identity, family, expected outcome, actual outcome, request count, evidence references, manual interventions and official completion proof.
 
 #### Excluded
 
-- A new workflow engine, unrestricted LLM shell access or generic browser automation.
-- Automatic exploitation beyond approved profiles.
-- Challenge-specific paths, flags, credentials or solutions.
-- Unrestricted credential attacks, scope expansion or external-target discovery.
-- Automatic Bug Bounty submission.
-- Artificial promotion of incomplete challenges into successful results.
+- A new AI framework, scanner engine, workflow service, Case database or frontend.
+- New generic BeeUI components without a demonstrated integration blocker.
+- Arbitrary shell commands, arbitrary scanner templates or unrestricted payload generation.
+- Generic browser automation, SPA crawling or login automation.
+- Brute-force discovery, object-ID enumeration or unrestricted fuzzing.
+- Destructive testing, write operations or unauthorized privilege escalation.
+- XSS, SQL Injection, SSRF and unrelated new verification engines.
+- Automatic multi-origin exploration, wildcard/CIDR scope expansion or program-wide crawling.
+- Automatic Bug Bounty submission or VERIFIED promotion.
+- Challenge-specific paths, passwords, flags, credentials or expected responses.
+- Knowledge Base, RAG, fine-tuning or additional mandatory AI providers.
+- A requirement to solve every available Web Security Academy or Hacker101 challenge.
 
 #### Deliverable
 
-`Target + Task + Scope + Depth Profile → Adaptive Governed Investigation → Evidence-Backed Findings / PARTIAL → Reviewed Report`
+`Authorized Target + Scope + Task + Quick/Standard/Deep → Discovery → Multi-Family Governed Verification → Evidence + Coverage + Findings → Human Review / Report`
+
+One persistent Web Case supporting autonomous evidence-driven investigations across multiple vulnerability families using the existing host runtime.
 
 #### Acceptance criteria
 
-- Supported multi-step investigations execute with correct source and approval dependencies.
-- Web Chat displays current progress, evidence, limitations and meaningful next actions.
-- Quick/Standard/Deep stay within effective operator-approved budgets.
-- Case/Resume avoids unnecessary repeat execution and rejects invalid checkpoints.
-- At least 20 distinct PortSwigger scenarios across multiple vulnerability families complete under the agreed independent acceptance procedure.
-- At least one Hacker101 CTF level is completed with all flags independently validated.
-- No scenario relies on hardcoded laboratory-specific implementation.
-- Fixed, unsupported, partial and negative scenarios remain accurately classified.
-- Every successful Finding retains reproducible evidence and reviewable reporting.
-- Existing security boundaries, provider pins, legacy integrations and unrelated modules remain compatible.
+- An authenticated operator can start an investigation through the existing BeeScan Web Chat using Target, approved Scope and Task.
+- No manual endpoint, parameter or verification-family selection is required when sufficient authenticated discovery evidence exists.
+- Discovery automatically feeds eligible verification actions through BeeScan It19 decisions.
+- Information Disclosure, Path Traversal and Access Control participate in the governed investigation workflow.
+- At least one positive evidence-backed scenario is demonstrated for each of the three supported vulnerability families.
+- Administrative-access verification distinguishes genuinely restricted functionality from public or insufficiently evidenced resources.
+- Existing two-principal IDOR/BOLA verification remains functional.
+- Unsupported single-session IDOR hypotheses cannot become vulnerability Findings.
+- A NO_MATCH or unsupported verification family does not unnecessarily terminate other eligible verification work.
+- Quick/Standard/Deep respect effective request, step, time and provider budgets.
+- Every active request remains bound to the current authorization, exact destination and approved execution profile.
+- Parent Case, child runs, immutable evidence, action identities and cumulative metrics remain consistent.
+- Resume avoids unnecessary replay and refuses invalid, foreign or stale checkpoints.
+- PARTIAL, ERROR and REFUSED remain truthful and do not erase previously accepted evidence.
+- Web Chat shows progress, accepted Findings, unsupported checks, coverage and meaningful stopping reasons.
+- Every Finding retains evidence references suitable for independent operator inspection.
+- Human Review, Report and Export introduce zero additional target requests.
+- Conversation and completed evidence survive restart; plaintext ephemeral credentials do not.
+- Existing BeeScan CLI, Web, historical Cases and unrelated BeeAgent workflows remain compatible.
+- Independent educational acceptance covers 8–12 distinct previously uncompleted authorized scenarios across the supported vulnerability families.
+- The acceptance matrix includes positive, negative, incomplete, unsupported and refusal scenarios.
+- Positive challenge results have independently verifiable completion evidence.
+- No challenge-specific implementation, stored solution or hardcoded expected result is used.
+- An authorized real Bug Bounty pilot is performed as a separate operational MVP gate after educational acceptance.
 
 #### Checks
 
-- Multi-step, cancellation, timeout, refusal, resume and deduplication E2E.
-- Authorized and unauthorized Web Chat workflow tests.
-- Cumulative PortSwigger/Hacker101 acceptance matrix.
-- Full pytest, integration tests, package/build verification and applicable SAST/SCA/DAST checks.
-- Actual artifact, metrics and security-policy review.
+- Multi-family Discovery → Verification → Next Action integration tests.
+- Real Web Chat Investigate workflow and protected action tests.
+- Existing Information Disclosure, Path Traversal and Access Control regressions.
+- Administrative-access positive, negative and insufficient-evidence scenarios.
+- Two-principal compatibility and single-session false-positive refusal tests.
+- Scope, approval, DNS/IP/TLS, redirect and SSRF refusal tests.
+- Credential/session binding, expiry and foreign-principal tests.
+- Request budget, timeout, cancellation, cleanup and failure-path tests.
+- Action deduplication, Case/Resume, restart and artifact-integrity tests.
+- Cross-run and cross-family evidence substitution tests.
+- Human Review, Report and Export zero-target-request regressions.
+- Independent educational Web E2E across 8–12 authorized scenarios.
+- Actual log, artifact, metrics and security-policy inspection.
+- Full pytest, package/build checks and applicable SAST/SCA/DAST checks.
+- Independent BeeMCP final review and hosted CI.
+
+#### Educational acceptance
+
+Maintain one cumulative benchmark with:
+
+- 8–12 distinct independently evaluated scenarios.
+- Coverage of Information Disclosure, Path Traversal and Access Control.
+- At least one positive scenario in each supported family.
+- Negative and intentionally incomplete scenarios.
+- An unauthorized or out-of-scope refusal scenario.
+- Evidence references and exact execution outcomes.
+- Official completion evidence where the challenge supports it.
+- No hardcoded laboratory solutions.
+- No undocumented manual intervention to select verification actions.
+
+Previously completed laboratories may remain in the regression corpus but must not substitute for the newly required independent acceptance scenarios.
+
+The earlier target of 20 PortSwigger scenarios and one complete Hacker101 CTF level becomes a cumulative product-maturity benchmark, not a mandatory BS-20 release gate.
+
+Failed in-scope acceptance scenarios must be analyzed and corrected within the existing BS-20/It19 feature branches before PR.
+
+Unsupported scenarios must remain explicitly recorded and must not be presented as successful vulnerability verification.
+
+#### Operational MVP gate
+
+After educational acceptance, evaluate one explicitly authorized real Bug Bounty program using its actual Scope and permitted testing rules.
+
+The operator must be able to:
+
+- Configure an authorized Target and Task.
+- Launch an investigation through Web Chat.
+- Inspect completed and unsupported checks.
+- Review evidence-backed Findings.
+- Prepare a reproducible report.
+- Confirm correct scope enforcement and request accounting.
+
+A pilot with no discovered vulnerabilities may still pass if supported checks executed correctly, evidence is truthful and no critical security or runtime failure occurred.
+
+The operational MVP decision is recorded separately from the BS-20 implementation PR.
+
+#### DoD
+
+BeeAgent and BeeScan deliver one usable autonomous multi-family Web investigation workflow through the existing Web Chat and host runtime.
+
+The declared educational acceptance matrix is independently verified, all accepted Findings have authentic evidence, and unsupported checks have truthful coverage and stopping records.
+
+No scope bypass, secret exposure, uncontrolled execution, false VERIFIED promotion or critical Case integrity regression remains.
+
+The implementation is ready for an authorized real Bug Bounty pilot without requiring a new UI framework, scanner runtime or Knowledge Base.
+
+### Iteration BS-21 — BeeScan Security Knowledge Base MVP
+
+**Status:** PLANNED
+
+#### Goal
+
+Provide a persistent, searchable and source-backed security knowledge base integrated into the existing BeeAgent Web Console and BeeScan Ask workflow.
+
+Allow operators to collect personal security materials, search technical knowledge, reuse reviewed investigation lessons and obtain cited AI answers without granting imported content execution authority.
+
+Keep private, shared and independently verified knowledge distinguishable and protected.
+
+#### Depends on
+
+- Completed BS-19 persistent conversational workspace.
+- Completed BS-20 autonomous investigation workflow and existing Human Review contracts.
+- Existing BeeAgent authentication, ownership, file storage and ArtifactAPI capabilities.
+- Existing document extraction capabilities, including supported Docling integration.
+- Existing BeeAgent AI provider integration.
+
+#### Change level
+
+`security-sensitive`
+
+#### Scope
+
+- Add a Knowledge section to the existing BeeAgent Web Console.
+- Support protected operator actions for:
+  - Creating and editing notes.
+  - Pasting text.
+  - Uploading TXT, MD, PDF and DOCX documents.
+  - Saving source URLs with operator notes.
+  - Assigning tags.
+  - Searching accessible documents.
+  - Inspecting original sources and normalized text.
+  - Submitting materials for shared publication review.
+- Reuse the existing attachment intake, validation, file storage and document extraction contracts where compatible.
+- Store original documents and normalized text separately.
+- Use SQLite for canonical document metadata, ownership, source identities, revisions, access policies and Case references.
+- Use SQLite FTS5 for local full-text search without a new mandatory external service.
+- Keep the search index rebuildable from canonical stored content.
+- Preserve stable document IDs, original source, content hashes, revision identities and extraction status.
+- Deduplicate repeated imports using stable content/source identity without merging records belonging to different owners or violating access boundaries.
+- Provide owner-scoped private knowledge by default.
+- Support shared knowledge only after an explicit authorized approval workflow.
+- Maintain an independent verification status for knowledge derived from authenticated and independently reviewed evidence.
+- Distinguish private/shared visibility from verified/unverified evidence status.
+- Require server-side authorization on document import, search, retrieval, revision and sharing actions.
+- Apply access control before exposing search results, snippets or source references to the AI provider.
+- Return bounded search results with document identity, relevant excerpts and original-source citations.
+- Integrate source-backed retrieval into the existing BeeScan Ask workflow.
+- Keep retrieved documents and snippets as untrusted contextual data, never system instructions or execution policy.
+- Allow AI to explain relevant technical methods and propose hypotheses without generating authorized network actions directly from retrieved text.
+- Support explicit human-approved promotion of sanitized technical lessons from Reviewed Cases.
+- Require independent review provenance, Case/evidence references and sensitive-content redaction before accepting a verified knowledge candidate.
+- Prevent automatic publication of private HTTP responses, credentials, tokens, PII or undisclosed vulnerabilities.
+- Preserve source revision history and traceability after restart.
+- For external URLs, store the link and operator-provided context without automatically downloading or crawling remote content.
+- Provide bounded import, extraction, storage and search operations with safe failure handling.
+- Keep existing BeeScan investigations and reports compatible.
+
+#### Excluded
+
+- LLM fine-tuning or model-weight modification.
+- External vector database, graph database or mandatory embedding service.
+- Autonomous Web scraping, unrestricted URL fetching or Internet-wide document ingestion.
+- Automatic execution of techniques extracted from documents.
+- AI-generated scanner code with immediate execution.
+- Automatic promotion of unreviewed Case evidence into verified knowledge.
+- Automatic public sharing of private or sensitive investigation records.
+- Complex social reputation, voting or contributor scoring systems.
+- A new independent workflow runtime, database server or frontend framework.
+- Full multimedia understanding or unsupported document formats.
+- Mandatory changes to BeeScan domain algorithms or BeeSDK contracts.
+
+#### Deliverable
+
+`Private Documents + Operator Notes + Approved Shared Knowledge + Reviewed Case Lessons → Normalized Storage + SQLite FTS5 → Authorized Search → Source-Cited BeeScan Ask`
+
+One persistent Knowledge section in the existing BeeAgent Web Console with protected retrieval and human-governed knowledge promotion.
+
+#### Acceptance criteria
+
+- An authenticated operator can create a knowledge note through the existing Web Console.
+- TXT, MD, PDF and DOCX documents can be imported using supported extraction paths.
+- A source URL can be stored without automatic remote fetching.
+- Imported originals and normalized content remain separately accessible to authorized operators.
+- Repeated imports do not create uncontrolled duplicates.
+- Documents can be searched by relevant terms using SQLite FTS5.
+- Search results provide correct original-source identity and bounded excerpts.
+- BeeScan Ask can answer a knowledge-backed security question with valid citations to accessible materials.
+- Documents and search indexes remain usable after restart.
+- The search index can be rebuilt without losing canonical documents.
+- Foreign operators cannot read private documents through search, direct retrieval, AI context or source-reference endpoints.
+- Shared publication requires authenticated approval and cannot occur automatically on upload.
+- A verified knowledge record requires valid independent review provenance and an approved sanitized technical lesson.
+- Rejected, incomplete or unreviewed Case evidence cannot be automatically promoted as verified knowledge.
+- Malicious instructions embedded in imported content cannot change Scope, grant execution authority or invoke active assessment.
+- Credential-like values, private Case evidence and restricted content are not leaked through shared search results or AI answers.
+- Unsupported, malformed, oversized or corrupted documents fail safely.
+- Knowledge operations introduce no new target HTTP requests.
+- Existing BeeScan Ask, Investigate, Case, Review and Report functionality remains compatible.
+- The MVP works without a new mandatory network service, vector database or model training pipeline.
+
+#### Checks
+
+- Protected note creation, editing, import and retrieval tests.
+- TXT/MD and supported PDF/DOCX extraction tests.
+- Canonical storage, content hashing, revisions and deduplication tests.
+- SQLite FTS5 indexing, search, index rebuild and restart tests.
+- Private and shared access-control tests.
+- Cross-user, cross-tenant and direct-reference authorization refusal tests.
+- Retrieved-context prompt-injection and execution-authority isolation tests.
+- Sensitive-content redaction and publication-approval tests.
+- Reviewed Case provenance and verified-knowledge promotion tests.
+- Rejected, incomplete, foreign and tampered Case refusal tests.
+- Bounded extraction, malformed input, unsafe path and resource-limit tests.
+- Source citation accuracy and retrieval-quality checks using known security questions.
+- Existing BeeScan Web Chat, Ask, Investigate and report regressions.
+- Full pytest, package/build checks and applicable security-sensitive reviews.
+- Real Web import → search → cited Ask → restart E2E.
 - Independent BeeMCP final review and hosted CI.
 
 #### DoD
 
-BeeAgent and BeeScan deliver a usable chat-first, evidence-driven training assessment platform that meets the declared educational acceptance gate.
+An authenticated operator can collect approved security materials through the existing Web Console, search them and obtain source-cited BeeScan Ask responses.
 
-Every claimed solved scenario has independent completion evidence, and every unresolved scenario has an accurate PARTIAL/ERROR/REFUSED disposition.
+Private documents remain private, shared publication requires approval, and verified knowledge remains attributable to independent reviewed evidence.
 
-Real Bug Bounty readiness is evaluated separately against target-program rules, supported coverage and operator review requirements.
+Retrieved content never becomes execution authority.
+
+The implementation reuses existing BeeAgent storage, extraction, authentication and AI capabilities without introducing a separate knowledge service, scanner runtime or mandatory vector database.
 
 ---
 
