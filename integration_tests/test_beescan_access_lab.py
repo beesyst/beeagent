@@ -84,7 +84,8 @@ def test_real_authenticated_web_workflow(
     service.reload_settings = lambda: deepcopy(settings)
     client, headers = authenticated(app)
     page = client.get("/beescan")
-    assert page.status_code == 200 and "test_profile_id" in page.text
+    assert page.status_code == 200 and "beescan_context" in page.text
+    assert profile["profile_id"] in page.text
     actor = {"user_id": "alice", "role": "operator"}
     payload = {
         "target": probe.origin,

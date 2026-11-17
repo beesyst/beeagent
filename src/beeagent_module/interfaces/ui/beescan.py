@@ -234,6 +234,12 @@ def _workspace_context(service, query, actor):
 
 
 def presentation(selected, config, locale="en", *, settings=None):
+    if selected.get("conversation"):
+        from beeagent_module.interfaces.ui.conversation import (
+            presentation as conversation_presentation,
+        )
+
+        return conversation_presentation(selected, locale)
     ru = locale == "ru"
     messages = []
     intake = selected["intake"]
@@ -581,6 +587,8 @@ def inspection(selected, config, locale="en", *, settings=None):
 def workspace(service, query, actor):
     from urllib.parse import urlencode
 
+    from beeagent_module.interfaces.ui.conversation import history_actions
+
     model = _workspace_context(service, query, actor)
     selected = model["selected"]
     labels = model["labels"]
@@ -713,7 +721,11 @@ def workspace(service, query, actor):
                         },
                         "mode": {"label": row["mode"].title()},
                         "status": {"label": row["status"]},
-                        "findings": {"label": str(len(row["findings"]))},
+                        "findings": {
+                            "label": ("См. запуски" if ru else "See child runs")
+                            if row.get("conversation")
+                            else str(len(row["findings"]))
+                        },
                         "report": {"label": row.get("report_readiness", "unavailable")},
                         "actions": [
                             {
@@ -940,6 +952,15 @@ def workspace(service, query, actor):
                     "href": history_href + "&" + urlencode({"run_id": row["run_id"]}),
                     "active": bool(selected and selected["case_id"] == row["case_id"]),
                     "status": row["status"],
+                    "actions": history_actions(
+                        service,
+                        row,
+                        actor,
+                        "/beescan?" + urlencode(query),
+                        history_href,
+                        selected["case_id"] if selected else None,
+                        ru,
+                    ),
                 }
                 for row in model["records"]
             ],

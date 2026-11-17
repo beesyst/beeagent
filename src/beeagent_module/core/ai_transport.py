@@ -4,7 +4,8 @@ import json
 import logging
 from collections.abc import Callable
 from typing import Any
-from urllib import request
+from urllib import error, request
+from urllib.parse import urlsplit
 
 _SUPPORTED_PROVIDERS = frozenset({"openai_responses", "openai_compatible"})
 
@@ -23,7 +24,11 @@ def call_structured_ai(
     output_chars_max: int | None,
     logger: logging.Logger,
     urlopen: Callable[..., Any] | None = None,
+    reasoning_enabled: bool | None = None,
+    diagnostics: dict[str, object] | None = None,
 ) -> str | None:
+    if diagnostics is not None:
+        diagnostics.clear()
     if (
         provider not in _SUPPORTED_PROVIDERS
         or not api_key.strip()
@@ -31,6 +36,8 @@ def call_structured_ai(
         or not base_url.strip()
         or max_output_tokens <= 0
     ):
+        if diagnostics is not None:
+            diagnostics["category"] = "configuration"
         return None
     if provider == "openai_responses":
         api_url = base_url.rstrip("/") + "/responses"
@@ -51,6 +58,17 @@ def call_structured_ai(
             "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+    if provider == "openai_compatible":
+        if reasoning_enabled is not None:
+            payload["reasoning"] = {"enabled": reasoning_enabled}
+        if urlsplit(base_url).hostname == "openrouter.ai" and responses_text_format:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    key: responses_text_format[key]
+                    for key in ("name", "strict", "schema")
+                },
+            }
     try:
         req = request.Request(
             api_url,
@@ -63,15 +81,61 @@ def call_structured_ai(
         )
         opener = urlopen or request.urlopen
         with opener(req, timeout=timeout_seconds) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            raw = response.read()
+            if diagnostics is not None:
+                diagnostics["http_status"] = (
+                    response.status if hasattr(response, "status") else 200
+                )
+            data = json.loads(raw.decode("utf-8"))
     except Exception as exc:
-        logger.warning("AI provider request failed: %s", exc)
+        category = (
+            "refused"
+            if isinstance(exc, error.HTTPError)
+            and exc.code in {400, 401, 402, 403, 404, 422}
+            else "invalid_response"
+            if isinstance(exc, (ValueError, UnicodeError))
+            else "temporary"
+        )
+        if diagnostics is not None:
+            diagnostics["category"] = category
+            if isinstance(exc, error.HTTPError):
+                diagnostics["http_status"] = exc.code
+        logger.warning("AI provider request failed: category=%s", category)
         return None
     content = _response_content(provider, data)
+    category = "invalid_response"
+    if provider == "openai_compatible" and isinstance(data, dict):
+        choices = data.get("choices")
+        first = (
+            choices[0]
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+            else {}
+        )
+        message = first.get("message")
+        if isinstance(message, dict) and message.get("refusal"):
+            category = "refused"
+            content = None
+        elif first.get("finish_reason") == "length":
+            category = "output_limit"
+            content = None
+        if diagnostics is not None and first.get("finish_reason") in {
+            "stop",
+            "length",
+            "content_filter",
+            "error",
+        }:
+            diagnostics["finish_reason"] = first["finish_reason"]
     if not content or (
         output_chars_max is not None and len(content) > output_chars_max
     ):
+        if content and output_chars_max is not None and len(content) > output_chars_max:
+            category = "output_limit"
+        if diagnostics is not None:
+            diagnostics["category"] = category
+        logger.warning("AI provider response refused: category=%s", category)
         return None
+    if diagnostics is not None:
+        diagnostics["category"] = "ok"
     return content
 
 

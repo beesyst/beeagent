@@ -160,7 +160,7 @@ requires-dist = [
     { name = "beedrill", marker = "extra == 'beedrill'", git = "https://github.com/beesyst/beedrill.git" },
     { name = "beescan", marker = "extra == 'beescan'", git = "https://github.com/beesyst/beescan.git" },
     { name = "beesdk", git = "https://github.com/beesyst/beesdk.git" },
-    { name = "beeui", specifier = "==0.31.0" },
+    { name = "beeui", specifier = "==0.32.0" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
     { name = "fastapi", specifier = "==0.141.1" },
@@ -227,7 +227,7 @@ source = { git = "https://github.com/beesyst/beesdk.git#4762c4e3d60aa1e1c6800549
 
 [[package]]
 name = "beeui"
-version = "0.31.0"
+version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -237,9 +237,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/a5/70f673924708c7678b5ee626cdad1727b4a2765d4572bb255a6e9176f5e9/beeui-0.31.0.tar.gz", hash = "sha256:b95169691d8b2e7044afb29c25725e610716c07219fce2d9c1659ee1ff343178", size = 2581160, upload-time = "2026-11-11T15:57:11.827Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/2d/0a9f8d8307f2c1eacdda076463e8c03a85f4fef3e03676a2e956a0569859/beeui-0.32.0.tar.gz", hash = "sha256:17389f233a188a0a82f1f9569b4fbdb054505a1d04bf38a77c74a4c24bcc6610", size = 2590347, upload-time = "2026-11-17T07:44:56.323Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/c9/bacc005d67fd252c022ab1c83775b0d7a7c4d81a1a28c0e68e5a8fba663e/beeui-0.31.0-py3-none-any.whl", hash = "sha256:8251efada245b9f83d5d0cd353a62d79c84694268526538c657878e5fc2ae98b", size = 2536239, upload-time = "2026-11-11T15:57:00.276Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/05/a00404a62c5a210cc5a3791590243b2703a575043e2c276105ceba775996/beeui-0.32.0-py3-none-any.whl", hash = "sha256:6993f2ff5276f23b226466c6db52e08b2ebd256905dce3ecc921807b40f1bfc5", size = 2542833, upload-time = "2026-11-17T07:44:53.955Z" },
 ]
 
 [[package]]

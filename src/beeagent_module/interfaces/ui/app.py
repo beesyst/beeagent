@@ -369,7 +369,17 @@ def _register_beescan_boundary(app, adapter):
                     query = dict(request.query_params)
                     if (
                         set(query)
-                        - {"lang", "run_id", "q", "tab", "page", "status", "sort"}
+                        - {
+                            "lang",
+                            "run_id",
+                            "q",
+                            "tab",
+                            "page",
+                            "message_page",
+                            "run_page",
+                            "status",
+                            "sort",
+                        }
                         or query.get("tab", "investigation")
                         not in {"investigation", "results"}
                         or len(query.get("q", "")) > 128

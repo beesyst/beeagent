@@ -199,8 +199,8 @@ def test_workspace_auth_preview_and_no_get_mutation(tmp_path, monkeypatch):
     client, headers = authenticated(app)
     page = client.get("/beescan?lang=ru")
     assert page.status_code == 200
-    assert "beescan_start" in page.text
-    assert "Текущая область" in page.text
+    assert "beescan_send" in page.text
+    assert "Добавить контекст" in page.text
     assert list(storage.iterdir()) == []
     assert TestClient(app).get("/api/beescan/status?run_id=foreign").status_code == 401
     outsider, _ = authenticated(app, "outsider")
@@ -529,7 +529,9 @@ def test_replay_concurrency_ownership_and_generic_isolation(tmp_path, monkeypatc
     assert execute(client, headers, data).json()["ok"] is False
 
 
-def test_authenticated_profile_routes_discovery_and_progress_polling(tmp_path, monkeypatch):
+def test_authenticated_profile_routes_discovery_and_progress_polling(
+    tmp_path, monkeypatch
+):
     from beeagent_module.integrations.beescan import access_discovery
     from beeagent_module.integrations.beescan.dast import _api
     from beeagent_module.integrations.beescan.detection import _persist
@@ -589,7 +591,7 @@ def test_authenticated_profile_routes_discovery_and_progress_polling(tmp_path, m
     }
     page = client.get("/beescan")
     assert page.status_code == 200
-    assert "Test principals (required for two-principal access-control assessment)" in page.text
+    assert "beescan_context" in page.text
     assert profile["profile_id"] in page.text
     response = execute(client, headers, request)
     assert response.status_code == 200 and response.json()["ok"], response.text
@@ -619,7 +621,9 @@ def test_authenticated_profile_routes_discovery_and_progress_polling(tmp_path, m
         ]
         assert all(status in {200, 409} for status in statuses), (diagnostics, failures)
         intake = json.loads(
-            (storage / "runs" / run_id / "module-beescan" / "web_intake.json").read_text()
+            (
+                storage / "runs" / run_id / "module-beescan" / "web_intake.json"
+            ).read_text()
         )
         assert intake["intake"]["test_profile_id"] == profile["profile_id"]
         assert discovered == [profile["profile_id"]]
@@ -652,16 +656,18 @@ def test_chat_shell_assets_and_permissions(tmp_path, monkeypatch, lang, name):
     assert "Chat / Work" not in response.text
     assert ("Новый кейс" if lang == "ru" else "New Case") in response.text
     submit = response.text.split('id="beescan-submit"', 1)[1].split(">", 1)[0]
-    assert ("disabled" in submit) is (name != "alice")
+    assert ("disabled" in submit) is (name == "viewer")
     assert client.get("/static/css/beeui.css").status_code == 200
     script = client.get("/static/js/beeui.js")
     assert script.status_code == 200
     assert "initChatWorkspace" in script.text
     assert "/api/beescan/assets" not in response.text
-    assert 'id="beescan-context"' in response.text
+    assert 'id="beescan-context"' not in response.text
     assert 'role="search"' in response.text
     assert 'type="url"' not in response.text
-    assert 'type="radio"' in response.text
+    assert "beescan_investigate" not in response.text
+    assert "beescan_send" in response.text
+    assert "ti-plus" in response.text
     assert 'data-beeui-page-tabs-surface="beescan"' in response.text
     assert 'data-bs-target="#beescan-settings"' not in response.text
     assert ("Кейсы" if lang == "ru" else "Cases") in response.text
@@ -848,9 +854,10 @@ def test_disabled_workspace_does_not_require_execution_limits(tmp_path, monkeypa
     client, _ = authenticated(app)
     page = client.get("/beescan")
     assert page.status_code == 200
-    assert "Unavailable" in page.text
+    assert "Investigation unavailable" in page.text
     submit = page.text.split('id="beescan-submit"', 1)[1].split(">", 1)[0]
-    assert "disabled" in submit
+    assert "disabled" not in submit
+    assert "beescan_send" in page.text
     assert list(storage.iterdir()) == []
 
 

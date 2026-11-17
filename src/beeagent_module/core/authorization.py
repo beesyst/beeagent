@@ -95,12 +95,15 @@ def is_resource_allowed(
 ) -> bool:
     scope_set = frozenset(scopes)
     if (
-        path in {"/api/actions/preview", "/api/actions/execute"}
+        path in {"/api/actions/preview", "/api/actions/execute", "/api/actions/upload"}
         and "beescan" in scope_set
     ):
         return True
     if SCOPE_WILDCARD in scope_set:
         return True
+
+    if path == "/api/actions/upload":
+        return False
 
     surface, artifact_id = _classify_path(path)
     rop_runs = frozenset(rop_run_ids or ())

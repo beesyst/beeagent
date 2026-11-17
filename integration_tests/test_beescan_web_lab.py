@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import ssl
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -12,6 +13,24 @@ from beeagent_module.integrations.beescan import dast_runner
 from beeagent_module.integrations.beescan.investigation import InvestigationPolicy
 from beeagent_module.interfaces.ui.app import build_beeui_app
 from tests.test_beescan_web import authenticated, execute, web_settings
+
+_REAL_AI_PROXY_ENVIRONMENT = (
+    {
+        key: os.environ.get(key)
+        for key in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        )
+    }
+    if os.environ.get("BEEAGENT_VERIFY_REAL_AI") == "1"
+    else {}
+)
 
 
 @pytest.mark.parametrize(
@@ -59,14 +78,14 @@ from tests.test_beescan_web import authenticated, execute, web_settings
             "standard",
             "Assess supported exposures",
             None,
-            None,
+            6,
         ),
         (
             "dast-nonrecursive-vulnerable",
             "deep",
             "Assess supported exposures",
             None,
-            None,
+            6,
         ),
     ],
     indirect=["managed_lab"],
@@ -526,3 +545,316 @@ def _review_report_acceptance(
             }
         )
     )
+
+
+@pytest.mark.parametrize("managed_lab", ["dast-nonrecursive-vulnerable"], indirect=True)
+@pytest.mark.parametrize("credential_refusal", ["unauthorized", "disclosure"])
+@pytest.mark.parametrize("session_kind", ["cookie", "bearer"])
+def test_real_network_conversation_partial_context_and_second_run(
+    managed_lab, monkeypatch, credential_refusal, session_kind
+):
+    from beeagent_module.integrations.beescan import investigation
+    from tests.test_beescan_web import web_report_payload, web_review_payload
+
+    _, root, requests, sessions, probe = managed_lab
+    settings = web_settings(monkeypatch)
+    config = settings["beescan"]["investigation"]
+    probe = replace(probe, time_budget_seconds=60)
+    approval = asdict(
+        InvestigationPolicy(probe, True, True, True, "GET", "numeric_invalid_v1", 3)
+    )
+    for name in ("valid_from", "expires_at"):
+        approval["transport"][name] = approval["transport"][name].isoformat()
+    config.update(
+        approval=approval,
+        local_lab_enabled=True,
+        trusted_local_enabled=True,
+        timeout_seconds=60,
+    )
+    settings["beescan"]["dast"] = {
+        "enabled": True,
+        "approval": {
+            "transport": approval["transport"],
+            "approved": True,
+            "method": "active_dast",
+            "entries": [],
+            "entry_selection": "authenticated_discovery",
+            "max_candidates": 1,
+            "profile": "traversal-nonrecursive-v1",
+            "request_budget": 10,
+            "seconds": 55,
+        },
+    }
+    context = ssl.create_default_context(cafile=str(root / "cert.pem"))
+    original = dast_runner.run_zap
+    monkeypatch.setattr(
+        dast_runner,
+        "run_zap",
+        lambda transport, **kwargs: original(transport, **kwargs, upstream_tls=context),
+    )
+    from pathlib import Path
+    from threading import Event
+
+    real_ai = os.environ.get("BEEAGENT_VERIFY_REAL_AI") == "1"
+    actual_settings = None
+    credential_environment = {}
+    if real_ai:
+        from dotenv import dotenv_values, load_dotenv
+
+        from beeagent_module.core.settings import load_settings
+
+        checkout = Path(__file__).resolve().parents[1]
+        load_dotenv(checkout / ".env")
+        actual_settings = load_settings(checkout / "config/settings.yml")
+        profile = investigation.named_ai_profile(actual_settings)
+        private_environment = dotenv_values(checkout / ".env")
+        name = profile["api_key_env"]
+        if private_environment.get(name):
+            credential_environment[name] = private_environment[name]
+    ai = investigation._ai
+    ask_calls = []
+
+    def conversation_ai(settings, name, *args, **kwargs):
+        if name in {"conversation_ask", "conversation_intent"}:
+            if name == "conversation_ask":
+                ask_calls.append(deepcopy(args[0]))
+            if real_ai:
+                with monkeypatch.context() as actual_environment:
+                    for variable, value in credential_environment.items():
+                        actual_environment.setenv(variable, value)
+                    for variable, value in _REAL_AI_PROXY_ENVIRONMENT.items():
+                        if value is None:
+                            actual_environment.delenv(variable, raising=False)
+                        else:
+                            actual_environment.setenv(variable, value)
+                    from urllib import request as provider_request
+
+                    actual_environment.setattr(
+                        provider_request,
+                        "urlopen",
+                        provider_request.build_opener().open,
+                    )
+                    return ai(actual_settings, name, *args, **kwargs)
+            return (
+                {"intent": "Investigate"}
+                if name == "conversation_intent"
+                else {"answer": "Synthetic conversation fixture answer."}
+            )
+        return ai(settings, name, *args, **kwargs)
+
+    monkeypatch.setattr(investigation, "_ai", conversation_ai)
+    entered, release = Event(), Event()
+    storage = root / "conversation-web-storage"
+    storage.mkdir(mode=0o700)
+    app = build_beeui_app(settings, logging.getLogger("conversation-lab"), storage)
+    service = app.state.beeagent_adapter.beescan
+    service.reload_settings = lambda: deepcopy(settings)
+    client, headers = authenticated(app)
+    actor = {"user_id": "alice", "role": "operator"}
+    created = execute(
+        client,
+        headers,
+        {
+            "nonce": service.nonce(actor),
+            "message": "What is CSRF? Answer in one short sentence.",
+        },
+        "beescan_send",
+    )
+    assert created.json()["ok"], created.text
+    case_id = created.json()["data"]["case_id"]
+    assert requests == []
+    assert (
+        service.conversations.read(case_id, actor)["messages"][-1]["sender"]
+        == "assistant"
+    )
+
+    def submit(action, fields):
+        payload = {
+            "case_id": case_id,
+            "revision": str(service.conversations.read(case_id, actor)["revision"]),
+            "nonce": service.conversations.nonce(
+                actor, case_id, service.conversations.read(case_id, actor)["revision"]
+            ),
+            **fields,
+        }
+        result = execute(client, headers, payload, action)
+        assert result.json()["ok"], result.text
+        return result
+
+    for key, value in (
+        ("target", probe.origin),
+        ("scope", probe.scope_id),
+        ("authority", probe.mission_id),
+    ):
+        submit("beescan_context", {"key": key, "value": value})
+    from http.server import BaseHTTPRequestHandler
+
+    cookies = []
+    parse_request = BaseHTTPRequestHandler.parse_request
+    session_value = (
+        "sid=synthetic-cookie-371"
+        if session_kind == "cookie"
+        else "synthetic-bearer-371"
+    )
+
+    def parse_with_cookie(handler):
+        accepted = parse_request(handler)
+        if accepted:
+            received = handler.headers.get(
+                "Cookie" if session_kind == "cookie" else "Authorization"
+            )
+            if session_kind == "bearer" and received is not None:
+                received = received.removeprefix("Bearer ")
+            cookies.append(received == session_value)
+            if received == session_value and not entered.is_set():
+                entered.set()
+                if not release.wait(15):
+                    return False
+            if received and received != session_value:
+                requests.append((handler.command, handler.path))
+                if credential_refusal == "unauthorized":
+                    handler.send_error(401)
+                else:
+                    body = ("Session reflected: " + received).encode()
+                    handler.send_response(200)
+                    handler.send_header("Content-Type", "text/plain")
+                    handler.send_header("Content-Length", str(len(body)))
+                    handler.end_headers()
+                    handler.wfile.write(body)
+                return False
+        return accepted
+
+    monkeypatch.setattr(BaseHTTPRequestHandler, "parse_request", parse_with_cookie)
+    submit("beescan_context", {"key": "principal", "value": "approved-lab-operator"})
+    submit("beescan_session", {"kind": session_kind, "secret": session_value})
+    submit(
+        "beescan_send",
+        {
+            "message": "Assess supported exposures",
+            "mode": "quick",
+        },
+    )
+    try:
+        assert entered.wait(15)
+        original_context = deepcopy(
+            service.conversations.read(case_id, actor)["runs"][0]
+        )
+        submit(
+            "beescan_context",
+            {"key": "observation", "value": "Added during active run"},
+        )
+        assert service.conversations.read(case_id, actor)["runs"][0] == original_context
+    finally:
+        release.set()
+    service.executor.submit(lambda: None).result(timeout=90)
+    credential_run = service.conversations.read(case_id, actor)["runs"][0]
+    assert service.inspect(credential_run["run_id"], actor)["status"] not in {
+        "ERROR",
+        "REFUSED",
+    }
+    assert cookies and all(cookies)
+    for path in (storage / "runs").rglob("*.json"):
+        assert session_value not in path.read_text()
+    submit("beescan_context", {"key": session_kind, "value": ""})
+    submit(
+        "beescan_session",
+        {
+            "kind": session_kind,
+            "secret": "sid=wrong" if session_kind == "cookie" else "wrong",
+        },
+    )
+    submit(
+        "beescan_send",
+        {
+            "message": "Assess supported exposures",
+            "mode": "quick",
+        },
+    )
+    service.executor.submit(lambda: None).result(timeout=90)
+    refused = service.conversations.read(case_id, actor)["runs"][1]
+    assert service.inspect(refused["run_id"], actor)["status"] == "REFUSED"
+    submit("beescan_context", {"key": session_kind, "value": ""})
+    submit(
+        "beescan_send",
+        {
+            "message": "Assess supported exposures",
+            "mode": "quick",
+        },
+    )
+    service.executor.submit(lambda: None).result(timeout=90)
+    first = service.conversations.read(case_id, actor)["runs"][2]
+    assert service.inspect(first["run_id"], actor)["status"] == "PARTIAL"
+    previous = {
+        p: p.read_bytes()
+        for p in (storage / "runs" / first["run_id"]).rglob("*")
+        if p.is_file()
+    }
+    submit(
+        "beescan_context",
+        {
+            "key": "observation",
+            "value": "Operator requests the approved traversal verification.",
+        },
+    )
+    submit(
+        "beescan_send",
+        {
+            "message": "Assess Path Traversal",
+            "mode": "standard",
+        },
+    )
+    service.executor.submit(lambda: None).result(timeout=90)
+    state = service.conversations.read(case_id, actor)
+    assert len(state["runs"]) == 4
+    second = state["runs"][3]
+    assert first["run_id"] != second["run_id"]
+    assert first["context_revision"] < second["context_revision"]
+    view = service.inspect(second["run_id"], actor)
+    assert view["status"] == "CANDIDATE", view
+    assert all(path.read_bytes() == raw for path, raw in previous.items())
+    assert [row["case_id"] for row in service.history(actor)] == [case_id]
+    counted = list(requests)
+    finding = view["findings"][0]["finding_id"]
+    reviewed = execute(
+        client, headers, web_review_payload(second["run_id"], finding), "beescan_review"
+    )
+    assert reviewed.json()["ok"], reviewed.text
+    prepared = execute(
+        client,
+        headers,
+        web_report_payload(
+            second["run_id"],
+            finding,
+            reviewed.json()["data"]["review_id"],
+            complete=True,
+        ),
+        "beescan_report_prepare",
+    )
+    assert prepared.json()["ok"], prepared.text
+    submit(
+        "beescan_ask", {"message": "What is its main mitigation? One short sentence."}
+    )
+    followup = service.conversations.read(case_id, actor)["messages"][-1]
+    assert followup["sender"] == "assistant" or followup["type"] == "unavailable"
+    assert len(ask_calls) == 2
+    assert (
+        ask_calls[-1]["conversation"][0]["text"]
+        == "What is CSRF? Answer in one short sentence."
+    )
+    assert sum(len(item["text"]) for item in ask_calls[-1]["conversation"]) <= 6000
+    assert session_value not in json.dumps(ask_calls)
+    assert requests == counted
+    restored = build_beeui_app(
+        settings, logging.getLogger("conversation-restart"), storage
+    )
+    restored.state.beeagent_adapter.beescan.reload_settings = lambda: deepcopy(settings)
+    restored_client, _ = authenticated(restored)
+    response = restored_client.get("/api/beescan/status", params={"run_id": case_id})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["message_count"] >= 6
+    assert len(response.json()["data"]["runs"]) == 4
+    assert requests == counted
+    assert all(
+        session.closed and session.evidence["cleanup_verified"] for session in sessions
+    )
+    service.executor.shutdown(wait=True)
