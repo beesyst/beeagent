@@ -237,11 +237,24 @@ def run_detection_provider(
     deadline=None,
     authentication=None,
 ):
+    authentication_kind = "bearer"
+    from beeagent_module.integrations.beescan.conversation import active_session
+
+    session = active_session.get()
+    if session is not None and investigation is not None:
+        if authentication is not None:
+            raise PermissionError("ambiguous_authentication_context")
+        selected = session(policy)
+        if selected is not None:
+            authentication_kind, authentication = selected
     if authentication is not None and (
         investigation is None
         or type(authentication) is not str
         or not 1 <= len(authentication) <= 4096
-        or any(ord(c) < 33 or ord(c) > 126 for c in authentication)
+        or any(
+            ord(c) < (32 if authentication_kind == "cookie" else 33) or ord(c) > 126
+            for c in authentication
+        )
     ):
         raise ValueError("invalid_authentication_context")
     if type(git_exposure) is not bool or (git_exposure and http_signals):
@@ -421,6 +434,8 @@ def run_detection_provider(
                     "/git_head_signature.py",
                 ]
             reauthorize()
+            if session is not None and investigation is not None:
+                session(policy)
             from beeagent_module.integrations.beescan.egress import checkpoint
 
             checkpoint(policy)
@@ -438,6 +453,7 @@ def run_detection_provider(
                 config.update(investigation=True, **investigation)
             if authentication is not None:
                 config["authenticated"] = True
+                config["authentication_kind"] = authentication_kind
             try:
                 code, raw_capture = run(
                     [
@@ -496,6 +512,24 @@ def run_detection_provider(
                     ):
                         raise ResponseLengthExceeded(failure["content_length"])
                 raise ValueError("capture_failed")
+            if (
+                session is not None
+                and authentication is not None
+                and investigation is not None
+            ):
+                response = json.loads(raw_capture, object_pairs_hook=_unique_object)
+                if response.get("status_code") in {401, 403}:
+                    raise PermissionError("target_session_refused")
+                disclosed = [authentication]
+                if authentication_kind == "cookie":
+                    disclosed.extend(
+                        pair.partition("=")[2].strip()
+                        for pair in authentication.split(";")
+                    )
+                if any(
+                    value and value in response.get("body", "") for value in disclosed
+                ):
+                    raise PermissionError("target_session_disclosed")
             if git_exposure or investigation is not None:
                 return raw_capture
             capture = parse_capture(raw_capture, policy, http_signals=http_signals)

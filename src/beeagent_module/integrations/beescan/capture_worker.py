@@ -128,10 +128,17 @@ def capture(config):
                     raise ValueError("invalid_authentication_context")
                 with open("/authentication", "rb") as credential:
                     value = credential.read(4097)
-                if not 1 <= len(value) <= 4096 or any(c < 33 or c > 126 for c in value):
+                kind = config.get("authentication_kind", "bearer")
+                if kind not in {"bearer", "cookie"}:
+                    raise ValueError("invalid_authentication_context")
+                if not 1 <= len(value) <= 4096 or any(
+                    c < (32 if kind == "cookie" else 33) or c > 126 for c in value
+                ):
                     raise ValueError("invalid_authentication_context")
                 authentication = (
-                    "Authorization: Bearer " + value.decode("ascii") + "\r\n"
+                    ("Cookie: " if kind == "cookie" else "Authorization: Bearer ")
+                    + value.decode("ascii")
+                    + "\r\n"
                 )
             request = (
                 f"GET {path} HTTP/1.1\r\nHost: {origin.netloc}\r\n"
@@ -282,8 +289,6 @@ def read_investigation_response(stream, *, limit, general=False):
     if match is None:
         raise ValueError("invalid_response_status")
     status = int(match[1])
-    if 300 <= status < 400:
-        raise ValueError("redirect_refused")
     headers = {}
     for line in lines[1:-2]:
         name, separator, value = line.partition(":")
@@ -299,10 +304,17 @@ def read_investigation_response(stream, *, limit, general=False):
             "content-type",
             "transfer-encoding",
             "content-encoding",
+            "location",
         }:
             if name in headers:
                 raise ValueError("duplicate_response_header")
             headers[name] = value.strip()
+    if 300 <= status < 400:
+        return {
+            "status_code": status,
+            "redirect_location": headers.get("location"),
+            "complete": True,
+        }
     if "transfer-encoding" in headers or "content-encoding" in headers:
         raise ValueError("unsupported_response_encoding")
     length = headers.get("content-length", "")

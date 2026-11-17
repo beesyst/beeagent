@@ -660,6 +660,8 @@ class BeeAgentUiAdapter:
             lambda: load_settings(get_project_root() / "config/settings.yml"),
         )
 
+        self.upload_actions = {"beescan_attach": self._upload_conversation}
+
         self.metadata = AdapterMetadata(
             product_id="beeagent",
             title="BeeAgent",
@@ -810,12 +812,53 @@ class BeeAgentUiAdapter:
         except SenderBlacklistError as exc:
             return error_result("invalid_input", str(exc))
 
+    def _upload_conversation(self, payload, files, actor):
+        try:
+            return ok_result(self.beescan.conversations.upload(payload, files, actor))
+        except OSError, ValueError, RuntimeError, KeyError, TypeError:
+            return error_result("permission_denied", "Attachment refused")
+
     def execute_action(
         self,
         action_id: str,
         payload: dict[str, Any],
         actor: dict[str, str] | None = None,
     ) -> AdapterResult | AdapterErrorResult:
+        if action_id in {
+            "beescan_conversation_create",
+            "beescan_ask",
+            "beescan_send",
+            "beescan_access",
+            "beescan_authorization",
+            "beescan_context",
+            "beescan_session",
+            "beescan_investigate",
+            "beescan_attachment_remove",
+        }:
+            try:
+                return ok_result(
+                    self.beescan.conversations.execute(action_id, payload, actor)
+                )
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError) as failure:
+                code = {
+                    "exact_origin_required": "invalid_target",
+                    "invalid_conversation_text": "invalid_target"
+                    if action_id == "beescan_context"
+                    and type(payload) is dict
+                    and payload.get("key") == "target"
+                    else "permission_denied",
+                    "conversation_replay_or_conflict": "case_conflict",
+                    "invalid_web_nonce": "action_expired",
+                    "web_nonce_refused": "action_expired",
+                    "target_context_required": "context_required",
+                    "session_context_required": "context_required",
+                    "internal_destination_denied": "target_execution_denied",
+                    "target_excluded": "target_execution_denied",
+                }.get(str(failure), "permission_denied")
+                self.beescan.logger.warning(
+                    "Conversation action refused: category=%s", code
+                )
+                return error_result(code, "Conversation action refused")
         if action_id in {
             "beescan_start",
             "beescan_resume",
@@ -832,6 +875,23 @@ class BeeAgentUiAdapter:
                         execute_web_review,
                     )
 
+                    for name in (
+                        "decision_basis",
+                        "evidence_text",
+                        "prerequisites",
+                        "reproduction_steps",
+                        "expected_behavior",
+                        "observed_behavior",
+                        "impact",
+                        "remediation",
+                        "program_requirements",
+                    ):
+                        value = payload.get(name)
+                        if (
+                            type(value) is str
+                            and self.beescan.conversations.redact(value, actor) != value
+                        ):
+                            raise PermissionError("secret_in_web_review")
                     return ok_result(
                         execute_web_review(self.beescan, action_id, payload, actor)
                     )
@@ -1427,6 +1487,18 @@ class BeeAgentUiAdapter:
     ) -> AdapterResult | AdapterErrorResult:
         try:
             if page_id == "beescan":
+                if (
+                    not query.get("run_id")
+                    and query.get("tab", "investigation") != "results"
+                    or str(query.get("run_id", "")).startswith("web-chat-")
+                ):
+                    from beeagent_module.interfaces.ui.conversation import (
+                        workspace as conversation_workspace,
+                    )
+
+                    return ok_result(
+                        conversation_workspace(self.beescan, query, web_actor.get())
+                    )
                 return ok_result(workspace(self.beescan, query, web_actor.get()))
             if page_id in {"rop", "rop_dashboard"}:
                 tab = query.get("tab", "overview")

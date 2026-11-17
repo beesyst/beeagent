@@ -436,6 +436,28 @@ def _load_general_case(state, snapshot, case_id):
                     "skipped_resources",
                 }
             ),
+            frozenset(
+                {
+                    "schema_version",
+                    "case_id",
+                    "origin",
+                    "connected_ip",
+                    "dependency_revision",
+                    "objective_id",
+                    "requested_field",
+                    "segments",
+                    "outcomes",
+                    "entries",
+                    "decisions",
+                    "status",
+                    "reason",
+                    "pending",
+                    "terminal",
+                    "metrics",
+                    "skipped_resources",
+                    "redirect_resources",
+                }
+            ),
         }
         or state["case_id"] != case_id
         or canonical_locator(TargetKind.URL, state["origin"]) != state["origin"]
@@ -472,13 +494,73 @@ def _load_general_case(state, snapshot, case_id):
             type(item) is not dict
             or set(item) != {"relative_url", "reason"}
             or type(item["relative_url"]) is not str
-            or item["reason"] != "unsupported_response_type"
+            or item["reason"]
+            not in {
+                "unsupported_response_type",
+                "redirect_destination_refused",
+                "redirect_followed",
+                "redirect_location_missing",
+            }
             for item in skipped_resources
         )
     ):
         raise ValueError("invalid_general_skipped_resource")
     for item in skipped_resources:
         _relative(item["relative_url"])
+    redirect_resources = state.get("redirect_resources", [])
+    if (
+        type(redirect_resources) is not list
+        or len(redirect_resources) > 32
+        or any(
+            type(item) is not dict
+            or frozenset(item)
+            not in {
+                frozenset({"relative_url", "status_code", "destination", "outcome"}),
+                frozenset(
+                    {
+                        "relative_url",
+                        "status_code",
+                        "destination",
+                        "outcome",
+                        "evidence_refs",
+                    }
+                ),
+            }
+            or type(item["relative_url"]) is not str
+            or item["status_code"]
+            not in {
+                200,
+                201,
+                202,
+                203,
+                204,
+                205,
+                206,
+                207,
+                208,
+                226,
+                301,
+                302,
+                303,
+                307,
+                308,
+            }
+            or item["destination"] is not None
+            and type(item["destination"]) is not str
+            or item["outcome"] not in {"refused", "followed", "captured"}
+            or "evidence_refs" in item
+            and (
+                type(item["evidence_refs"]) is not list
+                or any(type(value) is not str for value in item["evidence_refs"])
+            )
+            for item in redirect_resources
+        )
+    ):
+        raise ValueError("invalid_general_redirect_resource")
+    for item in redirect_resources:
+        _relative(item["relative_url"])
+        if item["destination"] is not None:
+            _relative(item["destination"])
     surfaces = []
     for entry in state["entries"]:
         if (

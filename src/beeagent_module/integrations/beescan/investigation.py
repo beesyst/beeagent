@@ -337,6 +337,7 @@ def _ai(settings, name, facts, schema, logger, *, deadline=None, on_call=None):
     prompt = _prompt(settings, name, facts)
     if on_call is not None:
         on_call()
+    diagnostics = {}
     raw = call_structured_ai(
         prompt=prompt,
         provider=profile["provider"],
@@ -354,10 +355,22 @@ def _ai(settings, name, facts, schema, logger, *, deadline=None, on_call=None):
         },
         output_chars_max=config["output_chars_max"],
         logger=private_logger,
+        reasoning_enabled=(
+            False
+            if name in {"conversation_ask", "conversation_intent"}
+            and urlsplit(profile["base_url"]).hostname == "openrouter.ai"
+            else None
+        ),
+        diagnostics=diagnostics,
     )
     if type(raw) is not str or not 1 <= len(raw) <= config["output_chars_max"]:
-        logger.warning("BeeScan investigation AI response unavailable")
-        raise ValueError("investigation_ai_unavailable")
+        category = diagnostics.get("category", "unavailable")
+        logger.warning(
+            "BeeScan AI failure: category=%s http_status=%s",
+            category,
+            diagnostics.get("http_status"),
+        )
+        raise ValueError("investigation_ai_" + category)
     return _json(raw)
 
 
@@ -1299,6 +1312,7 @@ def execute_investigation(
     general_case = None
     general_entries = []
     skipped_resources = []
+    redirect_resources = []
     from beeagent_module.integrations.beescan.discovery_dast import discovery_selected
 
     integrated = general and discovery_selected(settings)
@@ -1462,6 +1476,52 @@ def execute_investigation(
             raise ValueError("request_count_unverified")
         authorize()
         captured = _json(raw)
+        if general and (
+            set(captured)
+            == {
+                "origin",
+                "connected_ip",
+                "port",
+                "method",
+                "relative_url",
+                "request_count",
+                "status_code",
+                "redirect_location",
+                "complete",
+            }
+            and all(
+                captured[key] == value
+                for key, value in {
+                    "origin": current_policy.transport.origin,
+                    "connected_ip": current_policy.transport.connected_ip,
+                    "port": current_policy.transport.port,
+                    "method": "GET",
+                    "relative_url": selected.relative_url,
+                    "request_count": 1,
+                    "complete": True,
+                }.items()
+            )
+            and captured["status_code"] in {301, 302, 303, 307, 308}
+            and (
+                captured["redirect_location"] is None
+                or type(captured["redirect_location"]) is str
+                and 1 <= len(captured["redirect_location"]) <= 512
+                and captured["redirect_location"].isascii()
+            )
+        ):
+            child_status.update(
+                complete=True,
+                status_code=captured["status_code"],
+                redirect_location=captured["redirect_location"],
+            )
+            step.update(
+                status="redirected",
+                status_code=captured["status_code"],
+                redirect_location=captured["redirect_location"],
+            )
+            _persist(child, "capture_status.json", child_status)
+            _persist(artifacts, "investigation_steps.json", steps)
+            return captured, 1
         if general and (
             set(captured)
             == {
@@ -1697,6 +1757,7 @@ def execute_investigation(
             "decisions": (previous_case["decisions"] if previous_case else [])
             + case_decisions,
             "skipped_resources": list(skipped_resources),
+            "redirect_resources": list(redirect_resources),
             "status": status["status"],
             "reason": status["reason"],
             "pending": pending,
@@ -1837,6 +1898,7 @@ def execute_investigation(
                 config["adaptive"]["max_depth"],
             )
             skipped_resources.extend(previous_case.get("skipped_resources", []))
+            redirect_resources.extend(previous_case.get("redirect_resources", []))
         catalog = ToolCatalog(
             (
                 Capability(
@@ -1879,6 +1941,7 @@ def execute_investigation(
         else:
             selected = intent.discovery
             depth = 0
+        redirect_chain = []
         while selected is not None:
             authorize()
             if len(general_entries) >= config["adaptive"]["max_steps"]:
@@ -1889,13 +1952,51 @@ def execute_investigation(
                 break
             general_checkpoint(pending=True)
             facts, count = capture(selected, reauthorize=authorize)
-            if facts is None:
+            redirect_terminal = False
+            if type(facts) is dict:
+                location = facts["redirect_location"]
+                redirect_resources.append(
+                    {
+                        "relative_url": selected.relative_url,
+                        "status_code": facts["status_code"],
+                        "destination": None,
+                        "outcome": "refused",
+                    }
+                )
+                if location is not None and len(redirect_chain) < 3:
+                    try:
+                        destination = api_domain.canonical_resource(
+                            current_policy.transport.origin,
+                            selected.relative_url,
+                            location,
+                        )
+                    except ValueError:
+                        destination = None
+                    if destination is not None and destination not in redirect_chain:
+                        redirect_resources[-1]["destination"] = destination
+                        redirect_resources[-1]["outcome"] = "followed"
+                        redirect_chain.append(selected.relative_url)
+                        selected = intent.request("resource", destination)
+                        continue
                 skipped_resources.append(
                     {
                         "relative_url": selected.relative_url,
-                        "reason": "unsupported_response_type",
+                        "reason": "redirect_destination_refused"
+                        if location is not None
+                        else "redirect_location_missing",
                     }
                 )
+                redirect_chain = []
+                redirect_terminal = True
+                facts = None
+            if facts is None:
+                if not redirect_terminal:
+                    skipped_resources.append(
+                        {
+                            "relative_url": selected.relative_url,
+                            "reason": "unsupported_response_type",
+                        }
+                    )
                 decision = api_domain.decide_general(
                     general_case,
                     catalog=catalog,
@@ -1926,6 +2027,57 @@ def execute_investigation(
             persist_source(facts)
             if count != 1 or not verify_source(facts):
                 raise ValueError("unauthenticated_investigation_source")
+            if redirect_chain:
+                redirect_resources.append(
+                    {
+                        "relative_url": selected.relative_url,
+                        "status_code": facts.status_code,
+                        "destination": None,
+                        "outcome": "captured",
+                        "evidence_refs": list(facts.evidence_refs),
+                    }
+                )
+                skipped_resources.extend(
+                    {
+                        "relative_url": item,
+                        "reason": "redirect_followed",
+                    }
+                    for item in (*redirect_chain, selected.relative_url)
+                )
+                redirect_chain = []
+                decision = api_domain.decide_general(
+                    general_case,
+                    catalog=catalog,
+                    available_capabilities=(api_domain.CAPABILITY,),
+                    at=datetime.now(UTC),
+                    excluded_relative_urls=tuple(
+                        item["relative_url"] for item in skipped_resources
+                    ),
+                )
+                case_decisions.append(
+                    {
+                        "reason": decision.reason,
+                        "action_id": decision.resource.action_id
+                        if decision.resource
+                        else None,
+                        "guidance": decision.guidance,
+                    }
+                )
+                status.update(
+                    reason=decision.reason,
+                    next_actions=[next_action(decision)],
+                    evidence_refs=sorted(
+                        {
+                            *status["evidence_refs"],
+                            *facts.evidence_refs,
+                        }
+                    ),
+                )
+                if decision.resource is None:
+                    break
+                selected = intent.request("resource", decision.resource.relative_url)
+                depth = decision.resource.depth
+                continue
             content = transient_content.pop(facts.response_id)
             observed_entries = ()
             if integrated:
@@ -2285,6 +2437,7 @@ def execute_investigation(
                 for item in general_case.surfaces
             ],
             skipped_resources=list(skipped_resources),
+            redirect_resources=list(redirect_resources),
             source_analysis=source_analysis,
             decisions=case_decisions,
             limitations=[
@@ -2826,23 +2979,34 @@ def execute_investigation(
             complete=False,
         )
     except (OSError, ValueError, RuntimeError, ImportError) as error:
-        if web_invocation is not None:
+        reason = str(error)
+        partial_redirect = general and reason == "redirect_refused" and source_manifest
+        if web_invocation is not None and not partial_redirect:
             from beeagent_module.integrations.beescan.web import record_failure
 
             record_failure(storage_dir, logger, run_id, error, "investigation")
-        reason = str(error)
-        safe_reason = (
-            reason
-            if reason
-            in {
-                "unsupported_investigation_task",
-                "invalid_requested_field",
-                "reviewed_it11_revision_unavailable",
-                *RESPONSE_FAILURES,
-            }
-            else "execution_incomplete"
-        )
-        status.update(status="ERROR", reason=safe_reason, complete=False)
+        if partial_redirect:
+            status.update(
+                status="PARTIAL",
+                reason=reason,
+                complete=False,
+                next_actions=[
+                    "A redirect was not followed; inspect authenticated evidence and continue only with an approved exact-origin resource."
+                ],
+            )
+        else:
+            safe_reason = (
+                reason
+                if reason
+                in {
+                    "unsupported_investigation_task",
+                    "invalid_requested_field",
+                    "reviewed_it11_revision_unavailable",
+                    *RESPONSE_FAILURES,
+                }
+                else "execution_incomplete"
+            )
+            status.update(status="ERROR", reason=safe_reason, complete=False)
         if isinstance(error, ResponseLengthExceeded):
             status["response_content_length"] = error.content_length
     finally:

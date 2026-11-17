@@ -282,9 +282,7 @@ def test_all_consumers_select_independently(
     )
     from beeagent_module.integrations.beescan import investigation
 
-    settings = isolated_ai_settings(
-        read_test_settings(), "openrouter"
-    )
+    settings = isolated_ai_settings(read_test_settings(), "openrouter")
     settings["ai"]["default_profile"] = "openrouter"
     for profile in settings["ai"]["profiles"].values():
         profile.pop("enabled")
@@ -381,9 +379,7 @@ def test_investigation_cli_preserves_selected_provenance_on_ai_failure(
     from beeagent_module.integrations.beescan.probe import handle_beescan_cli
     from tests.test_beescan_investigation import configure_approved, task_file
 
-    settings = isolated_ai_settings(
-        read_test_settings(), "openrouter"
-    )
+    settings = isolated_ai_settings(read_test_settings(), "openrouter")
     configure_approved(settings, monkeypatch)
     settings["beescan"]["investigation"]["ai_profile"] = "deepseek"
     monkeypatch.setattr(investigation, "_load_domain", lambda **kw: (None, "a" * 40))
@@ -405,3 +401,149 @@ def test_investigation_cli_preserves_selected_provenance_on_ai_failure(
     assert result["ai_provider"] == "openai_compatible"
     assert result["ai_model"] == "test-deepseek-model"
     assert "sk-test" not in result_path.read_text()
+
+
+def test_openrouter_chat_schema_and_bounded_reasoning_disable():
+    captured = {}
+    diagnostics = {}
+
+    def opener(req, timeout):
+        captured.update(json.loads(req.data))
+        return _Response(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": '{"answer":"bounded"}'},
+                    }
+                ]
+            }
+        )
+
+    assert (
+        _call(
+            provider="openai_compatible",
+            base_url="https://openrouter.ai/api/v1",
+            reasoning_enabled=False,
+            diagnostics=diagnostics,
+            urlopen=opener,
+        )
+        == '{"answer":"bounded"}'
+    )
+    assert captured["model"] == "model" and captured["max_tokens"] == 100
+    assert captured["reasoning"] == {"enabled": False}
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert diagnostics == {
+        "http_status": 200,
+        "finish_reason": "stop",
+        "category": "ok",
+    }
+
+
+@pytest.mark.parametrize(
+    "response,category",
+    [
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": "", "reasoning": "private reasoning"},
+                    }
+                ]
+            },
+            "output_limit",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "", "refusal": "private refusal"},
+                    }
+                ]
+            },
+            "refused",
+        ),
+        ({"choices": []}, "invalid_response"),
+    ],
+)
+def test_provider_diagnostics_are_safe_and_distinguish_failure(
+    response, category, caplog
+):
+    diagnostics = {}
+    assert (
+        _call(
+            provider="openai_compatible",
+            diagnostics=diagnostics,
+            urlopen=lambda *args, **kwargs: _Response(response),
+        )
+        is None
+    )
+    assert diagnostics["category"] == category
+    assert "private" not in json.dumps(diagnostics) + caplog.text
+
+
+@pytest.mark.parametrize(
+    "status,category", [(401, "refused"), (429, "temporary"), (503, "temporary")]
+)
+def test_http_failure_diagnostics_do_not_log_private_exception(
+    status, category, caplog
+):
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    def opener(*args, **kwargs):
+        raise HTTPError(
+            "https://provider.test/private",
+            status,
+            "PRIVATE CREDENTIAL",
+            Message(),
+            None,
+        )
+
+    diagnostics = {}
+    assert _call(diagnostics=diagnostics, urlopen=opener) is None
+    assert diagnostics == {"category": category, "http_status": status}
+    assert "PRIVATE" not in caplog.text and "/private" not in caplog.text
+
+
+def test_conversation_openrouter_budget_and_reasoning_policy(
+    isolated_ai_settings, monkeypatch
+):
+    from beeagent_module.integrations.beescan import investigation
+    from tests.test_beescan_web import web_settings
+
+    settings = isolated_ai_settings(web_settings(monkeypatch), "openrouter")
+    settings["beescan"]["investigation"]["ai_profile"] = "openrouter"
+    captured = {}
+
+    def transport(**kwargs):
+        captured.update(kwargs)
+        return '{"answer":"Bounded answer"}'
+
+    monkeypatch.setattr(investigation, "call_structured_ai", transport)
+    result = investigation._ai(
+        settings,
+        "conversation_ask",
+        {
+            "conversation": [{"sender": "operator", "text": "What can you do?"}],
+            "approved_case_facts": [],
+        },
+        {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        },
+        logging.getLogger("test"),
+    )
+    assert result == {"answer": "Bounded answer"}
+    assert captured["reasoning_enabled"] is False
+    assert (
+        captured["max_output_tokens"]
+        == settings["beescan"]["investigation"]["output_chars_max"] // 4
+    )
+    assert captured["model"] == "test-openrouter-model"
+    assert captured["responses_text_format"]["strict"] is True

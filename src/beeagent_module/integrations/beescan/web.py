@@ -11,6 +11,7 @@ import stat
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from itertools import islice
@@ -232,8 +233,10 @@ class _WebInvocation:
                     state, snapshot = load_case(service.storage, case_id)
                     bound = state.get("discovery", state).get("connected_ip")
                     snapshot.verify()
+            conversation = service.conversations.pending.get(run_id)
+            authority_case = conversation[0] if conversation else case_id
             self.policy = web_execution_policy(
-                self.settings, task.target, case_id, connected_ip=bound
+                self.settings, task.target, authority_case, connected_ip=bound
             )
         else:
             self.policy = InvestigationPolicy.from_config(
@@ -327,6 +330,13 @@ class _WebInvocation:
         limits = result["beescan"]["investigation"]["adaptive"]
         for key, maximum in PROFILES[self.mode].items():
             limits[key] = min(limits[key], maximum)
+        conversation = getattr(
+            self, "conversation_binding", None
+        ) or self.service.conversations.pending.get(self.run_id)
+        if conversation and any(
+            kind in conversation[1] for kind in ("bearer", "cookie")
+        ):
+            result["beescan"].get("dast", {})["enabled"] = False
         return result
 
     def provenance(self):
@@ -350,6 +360,14 @@ class _WebInvocation:
             "mode": self.mode,
             "authority_sha256": digest(self.settings["beescan"]),
         }
+        conversation = getattr(
+            self, "conversation_binding", None
+        ) or self.service.conversations.pending.get(self.run_id)
+        if conversation:
+            binding["parent_case_id"] = conversation[0]
+            binding["context_sha256"] = digest(
+                {"context": conversation[1], "attachments": conversation[3]}
+            )
         if self.profile_id:
             binding["test_profile_id"] = self.profile_id
             binding["credential_bindings"] = self.credential_bindings
@@ -358,6 +376,9 @@ class _WebInvocation:
         path = api.artifact_dir() / "web_owner.json"
         if path.exists():
             old = _read_owned(self.service.storage, self.settings, run_id, self.actor)
+            if "parent_case_id" in old:
+                binding["parent_case_id"] = old["parent_case_id"]
+                binding["context_sha256"] = old["context_sha256"]
             if "created_at" in old:
                 binding["created_at"] = old["created_at"]
             if "destination_ip" not in old:
@@ -382,6 +403,9 @@ class WebInvestigations:
             max_workers=1, thread_name_prefix="beescan-web"
         )
         self.logger = logging.getLogger(__name__)
+        from beeagent_module.integrations.beescan.conversation import Conversations
+
+        self.conversations = Conversations(self)
 
     def nonce(self, actor):
         actor_id = principal(self.settings, actor)
@@ -419,6 +443,11 @@ class WebInvestigations:
             and type(payload["test_profile_id"]) is not str
         ):
             raise ValueError("invalid_web_action")
+        if (
+            type(payload["task"]) is str
+            and self.conversations.redact(payload["task"], actor) != payload["task"]
+        ):
+            raise ValueError("secret_in_web_objective")
         task = validate_task(
             {key: payload[key] for key in ("target", "task")},
             current["beescan"]["investigation"],
@@ -612,6 +641,12 @@ class WebInvestigations:
                 "mode": mode,
                 "authority_sha256": digest(settings["beescan"]),
             }
+            conversation = self.conversations.pending.get(run_id)
+            if conversation:
+                binding["parent_case_id"] = conversation[0]
+                binding["context_sha256"] = digest(
+                    {"context": conversation[1], "attachments": conversation[3]}
+                )
             intake = {
                 "case_id": run_id,
                 "target": task.target,
@@ -669,6 +704,9 @@ class WebInvestigations:
 
     def _execute(self, invocation, prior, lock):
         phase = "execution"
+        from beeagent_module.integrations.beescan.conversation import active_session
+
+        token = active_session.set(self.conversations.resolver(invocation))
         try:
             if invocation.profile_id:
                 from beeagent_module.integrations.beescan.access_control import (
@@ -751,9 +789,20 @@ class WebInvestigations:
             except OSError, ValueError:
                 self.logger.error("BeeScan Web publication failed")
         finally:
+            try:
+                self.conversations.finish(invocation)
+            except OSError, ValueError, RuntimeError, KeyError, TypeError:
+                self.logger.error(
+                    "Conversation result publication unavailable: run_id=%s",
+                    invocation.run_id,
+                )
+            self.conversations.running.discard(invocation.run_id)
+            active_session.reset(token)
             os.close(lock)
 
     def inspect(self, run_id, actor, *, latest=True, summary=False):
+        if isinstance(run_id, str) and run_id.startswith("web-chat-"):
+            return self.conversations.view(run_id, actor)
         for _ in range(2):
             try:
                 return self._inspect(
@@ -985,7 +1034,7 @@ class WebInvestigations:
                 "comparison",
             }
             or step["status"]
-            not in {"incomplete", "captured", "authenticated", "skipped"}
+            not in {"incomplete", "captured", "authenticated", "redirected", "skipped"}
             or step["request_count"] not in {None, 0, 1}
             for step in data["steps"]
         ):
@@ -1136,7 +1185,7 @@ class WebInvestigations:
                 binding = _read_owned(
                     self.storage, self.reload_settings(), path.name, actor
                 )
-                if binding["case_id"] != path.name:
+                if binding["case_id"] != path.name or binding.get("parent_case_id"):
                     continue
                 view = self.inspect(binding["case_id"], actor, summary=True)
                 if view["case_id"] in seen:
@@ -1164,7 +1213,16 @@ class WebInvestigations:
         value = record.get("value")
         if (
             type(value) is not dict
-            or set(value) != {"case_id", "title", "archived"}
+            or set(value)
+            not in (
+                {"case_id", "title", "archived"},
+                {"case_id", "title", "archived", "mutation"},
+            )
+            or "mutation" in value
+            and (
+                type(value["mutation"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", value["mutation"]) is None
+            )
             or value["case_id"] != case_id
             or type(value["title"]) is not str
             or len(value["title"]) > 160
@@ -1173,6 +1231,17 @@ class WebInvestigations:
         ):
             raise PermissionError("web_metadata_changed")
         return value
+
+    def management_nonce(self, case_id, actor):
+        metadata = self.case_metadata(case_id, actor)
+        token = self.nonce(actor)
+        return (
+            token
+            + "."
+            + _sign(
+                self.reload_settings(), [case_id, actor["user_id"], metadata, token]
+            )
+        )
 
     def manage(self, action, payload, actor):
         current = self.reload_settings()
@@ -1185,38 +1254,61 @@ class WebInvestigations:
         if (
             action not in {"beescan_rename", "beescan_archive"}
             or type(payload) is not dict
-            or set(payload) != expected
+            or set(payload) not in (expected, expected | {"nonce"})
         ):
             raise ValueError("invalid_case_management")
         case_id = payload["case_id"]
         root = open_directory(self.storage / "runs")
         try:
             fcntl.flock(root, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            view = self.inspect(case_id, actor)
-            if view["status"] in {"QUEUED", "RUNNING"}:
-                raise PermissionError("case_active")
-            metadata = self.case_metadata(case_id, actor)
-            title = payload.get("title", metadata.get("title", ""))
-            if (
-                type(title) is not str
-                or not title.strip()
-                and action == "beescan_rename"
-                or len(title) > 160
-                or any(ord(c) < 32 for c in title)
+            with (
+                self.conversations.lock(case_id, actor)
+                if case_id.startswith("web-chat-")
+                else nullcontext()
             ):
-                raise ValueError("invalid_case_title")
-            if action == "beescan_archive" and payload["confirmation"] != "ARCHIVE":
-                raise PermissionError("archive_confirmation_required")
-            value = {
-                "case_id": case_id,
-                "title": title.strip(),
-                "archived": action == "beescan_archive"
-                or metadata.get("archived", False),
-            }
-            self._publish_metadata(
-                case_id, {"value": value, "signature": _sign(current, value)}
-            )
-            return {"case_id": case_id, "archived": value["archived"]}
+                view = self.inspect(case_id, actor)
+                if view["status"] in {"QUEUED", "RUNNING"}:
+                    raise PermissionError("case_active")
+                metadata = self.case_metadata(case_id, actor)
+                if "nonce" in payload:
+                    token, signature = payload["nonce"].rsplit(".", 1)
+                    self._run_id(actor, token)
+                    expected_signature = _sign(
+                        current, [case_id, actor["user_id"], metadata, token]
+                    )
+                    if not hmac.compare_digest(signature, expected_signature):
+                        raise PermissionError("case_management_replay_or_conflict")
+                title = payload.get("title", metadata.get("title", ""))
+                if (
+                    type(title) is not str
+                    or not title.strip()
+                    and action == "beescan_rename"
+                    or len(title) > 160
+                    or any(ord(c) < 32 for c in title)
+                    or self.conversations.redact(title, actor) != title
+                ):
+                    raise ValueError("invalid_case_title")
+                if action == "beescan_archive" and payload["confirmation"] != "ARCHIVE":
+                    raise PermissionError("archive_confirmation_required")
+                value = {
+                    "case_id": case_id,
+                    "title": title.strip(),
+                    "archived": action == "beescan_archive"
+                    or metadata.get("archived", False),
+                    **(
+                        {
+                            "mutation": hashlib.sha256(
+                                payload["nonce"].encode()
+                            ).hexdigest()
+                        }
+                        if "nonce" in payload
+                        else {}
+                    ),
+                }
+                self._publish_metadata(
+                    case_id, {"value": value, "signature": _sign(current, value)}
+                )
+                return {"case_id": case_id, "archived": value["archived"]}
         finally:
             os.close(root)
 

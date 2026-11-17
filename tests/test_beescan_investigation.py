@@ -359,7 +359,10 @@ def test_supported_plan_uses_transport_and_no_target_data(settings, monkeypatch)
     )
     assert len(calls) == 1
     assert calls[0]["provider"] == "openai_compatible"
-    assert calls[0]["timeout_seconds"] == settings["beescan"]["investigation"]["timeout_seconds"]
+    assert (
+        calls[0]["timeout_seconds"]
+        == settings["beescan"]["investigation"]["timeout_seconds"]
+    )
     assert "target" not in calls[0]["prompt"]
 
 
@@ -459,6 +462,38 @@ def test_general_binary_response_is_skipped_before_body_read():
     assert parsed == {
         "status_code": 200,
         "skip_reason": "unsupported_response_type",
+        "complete": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "status",
+    [b"301 Moved", b"302 Found", b"303 See Other", b"307 Temporary", b"308 Permanent"],
+)
+def test_general_redirect_response_preserves_bounded_location(status):
+    parsed = read_investigation_response(
+        Stream(
+            raw_response(
+                status=status,
+                headers=b"Location: /next?item=value\r\n",
+            )
+        ),
+        limit=1024,
+        general=True,
+    )
+    assert parsed == {
+        "status_code": int(status[:3]),
+        "redirect_location": "/next?item=value",
+        "complete": True,
+    }
+
+
+def test_general_redirect_response_preserves_missing_location():
+    assert read_investigation_response(
+        Stream(raw_response(status=b"302 Found")), limit=1024, general=True
+    ) == {
+        "status_code": 302,
+        "redirect_location": None,
         "complete": True,
     }
 
@@ -597,7 +632,6 @@ def test_json_404_reason_is_bounded_and_does_not_expose_body():
         ("extra", "incomplete_response_body"),
         ("oversized_length", "response_length_exceeds_limit"),
         ("oversized_body", "response_body_limit"),
-        ("redirect", "redirect_refused"),
         ("transfer", "unsupported_response_encoding"),
         ("encoding", "unsupported_response_encoding"),
         ("duplicate", "duplicate_response_header"),
@@ -614,8 +648,6 @@ def test_untyped_500_preserves_framing_guards(change, reason):
         raw = raw.replace(b"Content-Length: 14", b"Content-Length: 1025")
     elif change == "oversized_body":
         raw += b"x" * 1024
-    elif change == "redirect":
-        raw = raw.replace(b"500 Error", b"302 Found")
     else:
         header = {
             "transfer": b"Transfer-Encoding: chunked",
@@ -635,7 +667,6 @@ def test_untyped_500_preserves_framing_guards(change, reason):
     "raw",
     [
         b"HTTP/1.1 200 OK\r\n",
-        raw_response(status=b"302 Found"),
         raw_response(headers=b"Content-Length: 5\r\n"),
         raw_response(headers=b"Transfer-Encoding: chunked\r\n"),
         raw_response(headers=b"Content-Encoding: gzip\r\n"),
@@ -1514,9 +1545,7 @@ def editable_dependency(tmp_path, monkeypatch):
     monkeypatch.setattr(
         importlib.metadata,
         "distribution",
-        lambda name: (
-            distribution if name == "beescan" else original_distribution(name)
-        ),
+        lambda name: distribution if name == "beescan" else original_distribution(name),
     )
     for name in (
         "beescan",
