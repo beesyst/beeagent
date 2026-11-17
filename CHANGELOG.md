@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.92.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.91.0...beeagent-v0.92.0) (2026-11-17)
+
+
+### Features
+
+* **beescan:** add persistent conversational security workspace ([#372](https://github.com/beesyst/beeagent/issues/372)) ([1b59a18](https://github.com/beesyst/beeagent/commit/1b59a18e2459dd82d861c443643d4e5e7d2ee495))
+
 ## [0.91.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.90.0...beeagent-v0.91.0) (2026-11-16)
 
 
