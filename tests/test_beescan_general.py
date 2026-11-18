@@ -573,6 +573,8 @@ def discovery_dast(general, monkeypatch):
     ],
 )
 def test_discovery_to_dast_one_parent_and_no_replay(discovery_dast, body, expected):
+    from beeagent_module.integrations.beescan.discovery_dast import validate_assessment
+
     run, state, calls, harness, active = discovery_dast
     state["assessment_body"] = body
     result = run("Assess Path Traversal")
@@ -583,6 +585,23 @@ def test_discovery_to_dast_one_parent_and_no_replay(discovery_dast, body, expect
     assert active[0][0] == (expected,)
     case, snapshot = load_case(harness.root, result["case_id"])
     assert case["schema_version"] == 4
+    pending_action = validate_assessment(
+        case["assessment"],
+        case["discovery"],
+        case["origin"],
+        snapshot,
+        result["case_id"],
+        pending=True,
+    )
+    completed_action = validate_assessment(
+        case["assessment"],
+        case["discovery"],
+        case["origin"],
+        snapshot,
+        result["case_id"],
+    )
+    assert pending_action == completed_action
+    assert completed_action.action_id == case["assessment"]["action_id"]
     assert case["metrics"]["request_count"] == 2
     assert case["discovery"]["metrics"]["request_count"] == 1
     assert (
@@ -600,6 +619,23 @@ def test_discovery_to_dast_one_parent_and_no_replay(discovery_dast, body, expect
     resumed = run("Assess Path Traversal", resume_case_id=result["case_id"])
     assert resumed["status"] == "CANDIDATE", resumed
     assert len(active) == 1 and calls == ["/"]
+
+
+def test_multifamily_operator_task_uses_image_not_generic_product_link(
+    discovery_dast,
+):
+    run, state, _calls, _harness, active = discovery_dast
+    state["assessment_body"] = (
+        '<a href="/product?productId=1"></a><img src="/read?document=fixture">'
+    )
+    result = run(
+        "Assess this authorized web application for supported information disclosure, "
+        "path traversal, and access control vulnerabilities."
+    )
+    assert result["status"] == "CANDIDATE", result
+    assert active and all(
+        entries == ("/read?document=fixture",) for entries, *_ in active
+    )
 
 
 def test_discovered_candidate_is_presented_after_parent_publication(
@@ -700,7 +736,7 @@ def test_discovered_fixed_target_is_partial(discovery_dast):
     state.update(
         assessment_body='<img src="/retrieve?document=record-7">', matched=False
     )
-    result = run("Assess web security")
+    result = run("Assess Path Traversal")
     assert result["status"] == "PARTIAL" and not result["complete"], result
     assert result["reproduction"] == "NOT_AVAILABLE"
     _case, snapshot = load_case(harness.root, result["case_id"])
@@ -721,7 +757,7 @@ def test_discovered_cumulative_budget_prevents_scanner(discovery_dast):
 def test_discovered_source_substitution_refuses_inspect(discovery_dast):
     run, state, _, harness, _ = discovery_dast
     state["assessment_body"] = '<img src="/retrieve?document=record-7">'
-    result = run("Assess web security")
+    result = run("Assess Path Traversal")
     case, _ = load_case(harness.root, result["case_id"])
     source_id = case["assessment"]["action"]["entry"]["source_run_id"]
     path = (
@@ -742,7 +778,7 @@ def test_discovered_case_inspection_in_fresh_process(discovery_dast):
 
     run, state, _, harness, active = discovery_dast
     state["assessment_body"] = '<img src="/retrieve?document=record-7">'
-    result = run("Assess web security")
+    result = run("Assess Path Traversal")
     script = (
         "import sys; from beeagent_module.integrations.beescan.case_state import load_case; "
         "state,_=load_case(sys.argv[1],sys.argv[2]); "
@@ -870,3 +906,697 @@ def test_integrated_deadline_preserves_case_and_accounting(
     assert case["assessment"]["request_count"] == 1
     assert case["metrics"]["request_count"] == 2
     assert snapshot.json(result["run_id"], "report.json")["status"] == "TIMEOUT"
+
+
+def test_multifamily_partial_traversal_continues_to_disclosure(discovery_dast):
+    run, state, calls, harness, active = discovery_dast
+    state.update(
+        assessment_body=(
+            '<form action="/retrieve"><input name="document" value="record-7"></form>'
+            '<form action="/other"><input name="file" value="second"></form>'
+        ),
+        matched=False,
+    )
+    result = run("Assess web security")
+    assert result["status"] == "CANDIDATE", result
+    assert len(active) == 2
+    assert "/ops/runtime.conf" in calls
+    assert len(result["coverage"]["path_traversal"]) == 2
+    assert result["coverage"]["information_disclosure"][0]["status"] == "CANDIDATE"
+    assert result["coverage"]["access_control"] == []
+    case, snapshot = load_case(harness.root, result["case_id"])
+    assert case["schema_version"] == 7
+    assert case["metrics"]["request_count"] == len(calls) + 2
+    assert len(case["findings"]) == 1
+    snapshot.verify()
+    before = len(calls)
+    reused = run("Assess web security", resume_case_id=case["case_id"])
+    assert reused["request_count"] == 0
+    assert len(calls) == before and len(active) == 2
+
+
+def test_multifamily_multiple_positive_findings_and_tamper(discovery_dast):
+    run, state, _, harness, active = discovery_dast
+    state["assessment_body"] = (
+        '<form action="/first"><input name="item" value="one"></form>'
+        '<form action="/second"><input name="record" value="two"></form>'
+    )
+    result = run("Assess web security")
+    assert result["status"] == "CANDIDATE", result
+    case, snapshot = load_case(harness.root, result["case_id"])
+    assert len(active) == 2 and len(case["findings"]) == 3
+    report = snapshot.json(result["run_id"], "report.json")
+    assert report["coverage"] == result["coverage"]
+    path = (
+        harness.root
+        / "runs"
+        / case["assessments"][0]["action"]["entry"]["source_run_id"]
+        / "module-beescan"
+        / "assessment_observations.json"
+    )
+    path.write_text('{"entries": []}')
+    with pytest.raises(ValueError):
+        load_case(harness.root, result["case_id"])
+
+
+def test_multifamily_cumulative_request_and_step_limits(discovery_dast):
+    run, state, calls, harness, active = discovery_dast
+    harness.config["adaptive"].update(max_requests=3, max_steps=3)
+    state["assessment_body"] = (
+        '<form action="/first"><input name="item" value="one"></form>'
+        '<form action="/second"><input name="record" value="two"></form>'
+    )
+    result = run("Assess web security")
+    assert result["request_count"] <= 3
+    assert len(calls) + len(active) == result["request_count"]
+    assert result["coverage"]["path_traversal"][-1]["status"] == "PARTIAL"
+
+
+@pytest.mark.parametrize(
+    "access_mode",
+    [
+        "vulnerable",
+        "fixed",
+        "budget_deferred",
+        "new_source",
+        "new_source_after_candidate",
+        "failure_ERROR",
+        "failure_REFUSED",
+        "failure_TIMEOUT",
+    ],
+)
+def test_multifamily_protected_web_review_and_export(
+    discovery_dast, tmp_path, monkeypatch, access_mode
+):
+    from copy import deepcopy
+
+    from beeagent_module.integrations.beescan import detection_runner
+    from tests.beescan_access_support import AutonomousApplication, autonomous_profile
+    from tests.test_beescan_web import (
+        authenticated,
+        execute,
+        payload,
+        setup_app,
+        web_report_payload,
+        web_review_payload,
+    )
+
+    _, scanner_state, _, _, active = discovery_dast
+    current, storage, app = setup_app(tmp_path, monkeypatch)
+    config = current["beescan"]["investigation"]
+    config.update(
+        local_lab_enabled=True, trusted_local_enabled=True, timeout_seconds=60
+    )
+    config["adaptive"].update(enabled=True, max_requests=20, max_steps=16, max_depth=4)
+    config["approval"]["transport"].update(
+        origin="https://example.test", time_budget_seconds=60
+    )
+    current["beescan"]["dast"] = scanner_state["dast"]
+    target = AutonomousApplication("fixed" if access_mode == "fixed" else "vulnerable")
+    if access_mode.startswith("failure_"):
+        target = AutonomousApplication("multiple")
+        target.mode = "vulnerable"
+    for name, token in zip(("A", "B"), target.tokens):
+        monkeypatch.setenv("BEEAGENT_ACCESS_" + name, token)
+    current["beescan"]["access_control"] = {
+        "profiles": [autonomous_profile("https://example.test")]
+    }
+    if access_mode.startswith("failure_"):
+        current["beescan"]["access_control"]["profiles"][0]["discovery_budget"] = 2
+    calls = []
+    traversal_deferred = access_mode in {
+        "budget_deferred",
+        "new_source",
+        "new_source_after_candidate",
+    }
+
+    def capture(
+        policy, *, investigation, on_attempt, reauthorize, authentication=None, **kwargs
+    ):
+        reauthorize()
+        if access_mode.startswith("failure_") and len(target.requests) == 10:
+            on_attempt(False)
+            raise {
+                "failure_ERROR": OSError,
+                "failure_REFUSED": PermissionError,
+                "failure_TIMEOUT": TimeoutError,
+            }[access_mode]("controlled_comparison_failure")
+        on_attempt(True)
+        path = investigation["relative_url"]
+        calls.append(path)
+        if path == "/" and authentication is None:
+            code, body = (
+                200,
+                '<img src="/photo?name=public.jpg"><a href="/config.txt">source</a>',
+            )
+            if access_mode in {
+                "budget_deferred",
+                "new_source",
+                "new_source_after_candidate",
+            }:
+                body += '<a href="/later">later</a>'
+        elif path == "/config.txt":
+            code, body = 200, 'DB_PASSWORD="private-web-canary"'
+        elif path == "/later" and access_mode == "budget_deferred":
+            code, body = 200, '<img src="/second?file=fixture">'
+        elif access_mode == "new_source" and path == "/" and authentication is not None:
+            target.requests.append((path, target.tokens.index(authentication)))
+            code, body = (
+                200,
+                {"identity": target.accounts[target.tokens.index(authentication)]},
+            )
+        elif (
+            access_mode in {"new_source", "new_source_after_candidate"}
+            and path == "/later"
+        ):
+            if authentication is None:
+                code, body = 200, '<a href="/later/objects">records</a>'
+            else:
+                code, body = target.get("/", authentication)
+        else:
+            code, body = target.get(path, authentication)
+        return json.dumps(
+            {
+                "origin": policy.origin,
+                "connected_ip": policy.connected_ip,
+                "port": policy.port,
+                "method": "GET",
+                "relative_url": path,
+                "request_count": 1,
+                "complete": True,
+                "status_code": code,
+                "content_type": "text/plain"
+                if path == "/config.txt"
+                else "text/html"
+                if type(body) is str
+                else "application/json",
+                "body": body if type(body) is str else json.dumps(body),
+            }
+        ).encode()
+
+    monkeypatch.setattr(detection_runner, "run_detection_provider", capture)
+    service = app.state.beeagent_adapter.beescan
+    service.reload_settings = lambda: deepcopy(current)
+    client, headers = authenticated(app)
+    request = {
+        **payload(app),
+        "target": "https://example.test",
+        "task": "Assess web security",
+        "mode": "deep",
+        "test_profile_id": "controlled-access",
+    }
+    started = execute(client, headers, request)
+    assert started.json()["ok"], started.text
+    case_id = started.json()["data"]["case_id"]
+    service.executor.submit(lambda: None).result(timeout=30)
+    view = service.inspect(case_id, {"user_id": "alice", "role": "operator"})
+    expected_status = (
+        access_mode.removeprefix("failure_")
+        if access_mode.startswith("failure_")
+        else "CANDIDATE"
+    )
+    assert view["status"] == expected_status, view
+    assert view["evidence_authenticated"], view
+    if access_mode.startswith("failure_"):
+        (finding,) = view["findings"]
+        assert view["coverage"]["information_disclosure"][0]["finding_ids"] == [
+            finding["finding_id"]
+        ]
+        assert not view["coverage"]["access_control"][-1]["finding_ids"]
+        assert not view["coverage"]["path_traversal"] and not active
+        assert not view["complete"]
+    elif traversal_deferred:
+        assert sorted(
+            item["finding_id"].split("-", 1)[0] for item in view["findings"]
+        ) == ["acf", "df"]
+        assert not active and not view["complete"]
+        assert view["request_count_exact"] and view["request_count"] == 20
+        assert view["coverage_summary"]["path_traversal"]["reason"] == (
+            "request_budget_exhausted"
+        )
+    else:
+        assert len(view["findings"]) == (2 if access_mode == "fixed" else 3)
+        assert len(active) == 1
+        assert all(
+            view["coverage"][family]
+            for family in ("information_disclosure", "path_traversal", "access_control")
+        )
+    assert view["coverage"]["access_control"][-1]["status"] == (
+        access_mode.removeprefix("failure_")
+        if access_mode.startswith("failure_")
+        else "PARTIAL"
+        if access_mode in {"budget_deferred", "new_source_after_candidate"}
+        else "NO_MATCH"
+        if access_mode == "fixed"
+        else "CANDIDATE"
+    )
+    if access_mode not in {"budget_deferred", "new_source_after_candidate"}:
+        assert view["coverage"]["access_control"][-1]["evidence_refs"]
+    saved, snapshot = load_case(storage, case_id)
+    if traversal_deferred:
+        (assessment,) = saved["assessments"]
+        assert assessment["deferred"] == "request_budget_exhausted"
+        assert assessment["status"] == "PARTIAL"
+        assert assessment["run_id"] is None and not assessment["pending"]
+        assert assessment["request_count"] == 0
+    if access_mode in {"new_source", "new_source_after_candidate"}:
+        assert len(saved["access"]) == 2
+        assert [r["source"]["relative_url"] for r in saved["access"]] == ["/", "/later"]
+        assert len({r["action_id"] for r in saved["access"]}) == 2
+        before_resume = len(calls)
+        resumed = execute(
+            client,
+            headers,
+            {
+                **request,
+                "case_id": case_id,
+                "nonce": service.nonce({"user_id": "alice", "role": "operator"}),
+            },
+            "beescan_resume",
+        )
+        assert resumed.json()["ok"] and resumed.json()["data"]["reused"]
+        assert len(calls) == before_resume
+        assert (
+            sum(
+                len(snapshot.json(item["run_id"], "case.json")["state"]["comparisons"])
+                for item in saved["access"]
+            )
+            == 1
+        )
+    if access_mode.startswith("failure_"):
+        assert saved["assessments"] == []
+        child = snapshot.json(saved["access"][0]["run_id"], "case.json")["state"]
+        (comparison,) = child["comparisons"]
+        evidence = snapshot.json(child["case_id"], comparison)["execution"]
+        assert evidence["request_count"] == len(evidence["evidence"]) == 6
+        assert child["discovery_request_count"] == 2
+        assert child["metrics"]["request_count"] == 8
+        assert saved["metrics"]["request_count"] == len(calls) == 12
+        assert saved["metrics"]["request_count_exact"]
+        assert child["status"] == expected_status
+    before = len(calls)
+    report_identity = None
+    for finding in view["findings"]:
+        review_payload = web_review_payload(case_id, finding["finding_id"])
+        review_payload["evidence_text"] += " Selected finding " + finding["finding_id"]
+        reviewed = execute(
+            client,
+            headers,
+            review_payload,
+            "beescan_review",
+        )
+        assert reviewed.json()["ok"], reviewed.text
+        report = execute(
+            client,
+            headers,
+            web_report_payload(
+                case_id,
+                finding["finding_id"],
+                reviewed.json()["data"]["review_id"],
+                complete=True,
+            ),
+            "beescan_report_prepare",
+        )
+        assert report.json()["ok"], report.text
+        report_identity = (
+            finding["finding_id"],
+            report.json()["data"]["report_run_id"],
+        )
+        exported = client.get(
+            "/api/beescan/report",
+            params={
+                "case_id": case_id,
+                "finding_id": finding["finding_id"],
+                "report_run_id": report.json()["data"]["report_run_id"],
+                "format": "json",
+                "download": "true",
+            },
+        )
+        assert exported.status_code == 200
+    assert len(calls) == before
+    if access_mode.startswith("failure_"):
+        assert report_identity is not None
+        finding_id, report_run_id = report_identity
+        from beeagent_module.interfaces.ui.app import build_beeui_app
+
+        restarted = build_beeui_app(
+            current, logging.getLogger("failed-comparison-restart"), storage
+        )
+        restarted_service = restarted.state.beeagent_adapter.beescan
+        restarted_service.reload_settings = lambda: deepcopy(current)
+        restored, _ = authenticated(restarted)
+        assert (
+            restored.get(
+                "/api/beescan/report",
+                params={
+                    "case_id": case_id,
+                    "finding_id": finding_id,
+                    "report_run_id": report_run_id,
+                    "format": "json",
+                    "download": "true",
+                },
+            ).status_code
+            == 200
+        )
+        assert len(calls) == before
+        restarted_service.executor.shutdown(wait=True)
+    assert (
+        client.get("/beescan", params={"tab": "results", "run_id": case_id}).status_code
+        == 200
+    )
+    for path in storage.rglob("*.json"):
+        assert "private-web-canary" not in path.read_text()
+        assert all(token not in path.read_text() for token in target.tokens)
+    service.executor.shutdown(wait=True)
+
+
+def test_multifamily_resume_preserves_sources_and_cumulative_budget(general):
+    run, state, calls, harness = general
+    state["cancel"] = True
+    first = run("Assess web security")
+    assert first["status"] == "PARTIAL", first
+    saved, _ = load_case(harness.root, first["case_id"])
+    original = saved["discovery"]["entries"][0]
+    assert saved["discovery"]["terminal"] is False
+    state["cancel"] = False
+    first_count = len(calls)
+    resumed = run("Assess web security", resume_case_id=first["case_id"])
+    assert resumed["status"] == "CANDIDATE", resumed
+    restored, _ = load_case(harness.root, first["case_id"])
+    assert restored["discovery"]["entries"][0] == original
+    assert "/" not in calls[first_count:]
+    assert restored["metrics"]["request_count"] == len(calls) <= 20
+
+
+def test_multifamily_rejects_rehashed_inconsistent_coverage(discovery_dast):
+    from beeagent_module.integrations.beescan.case_state import digest
+
+    run, state, _, harness, _ = discovery_dast
+    state["assessment_body"] = '<img src="/read?file=example">'
+    result = run("Assess web security")
+    root = harness.root / "runs" / result["run_id"] / "module-beescan"
+    marker = json.loads((root / "investigation_status.json").read_text())
+    marker["coverage"]["path_traversal"][0]["status"] = "NO_MATCH"
+    (root / "investigation_status.json").write_text(json.dumps(marker))
+    receipt = json.loads((root / "unified_report_receipt.json").read_text())
+    receipt["status_sha256"] = digest(marker)
+    (root / "unified_report_receipt.json").write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match="multifamily_coverage_changed"):
+        load_case(harness.root, result["case_id"])
+
+
+def test_multifamily_setup_failure_closes_created_egress(general, monkeypatch):
+    from beeagent_module.integrations.beescan import egress
+
+    run, _, _, _ = general
+    created = []
+
+    def start(session):
+        created.append(session)
+        raise OSError("controlled_setup_failure")
+
+    monkeypatch.setattr(egress.ManagedEgress, "start", start)
+    result = run("Assess web security")
+    assert result["status"] == "ERROR"
+    assert created and all(session.closed for session in created)
+    assert result["request_count"] == 0
+
+
+def test_multifamily_cli_resume_uses_existing_general_entrypoint(general, capsys):
+    from tests.settings_support import read_test_settings
+
+    run, state, calls, harness = general
+    state["cancel"] = True
+    first = run("Assess web security")
+    assert first["status"] == "PARTIAL"
+    state["cancel"] = False
+    current = read_test_settings()
+    current["beescan"]["investigation"].update(harness.config)
+    code = probe.handle_beescan_cli(
+        ["investigate", "--resume", first["case_id"], "--task", "Assess web security"],
+        settings=current,
+        reload_settings=lambda: current,
+        storage_dir=harness.root,
+        logger=logging.getLogger("multifamily-cli"),
+        local_operator=state["operator"],
+    )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert code == 5, captured
+    assert result["status"] == "CANDIDATE" and not result["complete"]
+    assert result["coverage_summary"]["information_disclosure"]["status"] == "CANDIDATE"
+    assert result["coverage_summary"]["access_control"]["status"] == "UNSUPPORTED"
+    assert calls.count("/") == 1
+    saved, _ = load_case(harness.root, first["case_id"])
+    assert saved["status"] == "CANDIDATE" and saved["metrics"]["request_count"] == len(
+        calls
+    )
+
+
+def test_multifamily_resume_refuses_inexact_request_accounting(general, monkeypatch):
+    from beeagent_module.integrations.beescan import detection_runner
+
+    run, _, calls, harness = general
+    original = detection_runner.run_detection_provider
+    failed = False
+
+    def capture(policy, **kwargs):
+        nonlocal failed
+        if kwargs["investigation"]["relative_url"] != "/" and not failed:
+            failed = True
+            kwargs["on_attempt"](None)
+            raise OSError("unknown_target_attempt")
+        return original(policy, **kwargs)
+
+    monkeypatch.setattr(detection_runner, "run_detection_provider", capture)
+    first = run("Assess web security")
+    assert first["status"] == "ERROR" and first["request_count_exact"] is False
+    saved, _ = load_case(harness.root, first["case_id"])
+    assert saved["metrics"]["request_count_exact"] is False
+    before = len(calls)
+    resumed = run("Assess web security", resume_case_id=first["case_id"])
+    assert resumed["status"] == "REFUSED" and resumed["request_count"] == 0
+    assert len(calls) == before
+
+
+def test_multifamily_refuses_destructive_redirect(general, monkeypatch):
+    from beeagent_module.integrations.beescan import detection_runner
+
+    run, state, calls, harness = general
+    original = detection_runner.run_detection_provider
+
+    def capture(policy, **kwargs):
+        if kwargs["investigation"]["relative_url"] == state["root"]:
+            kwargs["reauthorize"]()
+            kwargs["on_attempt"](True)
+            calls.append(state["root"])
+            return json.dumps(
+                {
+                    "origin": policy.origin,
+                    "connected_ip": policy.connected_ip,
+                    "port": policy.port,
+                    "method": "GET",
+                    "relative_url": state["root"],
+                    "request_count": 1,
+                    "status_code": 302,
+                    "redirect_location": "/admin/destroy",
+                    "complete": True,
+                }
+            ).encode()
+        return original(policy, **kwargs)
+
+    monkeypatch.setattr(detection_runner, "run_detection_provider", capture)
+    result = run("Assess web security")
+    assert "/admin/destroy" not in calls
+    assert result["request_count"] == len(calls)
+    saved, _ = load_case(harness.root, result["case_id"])
+    assert saved["metrics"]["request_count_exact"]
+    assert any(
+        item["relative_url"] == state["root"] and item["outcome"] == "refused"
+        for item in saved["discovery"]["redirect_resources"]
+    )
+
+
+@pytest.mark.parametrize("fault", ["timeout", "revoked"])
+def test_multifamily_child_failure_preserves_completed_findings(
+    discovery_dast, monkeypatch, fault
+):
+    from beeagent_module.integrations.beescan import dast_runner
+    from beeagent_module.integrations.beescan.detection import _persist
+
+    run, state, calls, harness, active = discovery_dast
+    state["assessment_body"] = (
+        '<img src="/first?item=one"><img src="/second?record=two">'
+    )
+    original = dast_runner.run_zap
+
+    def scanner(transport, **kwargs):
+        if not active:
+            return original(transport, **kwargs)
+        if fault == "revoked":
+            raise PermissionError("approval_changed")
+        _persist(
+            kwargs["artifacts"],
+            "egress_lifecycle.json",
+            {
+                "state": "closed",
+                "cleanup_verified": True,
+                "enforcement_verified": True,
+                "assessment_run_id": kwargs["run_id"],
+            },
+        )
+        _persist(
+            kwargs["artifacts"],
+            "dast_execution_status.json",
+            {"cleanup_verified": True, "request_count": 0},
+        )
+        raise TimeoutError("controlled_child_timeout")
+
+    monkeypatch.setattr(dast_runner, "run_zap", scanner)
+    result = run("Assess web security")
+    assert result["status"] == ("ERROR" if fault == "revoked" else "CANDIDATE")
+    assert len(active) == 1
+    saved, snapshot = load_case(harness.root, result["case_id"])
+    finding_ids = {finding["finding_id"] for finding in saved["findings"]}
+    assert finding_ids == {
+        finding_id
+        for outcome in saved["outcomes"]
+        if outcome["status"] == "CANDIDATE"
+        for finding_id in outcome["finding_ids"]
+    }
+    assert sorted(finding_id.split("-", 1)[0] for finding_id in finding_ids) == [
+        "dast",
+        "df",
+    ]
+    assert not result["complete"]
+    assert saved["metrics"]["request_count"] == len(calls) + 1
+    assert saved["pending"] is (fault == "revoked")
+    assert result["coverage"]["path_traversal"][1]["status"] == (
+        "ERROR" if fault == "revoked" else "PARTIAL"
+    )
+    snapshot.verify()
+    before = len(calls)
+    resumed = run("Assess web security", resume_case_id=result["case_id"])
+    if fault == "revoked":
+        assert resumed["request_count"] == 0 and len(calls) == before
+    assert len(active) == 1
+    if fault == "revoked":
+        from beeagent_module.integrations.beescan.case_state import digest
+
+        path = harness.root / "runs" / result["case_id"] / "module-beescan/case.json"
+        envelope = json.loads(path.read_text())
+        envelope["state"]["assessments"][-1]["action_id"] = "assessment-foreign"
+        envelope["sha256"] = digest(envelope["state"])
+        path.write_text(json.dumps(envelope))
+        with pytest.raises(ValueError, match="integrated_source_changed"):
+            load_case(harness.root, result["case_id"])
+
+
+@pytest.mark.parametrize("budget", ["request", "step", "time", "minimum_time"])
+def test_multifamily_eligible_budget_stop_is_partial(
+    discovery_dast, monkeypatch, budget
+):
+    from beescan.domain import assessment_selection, general_investigation
+
+    run, state, calls, harness, active = discovery_dast
+    state["assessment_body"] = '<img src="/read?file=fixture">'
+    if budget == "request":
+        harness.config["adaptive"]["max_requests"] = 1
+    if budget == "step":
+        harness.config["adaptive"]["max_steps"] = 1
+    calls_before_minimum = []
+    if budget in {"time", "minimum_time"}:
+        original_clock = host.time.monotonic
+        accepted = False
+
+        if budget == "time":
+            original_record = general_investigation.record_surface
+
+            def record(*args):
+                nonlocal accepted
+                result = original_record(*args)
+                accepted = True
+                return result
+
+            monkeypatch.setattr(general_investigation, "record_surface", record)
+        else:
+            original_decide = assessment_selection.decide_verification
+
+            def decide(*args, **kwargs):
+                nonlocal accepted
+                decision = original_decide(*args, **kwargs)
+                if decision.family == "path_traversal":
+                    calls_before_minimum[:] = calls
+                    accepted = True
+                return decision
+
+            monkeypatch.setattr(assessment_selection, "decide_verification", decide)
+        monkeypatch.setattr(
+            host.time,
+            "monotonic",
+            lambda: (
+                original_clock() + ((61 if budget == "time" else 55) if accepted else 0)
+            ),
+        )
+    result = run("Assess web security")
+    reason = {
+        "request": "request_budget_exhausted",
+        "step": "step_budget_exhausted",
+        "minimum_time": "verification_time_insufficient",
+    }.get(budget)
+    assert active == []
+    if budget == "time":
+        assert calls == ["/"]
+        assert result["status"] == "TIMEOUT" and not result["complete"]
+        assert result["reason"] == "investigation_deadline"
+        saved, snapshot = load_case(harness.root, result["case_id"])
+        assert saved["metrics"]["request_count"] == 1
+        assert saved["assessments"] == []
+        snapshot.verify()
+        return
+    assert calls == (calls_before_minimum if budget == "minimum_time" else ["/"])
+    assert result["coverage_summary"]["path_traversal"]["status"] == "PARTIAL", result
+    assert result["coverage_summary"]["path_traversal"]["reason"] == reason
+    assert result["stop_reason"] == reason
+    assert result["coverage_summary"]["access_control"]["status"] == "UNSUPPORTED"
+    saved, snapshot = load_case(harness.root, result["case_id"])
+    assert saved["metrics"]["request_count"] == len(calls)
+    assert saved["assessments"][0]["deferred"] == reason
+    snapshot.verify()
+    if budget == "request":
+        from copy import deepcopy
+
+        from beeagent_module.integrations.beescan.discovery_dast import (
+            load_multifamily_case,
+        )
+
+        substituted = deepcopy(saved)
+        substituted["assessments"][0]["deferred"] = "step_budget_exhausted"
+        substituted["outcomes"][0]["reason"] = "step_budget_exhausted"
+        with pytest.raises(ValueError, match="unproven_verification_budget_stop"):
+            load_multifamily_case(substituted, snapshot, result["case_id"])
+
+
+def test_multifamily_unavailable_profile_is_unsupported(discovery_dast):
+    run, state, calls, harness, active = discovery_dast
+    state["assessment_body"] = '<img src="/read?file=fixture">'
+    state["dast"]["enabled"] = False
+    harness.config["adaptive"]["max_requests"] = 1
+    result = run("Assess web security")
+    assert calls == ["/"] and active == []
+    assert result["coverage"]["path_traversal"] == []
+    assert result["coverage_summary"]["path_traversal"]["status"] == "UNSUPPORTED"
+    load_case(harness.root, result["case_id"])
+
+
+def test_access_discovery_ignores_valueless_attributes():
+    from beeagent_module.integrations.beescan.access_discovery import GetLinks
+
+    parser = GetLinks()
+    parser.feed(
+        '<link href="/bad" rel><form action="/bad" method>'
+        '<input name="x" value="y"></form>'
+        '<form action="/search"><input name><input name="missing" value>'
+        '<input name="q" value="ok"></form>'
+    )
+    assert parser.links == ["/search?q=ok"]

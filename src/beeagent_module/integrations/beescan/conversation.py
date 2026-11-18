@@ -27,9 +27,9 @@ from beeagent_module.integrations.beescan.web import (
     principal,
 )
 
-active_session: ContextVar[
-    Callable[[ProbePolicy], tuple[str, str] | None] | None
-] = ContextVar("beescan_conversation_session", default=None)
+active_session: ContextVar[Callable[[ProbePolicy], tuple[str, str] | None] | None] = (
+    ContextVar("beescan_conversation_session", default=None)
+)
 
 _CONTEXT = {
     "target",
@@ -268,6 +268,7 @@ class Conversations:
             "context_revision": 0,
             "context": {},
             "messages": [],
+            "sequence": [],
             "runs": [],
             "nonces": set(),
             "previous": None,
@@ -306,6 +307,10 @@ class Conversations:
             state["previous"] = digest(record)
             state["nonces"].add(value["nonce"])
             kind, data = value["kind"], value["data"]
+            if kind in {"message", "run"}:
+                state["sequence"].append(
+                    {"kind": kind, "data": data, "timestamp": value["timestamp"]}
+                )
             if kind == "message":
                 state["messages"].append(data)
             elif kind == "context":
@@ -393,6 +398,10 @@ class Conversations:
             state["context_revision"] += 1
         elif kind == "run":
             state["runs"].append(data)
+        if kind in {"message", "run"}:
+            state["sequence"].append(
+                {"kind": kind, "data": data, "timestamp": value["timestamp"]}
+            )
 
     def redact(self, value, actor=None):
         redactions = set()
@@ -686,12 +695,18 @@ class Conversations:
                 raise ValueError("unsupported_mode")
             if key == "profile":
                 from beeagent_module.integrations.beescan.access_control import (
+                    profiles,
+                    select_administrative_profile,
                     select_profile,
                 )
 
-                select_profile(
-                    self.host.reload_settings(), value, actor, context.get("target")
+                settings = self.host.reload_settings()
+                selector = (
+                    select_administrative_profile
+                    if "principals" not in profiles(settings).get(value, {})
+                    else select_profile
                 )
+                selector(settings, value, actor, context.get("target"))
             context[key] = value
             if key == "target":
                 settings = self.host.reload_settings()
@@ -808,15 +823,18 @@ class Conversations:
                 context.pop(key, None)
         if context.get("profile"):
             from beeagent_module.integrations.beescan.access_control import (
+                profiles,
+                select_administrative_profile,
                 select_profile,
             )
 
-            select_profile(
-                self.host.reload_settings(),
-                context["profile"],
-                actor,
-                context["target"],
+            settings = self.host.reload_settings()
+            selector = (
+                select_administrative_profile
+                if "principals" not in profiles(settings).get(context["profile"], {})
+                else select_profile
             )
+            selector(settings, context["profile"], actor, context["target"])
         if payload["kind"] != "none" and context.get("profile"):
             raise PermissionError("ambiguous_test_access")
         if payload["kind"] == "none" and payload["secret"]:
@@ -1005,6 +1023,8 @@ class Conversations:
 
     def investigate(self, state, payload, actor, *, conversational=False):
         expected = {"case_id", "revision", "nonce", "task", "mode"}
+        if "source_run_id" in payload and not conversational:
+            expected.add("source_run_id")
         if not conversational:
             expected.add("confirmation")
         if (
@@ -1013,6 +1033,14 @@ class Conversations:
             and payload.get("confirmation") != "INVESTIGATE"
         ):
             raise PermissionError("explicit_investigation_required")
+        if "source_run_id" in payload:
+            view = self.view(state["case_id"], actor)
+            if not any(
+                item["source_run_id"] == payload["source_run_id"]
+                and item["task"] == payload["task"]
+                for item in view["retry_actions"]
+            ):
+                raise PermissionError("investigation_action_source_changed")
         settings = self.host.reload_settings()
         principal(settings, actor, execute=True)
         if type(payload["mode"]) is not str or payload["mode"] not in PROFILES:
@@ -1069,6 +1097,21 @@ class Conversations:
         }
         if context.get("profile"):
             child_payload["test_profile_id"] = context["profile"]
+        if not conversational:
+            self.append(
+                state,
+                "message",
+                {
+                    "id": secrets.token_hex(16),
+                    "sender": "operator",
+                    "text": task,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "type": "investigation_request",
+                    "source": payload.get("source_run_id"),
+                },
+                payload["nonce"],
+                actor,
+            )
         planned_id = self.host._run_id(actor, child_payload["nonce"])
         attachments = deepcopy(
             [item for item in state["attachments"] if not item.get("removed")]
@@ -1105,11 +1148,6 @@ class Conversations:
 
     def view(self, case_id, actor, *, offset=None, run_offset=None):
         state = self.read(case_id, actor)
-        if offset is None:
-            offset = max(0, (len(state["messages"]) - 1) // 8 * 8)
-        if type(offset) is not int or offset < 0 or offset > len(state["messages"]):
-            raise ValueError("invalid_message_page")
-        messages = state["messages"][offset : offset + 8]
         if run_offset is None:
             run_offset = max(0, (len(state["runs"]) - 1) // 25 * 25)
         if type(run_offset) is not int or not 0 <= run_offset <= len(state["runs"]):
@@ -1123,12 +1161,15 @@ class Conversations:
                 status = "ERROR"
             if state["runs"][-1]["run_id"] in self.running:
                 status = "RUNNING"
-        summary = {"runs": [], "completed": 0, "active": 0}
+        summary = {"runs": [], "completed": 0, "active": 0, "findings": []}
+        timeline = []
+        run_views = {}
         for run in state["runs"][-25:]:
             try:
                 child = self.host.inspect(run["run_id"], actor, latest=False)
             except OSError, ValueError, RuntimeError, KeyError, TypeError:
                 continue
+            run_views[run["run_id"]] = child
             active = run["run_id"] in self.running or child["status"] in {
                 "RUNNING",
                 "QUEUED",
@@ -1141,6 +1182,25 @@ class Conversations:
                 "authenticated": child.get("evidence_authenticated") is True,
             }
             if item["authenticated"]:
+                for finding in child.get("findings", []):
+                    if (
+                        type(finding.get("finding_id")) is not str
+                        or type(finding.get("title")) is not str
+                    ):
+                        continue
+                    if len(summary["findings"]) < 16 and not any(
+                        entry["finding_id"] == finding["finding_id"]
+                        for entry in summary["findings"]
+                    ):
+                        summary["findings"].append(
+                            {
+                                **finding,
+                                "run_id": run["run_id"],
+                                "review_disposition": child.get(
+                                    "finding_reviews", {}
+                                ).get(finding["finding_id"], "candidate"),
+                            }
+                        )
                 item["requests"] = child.get("request_count")
                 item["elapsed_seconds"] = child.get("metrics", {}).get(
                     "elapsed_seconds"
@@ -1151,6 +1211,81 @@ class Conversations:
                     for finding in child.get("findings", [])
                 )
             summary["runs"].append(item)
+        from beeagent_module.integrations.beescan.progress import conversation_run
+
+        records = state["sequence"]
+        if offset is None:
+            offset = max(0, (len(records) - 1) // 8 * 8)
+        if type(offset) is not int or not 0 <= offset <= len(records):
+            raise ValueError("invalid_message_page")
+        messages = []
+        for record in records[offset : offset + 8]:
+            item = record["data"]
+            child_id = (
+                item["run_id"]
+                if record["kind"] == "run"
+                else item.get("source")
+                if item.get("type") == "investigation"
+                else None
+            )
+            child = None
+            if child_id:
+                child = run_views.get(child_id)
+                if child is None:
+                    child = self.host.inspect(child_id, actor, latest=False)
+                    run_views[child_id] = child
+            if record["kind"] == "run":
+                message = {
+                    "id": "run-" + item["run_id"],
+                    "sender": "host",
+                    "text": "",
+                    "timestamp": record["timestamp"],
+                    "type": "run",
+                    "source": item["run_id"],
+                }
+            else:
+                message = dict(item)
+            if child is not None:
+                message["investigation"] = conversation_run(
+                    child, active=child_id in self.running
+                )
+                message["investigation"]["has_conclusion"] = any(
+                    entry.get("type") == "investigation"
+                    and entry.get("source") == child_id
+                    for entry in state["messages"]
+                )
+            messages.append(message)
+        latest_view = (
+            run_views.get(state["runs"][-1]["run_id"]) if state["runs"] else None
+        )
+        latest_run = (
+            conversation_run(
+                latest_view, active=state["runs"][-1]["run_id"] in self.running
+            )
+            if latest_view
+            else None
+        )
+        timeline = latest_view.get("timeline", []) if latest_view else []
+        retry_actions = []
+        if (
+            latest_run
+            and latest_run["source_available"]
+            and status not in {"RUNNING", "QUEUED"}
+            and latest_run["target"] == state["context"].get("target")
+            and actor["role"] in {"operator", "admin"}
+            and not metadata.get("archived", False)
+        ):
+            retry_actions.append(
+                {
+                    "source_run_id": latest_run["run_id"],
+                    "task": "Assess web security (fresh full retry)",
+                    "case_id": case_id,
+                    "revision": str(state["revision"]),
+                    "nonce": self.nonce(actor, case_id, state["revision"]),
+                    "mode": state["context"].get("mode", "quick"),
+                    "confirmation": "INVESTIGATE",
+                }
+            )
         return {
             "case_id": case_id,
             "run_id": case_id,
@@ -1163,6 +1298,21 @@ class Conversations:
                 for kind in ("bearer", "cookie")
             },
             "messages": messages,
+            "timeline": timeline,
+            "latest_investigation": latest_run,
+            "next_actions": [],
+            "next_action_reason": "case_archived"
+            if metadata.get("archived", False)
+            else "operator_required"
+            if actor["role"] not in {"operator", "admin"}
+            else "investigation_active"
+            if status in {"RUNNING", "QUEUED"}
+            else "no_authenticated_source"
+            if not latest_run or not latest_run["source_available"]
+            else "target_context_changed"
+            if latest_run["target"] != state["context"].get("target")
+            else "source_bound_continuation_unavailable",
+            "retry_actions": retry_actions,
             "runs": [
                 {
                     "run_id": item["run_id"],
@@ -1175,7 +1325,7 @@ class Conversations:
             "run_count": len(state["runs"]),
             "summary": summary,
             "attachments": state["attachments"],
-            "message_count": len(state["messages"]),
+            "message_count": len(records),
             "status": status,
             "message_offset": offset,
             "mode": state["context"].get("mode", "quick"),
@@ -1222,6 +1372,8 @@ class Conversations:
         invocation.conversation_binding = binding
         self.running.add(invocation.run_id)
         case_id, context, actor = binding[:3]
+        if not any(kind in context for kind in ("bearer", "cookie")):
+            return None
 
         def resolve(policy):
             invocation.verify()

@@ -47,6 +47,7 @@ def _requires_test_profile(task):
 def record_failure(storage, logger, run_id, error, phase):
     from beeagent_module.integrations.beescan.assessment import _write_report
     from beeagent_module.integrations.beescan.dast import _api
+    from beeagent_module.integrations.beescan.progress import failure_reason
 
     category = next(
         (
@@ -71,7 +72,7 @@ def record_failure(storage, logger, run_id, error, phase):
     try:
         lines = [
             f"{datetime.now(UTC).isoformat()} run_id={run_id} "
-            f"category={category} phase={phase}",
+            f"category={category} phase={phase} reason={failure_reason(error)}",
             "Traceback (frames only; exception values and source omitted):",
         ]
         for frame, line in islice(traceback.walk_tb(error.__traceback__), 32):
@@ -196,12 +197,20 @@ class _WebInvocation:
         self.credential_bindings = None
         if profile_id:
             from beeagent_module.integrations.beescan.access_control import (
+                profiles,
+                select_administrative_profile,
                 select_profile,
             )
 
-            self.profile, values = select_profile(
-                self.settings, profile_id, self.actor, task.target
-            )
+            if "principals" not in profiles(self.settings).get(profile_id, {}):
+                self.profile = select_administrative_profile(
+                    self.settings, profile_id, self.actor, task.target
+                )
+                values = []
+            else:
+                self.profile, values = select_profile(
+                    self.settings, profile_id, self.actor, task.target
+                )
             if mode == "quick" and not self.profile.get("discovery"):
                 raise PermissionError("test_profile_requires_standard_mode")
             limits = self.settings["beescan"]["investigation"]["adaptive"]
@@ -265,15 +274,21 @@ class _WebInvocation:
         self._verify_authority()
         if self.profile_id:
             from beeagent_module.integrations.beescan.access_control import (
+                profiles,
+                select_administrative_profile,
                 select_profile,
             )
 
-            profile, values = select_profile(
-                self.service.reload_settings(),
-                self.profile_id,
-                self.actor,
-                self.task.target,
-            )
+            settings = self.service.reload_settings()
+            if "principals" not in profiles(settings).get(self.profile_id, {}):
+                profile = select_administrative_profile(
+                    settings, self.profile_id, self.actor, self.task.target
+                )
+                values = []
+            else:
+                profile, values = select_profile(
+                    settings, self.profile_id, self.actor, self.task.target
+                )
             if profile != self.profile or self.credential_bindings != [
                 hmac.digest(_key(self.settings), value.encode(), "sha256").hex()
                 for value in values
@@ -536,7 +551,10 @@ class WebInvestigations:
                 invocation.profile
             ):
                 raise PermissionError("web_resume_test_profile_changed")
-            if state.get("terminal") or state["status"] in {"CANDIDATE", "NO_MATCH"}:
+            if state.get("discovery", state).get("terminal") or state["status"] in {
+                "CANDIDATE",
+                "NO_MATCH",
+            }:
                 discovery = state.get("discovery", state)
                 reused = {
                     "case_id": case_id,
@@ -684,7 +702,13 @@ class WebInvestigations:
     def _receipt(self, snapshot, settings):
         cases = [key for key in snapshot.files if key[1] == "case.json"]
         if len(cases) != 1:
-            raise ValueError("invalid_web_case_receipt")
+            cases = [
+                key
+                for key in cases
+                if snapshot.json(*key)["state"].get("schema_version") == 7
+            ]
+            if len(cases) != 1:
+                raise ValueError("invalid_web_case_receipt")
         state = snapshot.json(*cases[0])["state"]
         for run_id in state.get("discovery", state)["segments"]:
             for name in (
@@ -708,7 +732,14 @@ class WebInvestigations:
 
         token = active_session.set(self.conversations.resolver(invocation))
         try:
-            if invocation.profile_id:
+            from beeagent_module.integrations.beescan.investigation import (
+                is_multi_family_task,
+            )
+
+            multi = is_multi_family_task(invocation.task.task)
+            if invocation.profile_id and not (
+                multi and invocation.profile.get("discovery")
+            ):
                 from beeagent_module.integrations.beescan.access_control import (
                     execute_access,
                 )
@@ -976,7 +1007,9 @@ class WebInvestigations:
             {
                 "finding_id": finding["finding_id"],
                 "status": finding["status"],
-                "title": "Access-control candidate"
+                "title": finding["title"]
+                if state and state["schema_version"] == 7
+                else "Access-control candidate"
                 if state and state["schema_version"] in {5, 6}
                 else "External DAST candidate",
             }
@@ -1059,6 +1092,41 @@ class WebInvestigations:
                     "request_count": assessment["request_count"],
                 }
             )
+        data["coverage"] = status.get("coverage", {}) if authenticated else {}
+        data["coverage_summary"] = (
+            status.get("coverage_summary", {}) if authenticated else {}
+        )
+        data["stop_reason"] = status.get("stop_reason") if authenticated else None
+        if authenticated and state is not None and state["schema_version"] == 7:
+            from beescan.domain.assessment_selection import (
+                VerificationOutcome,
+                verification_coverage_data,
+            )
+
+            expected_coverage = verification_coverage_data(
+                tuple(
+                    VerificationOutcome(
+                        **{
+                            **item,
+                            "evidence_refs": tuple(item["evidence_refs"]),
+                            "finding_ids": tuple(item["finding_ids"]),
+                        }
+                    )
+                    for item in state["outcomes"]
+                )
+            )
+            expected_coverage = json.loads(json.dumps(expected_coverage))
+            if data["coverage"] != expected_coverage:
+                raise ValueError("multifamily_coverage_changed")
+            for record in state["assessments"]:
+                data["steps"].append(
+                    {
+                        "step": "active_dast",
+                        "tool": "zap",
+                        "status": record["status"],
+                        "request_count": record["request_count"],
+                    }
+                )
         data["intake"] = None
         intake_snapshot = AssessmentSnapshot(self.storage)
         try:
@@ -1120,7 +1188,9 @@ class WebInvestigations:
                     {
                         "id": segment + ":status",
                         "author": "BeeAgent",
-                        "text": view["status"] + " / " + str(view["reason"]),
+                        "text": view["status"]
+                        + " / "
+                        + str(view.get("stop_reason") or view["reason"]),
                     }
                 )
             data["events"] = data["events"][-64:]
@@ -1132,6 +1202,21 @@ class WebInvestigations:
                 }
                 for finding in data["findings"]
             )
+            if authenticated and state is not None and state["schema_version"] == 7:
+                for family, checks in data["coverage"].items():
+                    data["events"].append(
+                        {
+                            "id": "coverage:" + family,
+                            "author": "BeeScan",
+                            "text": family
+                            + ": "
+                            + (
+                                ", ".join(item["status"] for item in checks)
+                                if checks
+                                else "UNSUPPORTED: required evidence or approved profile unavailable"
+                            ),
+                        }
+                    )
             data["completed_steps"] = completed
         metadata = self.case_metadata(owned["case_id"], actor)
         data["display_title"] = metadata.get("title") or (
@@ -1139,6 +1224,7 @@ class WebInvestigations:
         )
         data["archived"] = metadata.get("archived", False)
         data["report_readiness"] = "unavailable"
+        data["finding_reviews"] = {}
         if authenticated and data["findings"]:
             from beeagent_module.integrations.beescan.review import inspect_web_reports
 
@@ -1147,12 +1233,49 @@ class WebInvestigations:
                 report_status = inspect_web_reports(
                     self, owned["case_id"], finding["finding_id"], actor
                 )
+                data["finding_reviews"][finding["finding_id"]] = report_status[
+                    "review_disposition"
+                ]
                 readiness.append(
                     report_status["reports"][-1]["report_readiness"]
                     if report_status["reports"]
                     else "review_required"
                 )
             data["report_readiness"] = ", ".join(sorted(set(readiness)))
+        from beeagent_module.integrations.beescan.progress import (
+            authenticated_observations,
+            investigation_timeline,
+        )
+
+        authenticated_files = set(snapshot.files)
+        data["observations"] = (
+            authenticated_observations(state, snapshot) if authenticated else []
+        )
+        if set(snapshot.files) != authenticated_files:
+            raise PermissionError("web_observation_source_not_authenticated")
+
+        data["timeline"] = investigation_timeline(
+            self.storage,
+            owned,
+            status,
+            steps,
+            state,
+            authenticated,
+            child_owner=lambda child_id: _read_owned(
+                self.storage, current, child_id, actor
+            ),
+        )
+        data["timeline"].extend(
+            {
+                "id": "progress-finding-" + finding["finding_id"],
+                "kind": "finding",
+                "reference": finding["finding_id"],
+                "status": "CANDIDATE",
+                "authenticated": True,
+                "reason": "independent_review_required",
+            }
+            for finding in data["findings"]
+        )
         encoded = json.dumps(data, allow_nan=False)
         if len(encoded.encode()) > 65536:
             raise ValueError("web_projection_limit")

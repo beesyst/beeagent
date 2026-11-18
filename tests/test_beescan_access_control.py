@@ -38,6 +38,16 @@ def test_discovery_diagnostic_url_excludes_query_values(value, expected):
     assert diagnostic_relative_url(value) == expected
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["/admin/destroy", "/admin/revoke", "/admin/grant", "/admin/deleteUser?id=owned"],
+)
+def test_discovery_refuses_destructive_administrative_links(path):
+    from beeagent_module.integrations.beescan.access_discovery import safe_link
+
+    assert safe_link("https://example.test", "/", path) is None
+
+
 def prepare(
     tmp_path,
     monkeypatch,
@@ -46,6 +56,13 @@ def prepare(
     application=None,
 ):
     settings, storage, app = setup_app(tmp_path, monkeypatch)
+    from beescan.domain import web_investigation
+
+    from beeagent_module.integrations.beescan import investigation
+
+    monkeypatch.setattr(
+        investigation, "_load_domain", lambda **_: (web_investigation, "a" * 40)
+    )
     application = application or AccessApplication(mode, relationship)
     for name, value in zip(("A", "B"), application.tokens):
         monkeypatch.setenv("BEEAGENT_ACCESS_" + name, value)
@@ -884,3 +901,101 @@ def test_autonomous_discovery_excludes_known_foreign_objects(tmp_path, monkeypat
     assert view["status"] == "PARTIAL"
     assert all(path != "/third-party-private" for path, _ in target.requests)
     service.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("vulnerable", "CANDIDATE"),
+        ("fixed", "NO_MATCH"),
+        ("generic200", "PARTIAL"),
+        ("login", "PARTIAL"),
+        ("public", "PARTIAL"),
+        ("missing_negative", "PARTIAL"),
+    ],
+)
+def test_administrative_access_requires_independent_controls(
+    tmp_path, monkeypatch, mode, expected
+):
+    from tests.beescan_access_support import AutonomousApplication, autonomous_profile
+
+    target = AutonomousApplication(
+        "vulnerable" if mode == "missing_negative" else "fixed", "vertical"
+    )
+    original = target.get
+
+    def response(path, credential):
+        code, body = original(path, credential)
+        if mode == "public" and path == "/":
+            for item in body["resources"]:
+                item["visibility"] = "public"
+        if credential is None and path == target.resources[0][0] and mode != "fixed":
+            return (
+                (302, {})
+                if mode == "login"
+                else (200, {"message": "Welcome"})
+                if mode == "generic200"
+                else (200, target.resources[0][3])
+            )
+        return code, body
+
+    target.get = response
+    current, storage, app, _ = prepare(tmp_path, monkeypatch, application=target)
+    profile = autonomous_profile(
+        "http://127.0.0.1:18080", "vertical", "administrative_restricted"
+    )
+    profile.update(
+        restriction_reference="independent-administration-policy",
+        restricted_resource_type="resource-0",
+    )
+    current["beescan"]["access_control"] = {"profiles": [profile]}
+    client, headers = authenticated(app)
+    service = app.state.beeagent_adapter.beescan
+    started = execute(
+        client,
+        headers,
+        {**payload(app), "mode": "deep", "test_profile_id": "controlled-access"},
+    )
+    assert started.json()["ok"], started.text
+    case_id = started.json()["data"]["case_id"]
+    service.executor.submit(lambda: None).result(timeout=20)
+    view = service.inspect(case_id, {"user_id": "alice", "role": "operator"})
+    assert view["status"] == expected, view
+    assert bool(view["findings"]) == (expected == "CANDIDATE")
+    assert view["request_count"] == len(target.requests)
+    if expected == "CANDIDATE":
+        root = storage / "runs" / case_id / "module-beescan"
+        record = json.loads((root / "access-comparison-0.json").read_text())
+        assert record["intent"]["restriction_ref"] == profile["restriction_reference"]
+        assert record["intent"]["relationship"] == "administrative"
+    service.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize(
+    "change", ["missing", "self_asserted", "same_role", "wrong_type"]
+)
+def test_administrative_policy_refuses_unproven_scope(tmp_path, monkeypatch, change):
+    from tests.beescan_access_support import AutonomousApplication, autonomous_profile
+
+    target = AutonomousApplication("fixed", "vertical")
+    current, _, app, _ = prepare(tmp_path, monkeypatch, application=target)
+    profile = autonomous_profile(
+        "http://127.0.0.1:18080", "vertical", "administrative_restricted"
+    )
+    profile.update(
+        restriction_reference="independent-policy",
+        restricted_resource_type="resource-0",
+    )
+    if change == "missing":
+        profile.pop("restriction_reference")
+    elif change == "self_asserted":
+        profile["restriction_reference"] = profile["authorization_reference"]
+    elif change == "same_role":
+        profile["principals"][0]["role"] = "user"
+    else:
+        profile["restricted_resource_type"] = None
+    current["beescan"]["access_control"] = {"profiles": [profile]}
+    with pytest.raises((ValueError, TypeError)):
+        host.profiles(current)
+    assert not target.requests
+    app.state.beeagent_adapter.beescan.executor.shutdown(wait=True)

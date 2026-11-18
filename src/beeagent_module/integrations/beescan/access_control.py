@@ -48,7 +48,10 @@ def profiles(settings):
         raise ValueError("invalid_access_control_profiles")
     if not records:
         return {}
-    from beescan.domain.access_control import validate_resource_locator
+    from beescan.domain.access_control import (
+        read_only_resource,
+        validate_resource_locator,
+    )
     from beescan.domain.locators import canonical_locator
     from beescan.domain.models import TargetKind, validate_identifier, validate_text
 
@@ -78,6 +81,32 @@ def profiles(settings):
                 "expectation",
                 "discovery_budget",
             }
+        administrative = (
+            autonomous and profile.get("expectation") == "administrative_restricted"
+        )
+        standalone_administrative = administrative and "principals" not in profile
+        if standalone_administrative:
+            expected = {
+                "profile_id",
+                "origin",
+                "operator_ids",
+                "valid_from",
+                "expires_at",
+                "authorization_reference",
+                "discovery",
+                "expectation",
+                "discovery_budget",
+                "request_budget",
+                "seconds",
+                "read_only",
+                "local_lab",
+                "restriction_reference",
+                "restricted_resource_type",
+                "resource_path",
+                "negative_path",
+            }
+        if administrative:
+            expected |= {"restriction_reference", "restricted_resource_type"}
         if set(profile) != expected:
             raise ValueError("invalid_access_control_profile")
         validate_identifier(profile["profile_id"])
@@ -106,7 +135,13 @@ def profiles(settings):
             raise ValueError("invalid_access_control_authority")
         if autonomous and (
             profile["expectation"]
-            not in {"owned_private", "role_restricted", "public", "unknown"}
+            not in {
+                "owned_private",
+                "role_restricted",
+                "administrative_restricted",
+                "public",
+                "unknown",
+            }
             or type(profile["discovery_budget"]) is not int
             or not 2 <= profile["discovery_budget"] <= 16
             or profile["discovery_budget"] > profile["request_budget"]
@@ -119,6 +154,21 @@ def profiles(settings):
         )
         if start.tzinfo is None or end.tzinfo is None or start >= end:
             raise ValueError("invalid_access_control_validity")
+        if standalone_administrative:
+            validate_identifier(profile["restriction_reference"])
+            validate_text(profile["restricted_resource_type"], 64)
+            for key in ("resource_path", "negative_path"):
+                validate_resource_locator(profile[key])
+                if "?" in profile[key] or not read_only_resource(profile[key]):
+                    raise ValueError("invalid_administrative_resource")
+            if (
+                profile["restriction_reference"] == profile["authorization_reference"]
+                or profile["resource_path"] == profile["negative_path"]
+                or profile["request_budget"] < 2
+            ):
+                raise ValueError("independent_administrative_policy_required")
+            result[profile["profile_id"]] = deepcopy(profile)
+            continue
         principals = profile["principals"]
         if type(principals) is not list or len(principals) != 2:
             raise ValueError("exactly_two_principals_required")
@@ -161,6 +211,14 @@ def profiles(settings):
         ):
             if principals[0][key] == principals[1][key]:
                 raise ValueError("independent_principals_required")
+        if administrative:
+            validate_identifier(profile["restriction_reference"])
+            validate_text(profile["restricted_resource_type"], 64)
+            if (
+                profile["restriction_reference"] == profile["authorization_reference"]
+                or principals[0]["role"] == principals[1]["role"]
+            ):
+                raise ValueError("independent_administrative_policy_required")
         if autonomous:
             result[profile["profile_id"]] = deepcopy(profile)
             continue
@@ -250,8 +308,298 @@ def select_profile(settings, profile_id, actor, origin):
     return profile, credentials
 
 
+def select_administrative_profile(settings, profile_id, actor, origin):
+    profile = profiles(settings).get(profile_id)
+    now = datetime.now(UTC)
+    if (
+        profile is None
+        or "principals" in profile
+        or actor["user_id"] not in profile["operator_ids"]
+        or origin != profile["origin"]
+        or not datetime.fromisoformat(profile["valid_from"]) <= now
+        or now.timestamp() + profile["seconds"]
+        > datetime.fromisoformat(profile["expires_at"]).timestamp()
+    ):
+        raise PermissionError("administrative_profile_authority_refused")
+    return profile
+
+
+def execute_administrative_access(
+    service, invocation, source, *, execution_case_id, action_id
+):
+    from beescan.domain.access_control import (
+        AdministrativeEvidence,
+        AdministrativeExecution,
+        AdministrativeIntent,
+        evaluate_administrative_access,
+    )
+    from beescan.domain.models import (
+        EngagementScope,
+        Mission,
+        Project,
+        Target,
+        TargetKind,
+    )
+
+    from beeagent_module.integrations.beescan.dast import _api
+    from beeagent_module.integrations.beescan.detection_runner import (
+        run_detection_provider,
+    )
+    from beeagent_module.integrations.beescan.egress import ManagedEgress
+    from beeagent_module.integrations.beescan.http_runner import verify_resolution
+    from beeagent_module.integrations.beescan.review_source import AssessmentSnapshot
+    from beeagent_module.integrations.beescan.web import _key
+
+    profile = select_administrative_profile(
+        invocation.settings,
+        invocation.profile_id,
+        invocation.actor,
+        invocation.task.target,
+    )
+    transport, config = (
+        invocation.policy.transport,
+        invocation.settings["beescan"]["investigation"],
+    )
+    snapshot = AssessmentSnapshot(service.storage)
+    source_record = snapshot.json(source.source_run_id, "source.json")
+    if (
+        source_record.get("request_id") != source.request_id
+        or source_record.get("response_id") != source.response_id
+        or source_record["facts"]["request"].get("target_id") != transport.target_id
+        or not source.evidence_refs
+    ):
+        raise PermissionError("administrative_source_changed")
+    api = _api(service.storage, execution_case_id, service.logger)
+    invocation.bind(api, execution_case_id)
+    seconds = min(profile["seconds"], config["timeout_seconds"])
+    intent = AdministrativeIntent(
+        invocation.case_id,
+        Project(transport.project_id, "Authorized administrative assessment"),
+        EngagementScope(
+            transport.scope_id,
+            transport.project_id,
+            (transport.target_id,),
+            profile["authorization_reference"],
+            valid_from=datetime.fromisoformat(profile["valid_from"]),
+            expires_at=datetime.fromisoformat(profile["expires_at"]),
+            approved_methods=("GET",),
+            max_requests=3,
+            max_seconds=seconds,
+        ),
+        Mission(
+            transport.mission_id,
+            transport.project_id,
+            transport.scope_id,
+            ("web.access_control",),
+        ),
+        Target(
+            transport.target_id, transport.project_id, TargetKind.URL, profile["origin"]
+        ),
+        source.request_id,
+        source.response_id,
+        source.evidence_refs[0],
+        profile["resource_path"],
+        profile["profile_id"],
+        profile["restriction_reference"],
+    )
+    started, count, exact, evidence = time.monotonic(), 0, True, []
+    session = ManagedEgress(
+        transport, artifacts=api, assessment_run_id=execution_case_id, seconds=seconds
+    )
+
+    def authorize():
+        invocation.verify()
+        if (
+            select_administrative_profile(
+                service.reload_settings(),
+                invocation.profile_id,
+                invocation.actor,
+                invocation.task.target,
+            )
+            != profile
+        ):
+            raise PermissionError("administrative_policy_changed")
+        verify_resolution(transport)
+
+    source_at = datetime.now(UTC)
+    evidence.append(
+        AdministrativeEvidence(
+            intent.identity,
+            "source",
+            source.request_id,
+            source.response_id,
+            source.evidence_refs[0],
+            digest(source_record["facts"]["request"]),
+            digest(source_record["facts"]),
+            source_at,
+            True,
+            False,
+            True,
+        )
+    )
+    try:
+        authorize()
+        session.start()
+        for slot, path in (
+            ("anonymous", profile["resource_path"]),
+            ("negative", profile["negative_path"]),
+        ):
+            authorize()
+            attempted = None
+
+            def on_attempt(value):
+                nonlocal count, exact, attempted
+                attempted = value
+                count += int(value is True)
+                exact = value is not None
+
+            raw = run_detection_provider(
+                transport,
+                reauthorize=authorize,
+                investigation={
+                    "relative_url": path,
+                    "body_bytes_max": config["body_bytes_max"],
+                    "general": True,
+                },
+                on_attempt=on_attempt,
+                deadline=started + seconds,
+                authentication=None,
+            )
+            capture = _json(raw)
+            if (
+                attempted is not True
+                or capture.get("request_count") != 1
+                or capture.get("relative_url") != path
+                or capture.get("method") != "GET"
+                or capture.get("origin") != profile["origin"]
+                or capture.get("connected_ip") != transport.connected_ip
+            ):
+                raise ValueError("invalid_administrative_capture")
+            denied = (
+                capture.get("status_code") in {401, 403, 404}
+                or 300 <= capture.get("status_code", 0) < 400
+            )
+            equivalent = False
+            now = datetime.now(UTC)
+            request_id = "aaq-" + digest([intent.identity, slot, path])[:48]
+            response_id = "aar-" + digest([request_id, count])[:48]
+            ref = "aae-" + digest([execution_case_id, response_id])[:48]
+            record = {
+                "intent_id": intent.identity,
+                "slot": slot,
+                "request_id": request_id,
+                "response_id": response_id,
+                "evidence_ref": ref,
+                "request_sha256": digest([request_id, path]),
+                "response_sha256": hmac.digest(
+                    _key(invocation.settings), raw, "sha256"
+                ).hex(),
+                "captured_at": now.isoformat(),
+                "complete": capture.get("complete") is True
+                and "skip_reason" not in capture,
+                "denied": denied,
+                "equivalent": equivalent,
+            }
+            _persist(api, ref + ".json", record)
+            evidence.append(AdministrativeEvidence(**{**record, "captured_at": now}))
+    finally:
+        session.close()
+    lifecycle = AssessmentSnapshot(service.storage).json(
+        execution_case_id, "egress_lifecycle.json"
+    )
+    execution = AdministrativeExecution(
+        tuple(evidence),
+        datetime.now(UTC),
+        count,
+        exact,
+        lifecycle.get("cleanup_verified") is True
+        and lifecycle.get("enforcement_verified") is True,
+        True,
+    )
+    result = evaluate_administrative_access(intent, execution)
+    _persist(
+        api,
+        "administrative_comparison.json",
+        {
+            "intent": _plain(intent),
+            "execution": _plain(execution),
+            "source_sha256": digest(source_record),
+            "profile_sha256": digest(profile),
+        },
+    )
+    _persist(api, "investigation_result.json", _plain(result))
+    save_case(
+        api,
+        {
+            "schema_version": 8,
+            "case_id": execution_case_id,
+            "parent_case_id": invocation.case_id,
+            "action_id": action_id,
+            "source": _plain(source),
+            "profile_id": profile["profile_id"],
+            "profile_sha256": digest(profile),
+            "source_sha256": digest(source_record),
+            "request_count": count,
+            "request_count_exact": exact,
+            "status": result.status,
+            "reason": result.reason,
+            "evidence_refs": list(item.evidence_ref for item in evidence),
+        },
+    )
+    return {
+        "intent": intent,
+        "execution": execution,
+        "result": result,
+        "request_count": count,
+        "evidence_refs": tuple(item.evidence_ref for item in evidence),
+    }
+
+
 def _plain(value):
     return json.loads(json.dumps(asdict(value), default=lambda v: v.isoformat()))
+
+
+def load_administrative_case(state, snapshot, case_id):
+    required = {
+        "schema_version",
+        "case_id",
+        "parent_case_id",
+        "action_id",
+        "source",
+        "profile_id",
+        "profile_sha256",
+        "source_sha256",
+        "request_count",
+        "request_count_exact",
+        "status",
+        "reason",
+        "evidence_refs",
+    }
+    if (
+        set(state) != required
+        or state["case_id"] != case_id
+        or state["request_count"] != 2
+        or state["request_count_exact"] is not True
+    ):
+        raise ValueError("invalid_administrative_case")
+    comparison = snapshot.json(case_id, "administrative_comparison.json")
+    result = snapshot.json(case_id, "investigation_result.json")
+    if (
+        comparison.get("source_sha256") != state["source_sha256"]
+        or comparison.get("profile_sha256") != state["profile_sha256"]
+        or comparison.get("intent", {}).get("profile_id") != state["profile_id"]
+        or comparison.get("execution", {}).get("source_reused") is not True
+        or comparison.get("execution", {}).get("request_count") != 2
+        or result.get("status") != state["status"]
+        or tuple(state["evidence_refs"])
+        != tuple(
+            item["evidence_ref"]
+            for item in comparison.get("execution", {}).get("evidence", [])
+        )
+    ):
+        raise ValueError("administrative_case_changed")
+    snapshot.verify()
+    return state, snapshot
 
 
 def restore(record):
@@ -369,6 +717,7 @@ def execute_access(
     deadline_limit=None,
     progress_base=0,
     progress_steps=(),
+    execution_case_id=None,
 ):
     from beescan.domain.access_control import (
         SLOTS,
@@ -415,7 +764,7 @@ def execute_access(
         policy=invocation.policy,
         local_context=invocation,
     )
-    case_id = invocation.case_id
+    case_id = execution_case_id or invocation.case_id
     transport = invocation.policy.transport
     api = _api(service.storage, case_id, service.logger)
     key = _key(invocation.settings)
@@ -464,6 +813,9 @@ def execute_access(
         else None,
         profile["relationship"],
         resource["public"],
+        profile["restriction_reference"]
+        if profile["relationship"] == "administrative"
+        else None,
     )
     count, exact = 0, True
     failure = None

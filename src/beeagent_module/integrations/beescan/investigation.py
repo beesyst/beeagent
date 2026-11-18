@@ -1011,7 +1011,9 @@ def _prepare_intent(
             transport.mission_id,
             transport.project_id,
             transport.scope_id,
-            (capability, "web.dast") if assessment else (capability,),
+            (capability, "web.dast", "web.access_control")
+            if assessment
+            else (capability,),
         ),
         MissionSpec(
             transport.mission_id,
@@ -1112,6 +1114,15 @@ def _publish_investigation_result(
                     "assessment": result.get("assessment"),
                     "findings": result["findings"],
                     "assessment_guidance": result.get("assessment_guidance"),
+                    **(
+                        {
+                            "coverage": result.get("coverage"),
+                            "coverage_summary": result.get("coverage_summary"),
+                            "stop_reason": result.get("stop_reason"),
+                        }
+                        if "coverage" in result
+                        else {}
+                    ),
                 }
                 if integrated
                 else {}
@@ -1196,6 +1207,13 @@ def _publish_investigation_result(
             },
         )
     return output
+
+
+def is_multi_family_task(value):
+    from beescan.domain.debug_disclosure import TransientText
+    from beescan.domain.general_investigation import multi_family_objective
+
+    return multi_family_objective(TransientText(value))
 
 
 def execute_investigation(
@@ -1315,7 +1333,15 @@ def execute_investigation(
     redirect_resources = []
     from beeagent_module.integrations.beescan.discovery_dast import discovery_selected
 
-    integrated = general and discovery_selected(settings)
+    multifamily = general and task is not None and is_multi_family_task(task.task)
+    integrated = general and (discovery_selected(settings) or multifamily)
+    verification_outcomes = []
+    assessments = []
+    access_children = []
+    discovery_egress_runs = []
+    verification_entries = {}
+    prior_case_metrics = {}
+    prior_active_count = 0
     assessment_state = None
     assessment_findings = []
     candidate_target = None
@@ -1619,11 +1645,14 @@ def execute_investigation(
         if session is None:
             return
         session.close()
-        evidence = snapshot.json(run_id, "egress_lifecycle.json")
+        egress_run = (
+            session.evidence.get("assessment_run_id") if multifamily else run_id
+        )
+        evidence = snapshot.json(egress_run, "egress_lifecycle.json")
         if (
             not session.closed
             or evidence != session.evidence
-            or evidence.get("assessment_run_id") != run_id
+            or evidence.get("assessment_run_id") != egress_run
             or evidence.get("state") != "closed"
             or evidence.get("cleanup_verified") is not True
             or evidence.get("enforcement_verified") is not True
@@ -1633,6 +1662,8 @@ def execute_investigation(
             )
         ):
             raise RuntimeError("cleanup_unverified")
+        if multifamily and egress_run not in discovery_egress_runs:
+            discovery_egress_runs.append(egress_run)
         snapshot.verify()
 
     def case_checkpoint(*, pending):
@@ -1722,14 +1753,23 @@ def execute_investigation(
     def general_checkpoint(*, pending):
         if general_case is None or case_artifacts is None or policy is None:
             return
-        from beeagent_module.integrations.beescan.case_state import save_case
+        from beeagent_module.integrations.beescan.case_state import digest, save_case
 
         old_metrics = previous_case["metrics"] if previous_case else {}
-        active_count = assessment_state["request_count"] if assessment_state else 0
+        if multifamily:
+            assessment_findings.sort(key=lambda item: item["finding_id"])
+        active_count = (
+            sum(item["request_count"] for item in (*assessments, *access_children))
+            if multifamily
+            else assessment_state["request_count"]
+            if assessment_state
+            else 0
+        )
         metrics = {
             "request_count": old_metrics.get("request_count", 0)
             + status["request_count"]
-            - active_count,
+            - active_count
+            + (prior_active_count if multifamily else 0),
             "request_count_exact": old_metrics.get("request_count_exact", True)
             and status["request_count_exact"],
             "capture_launch_count": old_metrics.get("capture_launch_count", 0)
@@ -1759,13 +1799,49 @@ def execute_investigation(
             "skipped_resources": list(skipped_resources),
             "redirect_resources": list(redirect_resources),
             "status": status["status"],
-            "reason": status["reason"],
+            "reason": status.get("stop_reason", status["reason"])
+            if multifamily
+            else status["reason"],
             "pending": pending,
             "terminal": status["complete"]
             or status["reason"] in {"no_eligible_action", "ambiguous_evidence"},
             "metrics": metrics,
         }
-        if integrated:
+        if multifamily:
+            state["status"] = (
+                status["status"]
+                if status["status"] in {"ERROR", "TIMEOUT", "REFUSED"}
+                else "INCONCLUSIVE"
+            )
+            state["terminal"] = state["reason"] == "no_eligible_action"
+            state = {
+                "schema_version": 7,
+                "case_id": general_case.case_id,
+                "origin": policy.transport.origin,
+                "operator_uid": os.getuid(),
+                "authority_sha256": digest(settings["beescan"]),
+                "discovery": state,
+                "assessments": assessments,
+                "access": access_children,
+                "outcomes": [asdict(item) for item in verification_outcomes],
+                "findings": assessment_findings,
+                "status": status["status"],
+                "metrics": {
+                    **metrics,
+                    "request_count": metrics["request_count"] + active_count,
+                },
+                "pending": pending
+                or any(item["pending"] for item in (*assessments, *access_children)),
+                "egress_runs": discovery_egress_runs,
+                "context": json.loads(
+                    json.dumps(
+                        asdict(general_case.intent),
+                        default=lambda value: value.isoformat(),
+                    )
+                ),
+            }
+            metrics = state["metrics"]
+        elif integrated:
             from beeagent_module.integrations.beescan.dast import _current
             from beeagent_module.integrations.beescan.discovery_dast import wrap_case
 
@@ -1780,6 +1856,8 @@ def execute_investigation(
             metrics = state["metrics"]
         save_case(case_artifacts, state)
         status.update(case_id=general_case.case_id, metrics=metrics)
+        if web_invocation is not None:
+            _persist(artifacts, "investigation_status.json", status)
         _persist(case_artifacts, "case_report.json", state)
         _write_report(
             case_artifacts,
@@ -1789,12 +1867,390 @@ def execute_investigation(
             + "\n```\n",
         )
 
+    def verification_step_count():
+        return sum(item.reason is None for item in verification_outcomes) + sum(
+            max(0, record.get("step_count", 1) - 1) for record in access_children
+        )
+
+    def run_verifications(current_task, current_deadline):
+        nonlocal assessment_findings, session
+        from beescan.capabilities.catalog import (
+            ACCESS_CONTROL_GET,
+            TRAVERSAL_NONRECURSIVE,
+            Capability,
+            EffortMode,
+            ToolCatalog,
+            ToolDefinition,
+        )
+        from beescan.domain.assessment_selection import (
+            VerificationOutcome,
+            decide_verification,
+        )
+        from beescan.domain.debug_disclosure import TransientText
+
+        from beeagent_module.integrations.beescan.case_state import digest
+        from beeagent_module.integrations.beescan.dast import (
+            _current,
+            _plain,
+            _restore,
+            execute_dast_investigation,
+        )
+        from beeagent_module.integrations.beescan.discovery_dast import (
+            SelectedAssessment,
+            access_verification_refs,
+            completed_access_owner_paths,
+            disclosure_finding,
+        )
+
+        verification_case = general_case
+        if verification_case is None:
+            raise ValueError("general_case_unavailable")
+
+        mode = (
+            EffortMode(web_invocation.mode) if web_invocation else EffortMode.STANDARD
+        )
+        active_policy = (
+            _current(settings, web_invocation=web_invocation)
+            if discovery_selected(settings)
+            else None
+        )
+        access_profile = (
+            web_invocation.profile_id
+            if web_invocation is not None
+            and web_invocation.profile
+            and web_invocation.profile.get("discovery")
+            else None
+        )
+        catalog = ToolCatalog(
+            (
+                Capability("web.dast", "Governed traversal"),
+                Capability("web.access_control", "Governed comparative GET"),
+            ),
+            (
+                ToolDefinition("zap", ("web.dast",), "2.17.0"),
+                ToolDefinition("host-web-capture", ("web.access_control",), "1"),
+            ),
+            (TRAVERSAL_NONRECURSIVE, ACCESS_CONTROL_GET),
+        )
+
+        def defer_verification(decision, reason):
+            source = decision.source
+            if decision.family == "path_traversal":
+                record = {
+                    "action": _plain(source),
+                    "action_id": decision.action_id,
+                    "run_id": None,
+                    "pending": False,
+                    "status": "PARTIAL",
+                    "request_count": 0,
+                    "source_sha256": digest(
+                        snapshot.json(source.entry.source_run_id, "source.json")
+                    ),
+                    "deferred": reason,
+                }
+                refs = source.entry.evidence_refs
+                assessments.append(record)
+            else:
+                access_children.append(
+                    {
+                        "action_id": decision.action_id,
+                        "source": _plain(source),
+                        "profile_id": access_profile,
+                        "run_id": None,
+                        "pending": False,
+                        "request_count": 0,
+                        "evidence_refs": list(source.evidence_refs),
+                        "step_count": 0,
+                        "deferred": reason,
+                    }
+                )
+                refs = source.evidence_refs
+            verification_outcomes.append(
+                VerificationOutcome(
+                    decision.family,
+                    decision.action_id,
+                    "PARTIAL",
+                    tuple(refs),
+                    reason=reason,
+                )
+            )
+            status.update(reason=reason, stop_reason=reason)
+
+        while True:
+            inspected_access_paths = set()
+            excluded_owner_paths = set()
+            for record in access_children:
+                if record["pending"] or record.get("deferred"):
+                    continue
+                child = snapshot.json(record["run_id"], "case.json")["state"]
+                if child.get("schema_version") == 8:
+                    continue
+                inspected_access_paths.update(
+                    item["relative_url"]
+                    for item in snapshot.json(
+                        record["run_id"], "discovery_evidence.json"
+                    )["observations"]
+                    if item["complete"] is True
+                )
+                excluded_owner_paths.update(
+                    completed_access_owner_paths(child, snapshot)
+                )
+            try:
+                decision = decide_verification(
+                    verification_case,
+                    TransientText(current_task.task),
+                    catalog=catalog,
+                    available_capabilities=tuple(
+                        capability
+                        for capability, enabled in (
+                            ("web.dast", active_policy is not None),
+                            ("web.access_control", access_profile is not None),
+                        )
+                        if enabled
+                    ),
+                    available_profiles=tuple(
+                        profile
+                        for profile in (
+                            active_policy.profile if active_policy else None,
+                            ACCESS_CONTROL_GET.profile_id if access_profile else None,
+                        )
+                        if profile is not None
+                    ),
+                    mode=mode,
+                    outcomes=tuple(verification_outcomes),
+                    access_profile_id=access_profile,
+                    inspected_access_paths=tuple(sorted(inspected_access_paths)),
+                    selectable_entries=tuple(verification_entries),
+                    at=datetime.now(UTC),
+                )
+            except ValueError as error:
+                if str(error) == "investigation_deadline":
+                    raise TimeoutError("investigation_deadline") from None
+                raise
+            if decision.family is None:
+                status.update(
+                    reason=decision.reason,
+                    stop_reason=decision.reason,
+                    verification_reason=decision.reason,
+                )
+                return
+            if decision.family == "information_disclosure":
+                source = asdict(decision.source)
+                finding = disclosure_finding(verification_case.case_id, source)
+                assessment_findings.append(finding)
+                verification_outcomes.append(
+                    VerificationOutcome(
+                        decision.family,
+                        decision.action_id,
+                        "CANDIDATE",
+                        tuple(source["evidence_refs"]),
+                        (finding["finding_id"],),
+                    )
+                )
+                continue
+            if (
+                len(verification_case.surfaces) + verification_step_count()
+                >= config["adaptive"]["max_steps"]
+            ):
+                defer_verification(decision, "step_budget_exhausted")
+                return
+            remaining = (
+                config["adaptive"]["max_requests"]
+                - prior_case_metrics.get("request_count", 0)
+                - status["request_count"]
+            )
+            seconds = math.floor(current_deadline - time.monotonic())
+            if remaining < 1:
+                defer_verification(decision, "request_budget_exhausted")
+                return
+            if seconds < 1:
+                defer_verification(decision, "time_budget_exhausted")
+                return
+            if decision.family == "path_traversal" and seconds < 10:
+                defer_verification(decision, "verification_time_insufficient")
+                return
+            authorize(resolve=True)
+            close_egress()
+            authorize(resolve=True)
+            if decision.family == "path_traversal":
+                action = decision.source
+                if action.entry not in verification_entries:
+                    raise PermissionError("transient_verification_source_unavailable")
+                observations = snapshot.json(
+                    action.entry.source_run_id, "assessment_observations.json"
+                )
+                if _plain(action.entry) not in observations["entries"]:
+                    raise ValueError("assessment_source_changed")
+                record = {
+                    "action": _plain(action),
+                    "action_id": action.action_id,
+                    "run_id": None,
+                    "pending": True,
+                    "status": "PARTIAL",
+                    "request_count": 0,
+                    "source_sha256": digest(
+                        snapshot.json(action.entry.source_run_id, "source.json")
+                    ),
+                }
+                assessments.append(record)
+                general_checkpoint(pending=True)
+                count_was_exact = status["request_count_exact"]
+                status["request_count_exact"] = False
+                _persist(artifacts, "investigation_status.json", status)
+                child = execute_dast_investigation(
+                    task=current_task,
+                    settings=settings,
+                    reload_settings=reload_settings,
+                    storage_dir=storage_dir,
+                    logger=logger,
+                    local_operator=local_operator,
+                    web_invocation=web_invocation,
+                    _assessment=SelectedAssessment(
+                        verification_case,
+                        action,
+                        verification_entries[action.entry],
+                        remaining,
+                        seconds,
+                        authorize,
+                    ),
+                )
+                _, execution, _, report = _restore(snapshot, child["run_id"])
+                record.update(
+                    run_id=child["run_id"],
+                    pending=False,
+                    status=report.data["status"],
+                    request_count=execution.request_count,
+                )
+                findings = report.data["findings"]
+                refs = tuple(report.data["evidence_refs"])
+                result_status = report.data["status"]
+                child_exact = True
+                execution_reason = child["reason"]
+            else:
+                from beeagent_module.integrations.beescan.access_control import profiles
+
+                if web_invocation is None or access_profile is None:
+                    raise PermissionError("web_invocation_refused")
+                approved_profile = profiles(settings)[access_profile]
+                if "principals" not in approved_profile:
+                    from beeagent_module.integrations.beescan.access_control import (
+                        execute_administrative_access,
+                    )
+
+                    child_id = generate_run_id("administrative-access")
+                    record = {
+                        "action_id": decision.action_id,
+                        "source": _plain(decision.source),
+                        "profile_id": access_profile,
+                        "run_id": child_id,
+                        "pending": True,
+                        "request_count": 0,
+                        "evidence_refs": [],
+                        "step_count": 2,
+                        "kind": "administrative",
+                    }
+                    access_children.append(record)
+                    general_checkpoint(pending=True)
+                    count_was_exact = status["request_count_exact"]
+                    status["request_count_exact"] = False
+                    completed = execute_administrative_access(
+                        web_invocation.service,
+                        web_invocation,
+                        decision.source,
+                        execution_case_id=child_id,
+                        action_id=decision.action_id,
+                    )
+                    record.update(
+                        pending=False,
+                        request_count=completed["request_count"],
+                        evidence_refs=list(completed["evidence_refs"]),
+                    )
+                    findings = [_plain(item) for item in completed["result"].findings]
+                    refs = completed["evidence_refs"]
+                    result_status = completed["result"].status
+                    child_exact = completed["execution"].request_count_exact
+                    execution_reason = completed["result"].reason
+                else:
+                    from beeagent_module.integrations.beescan.access_discovery import (
+                        execute_discovery,
+                    )
+
+                    child_id = generate_run_id("access-discovery")
+                    record = {
+                        "action_id": decision.action_id,
+                        "source": _plain(decision.source),
+                        "profile_id": access_profile,
+                        "run_id": child_id,
+                        "pending": True,
+                        "request_count": 0,
+                        "evidence_refs": [],
+                        "step_count": 0,
+                    }
+                    access_children.append(record)
+                    general_checkpoint(pending=True)
+                    count_was_exact = status["request_count_exact"]
+                    status["request_count_exact"] = False
+                    execute_discovery(
+                        web_invocation.service,
+                        web_invocation,
+                        execution_case_id=child_id,
+                        request_limit=remaining,
+                        deadline_limit=current_deadline,
+                        continue_after_match=True,
+                        source_path=decision.source.relative_url,
+                        excluded_paths=tuple(sorted(inspected_access_paths)),
+                        excluded_owner_paths=tuple(sorted(excluded_owner_paths)),
+                        step_budget=config["adaptive"]["max_steps"]
+                        - len(verification_case.surfaces)
+                        - verification_step_count(),
+                    )
+                    from beeagent_module.integrations.beescan.case_state import (
+                        load_case,
+                    )
+
+                    child_state, child_snapshot = load_case(storage_dir, child_id)
+                    snapshot.files.update(child_snapshot.files)
+                    result = snapshot.json(child_id, "investigation_result.json")
+                    findings = result["findings"]
+                    refs = access_verification_refs(child_state, snapshot, result)
+                    record.update(
+                        pending=False,
+                        request_count=child_state["metrics"]["request_count"],
+                        evidence_refs=list(refs),
+                        step_count=child_state["discovery_request_count"]
+                        + len(child_state["comparisons"]),
+                    )
+                    result_status = result["status"]
+                    child_exact = child_state["metrics"]["request_count_exact"]
+                    execution_reason = result["reason"]
+            assessment_findings.extend(findings)
+            verification_outcomes.append(
+                VerificationOutcome(
+                    decision.family,
+                    decision.action_id,
+                    result_status,
+                    refs,
+                    tuple(f["finding_id"] for f in findings),
+                )
+            )
+            status.update(
+                request_count=status["request_count"] + record["request_count"],
+                request_count_exact=count_was_exact and child_exact,
+                status=result_status,
+                evidence_refs=sorted(set(status["evidence_refs"]) | set(refs)),
+            )
+            general_checkpoint(pending=True)
+            if result_status in {"REFUSED", "ERROR", "TIMEOUT"}:
+                status["reason"] = execution_reason
+                return
+
     def run_general():
         nonlocal intent, general_case, session, sensitive, ai_calls, ai_profile
         nonlocal assessment_state, assessment_findings, candidate_target
         import importlib
 
         from beescan.capabilities.catalog import Capability, ToolCatalog, ToolDefinition
+        from beescan.domain.access_control import read_only_resource
         from beescan.domain.debug_disclosure import TransientText
 
         from beeagent_module.integrations.beescan.case_state import digest
@@ -1894,7 +2350,9 @@ def execute_investigation(
                 fresh.objective_id,
                 field,
                 tuple(surfaces),
-                min(32, len(surfaces) + config["adaptive"]["max_steps"]),
+                config["adaptive"]["max_steps"]
+                if multifamily
+                else min(32, len(surfaces) + config["adaptive"]["max_steps"]),
                 config["adaptive"]["max_depth"],
             )
             skipped_resources.extend(previous_case.get("skipped_resources", []))
@@ -1908,26 +2366,34 @@ def execute_investigation(
             (ToolDefinition("host-web-capture", (api_domain.CAPABILITY,), "1"),),
         )
         status.update(
-            status="INCONCLUSIVE",
+            status="PARTIAL" if multifamily else "INCONCLUSIVE",
             reason="discovery_incomplete",
             complete=False,
             task_family="general_web_research",
         )
         general_checkpoint(pending=True)
         authorize(resolve=True)
-        session = ManagedEgress(
-            current_policy.transport,
-            artifacts=artifacts,
-            assessment_run_id=run_id,
-            seconds=max(1, math.ceil(current_deadline - time.monotonic())),
-        )
-        session.start()
+
+        def open_discovery_egress():
+            nonlocal session
+            egress_id = generate_run_id("discovery-egress") if multifamily else run_id
+            session = ManagedEgress(
+                current_policy.transport,
+                artifacts=api(egress_id) if multifamily else artifacts,
+                assessment_run_id=egress_id,
+                seconds=max(1, math.ceil(current_deadline - time.monotonic())),
+            )
+            session.start()
+            return session
+
+        session = open_discovery_egress()
         if general_case.surfaces:
             initial = api_domain.decide_general(
                 general_case,
                 catalog=catalog,
                 available_capabilities=(api_domain.CAPABILITY,),
                 at=datetime.now(UTC),
+                continue_verification=multifamily,
                 excluded_relative_urls=tuple(
                     item["relative_url"] for item in skipped_resources
                 ),
@@ -1938,16 +2404,24 @@ def execute_investigation(
                 else None
             )
             depth = initial.resource.depth if initial.resource else 0
+            if initial.resource is None and multifamily:
+                status["reason"] = initial.reason
         else:
             selected = intent.discovery
             depth = 0
         redirect_chain = []
         while selected is not None:
             authorize()
-            if len(general_entries) >= config["adaptive"]["max_steps"]:
+            if (len(general_case.surfaces) if multifamily else len(general_entries)) + (
+                verification_step_count() if multifamily else 0
+            ) >= config["adaptive"]["max_steps"]:
                 status.update(reason="step_budget_exhausted")
                 break
-            if status["capture_launch_count"] >= config["adaptive"]["max_requests"]:
+            if (
+                status["request_count"] + prior_case_metrics.get("request_count", 0)
+                if multifamily
+                else status["capture_launch_count"]
+            ) >= config["adaptive"]["max_requests"]:
                 status.update(reason="request_budget_exhausted")
                 break
             general_checkpoint(pending=True)
@@ -1970,6 +2444,12 @@ def execute_investigation(
                             selected.relative_url,
                             location,
                         )
+                        if (
+                            multifamily
+                            and destination is not None
+                            and not read_only_resource(destination)
+                        ):
+                            destination = None
                     except ValueError:
                         destination = None
                     if destination is not None and destination not in redirect_chain:
@@ -2002,6 +2482,7 @@ def execute_investigation(
                     catalog=catalog,
                     available_capabilities=(api_domain.CAPABILITY,),
                     at=datetime.now(UTC),
+                    continue_verification=multifamily,
                     excluded_relative_urls=tuple(
                         item["relative_url"] for item in skipped_resources
                     ),
@@ -2050,6 +2531,7 @@ def execute_investigation(
                     catalog=catalog,
                     available_capabilities=(api_domain.CAPABILITY,),
                     at=datetime.now(UTC),
+                    continue_verification=multifamily,
                     excluded_relative_urls=tuple(
                         item["relative_url"] for item in skipped_resources
                     ),
@@ -2136,7 +2618,7 @@ def execute_investigation(
             )
             if answer is not None:
                 sensitive = answer
-            if integrated:
+            if integrated and not multifamily:
                 from beescan.capabilities.catalog import (
                     TRAVERSAL_NONRECURSIVE,
                     EffortMode,
@@ -2264,6 +2746,10 @@ def execute_investigation(
                         ),
                     )
                     break
+            if multifamily:
+                verification_entries.update(
+                    {descriptor: value for descriptor, value in observed_entries}
+                )
             preference = None
             available_resources = [
                 item
@@ -2329,6 +2815,7 @@ def execute_investigation(
                     available_capabilities=(api_domain.CAPABILITY,),
                     at=datetime.now(UTC),
                     preferred_action_id=preference,
+                    continue_verification=multifamily,
                     excluded_relative_urls=tuple(
                         item["relative_url"] for item in skipped_resources
                     ),
@@ -2340,6 +2827,7 @@ def execute_investigation(
                     catalog=catalog,
                     available_capabilities=(api_domain.CAPABILITY,),
                     at=datetime.now(UTC),
+                    continue_verification=multifamily,
                     excluded_relative_urls=tuple(
                         item["relative_url"] for item in skipped_resources
                     ),
@@ -2362,10 +2850,13 @@ def execute_investigation(
                         for item in general_case.surfaces
                         for ref in item.evidence_refs
                     }
+                    | (set(status["evidence_refs"]) if multifamily else set())
                 ),
             )
             general_checkpoint(pending=True)
             if decision.resource is None:
+                if multifamily:
+                    break
                 if decision.reason in {
                     "answer_supported",
                     "source_disclosure_supported",
@@ -2384,9 +2875,34 @@ def execute_investigation(
                 break
             selected = intent.request("resource", decision.resource.relative_url)
             depth = decision.resource.depth
+        if multifamily and status["status"] not in {"REFUSED", "ERROR", "TIMEOUT"}:
+            run_verifications(current_task, current_deadline)
         close_egress()
         authorize()
-        if integrated and assessment_state is None:
+        if multifamily:
+            status["stop_reason"] = status["reason"]
+            _persist(
+                artifacts,
+                "egress_lifecycle.json",
+                {
+                    **session.evidence,
+                    "assessment_run_id": run_id,
+                },
+            )
+            if status["status"] not in {"REFUSED", "ERROR", "TIMEOUT"}:
+                status.update(
+                    status="CANDIDATE" if assessment_findings else "PARTIAL",
+                    complete=(
+                        bool(assessment_findings)
+                        and status["stop_reason"] == "no_eligible_source"
+                        and all(
+                            outcome.status in {"CANDIDATE", "NO_MATCH"}
+                            for outcome in verification_outcomes
+                        )
+                    ),
+                    reason="ok" if assessment_findings else status["reason"],
+                )
+        elif integrated and assessment_state is None:
             status.update(status="PARTIAL", complete=False)
         update_general_summary()
         general_checkpoint(pending=False)
@@ -2394,6 +2910,19 @@ def execute_investigation(
     def update_general_summary():
         if general_case is None:
             return
+        if multifamily:
+            from beescan.domain.assessment_selection import (
+                coverage_summary,
+                verification_coverage_data,
+            )
+
+            status["coverage_summary"] = coverage_summary(tuple(verification_outcomes))
+
+            status["coverage"] = json.loads(
+                json.dumps(verification_coverage_data(tuple(verification_outcomes)))
+            )
+            status["assessments"] = assessments
+            status["access"] = access_children
         unresolved = next(
             (
                 item
@@ -2696,6 +3225,12 @@ def execute_investigation(
         nonlocal ai_profile, analysis, case_artifacts, case_history, case_lock
         nonlocal deadline, debug_domain, domain, explanation, intent, local_context
         nonlocal \
+            assessments, \
+            access_children, \
+            verification_outcomes, \
+            assessment_findings
+        nonlocal discovery_egress_runs, prior_case_metrics, prior_active_count
+        nonlocal \
             policy, \
             previous_case, \
             resume_snapshot, \
@@ -2712,7 +3247,10 @@ def execute_investigation(
 
                 from beescan.domain.models import validate_identifier
 
-                from beeagent_module.integrations.beescan.case_state import load_case
+                from beeagent_module.integrations.beescan.case_state import (
+                    digest,
+                    load_case,
+                )
 
                 if (
                     not local_selected
@@ -2735,7 +3273,7 @@ def execute_investigation(
                         raise PermissionError("case_segment_budget_exhausted")
                     resume_snapshot.verify()
                     resume_snapshot.files.pop((resume_case_id, "case.json"))
-                    if previous_case["schema_version"] == 4:
+                    if previous_case["schema_version"] in {4, 7}:
                         from beescan.domain.web_investigation import _identity
 
                         from beeagent_module.integrations.beescan.dast import (
@@ -2743,35 +3281,103 @@ def execute_investigation(
                             approval_identity,
                         )
 
-                        active = _current(settings, web_invocation=web_invocation)
-                        active.authorize(
-                            web_invocation or local_operator, at=datetime.now(UTC)
-                        )
-                        current_task = task
-                        if not isinstance(current_task, InvestigationTask):
-                            raise PermissionError("integrated_resume_identity")
-                        if (
-                            not integrated
-                            or previous_case["approval_identity"]
-                            != approval_identity(active)
-                            or current_task.target.rstrip("/")
-                            != previous_case["origin"]
-                            or _identity("objective-", current_task.task)
-                            != previous_case["discovery"]["objective_id"]
-                        ):
-                            raise PermissionError("integrated_resume_identity")
-                        resume_snapshot.verify()
-                        os.close(case_lock)
-                        case_lock = None
-                        return {
-                            "case_id": resume_case_id,
-                            "status": previous_case["status"],
-                            "complete": previous_case["status"]
-                            in {"CANDIDATE", "NO_MATCH"},
-                            "reason": "authenticated_case_reused",
-                            "request_count": 0,
-                            "metrics": previous_case["metrics"],
-                        }
+                        if previous_case["schema_version"] == 7:
+                            from beeagent_module.integrations.beescan.local_cli import (
+                                bind_local_run,
+                            )
+
+                            if (
+                                type(task) is not InvestigationTask
+                                or not multifamily
+                                or previous_case["authority_sha256"]
+                                != digest(settings["beescan"])
+                                or task.target.rstrip("/") != previous_case["origin"]
+                                or _identity("objective-", task.task)
+                                != previous_case["discovery"]["objective_id"]
+                            ):
+                                raise PermissionError("multifamily_resume_identity")
+                            restored_context = web_invocation or bind_local_run(
+                                task, local_operator, settings, run_id=resume_case_id
+                            )
+                            restored_context.verify(restored_context.policy)
+                            if (
+                                previous_case["metrics"]["request_count_exact"]
+                                is not True
+                            ):
+                                raise PermissionError(
+                                    "multifamily_accounting_unverified"
+                                )
+                            prior_case_metrics = dict(previous_case["metrics"])
+                            if (
+                                previous_case["discovery"]["terminal"]
+                                or prior_case_metrics["request_count"]
+                                >= config["adaptive"]["max_requests"]
+                                or prior_case_metrics["elapsed_seconds"]
+                                >= config["timeout_seconds"]
+                            ):
+                                os.close(case_lock)
+                                case_lock = None
+                                return {
+                                    "case_id": resume_case_id,
+                                    "status": previous_case["status"],
+                                    "complete": bool(previous_case["findings"]),
+                                    "reason": "authenticated_case_reused",
+                                    "request_count": 0,
+                                    "metrics": previous_case["metrics"],
+                                }
+                            from beescan.domain.assessment_selection import (
+                                VerificationOutcome,
+                            )
+
+                            assessments = list(previous_case["assessments"])
+                            access_children = list(previous_case["access"])
+                            verification_outcomes = [
+                                VerificationOutcome(
+                                    **{
+                                        **item,
+                                        "evidence_refs": tuple(item["evidence_refs"]),
+                                        "finding_ids": tuple(item["finding_ids"]),
+                                    }
+                                )
+                                for item in previous_case["outcomes"]
+                            ]
+                            assessment_findings = list(previous_case["findings"])
+                            discovery_egress_runs = list(previous_case["egress_runs"])
+                            prior_active_count = sum(
+                                item["request_count"]
+                                for item in (*assessments, *access_children)
+                            )
+                            previous_case = previous_case["discovery"]
+                        else:
+                            active = _current(settings, web_invocation=web_invocation)
+                            active.authorize(
+                                web_invocation or local_operator, at=datetime.now(UTC)
+                            )
+                            current_task = task
+                            if not isinstance(current_task, InvestigationTask):
+                                raise PermissionError("integrated_resume_identity")
+                            if (
+                                not integrated
+                                or previous_case["approval_identity"]
+                                != approval_identity(active)
+                                or current_task.target.rstrip("/")
+                                != previous_case["origin"]
+                                or _identity("objective-", current_task.task)
+                                != previous_case["discovery"]["objective_id"]
+                            ):
+                                raise PermissionError("integrated_resume_identity")
+                            resume_snapshot.verify()
+                            os.close(case_lock)
+                            case_lock = None
+                            return {
+                                "case_id": resume_case_id,
+                                "status": previous_case["status"],
+                                "complete": previous_case["status"]
+                                in {"CANDIDATE", "NO_MATCH"},
+                                "reason": "authenticated_case_reused",
+                                "request_count": 0,
+                                "metrics": previous_case["metrics"],
+                            }
                     case_history = list(previous_case["outcomes"])
             if local_selected:
                 from beeagent_module.integrations.beescan.local_cli import (
@@ -2818,7 +3424,11 @@ def execute_investigation(
                     local_context = _LocalRun(local_operator, policy)
             if not local_selected and task["target"] != policy.transport.origin:
                 raise PermissionError("target_not_approved")
-            deadline = started + policy.transport.time_budget_seconds
+            deadline = (
+                started
+                + policy.transport.time_budget_seconds
+                - prior_case_metrics.get("elapsed_seconds", 0)
+            )
             authorize()
             try:
                 domain, revision = _load_domain(
@@ -2964,6 +3574,10 @@ def execute_investigation(
             record_failure(storage_dir, logger, run_id, error, "investigation")
         status.update(status="TIMEOUT", reason="investigation_deadline", complete=False)
     except PermissionError as error:
+        if web_invocation is not None:
+            from beeagent_module.integrations.beescan.web import record_failure
+
+            record_failure(storage_dir, logger, run_id, error, "investigation")
         reason = str(error)
         status.update(
             status="REFUSED",
@@ -3020,6 +3634,36 @@ def execute_investigation(
                 )
 
     if general_case is not None:
+        if multifamily and status["status"] == "INCONCLUSIVE":
+            status["status"] = "PARTIAL"
+        if multifamily:
+            from beescan.domain.assessment_selection import VerificationOutcome
+
+            for family, child_records in (
+                ("path_traversal", assessments),
+                ("access_control", access_children),
+            ):
+                for record in child_records:
+                    if record["pending"] is True:
+                        source = (
+                            record["action"]["entry"]
+                            if family == "path_traversal"
+                            else record["source"]
+                        )
+                        verification_outcomes.append(
+                            VerificationOutcome(
+                                family,
+                                record["action_id"],
+                                status["status"],
+                                tuple(source["evidence_refs"]),
+                            )
+                        )
+        if multifamily and session is not None and session.closed:
+            _persist(
+                artifacts,
+                "egress_lifecycle.json",
+                {**session.evidence, "assessment_run_id": run_id},
+            )
         update_general_summary()
         try:
             general_checkpoint(pending=status["reason"] == "cleanup_unverified")

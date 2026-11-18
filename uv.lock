@@ -160,7 +160,7 @@ requires-dist = [
     { name = "beedrill", marker = "extra == 'beedrill'", git = "https://github.com/beesyst/beedrill.git" },
     { name = "beescan", marker = "extra == 'beescan'", git = "https://github.com/beesyst/beescan.git" },
     { name = "beesdk", git = "https://github.com/beesyst/beesdk.git" },
-    { name = "beeui", specifier = "==0.32.0" },
+    { name = "beeui", specifier = "==0.32.1" },
     { name = "docling", marker = "extra == 'docling-cpu'", specifier = "==2.122.0" },
     { name = "docling", marker = "extra == 'docling-cuda'", specifier = "==2.122.0" },
     { name = "fastapi", specifier = "==0.141.1" },
@@ -214,8 +214,8 @@ dependencies = [
 
 [[package]]
 name = "beescan"
-version = "0.18.0"
-source = { git = "https://github.com/beesyst/beescan.git#cea8404db8b204874e64d5d2ba5d0533643b4c99" }
+version = "0.19.0"
+source = { git = "https://github.com/beesyst/beescan.git#dcc078dbc65ac914acd6193b3b859f03a630d6ae" }
 dependencies = [
     { name = "beesdk" },
 ]
@@ -227,7 +227,7 @@ source = { git = "https://github.com/beesyst/beesdk.git#4762c4e3d60aa1e1c6800549
 
 [[package]]
 name = "beeui"
-version = "0.32.0"
+version = "0.32.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -237,9 +237,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/2d/0a9f8d8307f2c1eacdda076463e8c03a85f4fef3e03676a2e956a0569859/beeui-0.32.0.tar.gz", hash = "sha256:17389f233a188a0a82f1f9569b4fbdb054505a1d04bf38a77c74a4c24bcc6610", size = 2590347, upload-time = "2026-11-17T07:44:56.323Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/52/6799ec83beee6ac03735aace8b8df34379ebf3dfa492d0763754d808b37d/beeui-0.32.1.tar.gz", hash = "sha256:f5cd06ba0d51cf7bf0b07c190b34a9b9bf1f84d8c8211494925acdabbf5a62bc", size = 2591900, upload-time = "2026-11-18T14:35:14.292Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/05/a00404a62c5a210cc5a3791590243b2703a575043e2c276105ceba775996/beeui-0.32.0-py3-none-any.whl", hash = "sha256:6993f2ff5276f23b226466c6db52e08b2ebd256905dce3ecc921807b40f1bfc5", size = 2542833, upload-time = "2026-11-17T07:44:53.955Z" },
+    { url = "https://files.pythonhosted.org/packages/65/47/17f0535baef27d1715d643aaf40ef9e533152814e5dd4429bba560775d0a/beeui-0.32.1-py3-none-any.whl", hash = "sha256:026a6b49043230f30ccf4fec63ca9237055c2ea3b45b1186e8232b8066bbf80e", size = 2543785, upload-time = "2026-11-18T14:35:12.169Z" },
 ]
 
 [[package]]

@@ -519,6 +519,168 @@ def load_web_dast(service, settings, case_id, finding_id, actor):
     if binding["case_id"] != case_id:
         raise PermissionError("exact_web_case_required")
     state, snapshot = load_case(service.storage, case_id)
+    if state["schema_version"] == 7:
+        from beescan.domain.access_control import (
+            AccessReviewInput,
+            AdministrativeEvidence,
+            AdministrativeExecution,
+            AdministrativeIntent,
+            AdministrativeReviewInput,
+            evaluate_access,
+        )
+        from beescan.domain.general_investigation import GeneralCase
+        from beescan.domain.reviewed_case import DisclosureReviewInput
+
+        from beeagent_module.integrations.beescan.access_control import restore
+        from beeagent_module.integrations.beescan.discovery_dast import (
+            restore_general_intent,
+            restore_surface,
+        )
+
+        if snapshot.json(case_id, "web_receipt.json") != service._receipt(
+            snapshot, settings
+        ):
+            raise PermissionError("web_source_authentication_failed")
+        if finding_id not in {item["finding_id"] for item in state["findings"]}:
+            raise ValueError("original_multifamily_candidate_required")
+        for record in state["assessments"]:
+            if record["pending"] or record.get("deferred") is not None:
+                continue
+            intent, execution, outcome, report = _restore(snapshot, record["run_id"])
+            if finding_id not in {
+                item["finding_id"] for item in report.data["findings"]
+            }:
+                continue
+            raw = dict(record["action"])
+            entry = raw["entry"]
+            action = AssessmentAction(
+                **{
+                    **raw,
+                    "entry": ObservedEntry(
+                        **{
+                            **entry,
+                            "parameter_names": tuple(entry["parameter_names"]),
+                            "evidence_refs": tuple(entry["evidence_refs"]),
+                        }
+                    ),
+                }
+            )
+            return DastReviewInput(
+                intent, execution, outcome, finding_id, action
+            ), snapshot
+        for record in state["access"]:
+            if record["pending"] or record.get("deferred") is not None:
+                continue
+            child = snapshot.json(record["run_id"], "case.json")["state"]
+            if child.get("schema_version") == 8:
+                comparison = snapshot.json(
+                    record["run_id"], "administrative_comparison.json"
+                )
+                raw_intent = dict(comparison["intent"])
+                raw_execution = dict(comparison["execution"])
+                from datetime import datetime
+
+                from beescan.domain.models import (
+                    EngagementScope,
+                    Mission,
+                    Project,
+                    Target,
+                    TargetKind,
+                )
+
+                scope = raw_intent["scope"]
+                raw_intent.update(
+                    project=Project(**raw_intent["project"]),
+                    scope=EngagementScope(
+                        **{
+                            **scope,
+                            "target_ids": tuple(scope["target_ids"]),
+                            "excluded_target_ids": tuple(scope["excluded_target_ids"]),
+                            "approved_methods": tuple(scope["approved_methods"]),
+                            "valid_from": datetime.fromisoformat(scope["valid_from"]),
+                            "expires_at": datetime.fromisoformat(scope["expires_at"]),
+                        }
+                    ),
+                    mission=Mission(
+                        **{
+                            **raw_intent["mission"],
+                            "capability_ids": tuple(
+                                raw_intent["mission"]["capability_ids"]
+                            ),
+                        }
+                    ),
+                    target=Target(
+                        **{
+                            **raw_intent["target"],
+                            "kind": TargetKind(raw_intent["target"]["kind"]),
+                        }
+                    ),
+                )
+                intent = AdministrativeIntent(**raw_intent)
+                raw_execution["evidence"] = tuple(
+                    AdministrativeEvidence(
+                        **{
+                            **item,
+                            "captured_at": datetime.fromisoformat(item["captured_at"]),
+                        }
+                    )
+                    for item in raw_execution["evidence"]
+                )
+                raw_execution["ended_at"] = datetime.fromisoformat(
+                    raw_execution["ended_at"]
+                )
+                execution = AdministrativeExecution(**raw_execution)
+                if (
+                    child["parent_case_id"] != case_id
+                    or child["action_id"] != record["action_id"]
+                    or child["profile_id"] != intent.profile_id
+                    or child["request_count"] != 2
+                ):
+                    raise ValueError("administrative_child_changed")
+                from beescan.domain.access_control import evaluate_administrative_access
+
+                if finding_id in {
+                    item.finding_id
+                    for item in evaluate_administrative_access(
+                        intent, execution
+                    ).findings
+                }:
+                    return AdministrativeReviewInput(
+                        intent, execution, finding_id, case_id
+                    ), snapshot
+                continue
+            for name in child["comparisons"]:
+                intent, execution = restore(snapshot.json(record["run_id"], name))
+                if finding_id in {
+                    item.finding_id
+                    for item in evaluate_access(intent, execution).findings
+                }:
+                    return AccessReviewInput(
+                        intent, execution, finding_id, case_id
+                    ), snapshot
+        intent = restore_general_intent(state["context"])
+        surfaces = tuple(
+            restore_surface(item["surface"]) for item in state["discovery"]["entries"]
+        )
+        case = GeneralCase(
+            case_id,
+            intent,
+            state["discovery"]["objective_id"],
+            state["discovery"]["requested_field"],
+            surfaces,
+        )
+        from beescan.domain.assessment_selection import disclosure_finding
+
+        for surface in surfaces:
+            if (
+                surface.source_disclosure
+                and not surface.ambiguous
+                and disclosure_finding(case_id, surface).finding_id == finding_id
+            ):
+                return DisclosureReviewInput(
+                    case, surface, finding_id, intent.started_at
+                ), snapshot
+        raise ValueError("original_multifamily_candidate_required")
     if state["schema_version"] in {5, 6}:
         from beescan.domain.access_control import AccessReviewInput
 
