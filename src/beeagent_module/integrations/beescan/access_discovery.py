@@ -8,7 +8,11 @@ from html.parser import HTMLParser
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from beescan.capabilities.catalog import ACCESS_CONTROL_GET, EffortMode
-from beescan.domain.access_control import AccessResult, validate_resource_locator
+from beescan.domain.access_control import (
+    AccessResult,
+    read_only_resource,
+    validate_resource_locator,
+)
 from beescan.domain.access_discovery import (
     AccessHypothesis,
     DiscoveredObject,
@@ -67,11 +71,7 @@ def safe_link(origin, current, value):
         validate_resource_locator(relative)
     except ValueError:
         return None
-    if re.search(
-        r"(?:^|[/_?=&-])(?:delete|remove|logout|signout|reset|update|create|purchase|transfer|unsubscribe)(?:$|[/_?=&-])",
-        relative,
-        re.I,
-    ):
+    if not read_only_resource(relative):
         return None
     return relative
 
@@ -85,32 +85,49 @@ class GetLinks(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.links = []
-        self.form = None
+        self.form: tuple[str, list[tuple[str, str]]] | None = None
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
         values = dict(attrs)
         if len(self.links) >= 32:
             return
-        if tag == "a" and values.get("href"):
-            self.links.append(values["href"])
-        if tag == "link" and values.get("href") and not set(
-            values.get("rel", "").lower().split()
-        ).intersection({"stylesheet", "icon", "manifest", "preload"}):
-            self.links.append(values["href"])
+        href = values.get("href")
+        if tag == "a" and isinstance(href, str) and href:
+            self.links.append(href)
+        rel = values.get("rel", "")
+        if (
+            tag == "link"
+            and isinstance(href, str)
+            and href
+            and isinstance(rel, str)
+            and not set(rel.lower().split()).intersection(
+                {"stylesheet", "icon", "manifest", "preload"}
+            )
+        ):
+            self.links.append(href)
         if tag == "form":
+            method = values.get("method", "get")
+            action = values.get("action")
             self.form = (
-                (values["action"], [])
-                if values.get("method", "get").lower() == "get" and values.get("action")
+                (action, [])
+                if (
+                    isinstance(method, str)
+                    and method.lower() == "get"
+                    and isinstance(action, str)
+                    and action
+                )
                 else None
             )
+        name, value = values.get("name"), values.get("value")
         if (
             tag == "input"
             and self.form is not None
-            and values.get("name")
-            and "value" in values
+            and isinstance(name, str)
+            and name
+            and isinstance(value, str)
             and len(self.form[1]) < 8
         ):
-            self.form[1].append((values["name"], values["value"]))
+            self.form[1].append((name, value))
 
     def handle_endtag(self, tag):
         if tag == "form" and self.form is not None:
@@ -215,7 +232,7 @@ def observe(body, media, origin, path, principal):
                     if re.search(
                         r"password|token|credential|session|auth|csrf|secret_key",
                         name,
-                        re.I,
+                        re.IGNORECASE,
                     ):
                         continue
                     if type(content) in {str, int, float} and (
@@ -258,7 +275,19 @@ def observe(body, media, origin, path, principal):
     )
 
 
-def execute_discovery(service, invocation):
+def execute_discovery(
+    service,
+    invocation,
+    *,
+    execution_case_id=None,
+    request_limit=None,
+    deadline_limit=None,
+    continue_after_match=False,
+    step_budget=None,
+    source_path="/",
+    excluded_paths=(),
+    excluded_owner_paths=(),
+):
     from beeagent_module.integrations.beescan.detection_runner import (
         run_detection_provider,
     )
@@ -281,22 +310,46 @@ def execute_discovery(service, invocation):
         local_context=invocation,
     )
     config = invocation.settings["beescan"]["investigation"]
+    validate_resource_locator(source_path)
+    if not read_only_resource(source_path):
+        raise PermissionError("discovery_source_refused")
+    for paths in (excluded_paths, excluded_owner_paths):
+        if type(paths) is not tuple or len(paths) > 256:
+            raise ValueError("invalid_discovery_history")
+        for path in paths:
+            validate_resource_locator(path)
     discovery_limit, total_limit = EFFORT[invocation.mode]
     step_limit = min(
         config["adaptive"]["max_steps"],
         {"quick": 2, "standard": 8, "deep": 16}[invocation.mode],
     )
+    if step_budget is not None:
+        if type(step_budget) is not int or step_budget < 1:
+            raise PermissionError("discovery_step_budget_exhausted")
+        step_limit = min(step_limit, step_budget)
     total_limit = min(
         total_limit, profile["request_budget"], config["adaptive"]["max_requests"]
     )
+    if request_limit is not None:
+        if type(request_limit) is not int or request_limit < 1:
+            raise PermissionError("discovery_budget_exhausted")
+        total_limit = min(total_limit, request_limit)
     discovery_limit = min(
         discovery_limit, profile["discovery_budget"], total_limit, step_limit
     )
-    case_id, transport = invocation.case_id, invocation.policy.transport
+    case_id, transport = (
+        execution_case_id or invocation.case_id,
+        invocation.policy.transport,
+    )
     api, key = _api(service.storage, case_id, service.logger), _key(invocation.settings)
+    if execution_case_id is not None:
+        invocation.bind(api, case_id)
     started = time.monotonic()
     seconds = min(profile["seconds"], config["timeout_seconds"])
     deadline = started + seconds
+    if deadline_limit is not None:
+        deadline = min(deadline, deadline_limit)
+        seconds = max(1, int(deadline - started))
     bindings = [hmac.digest(key, c.encode(), "sha256").hex() for c in credentials]
     sessions = [
         "session-" + hmac.digest(key, (case_id + b).encode(), "sha256").hex()[:48]
@@ -311,6 +364,8 @@ def execute_discovery(service, invocation):
         {},
         [],
     )
+    if source_path != "/":
+        queue.extend(((0, source_path), (1, source_path)))
     count, exact, failure = 0, True, None
     failure_stage = None
     results, comparisons, decisions = [], [], []
@@ -414,9 +469,9 @@ def execute_discovery(service, invocation):
                 else (None, [], [])
             )
             if identity:
-                if index in identities and identities[index] != identity:
+                if index in identities and identities[index][3] != identity[3]:
                     raise ValueError("contradictory_identity_source")
-                identities[index] = identity
+                identities.setdefault(index, identity)
             ref = "acd-" + digest([case_id, index, count])[:48]
             response_id = "acr-" + digest([case_id, ref])[:48]
             observations.append(
@@ -438,6 +493,11 @@ def execute_discovery(service, invocation):
             )
             blocked_links = set()
             for record in records:
+                if profile["expectation"] == "administrative_restricted" and (
+                    record["type"] != profile["restricted_resource_type"]
+                    or record["visibility"] != "private"
+                ):
+                    continue
                 url = safe_link(profile["origin"], path, record["url"])
                 if url is None:
                     continue
@@ -483,6 +543,8 @@ def execute_discovery(service, invocation):
             for link in links:
                 if (
                     link not in blocked_links
+                    and link.split("?", 1)[0] not in excluded_paths
+                    and link.split("?", 1)[0] not in excluded_owner_paths
                     and (index, link) not in visited
                     and (index, link) not in queue
                     and len(queue) < 64
@@ -548,10 +610,17 @@ def execute_discovery(service, invocation):
         and len(observations) + len(comparisons) < step_limit
     ):
         hypothesis, reason = select_hypothesis(
-            tuple(objects),
+            tuple(
+                item
+                for item in objects
+                if item.principal_id != profile["principals"][0]["principal_id"]
+                or item.relative_url not in excluded_owner_paths
+            ),
             case_id=case_id,
             expectation=profile["expectation"],
-            expectation_ref=profile["authorization_reference"],
+            expectation_ref=profile.get(
+                "restriction_reference", profile["authorization_reference"]
+            ),
             attempted=tuple(attempted_hypotheses),
             effort_mode=EffortMode(invocation.mode),
             available_profiles=(ACCESS_CONTROL_GET,),
@@ -585,7 +654,9 @@ def execute_discovery(service, invocation):
                 }
             )
         derived["relationship"] = (
-            "horizontal"
+            "administrative"
+            if hypothesis.expectation == "administrative_restricted"
+            else "horizontal"
             if derived["principals"][0]["role"] == derived["principals"][1]["role"]
             else "vertical"
         )
@@ -612,6 +683,7 @@ def execute_discovery(service, invocation):
             deadline_limit=deadline,
             progress_base=count,
             progress_steps=steps,
+            execution_case_id=case_id,
         )
         cleanup = AssessmentSnapshot(service.storage).json(
             case_id, "egress_lifecycle.json"
@@ -623,14 +695,23 @@ def execute_discovery(service, invocation):
         comparisons.append(name)
         decisions.append(asdict(hypothesis))
         steps.extend(outcome["steps"])
-        if results[-1].status in {"CANDIDATE", "REFUSED", "ERROR", "TIMEOUT"}:
+        if results[-1].status in {"REFUSED", "ERROR", "TIMEOUT"} or (
+            not continue_after_match and results[-1].status == "CANDIDATE"
+        ):
             break
     unresolved = any(o.owner_id is None or o.visibility == "unknown" for o in objects)
     remaining, _ = select_hypothesis(
-        tuple(objects),
+        tuple(
+            item
+            for item in objects
+            if item.principal_id != profile["principals"][0]["principal_id"]
+            or item.relative_url not in excluded_owner_paths
+        ),
         case_id=case_id,
         expectation=profile["expectation"],
-        expectation_ref=profile["authorization_reference"],
+        expectation_ref=profile.get(
+            "restriction_reference", profile["authorization_reference"]
+        ),
         attempted=tuple(attempted_hypotheses),
         effort_mode=EffortMode(invocation.mode),
         available_profiles=(ACCESS_CONTROL_GET,),
@@ -681,12 +762,16 @@ def execute_discovery(service, invocation):
         "comparisons": comparisons,
         "hypotheses": decisions,
         "expectation": profile["expectation"],
-        "authorization_reference": profile["authorization_reference"],
+        "authorization_reference": profile.get(
+            "restriction_reference", profile["authorization_reference"]
+        ),
         "frontier_exhausted": not queue and remaining is None,
         "unresolved": unresolved,
         "failure": failure,
         "failure_stage": failure_stage,
         "discovery_request_count": discovery_count,
+        "discovery_source": source_path,
+        "excluded_owner_paths": list(excluded_owner_paths),
         "budgets": {
             "max_requests": total_limit,
             "discovery_requests": discovery_limit,

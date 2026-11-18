@@ -381,7 +381,7 @@ def handle_beescan_cli(
                 options.update(
                     adaptive=True,
                     resume_case_id=args[2],
-                    general=state["schema_version"] in {2, 4},
+                    general=state["schema_version"] in {2, 4, 7},
                 )
                 options["task"] = validate_task(
                     {"target": state["origin"], "task": args[4]},

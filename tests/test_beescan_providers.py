@@ -21,6 +21,20 @@ from beeagent_module.core import beedrill_toolchain as download
 from beeagent_module.integrations.beescan import providers as native
 
 
+def _file_invariants(info):
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_uid,
+        info.st_gid,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 @pytest.fixture
 def distribution(tmp_path, monkeypatch):
     content = b"pinned-provider-test-bytes"
@@ -139,11 +153,17 @@ def test_existing_zap_archive_fails_closed_without_replacement(
     else:
         archive.unlink()
         archive.symlink_to(root / "outside")
-    before = archive.lstat()
+        assert not os.path.lexists(root / "outside")
+        destination = os.readlink(archive)
+    before = _file_invariants(archive.lstat())
     monkeypatch.setattr(native, "_download", lambda *_: pytest.fail("repair forbidden"))
     with pytest.raises(native.ProviderProvisioningError):
         native.ensure_beescan_providers(settings)
-    assert archive.lstat() == before
+    assert _file_invariants(archive.lstat()) == before
+    if mutation == "symlink":
+        assert archive.is_symlink()
+        assert os.readlink(archive) == destination
+        assert not os.path.lexists(root / "outside")
 
 
 def test_interrupted_zap_download_is_not_published(zap_distribution, monkeypatch):
@@ -323,11 +343,11 @@ def test_modified_provider_fails_without_replacement(
             binary.mkdir()
         else:
             os.mkfifo(binary)
-    before = binary.lstat()
+    before = _file_invariants(binary.lstat())
     monkeypatch.setattr(native, "_download", lambda *_: pytest.fail("repair forbidden"))
     with pytest.raises(native.ProviderProvisioningError):
         native.ensure_beescan_providers(settings)
-    assert binary.lstat() == before
+    assert _file_invariants(binary.lstat()) == before
 
 
 @pytest.mark.parametrize(
@@ -642,10 +662,10 @@ def test_existing_pasta_is_never_silently_replaced(pasta_distribution, mutation)
     else:
         path.write_bytes(binary if mutation == "mode" else b"bad")
         path.chmod(0o777 if mutation == "mode" else 0o500)
-    before = path.lstat()
+    before = _file_invariants(path.lstat())
     with pytest.raises(native.ProviderProvisioningError):
         native.ensure_beescan_providers(settings)
-    assert path.lstat() == before and not calls
+    assert _file_invariants(path.lstat()) == before and not calls
 
 
 @pytest.mark.parametrize(

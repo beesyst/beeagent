@@ -10,8 +10,18 @@ from pathlib import Path
 from typing import Any, overload
 from uuid import uuid4
 
-from beescan.domain.access_control import AccessFindingReview, AccessReviewInput
-from beescan.domain.reviewed_case import DastFindingReview, DastReviewInput
+from beescan.domain.access_control import (
+    AccessFindingReview,
+    AccessReviewInput,
+    AdministrativeFindingReview,
+    AdministrativeReviewInput,
+)
+from beescan.domain.reviewed_case import (
+    DastFindingReview,
+    DastReviewInput,
+    DisclosureFindingReview,
+    DisclosureReviewInput,
+)
 from beescan.domain.triage import HostReview, ReviewDisposition
 
 from beeagent_module.core.artifact_api import ArtifactAPI
@@ -602,7 +612,7 @@ def _read_web_package(service, settings, actor, run_id, source, snapshot, kind):
         or binding.get("run_id") != run_id
         or binding.get("kind") != kind
         or binding.get("principal_id") != _web_authority(service, settings, actor)
-        or binding.get("case_id") != source.intent.parent_run_id
+        or binding.get("case_id") != _web_source_identity(source)[0]
         or binding.get("finding_id") != source.finding_id
         or binding.get("source_files") != _source_hashes(snapshot)
         or type(binding.get("files")) is not dict
@@ -629,14 +639,51 @@ def _read_web_package(service, settings, actor, run_id, source, snapshot, kind):
     return binding, package
 
 
+def _web_source_identity(
+    source: DisclosureReviewInput
+    | DastReviewInput
+    | AdministrativeReviewInput
+    | AccessReviewInput,
+):
+    if isinstance(source, DisclosureReviewInput):
+        return (
+            source.case.case_id,
+            source.case.intent.mission.mission_id,
+            source.case.intent.spec.target_id,
+        )
+    if isinstance(source, DastReviewInput):
+        return (
+            source.intent.parent_run_id,
+            source.intent.mission.mission_id,
+            source.intent.target.target_id,
+        )
+    return (
+        source.case_id or source.intent.parent_run_id,
+        source.intent.mission.mission_id,
+        source.intent.target.target_id,
+    )
+
+
 def _web_review_type(
-    source: AccessReviewInput | DastReviewInput,
+    source: AccessReviewInput
+    | AdministrativeReviewInput
+    | DastReviewInput
+    | DisclosureReviewInput,
     disposition: ReviewDisposition,
     basis: str,
     host: HostReview,
-) -> AccessFindingReview | DastFindingReview:
+) -> (
+    AccessFindingReview
+    | AdministrativeFindingReview
+    | DastFindingReview
+    | DisclosureFindingReview
+):
+    if type(source) is DisclosureReviewInput:
+        return DisclosureFindingReview(source, disposition, basis, host)
     if type(source) is DastReviewInput:
         return DastFindingReview(source, disposition, basis, host)
+    if type(source) is AdministrativeReviewInput:
+        return AdministrativeFindingReview(source, disposition, basis, host)
     if type(source) is not AccessReviewInput:
         raise ValueError("unsupported_review_source")
     return AccessFindingReview(source, disposition, basis, host)
@@ -645,7 +692,7 @@ def _web_review_type(
 def _load_web_review(service, settings, actor, source, snapshot):
     from beescan.domain.triage import HostReview, ReviewDisposition
 
-    run_id = _web_review_id(source.intent.parent_run_id, source.finding_id)
+    run_id = _web_review_id(_web_source_identity(source)[0], source.finding_id)
     binding, package = _read_web_package(
         service, settings, actor, run_id, source, snapshot, "review"
     )
@@ -781,22 +828,25 @@ def execute_web_review(service, action, payload, actor):
             automated = {
                 hashlib.sha256(value).hexdigest() for value in snapshot.files.values()
             }
-            automated.update(
-                value
-                for item in source.execution.evidence
-                for value in (
-                    item.artifact_sha256,
-                    item.request_sha256,
-                    item.response_sha256,
-                )
-            )
+            if isinstance(source, (DastReviewInput, AccessReviewInput)):
+                for item in source.execution.evidence:
+                    automated.update(
+                        (
+                            item.request_sha256,
+                            item.response_sha256,
+                            item.artifact_sha256,
+                        )
+                    )
+            elif isinstance(source, AdministrativeReviewInput):
+                for item in source.execution.evidence:
+                    automated.update((item.request_sha256, item.response_sha256))
             if evidence_digest in automated:
                 raise ValueError("automated_evidence_reused")
             host = HostReview(
                 review_id,
                 source.finding_id,
-                source.intent.mission.mission_id,
-                source.intent.target.target_id,
+                _web_source_identity(source)[1],
+                _web_source_identity(source)[2],
                 reviewer,
                 datetime.now(UTC),
                 True,

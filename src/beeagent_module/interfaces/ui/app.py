@@ -407,12 +407,30 @@ def _register_beescan_boundary(app, adapter):
 
     @app.get("/api/beescan/status", include_in_schema=False)
     async def beescan_status(request: Request):
-        if set(request.query_params) != {"run_id"}:
+        query = dict(request.query_params)
+        if "run_id" not in query or set(query) - {"run_id", "message_page", "run_page"}:
+            return _error_json("invalid_params", status_code=400)
+        if any(
+            key in query and (not query[key].isdecimal() or len(query[key]) > 6)
+            for key in ("message_page", "run_page")
+        ):
             return _error_json("invalid_params", status_code=400)
         try:
-            data = adapter.beescan.inspect(
-                request.query_params["run_id"], web_actor.get()
-            )
+            if query["run_id"].startswith("web-chat-"):
+                data = adapter.beescan.conversations.view(
+                    query["run_id"],
+                    web_actor.get(),
+                    offset=int(query["message_page"]) * 8
+                    if "message_page" in query
+                    else None,
+                    run_offset=int(query["run_page"]) * 25
+                    if "run_page" in query
+                    else None,
+                )
+            elif set(query) == {"run_id"}:
+                data = adapter.beescan.inspect(query["run_id"], web_actor.get())
+            else:
+                return _error_json("invalid_params", status_code=400)
             from beeui_module.pages.router import resolve_locale
 
             locale = resolve_locale(request, app.state.beeagent_beeui_ui_config.locale)

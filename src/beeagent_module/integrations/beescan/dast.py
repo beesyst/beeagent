@@ -571,7 +571,12 @@ def execute_dast_investigation(
                 web_invocation if web_selected else local_operator,
                 at=datetime.now(UTC),
             )
-            intent.validate_at(datetime.now(UTC))
+            try:
+                intent.validate_at(datetime.now(UTC))
+            except ValueError as error:
+                if str(error) == "dast_deadline":
+                    raise TimeoutError("dast_deadline") from None
+                raise
             snapshot.verify()
             if _assessment is not None:
                 _assessment.verify(policy)

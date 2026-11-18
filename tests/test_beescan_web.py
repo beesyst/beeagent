@@ -1776,3 +1776,77 @@ def test_target_policy_validation_does_not_require_domain_install(monkeypatch):
         }
     }
     assert len(target_exclusions(settings)) == 3
+
+
+def test_administrative_review_source_identity_and_foreign_finding():
+    from datetime import UTC, datetime, timedelta
+
+    from beescan.domain.access_control import (
+        AdministrativeEvidence,
+        AdministrativeExecution,
+        AdministrativeIntent,
+        AdministrativeReviewInput,
+        evaluate_administrative_access,
+    )
+    from beescan.domain.models import (
+        EngagementScope,
+        Mission,
+        Project,
+        Target,
+        TargetKind,
+    )
+
+    from beeagent_module.integrations.beescan.review import _web_source_identity
+
+    now = datetime.now(UTC)
+    intent = AdministrativeIntent(
+        "parent",
+        Project("project", "Assessment"),
+        EngagementScope(
+            "scope",
+            "project",
+            ("target",),
+            "authorization",
+            valid_from=now - timedelta(minutes=1),
+            expires_at=now + timedelta(minutes=5),
+            approved_methods=("GET",),
+            max_requests=3,
+            max_seconds=60,
+        ),
+        Mission("mission", "project", "scope", ("web.access_control",)),
+        Target("target", "project", TargetKind.URL, "https://example.test"),
+        "request",
+        "response",
+        "source",
+        "/restricted",
+        "profile",
+        "policy",
+    )
+    evidence = tuple(
+        AdministrativeEvidence(
+            intent.identity,
+            slot,
+            "request-" + slot,
+            "response-" + slot,
+            "evidence-" + slot,
+            "a" * 64,
+            "b" * 64,
+            now + timedelta(seconds=index),
+            True,
+            slot == "negative",
+            slot != "negative",
+        )
+        for index, slot in enumerate(("source", "anonymous", "negative"))
+    )
+    execution = AdministrativeExecution(
+        evidence, now + timedelta(seconds=4), 3, True, True
+    )
+    finding_id = evaluate_administrative_access(intent, execution).findings[0].finding_id
+    assert _web_source_identity(
+        AdministrativeReviewInput(intent, execution, finding_id)
+    ) == ("parent", "mission", "target")
+    assert _web_source_identity(
+        AdministrativeReviewInput(intent, execution, finding_id, "case")
+    ) == ("case", "mission", "target")
+    with pytest.raises(ValueError, match="Original administrative candidate required"):
+        AdministrativeReviewInput(intent, execution, "foreign")

@@ -14,14 +14,14 @@ dependencies = [
     "jinja2==3.1.6",
     "fastapi==0.141.1",
     "uvicorn==0.52.1",
-    "beeui==0.32.0",
+    "beeui==0.32.1",
     "solders==0.29.0",
     "h11==0.16.0",
 ]
 
 [project.optional-dependencies]
 beescan = [
-    "beescan==0.18.0",
+    "beescan==0.19.0",
 ]
 rop = [
     "beeagent-rop==0.19.8",
