@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.93.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.92.0...beeagent-v0.93.0) (2026-11-18)
+
+
+### Features
+
+* **beescan:** integrate governed multi-family Web investigation ([#375](https://github.com/beesyst/beeagent/issues/375)) ([6369ad0](https://github.com/beesyst/beeagent/commit/6369ad0133ba20f291d9e35a5c92ed2eb8907aba))
+
 ## [0.92.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.91.0...beeagent-v0.92.0) (2026-11-17)
 
 
