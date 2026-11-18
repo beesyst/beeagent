@@ -2130,7 +2130,149 @@ BeeAgent executes BeeScan It19 decisions through one existing authorized investi
 
 The declared educational acceptance is independently verified before PR. Real Bug Bounty readiness is evaluated separately through an authorized operational pilot.
 
-### Iteration BS-21 — BeeScan Security Knowledge Base MVP
+## Iteration BS-22 — Evidence-Backed Investigation Workspace UX-1
+
+**Status:** PLANNED  
+**Projects:** BeeAgent, BeeUI  
+**BeeScan dependency:** Existing Case, Execution, Evidence and Verification contracts.
+
+### Goal
+
+Replace verbose investigation execution messages with a compact, human-first workspace where every actual tool execution is inspectable, traceable and linked to authenticated evidence.
+
+Deliver a complete browser-based investigation inspection workflow using existing BeeUI/Tabler components.
+
+### Scope
+
+1. **Collapsible Case History**
+   - Fully hide/show the Case sidebar and reclaim chat width.
+   - Preserve selected Case, polling, conversation and composer state.
+   - Use a responsive offcanvas/drawer on mobile.
+
+2. **Evidence-Backed Process Cards**
+   - Render one card per actual tool/action execution, identified by its durable execution identity.
+   - Show tool/action name, real execution status, available counters, timestamps and concise outcome.
+   - Display numeric progress only when completed work and total work are known.
+   - Support responsive layouts of 1–4 cards per row.
+   - Retain ordinary user messages and conversational Ask responses.
+   - Preserve multiple distinct executions of the same tool.
+
+3. **Shared Process Inspector**
+   - Open technical details from a Process Card.
+   - Provide Overview, Timeline, Logs, Evidence and Technical Details using existing Tabler primitives.
+   - Show actual authorization decisions, execution profile, request/check counts, bounded metadata, evidence references, limitations and policy outcomes.
+   - Present unavailable historical data explicitly as unavailable.
+   - Prevent credential exposure, unbounded logs and unsafe rendering.
+   - Reuse the same inspection projection for future Graph nodes.
+
+4. **Execution Read Model**
+   - Reuse BeeAgent Case, Run, Action, Event, Artifact and authorization infrastructure.
+   - Correlate UI cards with durable execution identities.
+   - Persist only essential missing execution facts when current receipts cannot reconstruct them.
+   - Keep product-specific read models in BeeAgent and presentation primitives in BeeUI.
+   - Do not change BeeScan verification semantics for presentation purposes.
+
+### Required end-to-end acceptance
+
+- An authorized real investigation produces inspectable Process Cards while running and after completion.
+- Two executions of the same tool remain distinguishable by identity.
+- A Process Card opens its correct technical details and authenticated evidence.
+- Actual progress/counters agree with persisted execution records.
+- A new run on a supported PortSwigger Path Traversal laboratory reaches an evidence-backed verification result and allows operator inspection through the Web Workspace.
+- An independent human review and exportable report are demonstrated when the evidence satisfies existing report contracts.
+- A negative or unsupported scenario reports PARTIAL/NO_MATCH/UNSUPPORTED accurately, without invented findings.
+- Browser reload and BeeAgent restart preserve available history, identities and links.
+- Foreign Case/Artifact access, tampered evidence and unsafe log content are rejected or safely represented.
+- Inspection and polling introduce zero additional target requests.
+- RU/EN, Light/Dark, desktop and mobile 390px are browser-tested.
+- Existing regression suites pass; actual browser E2E evidence is recorded.
+
+### NO-GO
+
+- Cards generated from LLM narration instead of real execution records.
+- Synthetic percentage progress or invented process counts.
+- Unauthenticated evidence or fabricated technical logs.
+- New Case Store, frontend framework or independent execution backend.
+- Interactive shell disguised as a Process Details feature.
+- Closure based only on mocked frontend tests.
+- Declaring laboratory acceptance without an actual successful run.
+
+### Definition of Done
+
+A user can launch a supported real investigation, observe actual executions as compact cards, inspect their technical details and evidence, reload the workspace, and proceed to the existing review/report workflow without losing identity or provenance.
+
+Real browser and laboratory acceptance artifacts are mandatory before marking DONE.
+
+## Iteration BS-21 — Evidence-Backed Investigation Graph MVP
+
+**Status:** PLANNED
+
+### Goal
+
+Provide a read-only visual graph of a real investigation, built automatically from persisted Case, Action, Resource, Evidence, Finding and Review relationships.
+
+The graph must expose verified lineage rather than a visually plausible execution story.
+
+### Scope
+
+1. **Investigation Graph Projection**
+   - Reuse existing authenticated Case and Artifact data.
+   - Produce a bounded graph projection containing stable node identities, node types, actual statuses and evidence-backed edges.
+   - Support Target, Discovery, Resource, Tool Execution, Verification, Evidence, Finding, Human Review and Report nodes where supported by real data.
+   - Never infer causal edges solely from timestamps or LLM text.
+
+2. **BeeUI Graph Canvas**
+   - Add the Nodes tab immediately after Investigation.
+   - Render actual nodes and directional relationships.
+   - Provide zoom, pan, selection, responsive viewport and clear empty states.
+   - Use existing BeeUI/Tabler visual patterns and minimal SVG/JS when sufficient.
+   - Avoid a graph database or large new frontend dependency without an established requirement.
+
+3. **Shared Technical Inspection**
+   - Selecting a node opens the inspector established in BS-22.
+   - Preserve links to the corresponding Process Card, Case, Finding and Evidence.
+   - Show unavailable relationships explicitly rather than fabricating connections.
+
+4. **Persistence and Provenance**
+   - Reconstruct the graph deterministically from persisted records.
+   - Preserve identities and factual edges after reload and restart.
+   - Keep visual positions independent from evidence/provenance data.
+
+### Required end-to-end acceptance
+
+- A real supported laboratory investigation produces a nonempty graph containing actual executions and evidence relationships.
+- Every graph node resolves to an existing authorized source record.
+- Every rendered edge has an identifiable factual source.
+- Graph execution identities and technical details match the corresponding Process Cards.
+- Multiple executions and incomplete runs are represented without collapsing or inventing relationships.
+- Reload and restart reproduce the same factual node/edge identities.
+- Foreign Case/Node/Artifact requests, corrupt records and tampered evidence are safely rejected.
+- Inspection creates zero new target requests.
+- RU/EN, Light/Dark, desktop, mobile and keyboard interactions pass browser E2E.
+
+### Explicit exclusions
+
+- Node-driven active investigation.
+- Manual workflow construction.
+- Arbitrary graph editing.
+- Network packet capture.
+- General-purpose graph database.
+- Simulated Nmap/Nikto or unsupported tool nodes.
+
+### NO-GO
+
+- Missing durable lineage for essential node relationships.
+- Fabricated edges based on execution order.
+- A graph that cannot reconstruct its factual content after restart.
+- A graph independent from the Case/Evidence identities used in the chat.
+
+### Definition of Done
+
+An operator can open a completed or partial real investigation, understand the verified execution and evidence relationships visually, inspect nodes through the shared technical inspector, and navigate to the associated Case records without integrity or authorization bypasses.
+
+Actual laboratory and browser acceptance artifacts are mandatory before marking DONE.
+
+### Iteration BS-22 — BeeScan Security Knowledge Base MVP
 
 **Status:** PLANNED
 
