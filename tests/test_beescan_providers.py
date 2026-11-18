@@ -154,7 +154,6 @@ def test_existing_zap_archive_fails_closed_without_replacement(
         archive.unlink()
         archive.symlink_to(root / "outside")
         assert not os.path.lexists(root / "outside")
-        destination = os.readlink(archive)
     before = _file_invariants(archive.lstat())
     monkeypatch.setattr(native, "_download", lambda *_: pytest.fail("repair forbidden"))
     with pytest.raises(native.ProviderProvisioningError):
@@ -162,7 +161,8 @@ def test_existing_zap_archive_fails_closed_without_replacement(
     assert _file_invariants(archive.lstat()) == before
     if mutation == "symlink":
         assert archive.is_symlink()
-        assert os.readlink(archive) == destination
+        if mutation == "symlink":
+            assert os.readlink(archive) == str(root / "outside")
         assert not os.path.lexists(root / "outside")
 
 
