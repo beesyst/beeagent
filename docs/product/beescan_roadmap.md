@@ -2242,7 +2242,7 @@ This is a code-and-evidence product increment, not a documentation-only acceptan
 #### Depends on
 
 - BeeScan It19 and BeeAgent BS-20.
-- BS-22 observable Investigation Workspace.
+- BS-21 observable Investigation Workspace.
 
 #### Change level
 
