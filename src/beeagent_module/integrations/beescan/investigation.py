@@ -2194,6 +2194,7 @@ def execute_investigation(
                         web_invocation.service,
                         web_invocation,
                         execution_case_id=child_id,
+                        action_id=decision.action_id,
                         request_limit=remaining,
                         deadline_limit=current_deadline,
                         continue_after_match=True,
@@ -2387,6 +2388,10 @@ def execute_investigation(
             return session
 
         session = open_discovery_egress()
+        if web_invocation is not None:
+            web_invocation.observe_execution(
+                run_id, "discovery", "RUNNING", provider="host-web-capture"
+            )
         if general_case.surfaces:
             initial = api_domain.decide_general(
                 general_case,
@@ -2878,6 +2883,14 @@ def execute_investigation(
         if multifamily and status["status"] not in {"REFUSED", "ERROR", "TIMEOUT"}:
             run_verifications(current_task, current_deadline)
         close_egress()
+        if web_invocation is not None:
+            web_invocation.observe_execution(
+                run_id,
+                "discovery",
+                status["status"]
+                if status["status"] in {"REFUSED", "ERROR", "TIMEOUT"}
+                else "COMPLETED",
+            )
         authorize()
         if multifamily:
             status["stop_reason"] = status["reason"]

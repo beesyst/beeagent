@@ -880,7 +880,50 @@ def test_workspace_results_are_readonly_and_localized(tmp_path, monkeypatch):
     assert list(storage.iterdir()) == []
 
 
-def reviewed_dast_fixture(tmp_path, monkeypatch):
+@pytest.mark.parametrize("severity", ["HIGH", "../high", "critical"])
+def test_workspace_results_rejects_invalid_severity(tmp_path, monkeypatch, severity):
+    _, storage, app = setup_app(tmp_path, monkeypatch)
+    client, _ = authenticated(app)
+    response = client.get(
+        "/beescan",
+        params={"run_id": "web-" + "a" * 48, "tab": "results", "severity": severity},
+    )
+    assert response.status_code == 403
+    assert list(storage.iterdir()) == []
+
+
+def test_ambiguous_control_reason_is_explained_in_results(tmp_path, monkeypatch):
+    _, _, app, case_id, _ = reviewed_dast_fixture(tmp_path, monkeypatch)
+    service = app.state.beeagent_adapter.beescan
+    inspect = service.inspect
+
+    def partial(*args, **kwargs):
+        return inspect(*args, **kwargs) | {
+            "status": "PARTIAL",
+            "reason": "verification_controls_ambiguous",
+        }
+
+    monkeypatch.setattr(service, "inspect", partial)
+
+    def reject_execution(*args, **kwargs):
+        pytest.fail("Results entered the execution path")
+
+    monkeypatch.setattr(service, "start", reject_execution)
+    client, _ = authenticated(app)
+    for lang, text, technical in (
+        ("en", "The control responses were ambiguous.", "Diagnostic code"),
+        ("ru", "Ответы на контрольные запросы неоднозначны.", "Код диагностики"),
+    ):
+        response = client.get(
+            "/beescan", params={"tab": "results", "run_id": case_id, "lang": lang}
+        )
+        assert response.status_code == 200
+        assert text in response.text
+        assert f"{technical} = verification_controls_ambiguous" in response.text
+        assert response.text.count("verification_controls_ambiguous") == 1
+
+
+def reviewed_dast_fixture(tmp_path, monkeypatch, *, severity=None):
     import hashlib
     import os
     from dataclasses import asdict
@@ -1004,6 +1047,7 @@ def reviewed_dast_fixture(tmp_path, monkeypatch):
             {
                 "findings": [
                     asdict(normalize_dast(intent, execution, outcome).findings[0])
+                    | ({"severity": severity} if severity else {})
                 ]
             },
         ),
@@ -1051,6 +1095,217 @@ def reviewed_dast_fixture(tmp_path, monkeypatch):
     _, snapshot = load_case(storage, case_id)
     web._persist(parent_api, "web_receipt.json", service._receipt(snapshot, settings))
     return settings, storage, app, case_id, finding_id
+
+
+def test_workspace_results_filter_authenticated_findings(tmp_path, monkeypatch):
+    _, _, app, case_id, finding_id = reviewed_dast_fixture(
+        tmp_path, monkeypatch, severity="medium"
+    )
+    client, _ = authenticated(app)
+    params = {"tab": "results", "run_id": case_id}
+    match = client.get("/beescan", params=params | {"severity": "medium"})
+    mismatch = client.get("/beescan", params=params | {"severity": "high"})
+    assert match.status_code == mismatch.status_code == 200
+    assert finding_id in match.text
+    assert finding_id not in mismatch.text
+
+
+def test_execution_inspector_requires_signed_conversation_run(tmp_path, monkeypatch):
+    from beeagent_module.integrations.beescan.case_state import digest
+    from beeagent_module.integrations.beescan.dast import _api
+    from beeagent_module.integrations.beescan.executions import publish_lifecycle
+
+    settings, storage, app = setup_app(tmp_path, monkeypatch)
+    host = app.state.beeagent_adapter.beescan
+    actor = {"user_id": "alice", "role": "operator"}
+    case_id = host.conversations.create(
+        {"nonce": host.nonce(actor)}, actor, initial_action="beescan_attach"
+    )["case_id"]
+    run_id = "web-" + "a" * 48
+    execution_id = "execution-" + run_id
+    state = host.conversations.read(case_id, actor)
+    context = {"target": "https://example.test:443"}
+    binding = {
+        "run_id": run_id,
+        "case_id": run_id,
+        "parent_case_id": case_id,
+        "principal_id": actor["user_id"],
+        "target": "https://example.test",
+        "mode": "quick",
+        "context_sha256": digest({"context": context, "attachments": []}),
+        "authority_sha256": digest(settings["beescan"]),
+    }
+    host.conversations.append(
+        state,
+        "run",
+        {
+            "run_id": run_id,
+            "context": context,
+            "attachments": [],
+            "authority_sha256": binding["authority_sha256"],
+            "context_revision": 0,
+        },
+        "execution",
+        actor,
+    )
+    api = _api(storage, run_id, logging.getLogger("test"))
+    web._persist(
+        api,
+        "web_owner.json",
+        {"binding": binding, "signature": web._sign(settings, binding)},
+    )
+    publish_lifecycle(api, settings, run_id, "REFUSED", reason="target_excluded")
+    web._persist(
+        api,
+        "investigation_status.json",
+        {"status": "REFUSED", "complete": False, "reason": "target_excluded"},
+    )
+    web._persist(api, "case.json", {"state": {"pending": True}})
+
+    def no_execution(*args, **kwargs):
+        pytest.fail("A read entered the execution path")
+
+    monkeypatch.setattr(host, "start", no_execution)
+    monkeypatch.setattr(web, "execute_investigation", no_execution)
+    params = {
+        "case_id": case_id,
+        "run_id": run_id,
+        "execution_id": execution_id,
+        "lang": "en",
+    }
+    url = "/api/beescan/execution"
+    alice, _ = authenticated(app)
+    bob, _ = authenticated(app, "bob")
+    response = alice.get(url, params=params)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()["data"]
+    assert data["id"] == execution_id
+    assert data["sections"]["overview"] == [
+        {"label": "Status", "value": "Refused"},
+        {"label": "Tool", "value": "Investigation"},
+        {"label": "Duration, s", "value": "Unavailable"},
+    ]
+    assert "logs" not in data["sections"]
+    assert {"label": "Host diagnostic code", "value": "target_excluded"} in data[
+        "sections"
+    ]["technical"]
+    assert TestClient(app).get(url, params=params).status_code in {401, 403}
+    assert bob.get(url, params=params).status_code == 403
+    assert (
+        alice.get(url, params=params | {"run_id": "web-" + "b" * 48}).status_code == 403
+    )
+    assert (
+        alice.get(url, params=params | {"execution_id": "execution-other"}).status_code
+        == 403
+    )
+    assert (
+        alice.get(url, params=params | {"execution_id": "../case.json"}).status_code
+        == 400
+    )
+    assert alice.get(url, params=params | {"artifact": "case.json"}).status_code == 400
+    assert (
+        alice.get(url, params=[*params.items(), ("run_id", run_id)]).status_code == 400
+    )
+    status = alice.get("/api/beescan/status", params={"run_id": case_id, "lang": "ru"})
+    assert status.status_code == 200
+    cards = status.json()["data"]["presentation"]["messages"]
+    assert [(item["id"], item["name"]) for item in cards] == [
+        (execution_id, "Исследование"),
+        ("result-" + run_id, "Итог"),
+    ]
+    publish_lifecycle(api, settings, run_id, "RUNNING")
+    assert alice.get(url, params=params).status_code == 403
+    publish_lifecycle(api, settings, run_id, "TIMEOUT", reason="dast_deadline")
+    assert alice.get(url, params=params).json()["data"]["sections"]["overview"][0] == {
+        "label": "Status",
+        "value": "Timed out",
+    }
+    publish_lifecycle(api, settings, run_id, "QUEUED")
+    host.conversations.pending[run_id] = ()
+    assert (
+        alice.get(url, params=params).json()["data"]["sections"]["overview"][0]["value"]
+        == "Queued"
+    )
+    del host.conversations.pending[run_id]
+    host.conversations.running.add(run_id)
+    publish_lifecycle(api, settings, run_id, "RUNNING")
+    discovery = {"kind": "discovery", "run_id": run_id}
+    publish_lifecycle(api, settings, run_id, "RUNNING", execution=discovery)
+    assert (
+        alice.get(url, params=params).json()["data"]["sections"]["overview"][0]["value"]
+        == "Running"
+    )
+    child = "dast-" + "b" * 32
+    child_api = _api(storage, child, logging.getLogger("test"))
+    child_binding = binding | {"run_id": child}
+    web._persist(
+        child_api,
+        "web_owner.json",
+        {"binding": child_binding, "signature": web._sign(settings, child_binding)},
+    )
+    verification = {
+        "kind": "verification",
+        "run_id": child,
+        "action_id": "action-1",
+        "provider": "zap",
+        "profile": "test-profile",
+    }
+    publish_lifecycle(api, settings, run_id, "RUNNING", execution=verification)
+    child_params = params | {"execution_id": "execution-" + child}
+    response = alice.get(url, params=child_params)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["sections"]["overview"][0]["value"] == "Running"
+    assert {"label": "Action", "value": "action-1", "copy": True} in data["sections"][
+        "connections"
+    ]
+    assert all(row["label"] != "Evidence" for row in data["sections"]["connections"])
+    projected = alice.get(
+        "/api/beescan/status", params={"run_id": case_id, "lang": "en"}
+    )
+    cards = projected.json()["data"]["presentation"]["messages"]
+    assert [(card["id"], card["status"]) for card in cards] == [
+        (execution_id, "Completed"),
+        ("execution-" + child, "Running"),
+    ]
+    assert cards[1]["execution"]["progress"] == {"completed": None, "total": None}
+    html = alice.get("/beescan", params={"run_id": case_id})
+    assert html.status_code == 200
+    assert html.text.index(f'data-message-id="{execution_id}"') < html.text.index(
+        f'data-message-id="execution-{child}"'
+    )
+    foreign_binding = child_binding | {"parent_case_id": "foreign"}
+    web._persist(
+        child_api,
+        "web_owner.json",
+        {"binding": foreign_binding, "signature": web._sign(settings, foreign_binding)},
+    )
+    assert alice.get(url, params=child_params).status_code == 403
+    web._persist(
+        child_api,
+        "web_owner.json",
+        {"binding": child_binding, "signature": web._sign(settings, child_binding)},
+    )
+    host.conversations.running.clear()
+    assert (
+        alice.get(url, params=child_params).json()["data"]["sections"]["overview"][0][
+            "value"
+        ]
+        == "Unavailable"
+    )
+    publish_lifecycle(api, settings, run_id, "COMPLETED", execution=verification)
+    assert (
+        alice.get(url, params=child_params).json()["data"]["sections"]["overview"][0][
+            "value"
+        ]
+        == "Completed"
+    )
+    marker = api.artifact_dir() / "web_execution.json"
+    record = json.loads(marker.read_text())
+    record["value"]["status"] = "COMPLETED"
+    marker.write_text(json.dumps(record))
+    assert alice.get(url, params=params).status_code == 403
 
 
 def web_review_payload(case_id, finding_id):
@@ -1841,7 +2096,9 @@ def test_administrative_review_source_identity_and_foreign_finding():
     execution = AdministrativeExecution(
         evidence, now + timedelta(seconds=4), 3, True, True
     )
-    finding_id = evaluate_administrative_access(intent, execution).findings[0].finding_id
+    finding_id = (
+        evaluate_administrative_access(intent, execution).findings[0].finding_id
+    )
     assert _web_source_identity(
         AdministrativeReviewInput(intent, execution, finding_id)
     ) == ("parent", "mission", "target")

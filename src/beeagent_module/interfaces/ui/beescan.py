@@ -52,6 +52,20 @@ def hide_beescan(storage, data):
     return data
 
 
+FINDING_SEVERITIES = ("high", "medium", "low")
+
+
+def results_severity(query):
+    severity = query.get("severity")
+    if severity is not None and (
+        severity not in FINDING_SEVERITIES
+        or query.get("tab") != "results"
+        or not query.get("run_id")
+    ):
+        raise ValueError("invalid_beescan_severity")
+    return severity
+
+
 def _workspace_context(service, query, actor):
     from datetime import UTC, datetime
 
@@ -59,10 +73,20 @@ def _workspace_context(service, query, actor):
 
     settings = service.reload_settings()
     actor_id = principal(settings, actor)
-    if set(query) - {"lang", "run_id", "q", "tab", "page", "status", "sort"}:
+    if set(query) - {
+        "lang",
+        "run_id",
+        "q",
+        "tab",
+        "page",
+        "status",
+        "sort",
+        "severity",
+    }:
         raise ValueError("invalid_beescan_query")
     if query.get("tab", "investigation") not in {"investigation", "results"}:
         raise ValueError("invalid_beescan_tab")
+    severity = results_severity(query)
     search = query.get("q", "")
     if type(search) is not str or len(search) > 128:
         raise ValueError("invalid_beescan_search")
@@ -168,7 +192,13 @@ def _workspace_context(service, query, actor):
             )
     except PermissionError, ValueError, TypeError, KeyError:
         pass
-    selected = service.inspect(query["run_id"], actor) if query.get("run_id") else None
+    selected = None
+    if run_id := query.get("run_id"):
+        selected = service.inspect(
+            run_id, actor, **({"latest": False} if severity else {})
+        )
+        if severity and selected["case_id"] == run_id and "summary" not in selected:
+            selected = service.inspect(run_id, actor)
     records = service.history(actor)
     records = [
         row
@@ -331,6 +361,19 @@ def inspection(selected, config, locale="en", *, settings=None):
     except PermissionError, ValueError, TypeError, KeyError:
         pass
     intake = selected.get("intake") if selected else None
+    reason = (selected.get("reason") or "") if selected else ""
+    ambiguous_controls = (
+        selected
+        and selected["evidence_authenticated"]
+        and reason == "verification_controls_ambiguous"
+    )
+    explanation = reason
+    if ambiguous_controls:
+        explanation = (
+            "Ответы на контрольные запросы неоднозначны. Проверка не подтвердила уязвимость."
+            if ru
+            else "The control responses were ambiguous. The check did not confirm a vulnerability."
+        )
     sections = [
         {
             "id": "authorization",
@@ -377,7 +420,7 @@ def inspection(selected, config, locale="en", *, settings=None):
                     selected["status"]
                     if selected
                     else ("Готово к запуску" if ru else "Ready for intake"),
-                    selected.get("reason") or "" if selected else "",
+                    explanation,
                 ),
                 item(
                     "execution-policy",
@@ -429,7 +472,7 @@ def inspection(selected, config, locale="en", *, settings=None):
                     "status",
                     "Статус" if ru else "Status",
                     selected["status"],
-                    selected.get("reason") or "",
+                    explanation,
                 ),
                 item("mode", "Режим" if ru else "Mode", selected["mode"].title()),
             ],
@@ -510,7 +553,10 @@ def inspection(selected, config, locale="en", *, settings=None):
                     item(
                         "result",
                         "Результат" if ru else "Result",
-                        selected["report"]["answer"] or selected["report"]["reason"],
+                        explanation
+                        if ambiguous_controls
+                        else selected["report"]["answer"]
+                        or selected["report"]["reason"],
                         " ".join(selected["report"]["limitations"]),
                     ),
                     item(
@@ -522,6 +568,14 @@ def inspection(selected, config, locale="en", *, settings=None):
             },
         ]
     )
+    if ambiguous_controls:
+        sections[-1]["items"].append(
+            item(
+                "diagnostic-code",
+                "Код диагностики" if ru else "Diagnostic code",
+                reason,
+            )
+        )
     from urllib.parse import urlsplit
 
     advanced = "\n".join(
@@ -548,7 +602,7 @@ def inspection(selected, config, locale="en", *, settings=None):
                         "status",
                         "Статус" if ru else "Status",
                         selected["status"],
-                        selected.get("reason") or "",
+                        explanation,
                     ),
                     item(
                         "operation",
@@ -610,6 +664,20 @@ def workspace(service, query, actor):
         )
     )
     if tab == "results":
+        severity = query.get("severity")
+        case_summary = selected.get("summary") if selected and severity else None
+        if case_summary is not None:
+            selected = None
+        elif selected and severity:
+            selected = {
+                **selected,
+                "findings": [
+                    finding
+                    for finding in selected["findings"]
+                    if selected["evidence_authenticated"]
+                    and finding.get("severity") == severity
+                ],
+            }
         table_query = {
             "lang": locale,
             "tab": "results",
@@ -790,7 +858,56 @@ def workspace(service, query, actor):
                 },
             }
         ]
-        if not selected:
+        if case_summary is not None:
+            from beeagent_module.interfaces.ui.conversation import results_href
+
+            findings = (
+                [
+                    finding
+                    for finding in case_summary["findings"]
+                    if finding.get("severity") == severity
+                ]
+                if case_summary.get("findings_complete")
+                else []
+            )
+            label = "Находки" if ru else "Findings"
+            title = f"{label} · {severity.title()}"
+            if findings:
+                layout.append(
+                    {
+                        "type": "quick_links",
+                        "width": 12,
+                        "title": title,
+                        "items": [
+                            {
+                                "label": finding["title"],
+                                "href": results_href(finding["run_id"], locale)
+                                + "&"
+                                + urlencode({"severity": severity}),
+                            }
+                            for finding in findings
+                        ],
+                    }
+                )
+            else:
+                layout.append(
+                    {
+                        "type": "state_grid",
+                        "width": 12,
+                        "title": title,
+                        "items": [
+                            {
+                                "label": label,
+                                "value": (
+                                    "0"
+                                    if case_summary.get("findings_complete")
+                                    else ("Недоступно" if ru else "Unavailable")
+                                ),
+                            }
+                        ],
+                    }
+                )
+        elif not selected:
             layout.append(
                 {
                     "type": "state_grid",
@@ -822,6 +939,20 @@ def workspace(service, query, actor):
                     ],
                 }
                 for section in context["sections"]
+            )
+        if severity and selected:
+            layout.append(
+                {
+                    "type": "state_grid",
+                    "width": 6,
+                    "title": "Фильтр находок" if ru else "Finding filter",
+                    "items": [
+                        {
+                            "label": severity.title(),
+                            "value": str(len(selected["findings"])),
+                        }
+                    ],
+                }
             )
         layout.extend(review_workspace(service, selected, actor, locale))
         return {"layout": layout}

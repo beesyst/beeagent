@@ -440,6 +440,13 @@ def execute_administrative_access(
     try:
         authorize()
         session.start()
+        invocation.observe_execution(
+            execution_case_id,
+            "verification",
+            "RUNNING",
+            action_id=action_id,
+            profile=profile["profile_id"],
+        )
         for slot, path in (
             ("anonymous", profile["resource_path"]),
             ("negative", profile["negative_path"]),
@@ -545,6 +552,11 @@ def execute_administrative_access(
             "reason": result.reason,
             "evidence_refs": list(item.evidence_ref for item in evidence),
         },
+    )
+    invocation.observe_execution(
+        execution_case_id,
+        "verification",
+        "COMPLETED" if result.status in {"CANDIDATE", "NO_MATCH"} else result.status,
     )
     return {
         "intent": intent,
@@ -863,6 +875,10 @@ def execute_access(
     try:
         authorize()
         session.start()
+        if finalize:
+            invocation.observe_execution(
+                case_id, "verification", "RUNNING", profile=invocation.profile_id
+            )
         for slot in SLOTS:
             authorize()
             action = None
@@ -1129,4 +1145,12 @@ def execute_access(
         + "\n",
     )
     save_case(api, state)
+    if finalize:
+        invocation.observe_execution(
+            case_id,
+            "verification",
+            "COMPLETED"
+            if result.status in {"CANDIDATE", "NO_MATCH"}
+            else result.status,
+        )
     return {"case_id": case_id, "status": result.status}

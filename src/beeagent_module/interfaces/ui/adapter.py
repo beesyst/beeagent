@@ -1490,7 +1490,10 @@ class BeeAgentUiAdapter:
                 if (
                     not query.get("run_id")
                     and query.get("tab", "investigation") != "results"
-                    or str(query.get("run_id", "")).startswith("web-chat-")
+                    or (
+                        str(query.get("run_id", "")).startswith("web-chat-")
+                        and not query.get("severity")
+                    )
                 ):
                     from beeagent_module.interfaces.ui.conversation import (
                         workspace as conversation_workspace,

@@ -14,7 +14,10 @@ from urllib.parse import urlsplit
 
 from beeagent_module.integrations.beescan.case_state import digest
 from beeagent_module.integrations.beescan.detection import _persist
-from beeagent_module.integrations.beescan.policy import ProbePolicy
+from beeagent_module.integrations.beescan.policy import (
+    ProbePolicy,
+    check_target_exclusions,
+)
 from beeagent_module.integrations.beescan.review_source import (
     AssessmentSnapshot,
     open_child,
@@ -25,6 +28,7 @@ from beeagent_module.integrations.beescan.web import (
     _read_owned,
     _sign,
     principal,
+    require_web_execution_authority,
 )
 
 active_session: ContextVar[Callable[[ProbePolicy], tuple[str, str] | None] | None] = (
@@ -1147,6 +1151,8 @@ class Conversations:
         )
 
     def view(self, case_id, actor, *, offset=None, run_offset=None):
+        from beeagent_module.integrations.beescan.executions import records_for_run
+
         state = self.read(case_id, actor)
         if run_offset is None:
             run_offset = max(0, (len(state["runs"]) - 1) // 25 * 25)
@@ -1164,12 +1170,19 @@ class Conversations:
         summary = {"runs": [], "completed": 0, "active": 0, "findings": []}
         timeline = []
         run_views = {}
+        execution_views = {}
         for run in state["runs"][-25:]:
             try:
                 child = self.host.inspect(run["run_id"], actor, latest=False)
             except OSError, ValueError, RuntimeError, KeyError, TypeError:
                 continue
             run_views[run["run_id"]] = child
+            try:
+                execution_views[run["run_id"]] = records_for_run(
+                    self.host, case_id, run, actor
+                )
+            except OSError, ValueError:
+                pass
             active = run["run_id"] in self.running or child["status"] in {
                 "RUNNING",
                 "QUEUED",
@@ -1202,6 +1215,7 @@ class Conversations:
                             }
                         )
                 item["requests"] = child.get("request_count")
+                item["request_count_exact"] = child.get("request_count_exact") is True
                 item["elapsed_seconds"] = child.get("metrics", {}).get(
                     "elapsed_seconds"
                 )
@@ -1211,6 +1225,30 @@ class Conversations:
                     for finding in child.get("findings", [])
                 )
             summary["runs"].append(item)
+        if len(summary["runs"]) == len(state["runs"]):
+            summary["findings_complete"] = len(summary["findings"]) < 16 and all(
+                item["authenticated"] for item in summary["runs"]
+            )
+            if len(execution_views) == len(state["runs"]) and all(
+                execution_views.values()
+            ):
+                stages = [
+                    item
+                    for executions in execution_views.values()
+                    for item in executions
+                    if item["kind"] in {"discovery", "verification"}
+                ]
+                summary["execution_count"] = len(stages)
+                summary["execution_errors"] = sum(
+                    item["status"] in {"ERROR", "TIMEOUT", "REFUSED"} for item in stages
+                )
+            if all(
+                item.get("request_count_exact") and type(item.get("requests")) is int
+                for item in summary["runs"]
+            ):
+                summary["request_count"] = sum(
+                    item["requests"] for item in summary["runs"]
+                )
         from beeagent_module.integrations.beescan.progress import conversation_run
 
         records = state["sequence"]
@@ -1243,6 +1281,14 @@ class Conversations:
                     "type": "run",
                     "source": item["run_id"],
                 }
+                try:
+                    if child_id not in execution_views:
+                        execution_views[child_id] = records_for_run(
+                            self.host, case_id, item, actor
+                        )
+                    message["executions"] = execution_views[child_id]
+                except FileNotFoundError:
+                    pass
             else:
                 message = dict(item)
             if child is not None:
@@ -1267,25 +1313,49 @@ class Conversations:
         )
         timeline = latest_view.get("timeline", []) if latest_view else []
         retry_actions = []
+        context = state["context"]
         if (
             latest_run
             and latest_run["source_available"]
             and status not in {"RUNNING", "QUEUED"}
-            and latest_run["target"] == state["context"].get("target")
+            and latest_run["target"] == context.get("target")
+            and all(context.get(key) for key in ("target", "scope", "authority"))
             and actor["role"] in {"operator", "admin"}
             and not metadata.get("archived", False)
         ):
-            retry_actions.append(
-                {
-                    "source_run_id": latest_run["run_id"],
-                    "task": "Assess web security (fresh full retry)",
-                    "case_id": case_id,
-                    "revision": str(state["revision"]),
-                    "nonce": self.nonce(actor, case_id, state["revision"]),
-                    "mode": state["context"].get("mode", "quick"),
-                    "confirmation": "INVESTIGATE",
-                }
-            )
+            settings = self.host.reload_settings()
+            try:
+                require_web_execution_authority(settings, actor)
+                if "target_policy" in settings["beescan"]:
+                    check_target_exclusions(settings, context["target"])
+                else:
+                    from beeagent_module.integrations.beescan.investigation import (
+                        InvestigationPolicy,
+                    )
+
+                    policy = InvestigationPolicy.from_config(
+                        settings["beescan"]["investigation"].get("approval")
+                    )
+                    policy.authorize(context["target"], at=datetime.now(UTC))
+                    if (
+                        context["scope"] != policy.transport.scope_id
+                        or context["authority"] != policy.transport.mission_id
+                    ):
+                        raise PermissionError("context_authority_changed")
+            except PermissionError, ValueError:
+                pass
+            else:
+                retry_actions.append(
+                    {
+                        "source_run_id": latest_run["run_id"],
+                        "task": "Assess web security (fresh full retry)",
+                        "case_id": case_id,
+                        "revision": str(state["revision"]),
+                        "nonce": self.nonce(actor, case_id, state["revision"]),
+                        "mode": state["context"].get("mode", "quick"),
+                        "confirmation": "INVESTIGATE",
+                    }
+                )
         return {
             "case_id": case_id,
             "run_id": case_id,
@@ -1335,6 +1405,17 @@ class Conversations:
             "findings": [],
             "archived": metadata.get("archived", False),
         }
+
+    def execution(self, case_id, run_id, execution_id, actor):
+        from beeagent_module.integrations.beescan.executions import records_for_run
+
+        state = self.read(case_id, actor)
+        run = next((item for item in state["runs"] if item["run_id"] == run_id), None)
+        if run is not None:
+            for item in records_for_run(self.host, case_id, run, actor):
+                if item["id"] == execution_id:
+                    return item
+        raise PermissionError("execution_reference_refused")
 
     def credential(
         self, case_id, context, actor, policy: ProbePolicy

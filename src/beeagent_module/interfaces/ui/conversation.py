@@ -15,57 +15,41 @@ _CONTEXT_LABELS = {
 }
 
 
-def coverage_label(family, ru):
-    return {
-        "information_disclosure": ("Раскрытие информации", "Information disclosure"),
-        "path_traversal": ("Обход каталогов", "Path traversal"),
-        "access_control": ("Контроль доступа", "Access control"),
-    }[family][0 if ru else 1]
+_STATUS_LABELS = {
+    "READY": ("Готово", "Ready"),
+    "QUEUED": ("В очереди", "Queued"),
+    "RUNNING": ("Выполняется", "Running"),
+    "COMPLETED": ("Завершено", "Completed"),
+    "PARTIAL": ("Частично", "Partial"),
+    "INCONCLUSIVE": ("Недостаточно данных", "Inconclusive"),
+    "CANDIDATE": ("Кандидат", "Candidate"),
+    "MATCH": ("Совпадение", "Match"),
+    "NO_MATCH": ("Совпадений нет", "No match"),
+    "ERROR": ("Ошибка", "Error"),
+    "REFUSED": ("Отклонено", "Refused"),
+    "TIMEOUT": ("Истекло время", "Timed out"),
+    "UNAVAILABLE": ("Недоступно", "Unavailable"),
+}
+_STATUS_TONES = {
+    "RUNNING": "blue",
+    "COMPLETED": "green",
+    "MATCH": "green",
+    "NO_MATCH": "green",
+    "PARTIAL": "yellow",
+    "CANDIDATE": "yellow",
+    "INCONCLUSIVE": "yellow",
+    "TIMEOUT": "yellow",
+    "REFUSED": "red",
+    "ERROR": "red",
+}
 
 
-def investigation_outcome(run, ru):
-    failed = run["status"] in {"ERROR", "REFUSED"}
-    completed = run["status"] in {"MATCH", "CANDIDATE", "NO_MATCH"} and run[
-        "reason"
-    ] in {
-        "ok",
-        "answer_supported",
-        "source_disclosure_supported",
-        "authenticated_case_reused",
-    }
-    investigation = (
-        ("выполняется" if ru else "in progress")
-        if run["status"] in {"RUNNING", "QUEUED"}
-        else ("не завершено из-за ошибки" if ru else "failed")
-        if failed
-        else ("завершено" if ru else "completed")
-        if completed
-        else ("частично" if ru else "partial")
-    )
-    vulnerability = {
-        "verified": (
-            "подтверждена независимой проверкой",
-            "verified by independent review",
-        ),
-        "candidate": (
-            "кандидат; требуется независимая проверка",
-            "candidate; independent verification required",
-        ),
-        "not_established": ("не установлена", "not established"),
-    }[run["vulnerability"]][0 if ru else 1]
-    return (
-        ("Исследование: " if ru else "Investigation: ")
-        + investigation
-        + "\n"
-        + ("Уязвимость: " if ru else "Vulnerability: ")
-        + vulnerability
-        + "\n"
-        + (
-            "Завершение лаборатории: неизвестно; независимых доказательств завершения нет."
-            if ru
-            else "Lab completion: unknown; no independent completion evidence."
-        )
-    )
+def status_label(status, ru):
+    return _STATUS_LABELS.get(status, _STATUS_LABELS["UNAVAILABLE"])[0 if ru else 1]
+
+
+def results_href(run_id, locale):
+    return "/beescan?" + urlencode({"run_id": run_id, "lang": locale, "tab": "results"})
 
 
 def observation_text(item):
@@ -103,332 +87,340 @@ def observation_text(item):
     return "\n".join(lines)
 
 
-def investigation_message(message, ru):
-    run = message["investigation"]
-    if message.get("type") == "investigation":
-        text = investigation_outcome(run, ru)
-        if run["status"] == "NO_MATCH":
-            text += "\n" + (
-                "Отсутствие совпадения не подтверждает безопасность цели."
-                if ru
-                else "NO_MATCH does not establish target safety."
-            )
-    else:
-        lines = [
-            ("Исследую: " if ru else "Investigating: ")
-            + (
-                run["objective"][:160]
-                or ("сохранённую задачу" if ru else "the recorded objective")
-            )
-        ]
-        if run["captured"]:
-            lines.append(
-                ("Получено ответов: " if ru else "Responses captured: ")
-                + str(run["captured"])
-                + (
-                    ". Источники аутентифицированы."
-                    if ru
-                    else ". Sources authenticated."
-                )
-                if run["authenticated"]
-                else ("Получено ответов: " if ru else "Responses captured: ")
-                + str(run["captured"])
-                + (
-                    ". Операционный статус; доказательства ещё не аутентифицированы."
-                    if ru
-                    else ". Operational status; evidence is not yet authenticated."
-                )
-            )
-        elif run["capture_pending"]:
-            lines.append(
-                "Получение ответа ещё не завершено."
-                if ru
-                else "Response capture is not complete yet."
-            )
-        else:
-            lines.append(
-                "Завершённых HTTP-захватов пока нет."
-                if ru
-                else "No completed HTTP captures are recorded yet."
-            )
-        for provider in run["providers"][:3]:
-            lines.append(
-                ("Выбрана проверка " if ru else "Selected verification ")
-                + str(provider["provider"])
-                + " / "
-                + str(provider["profile"])
-                + (
-                    " по наблюдаемому GET-источнику: "
-                    if ru
-                    else " from an observed GET source: "
-                )
-                + str(provider["status"])
-                + "."
-            )
-        unavailable = [
-            item["family"]
-            for item in run["coverage"]
-            if item["status"]
-            in {
-                "UNSUPPORTED",
-                "NOT_YET_ESTABLISHED",
-                "PARTIAL",
-                "ERROR",
-                "TIMEOUT",
-                "REFUSED",
-            }
-        ]
-        if unavailable:
-            lines.append(
-                (
-                    "Покрытие не установлено или неполное: "
-                    if ru
-                    else "Coverage unavailable or incomplete: "
-                )
-                + ", ".join(coverage_label(family, ru) for family in unavailable)
-                + "."
-            )
-        if run["status"] in {"RUNNING", "QUEUED"}:
-            lines.append(
-                "Исследование продолжается в разрешённых пределах."
-                if ru
-                else "Investigation is continuing within its authorization limits."
-            )
-        else:
-            if not run.get("has_conclusion"):
-                lines.append(investigation_outcome(run, ru))
-        text = "\n".join(lines)
-    failure = run.get("failure")
-    if failure:
-        if failure["reason"] == "capture_before_request_failed":
-            text += "\n" + (
-                "Захват завершился до отправки запроса. Проверьте соединение/TLS и защищённую диагностику; точная причина не сохранена."
-                if ru
-                else "Capture failed before sending a request. Check connectivity/TLS and protected diagnostics; the exact cause was not retained."
-            )
-        else:
-            text += (
-                "\n"
-                + ("Причина остановки: " if ru else "Stop reason: ")
-                + failure["reason"]
-                + "."
-            )
-    if run["status"] not in {"RUNNING", "QUEUED"}:
-        text += "\n" + (
-            "Далее: просмотрите доказательства и ограничения в результатах."
-            if ru
-            else "Next: review evidence and limitations in Results."
-        )
-    return {
-        "id": message["id"],
-        "sender": message["sender"],
-        "name": "BeeScan",
-        "text": text[:1500],
-        "timestamp": message["timestamp"],
-        "status": "",
-        "details": (
-            run["objective"]
-            + "\n"
-            + (
-                "\n\n".join(
-                    observation_text(item) for item in run.get("observations", [])
-                )
-                or run["details"]
-            )
-            + ("\n" + message["text"] if message.get("type") == "investigation" else "")
-        )[:2400],
-        "details_label": "Технические детали" if ru else "Technical details",
-        "links": [
-            {
-                "label": "Доказательства / Review / Report / Export"
-                if ru
-                else "Evidence / Review / Report / Export",
-                "href": "/beescan?"
-                + urlencode(
-                    {
-                        "run_id": message["source"],
-                        "tab": "results",
-                        "lang": "ru" if ru else "en",
-                    }
-                ),
-            }
-        ],
+def execution_name(item, ru):
+    names = {
+        "discovery": "Разведка" if ru else "Discovery",
+        "investigation": "Исследование" if ru else "Investigation",
+        "verification": "Проверка" if ru else "Verification",
     }
+    name = names[item["kind"]]
+    if item["kind"] == "verification" and item.get("provider"):
+        name = (
+            item["provider"].upper() if item["provider"] == "zap" else item["provider"]
+        )
+    return name
+
+
+def execution_card(item, case_id, segment_id, ru):
+    metrics = []
+    for key, label in (
+        ("checks", "Проверки" if ru else "Checks"),
+        ("capture_steps", "Шаги захвата" if ru else "Capture steps"),
+        ("requests", "HTTP-запросы" if ru else "HTTP requests"),
+    ):
+        if item.get(key) is not None:
+            metrics.append({"label": label, "value": str(item[key])})
+    progress = None
+    if item["status"] in {"QUEUED", "RUNNING"}:
+        if item.get("checks_total") and 0 <= item["checks"] <= item["checks_total"]:
+            progress = {"completed": item["checks"], "total": item["checks_total"]}
+        else:
+            progress = {"completed": None, "total": None}
+    outcome = item.get("outcome")
+    tone_status = (
+        outcome if item["status"] == "COMPLETED" and outcome else item["status"]
+    )
+    return {
+        "kind": "execution",
+        "id": item["id"],
+        "sender": "host",
+        "name": execution_name(item, ru),
+        "text": "",
+        "status": status_label(item["status"], ru),
+        "timestamp": item.get("started_at", ""),
+        "execution": {
+            "outcome": status_label(item["outcome"], ru) if item.get("outcome") else "",
+            "tone": _STATUS_TONES.get(tone_status, "secondary"),
+            "duration_ms": item.get("duration_ms"),
+            "progress": progress,
+            "metrics": metrics[:2],
+            "inspector_href": "/api/beescan/execution?"
+            + urlencode(
+                {
+                    "case_id": case_id,
+                    "run_id": segment_id,
+                    "execution_id": item["id"],
+                    "lang": "ru" if ru else "en",
+                }
+            ),
+        },
+    }
+
+
+def execution_inspector(item, case_id, segment_id, ru):
+    sections = {}
+    unavailable = "Недоступно" if ru else "Unavailable"
+
+    def add(section, label, value, **extra):
+        if value is not None:
+            sections.setdefault(section, []).append(
+                {"label": label, "value": str(value), **extra}
+            )
+
+    add("overview", "Статус" if ru else "Status", status_label(item["status"], ru))
+    tool = execution_name(item, ru)
+    add("overview", "Инструмент" if ru else "Tool", tool)
+    add(
+        "overview",
+        "Результат проверки" if ru else "Verification outcome",
+        status_label(item["outcome"], ru) if item.get("outcome") else None,
+    )
+    add(
+        "overview",
+        "Длительность, с" if ru else "Duration, s",
+        f"{item['duration_ms'] / 1000:.2f}".replace(".", "," if ru else ".")
+        if item.get("duration_ms") is not None
+        else unavailable,
+    )
+    for key, label in (
+        ("started_at", "Начало" if ru else "Started"),
+        ("ended_at", "Окончание" if ru else "Ended"),
+        ("observed_at", "Запись жизненного цикла" if ru else "Lifecycle record"),
+    ):
+        if item.get(key):
+            value = item[key]
+            if key == "observed_at":
+                if value == item.get("started_at"):
+                    continue
+                label += " · " + status_label(item["event_status"], ru)
+            add("events", label, value, format="timestamp")
+    if not any(item.get(key) for key in ("started_at", "ended_at", "observed_at")):
+        add("events", "Время исполнения" if ru else "Execution timestamps", unavailable)
+    for step in item.get("steps", []):
+        add(
+            "events",
+            "Захват HTTP" if ru else "HTTP capture",
+            step["phase"] + " · " + step["status"],
+        )
+    add(
+        "technical",
+        "Код диагностики хоста" if ru else "Host diagnostic code",
+        item.get("reason"),
+    )
+    for key, label in (
+        ("requests", "HTTP-запросы" if ru else "HTTP requests"),
+        ("checks", "Выполненные проверки" if ru else "Completed checks"),
+        ("checks_total", "Всего проверок" if ru else "Total checks"),
+    ):
+        add("checks", label, item.get(key))
+    for code, count in sorted(item.get("response_counts", {}).items()):
+        add("checks", f"HTTP {code}", count)
+    for key, label in (
+        ("provider", "Провайдер" if ru else "Provider"),
+        ("provider_version", "Версия провайдера" if ru else "Provider version"),
+        ("profile", "Профиль" if ru else "Profile"),
+        (
+            "request_budget",
+            ("Лимит запросов исследования" if ru else "Investigation request budget")
+            if item["kind"] == "discovery"
+            else ("Лимит запросов" if ru else "Request budget"),
+        ),
+        ("artifact", "Подписанный артефакт" if ru else "Authenticated artifact"),
+    ):
+        add("technical", label, item.get(key))
+    cleanup = item.get("cleanup")
+    if cleanup is not None:
+        add(
+            "technical",
+            "Очистка подтверждена" if ru else "Cleanup verified",
+            ("Да" if cleanup else "Нет") if ru else ("Yes" if cleanup else "No"),
+        )
+    for label, value in (
+        ("Кейс" if ru else "Case", case_id),
+        ("Запуск исследования" if ru else "Investigation run", segment_id),
+        ("Исполнение" if ru else "Execution run", item["run_id"]),
+        ("Действие" if ru else "Action", item.get("action_id")),
+        ("Исходный запуск" if ru else "Source run", item.get("source_run_id")),
+    ):
+        add("connections", label, value, copy=True)
+    for ref in item.get("evidence_refs", []):
+        add("connections", "Доказательство" if ru else "Evidence", ref, copy=True)
+    if item.get("artifact"):
+        add(
+            "connections",
+            "Связанные результаты" if ru else "Related results",
+            "Review / Report",
+            href="/beescan?"
+            + urlencode(
+                {"run_id": segment_id, "tab": "results", "lang": "ru" if ru else "en"}
+            ),
+        )
+    result = {"id": item["id"], "sections": sections}
+    if item.get("controls"):
+        roles = {
+            "baseline": "Базовый" if ru else "Baseline",
+            "negative": "Отрицательный" if ru else "Negative control",
+            "comparison": "Сравнение" if ru else "Comparison",
+        }
+        result["checks_table"] = {
+            "columns": [
+                "№",
+                "Тип" if ru else "Type",
+                "HTTP",
+                "Сигнал" if ru else "Oracle",
+            ],
+            "rows": [
+                [
+                    str(index),
+                    roles.get(control.get("role"), unavailable),
+                    str(control["status_code"]),
+                    ("Есть" if ru else "Positive")
+                    if control["oracle"]
+                    else ("Нет" if ru else "Negative"),
+                ]
+                for index, control in enumerate(item["controls"], 1)
+            ],
+        }
+    return result
 
 
 def presentation(view, locale="en"):
     ru = locale == "ru"
     context = []
-    target = view["context"].get("target")
+    severity = []
     latest = view.get("latest_investigation")
-    if target or view["run_count"]:
-        if target:
-            context.append(
-                {"id": "target", "label": "Цель" if ru else "Target", "value": target}
-            )
-        context.append(
-            {
-                "id": "status",
-                "label": "Текущая активность" if ru else "Current activity",
-                "value": view["status"],
-            }
-        )
+    target = view["context"].get("target")
+    summary = view["summary"]
+    unavailable = "Недоступно" if ru else "Unavailable"
+    results = results_href(latest["run_id"], locale) if latest else None
+
+    def metric(identity, label, value, href=None):
+        item = {"id": identity, "label": label, "value": str(value), "detail": ""}
+        if href:
+            item["href"] = href
+        context.append(item)
+
+    if target:
+        metric("target", "Цель" if ru else "Target", target, results)
     if latest:
-        context.extend(
-            [
-                {
-                    "id": "objective",
-                    "label": "Задача исследования" if ru else "Investigation objective",
-                    "value": latest["objective"],
-                },
-                {
-                    "id": "surfaces",
-                    "label": "Наблюдаемые поверхности" if ru else "Observed surfaces",
-                    "value": ("Ответов: " if ru else "Responses: ")
-                    + str(latest["captured"]),
-                },
-                {
-                    "id": "outcome",
-                    "label": "Результат последнего запуска"
-                    if ru
-                    else "Latest run outcome",
-                    "value": investigation_outcome(latest, ru),
-                },
-            ]
+        metric(
+            "status",
+            "Статус кейса" if ru else "Case status",
+            status_label(view["status"], ru),
+            results,
         )
-        for index, item in enumerate(latest["coverage"]):
-            context.append(
-                {
-                    "id": "coverage-" + str(index),
-                    "label": coverage_label(item["family"], ru),
-                    "value": item["status"],
-                    "detail": (
-                        "Статус покрытия; UNSUPPORTED не является доказательством."
-                        if ru
-                        else "Coverage status; UNSUPPORTED is not evidence."
-                    ),
-                }
+        for key, label in (
+            ("execution_count", "Исполнения" if ru else "Executions"),
+            ("request_count", "HTTP-запросы" if ru else "HTTP requests"),
+            ("execution_errors", "Ошибки исполнения" if ru else "Execution errors"),
+        ):
+            value = summary.get(key)
+            if key != "request_count" or value is not None:
+                metric(key, label, value if value is not None else unavailable, results)
+        findings = summary.get("findings", [])
+        if latest["authenticated"] and summary.get("findings_complete"):
+            verified = sum(
+                item.get("review_disposition") == "verified" for item in findings
             )
-        for index, item in enumerate(latest.get("observations", [])):
-            context.append(
-                {
-                    "id": "observation-" + str(index),
-                    "label": "Доказательства проверки"
-                    if ru
-                    else "Verification evidence",
-                    "value": item["endpoint"] + " / " + item["profile"],
-                    "detail": observation_text(item),
-                }
+            candidates = sum(
+                item.get("review_disposition") in (None, "candidate")
+                for item in findings
             )
-        for finding in view["summary"].get("findings", latest["findings"])[:16]:
-            context.append(
-                {
-                    "id": finding["finding_id"],
-                    "label": "Находка" if ru else "Finding",
-                    "value": finding["title"],
-                    "detail": finding.get("review_disposition", "candidate"),
-                    "href": "/beescan?"
-                    + urlencode(
-                        {
-                            "run_id": finding.get("run_id", latest["run_id"]),
-                            "lang": locale,
-                            "tab": "results",
-                        }
-                    ),
-                }
+            metric(
+                "candidates", "Кандидаты" if ru else "Candidates", candidates, results
             )
-        context.append(
-            {
-                "id": "next",
-                "label": "Следующий шаг" if ru else "Next step",
-                "value": (
-                    "Продолжение проверки недоступно: "
-                    if ru
-                    else "Next verification unavailable: "
+            metric(
+                "verified",
+                "Подтверждённые" if ru else "Verified findings",
+                verified,
+                results,
+            )
+            for level, tone in (("high", "red"), ("medium", "yellow"), ("low", "blue")):
+                matching = [item for item in findings if item.get("severity") == level]
+                entry = {
+                    "id": level,
+                    "label": level.title(),
+                    "value": str(len(matching)),
+                    "detail": "",
+                    "tone": tone,
+                }
+                entry["href"] = (
+                    results_href(view["case_id"], locale)
+                    + "&"
+                    + urlencode({"severity": level})
                 )
-                + view.get(
-                    "next_action_reason", "source_bound_continuation_unavailable"
-                )
-                + (
-                    ". Новый повтор требует нового захвата и бюджета."
-                    if ru
-                    else ". A fresh retry requires new captures and a new budget."
-                ),
-            }
-        )
-        context.append(
-            {
-                "id": "technical",
-                "label": "Технические детали" if ru else "Technical details",
-                "value": "Открыть" if ru else "Expand",
-                "detail": latest["details"],
-            }
-        )
-    for index, run in enumerate(view["summary"]["runs"]):
-        detail = ""
-        if run["authenticated"]:
-            detail = (
-                ("Запросы: " if ru else "Requests: ")
-                + str(run.get("requests"))
-                + ("; кандидаты: " if ru else "; candidates: ")
-                + str(run.get("candidates", 0))
+                severity.append(entry)
+        else:
+            metric("findings", "Находки" if ru else "Findings", unavailable, results)
+        reasons = {
+            "case_archived": ("Кейс в архиве.", "The case is archived."),
+            "operator_required": (
+                "Требуется роль оператора.",
+                "An operator role is required.",
+            ),
+            "investigation_active": (
+                "Дождитесь завершения текущего исследования.",
+                "Wait for the current investigation to finish.",
+            ),
+            "no_authenticated_source": (
+                "Для продолжения нет подтверждённого источника.",
+                "Continuing requires an authenticated source.",
+            ),
+            "target_context_changed": (
+                "Цель изменилась. Продолжение недоступно.",
+                "The target changed. Continuing is unavailable.",
+            ),
+            "source_bound_continuation_unavailable": (
+                "Продолжение с сохранёнными доказательствами недоступно.",
+                "Resuming with saved evidence is unavailable.",
+            ),
+        }
+        reason_code = view.get("next_action_reason")
+        reason = reasons.get(reason_code)
+        if reason:
+            metric(
+                "next", "Следующий шаг" if ru else "Next step", reason[0 if ru else 1]
             )
-        context.append(
-            {
-                "id": "run-" + str(index),
-                "label": "Исторический запуск" if ru else "Historical run",
-                "value": run["status"],
-                "detail": detail,
-                "href": "/beescan?"
-                + urlencode(
-                    {"run_id": run["run_id"], "lang": locale, "tab": "results"}
-                ),
-            }
-        )
-    for item in context:
-        item.setdefault("detail", "")
     messages = []
     for message in view["messages"]:
+        if message.get("executions"):
+            messages.extend(
+                execution_card(item, view["case_id"], message["source"], ru)
+                for item in message["executions"]
+            )
         if message.get("investigation"):
-            messages.append(investigation_message(message, ru))
-        else:
+            run = message["investigation"]
+            terminal = run["status"] not in {"QUEUED", "RUNNING"}
+            if message.get("type") == "run" and (
+                run.get("has_conclusion") or not terminal
+            ):
+                continue
+            outcome = (
+                {
+                    "verified": (
+                        "Есть подтверждённая находка",
+                        "Contains a verified finding",
+                    ),
+                    "candidate": ("Требуется проверка находки", "Finding needs review"),
+                    "not_established": (
+                        "Уязвимость не подтверждена",
+                        "Vulnerability not verified",
+                    ),
+                }[run["vulnerability"]][0 if ru else 1]
+                if terminal and run["authenticated"]
+                else ""
+            )
+            messages.append(
+                {
+                    "kind": "result",
+                    "id": "result-" + message["source"],
+                    "sender": "host",
+                    "name": "Итог" if ru else "Result",
+                    "status": status_label(run["status"], ru),
+                    "text": "",
+                    "timestamp": message["timestamp"],
+                    "result": {
+                        "tone": _STATUS_TONES.get(run["status"], "secondary"),
+                        "outcome": outcome,
+                        "href": results_href(message["source"], locale),
+                    },
+                }
+            )
+        elif not message.get("executions"):
             messages.append(
                 {key: message[key] for key in ("id", "sender", "text", "timestamp")}
                 | {"name": "", "status": ""}
             )
-    if (
-        view.get("retry_actions")
-        and view["message_offset"] + 8 >= view["message_count"]
-    ):
-        messages.append(
-            {
-                "id": "next-" + view["case_id"],
-                "sender": "host",
-                "name": "BeeScan",
-                "timestamp": "",
-                "status": "",
-                "text": "Доступен новый полный повтор с новым захватом и бюджетом. Это отдельное исследование, не Resume и не следующая проверка по доказательству."
-                if ru
-                else "A fresh full retry starts a separate investigation with new captures and a new budget. It is not Resume or an evidence-bound next verification.",
-                "actions": [
-                    {
-                        "action_id": "beescan_investigate",
-                        "label": "Новый полный повтор"
-                        if ru
-                        else "Start fresh full retry",
-                        "disabled": False,
-                        "args": args,
-                        "fields": [],
-                        "navigate": {
-                            "href": "/beescan?" + urlencode({"lang": locale}),
-                            "param": "run_id",
-                            "result_key": "case_id",
-                        },
-                    }
-                    for args in view["retry_actions"][:1]
-                ],
-            }
-        )
     current = view["message_offset"] // 8
     links = []
     for number, label in (
@@ -461,10 +453,20 @@ def presentation(view, locale="en"):
         "values": [],
         "complete": view["status"] not in {"QUEUED", "RUNNING"},
         "context": {
-            "title": "Сводка исследования" if ru else "Investigation summary",
-            "sections": [
-                {"id": "case", "title": "Кейс" if ru else "Case", "items": context}
-            ],
+            "title": "Сводка" if ru else "Summary",
+            "sections": [{"id": "case", "title": "", "items": context}]
+            + (
+                [
+                    {
+                        "id": "findings",
+                        "title": "Находки" if ru else "Findings",
+                        "inline": True,
+                        "items": severity,
+                    }
+                ]
+                if severity
+                else []
+            ),
         }
         if context
         else None,
@@ -923,11 +925,8 @@ def workspace(host, query, actor):
                 + urlencode(
                     {
                         "run_id": case_id,
-                        **(
-                            {"message_page": message_page}
-                            if message_page is not None
-                            else {}
-                        ),
+                        "message_page": view["message_offset"] // 8,
+                        "lang": locale,
                     }
                 ),
                 "interval_ms": 3000,

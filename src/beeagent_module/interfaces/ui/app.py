@@ -56,7 +56,7 @@ from beeagent_module.interfaces.ui.adapter import (
     BeeAgentUiAdapter,
     extract_rop_query_params,
 )
-from beeagent_module.interfaces.ui.beescan import is_beescan_run
+from beeagent_module.interfaces.ui.beescan import is_beescan_run, results_severity
 from beeagent_module.interfaces.ui.bitrix_embed import (
     EMBEDDED_SESSION_AGE_MAX_SECONDS,
     MAX_FORM_BODY_BYTES,
@@ -379,12 +379,14 @@ def _register_beescan_boundary(app, adapter):
                             "run_page",
                             "status",
                             "sort",
+                            "severity",
                         }
                         or query.get("tab", "investigation")
                         not in {"investigation", "results"}
                         or len(query.get("q", "")) > 128
                     ):
                         return _forbidden_response()
+                    results_severity(query)
                     if query.get("run_id"):
                         await run_in_threadpool(
                             adapter.beescan.inspect, query["run_id"], actor
@@ -408,7 +410,12 @@ def _register_beescan_boundary(app, adapter):
     @app.get("/api/beescan/status", include_in_schema=False)
     async def beescan_status(request: Request):
         query = dict(request.query_params)
-        if "run_id" not in query or set(query) - {"run_id", "message_page", "run_page"}:
+        if (
+            "run_id" not in query
+            or len(query) != len(request.query_params.multi_items())
+            or set(query) - {"run_id", "message_page", "run_page", "lang"}
+            or query.get("lang", "en") not in {"en", "ru"}
+        ):
             return _error_json("invalid_params", status_code=400)
         if any(
             key in query and (not query[key].isdecimal() or len(query[key]) > 6)
@@ -427,7 +434,7 @@ def _register_beescan_boundary(app, adapter):
                     if "run_page" in query
                     else None,
                 )
-            elif set(query) == {"run_id"}:
+            elif not set(query) & {"message_page", "run_page"}:
                 data = adapter.beescan.inspect(query["run_id"], web_actor.get())
             else:
                 return _error_json("invalid_params", status_code=400)
@@ -444,6 +451,48 @@ def _register_beescan_boundary(app, adapter):
                 return _error_json("case_updating", status_code=409)
             return _forbidden_response()
         except OSError, PermissionError, KeyError, TypeError:
+            return _forbidden_response()
+
+    @app.get("/api/beescan/execution", include_in_schema=False)
+    async def beescan_execution(request: Request):
+        from beeui_module.pages.router import resolve_locale
+
+        from beeagent_module.interfaces.ui.conversation import execution_inspector
+
+        query = dict(request.query_params)
+        if (
+            len(query) != len(request.query_params.multi_items())
+            or set(query) - {"case_id", "run_id", "execution_id", "lang"}
+            or query.get("lang", "en") not in {"en", "ru"}
+            or not all(
+                re.fullmatch(pattern, query.get(key, ""))
+                for key, pattern in (
+                    ("case_id", r"web-chat-[0-9a-f]{48}"),
+                    ("run_id", r"web-[0-9a-f]{48}"),
+                    ("execution_id", r"execution-[A-Za-z0-9][A-Za-z0-9_.-]{0,63}"),
+                )
+            )
+        ):
+            return _error_json("invalid_params", status_code=400)
+        try:
+            item = await run_in_threadpool(
+                adapter.beescan.conversations.execution,
+                query["case_id"],
+                query["run_id"],
+                query["execution_id"],
+                web_actor.get(),
+            )
+            locale = resolve_locale(request, app.state.beeagent_beeui_ui_config.locale)
+            return _ok_json(
+                execution_inspector(
+                    item, query["case_id"], query["run_id"], locale == "ru"
+                )
+            )
+        except ValueError as error:
+            if _beescan_in_progress_error(error):
+                return _error_json("case_updating", status_code=409)
+            return _forbidden_response()
+        except OSError, KeyError, TypeError, RecursionError, OverflowError:
             return _forbidden_response()
 
     @app.get("/api/beescan/report", include_in_schema=False)
