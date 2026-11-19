@@ -2227,102 +2227,215 @@ The operator can understand what ran, what was checked, what evidence was obtain
 
 The result works after restart and introduces no second runtime, Case Store or frontend framework.
 
-### Iteration BS-22 — Autonomous Real-World Web Investigation and PortSwigger Acceptance
+### Iteration BS-22 — Autonomous Web Investigation and Research Workspace MVP
 
 **Status:** PLANNED
 
 #### Goal
 
-Close the practical gap between controlled multi-family verification and independently completed real-world educational Web security challenges.
+Deliver a complete human-first BeeScan Research Workspace and use it to improve autonomous vulnerability discovery, verification and reporting against unfamiliar authorized Web security challenges.
 
-Ensure BeeScan can autonomously discover supported attack surfaces, select justified checks, execute approved tools, evaluate authenticated evidence and reach reproducible outcomes without manually selecting verification endpoints or profiles.
+Unify Case Results, Case Detail, Investigation Graph, execution diagnostics, evidence, findings and reports into one coherent operator workflow.
 
-This is a code-and-evidence product increment, not a documentation-only acceptance exercise.
+Make actual investigation decisions, tool execution, failed checks and coverage gaps directly inspectable so that new laboratory failures can be diagnosed and corrected efficiently.
+
+Demonstrate practical autonomous investigation capability through six independently completed, previously unsolved PortSwigger/Hacker101 challenges.
+
+This is one substantial end-to-end product increment, not separate iterations for individual screens, tools or laboratory defects.
 
 #### Depends on
 
-- BeeScan It19 and BeeAgent BS-20.
-- BS-21 observable Investigation Workspace.
+- Completed BeeScan It19 and BeeAgent BS-20.
+- Completed BeeAgent BS-21 and BeeUI It14.
+- Companion BeeUI Iteration 15.
+- Existing Case, ArtifactAPI, execution lifecycle, Inspector, Finding, Review and Report contracts.
+- Existing BeeScan ToolCatalog, ToolProfile, typed facts and evidence-driven action selection.
 
 #### Change level
 
-`security-sensitive`.
+`security-sensitive`
 
 #### Scope
 
-- Establish a reproducible baseline on six previously uncompleted authorized PortSwigger/Hacker101 challenges.
-- Record actual discovery, selected actions, executed requests, outcomes and precise stopping reasons.
-- Identify concrete reusable blockers in existing Discovery, eligibility, action selection, verification or continuation.
-- Fix demonstrated blockers within the existing governed investigation architecture.
-- Improve bounded source-backed discovery or verification selection only where actual failed scenarios justify the change.
+**Results Workspace**
+
+- Replace the current BeeScan Results presentation with a functional Tabler Case table.
+- Display Name, Target, Date, Status, Findings, Report and Details.
+- Use localized timestamps, readable status badges and responsive layout.
+- Group authenticated findings by High, Medium and Low severity.
+- Make severity counts clickable with actual filtered Results navigation.
+- Support Case search, sorting and relevant filtering.
+- Remove Mode, Rename and Archive controls from the primary table without deleting existing backend capabilities.
+- Preserve historical Cases and ownership boundaries.
+
+**Case Detail**
+
+- Provide a dedicated authenticated detail page for each Case.
+- Reuse existing BeeUI Tabler datagrid, cards, tables and detail-page primitives.
+- Display Target, Scope, authorization context, status, timestamps, budgets and coverage.
+- Show Discovery observations, supported attack surfaces and available source evidence.
+- Show actual parent and child executions with stable Run and Action identities.
+- Distinguish candidates, incomplete hypotheses, reviewed findings and confirmed vulnerability evidence.
+- Provide execution diagnostics, comparative controls and available logs.
+- Include navigation to Findings, Evidence, Review, Report and Export.
+- Make the existing conversation Result card open Case Detail.
+- Preserve Case identity and navigation context across reload and restart.
+
+**Investigation Nodes Graph**
+
+- Add a Nodes tab to the selected Case.
+- Build a bounded read-only graph from authenticated Case, Run, Action, Observation, Finding and Evidence records.
+- Represent actual tool executions, investigation actions and supported evidence relationships.
+- Preserve stable node/edge identities and relationship types.
+- Display execution lifecycle and verification outcome independently.
+- Support automatic layout, zoom, pan, node selection and detail navigation.
+- Open the existing authorized Inspector when an execution node is selected.
+- Support direct navigation from relevant nodes to Findings, Evidence and Case Detail.
+- Represent missing provenance or unsupported relationships honestly.
+- Do not infer causal relationships from timestamps alone.
+- Do not fabricate tools, agents, network flows or execution events.
+- Reuse a verified frontend graph library through companion BeeUI Iteration 15.
+
+**Execution Logs and Diagnostics**
+
+- Inspect existing BeeAgent host/provider outputs, execution events and authenticated artifacts.
+- Reuse existing diagnostic records before adding new persistence.
+- Where existing records are insufficient, add minimal bounded structured execution diagnostics through the current host artifact infrastructure.
+- Bind every persisted diagnostic entry to actual Case/Run/Action identities.
+- Preserve verified timestamp, source, level and sanitized message when available.
+- Support safe INFO, WARNING and ERROR log presentation.
+- Provide one-click copying of approved sanitized log content.
+- Show explicit unavailable states when logs or execution facts do not exist.
+- Expose source-backed capability/profile selection, executed controls, observed outcomes and stopping reasons.
+- Explain PARTIAL, NO_MATCH, UNSUPPORTED, REFUSED, ERROR and TIMEOUT without exposing unnecessary internal codes.
+- Preserve credential, token, sensitive body and private artifact redaction.
+
+**Autonomous Web Investigation**
+
+- Establish a reproducible baseline against six previously uncompleted authorized PortSwigger/Hacker101 challenges.
+- Execute the acceptance campaign sequentially, one challenge at a time.
+- Use Research Workspace evidence to diagnose actual failures.
+- Identify reusable Discovery, eligibility, action-selection, verification and continuation defects.
+- Fix demonstrated reusable defects within this iteration.
 - Reuse existing Information Disclosure, Path Traversal and Access Control capabilities.
-- Extend qualified verification profiles only when a demonstrated reusable capability gap requires it and separately approved security boundaries permit it.
-- Preserve automatic capability selection from authenticated evidence.
-- Require independent human review for VERIFIED findings.
-- Preserve explicit NO_MATCH, PARTIAL, UNSUPPORTED, REFUSED, ERROR and TIMEOUT distinctions.
-- Retain exact Target, Scope, Approval, DNS/IP/TLS, credentials, budgets and ManagedEgress enforcement.
-- Preserve Case/Resume and immutable evidence across completed and incomplete runs.
-- Record repeatable acceptance evidence without storing credentials, challenge secrets or hardcoded solutions in production code.
-- Provide operator-visible explanations of unsupported coverage and missing prerequisites.
+- Improve bounded source-backed discovery or selection only where observed failures justify it.
+- Extend qualified verification profiles when a demonstrated reusable coverage gap requires the change.
+- Integrate an additional mature security tool only when actual challenge evidence demonstrates a missing capability.
+- Reuse BeeScan catalog/profile contracts and BeeAgent governed execution rather than creating a new scanner framework.
+- Preserve autonomous action selection from authenticated evidence without manually choosing endpoints, profiles or payloads.
+- Maintain source-bound investigation and deterministic verification decisions.
+- Preserve independent human review requirements before VERIFIED finding promotion.
+- Preserve exact Target, Scope, Approval, DNS/IP/TLS, credentials, request budgets and ManagedEgress enforcement.
+- Preserve Case/Resume, signed evidence and reproducible reports.
+- Record independently verifiable challenge outcomes.
+
+**Unified Research Navigation**
+
+- Chat Result → Case Detail.
+- Results row → Case Detail.
+- Severity count → filtered Findings.
+- Graph node → authorized Inspector or detail.
+- Finding → Evidence / Review / Report.
+- Preserve current operator authorization and same-origin navigation.
+- Maintain compatibility with existing Ask, Investigate, Resume, Review and Report workflows.
 
 #### Excluded
 
-- Challenge-specific URLs, parameters, credentials, flags or hardcoded solutions.
-- Claiming success from HTTP 200, a scanner signal or CANDIDATE alone.
-- Manually selecting verification endpoints/profiles as a substitute for autonomy.
-- Automatic exploitation beyond approved read-only capabilities.
+- Challenge-specific URLs, secrets, credentials or hardcoded solutions.
+- Claiming a verified vulnerability from HTTP 200, scanner alerts, CANDIDATE or LLM output alone.
+- Manually selecting verification endpoints or profiles as a substitute for autonomous investigation.
+- New scanner framework, execution runtime, Case Store, event store or graph database.
+- Unrestricted shell, terminal execution or arbitrary commands.
+- Editable workflow DAG or arbitrary graph-driven execution.
 - Arbitrary crawling, fuzzing, wordlists or payload generation.
-- Unrestricted shell, browser execution or scope expansion.
-- New scanner framework, Case Store or graph database.
-- Universal Web vulnerability coverage claims.
+- Automatic scope expansion or unrestricted exploitation.
+- Unsupported network flow reconstruction.
+- Automatic VERIFIED promotion or Bug Bounty submission.
+- New frontend framework or duplicated Tabler components.
+- Mandatory Knowledge Base, RAG or vector database.
+- Universal vulnerability coverage claims.
 
 #### Deliverable
 
-`Authorized Unfamiliar Lab + Natural-Language Task → Autonomous Source-Backed Investigation → Governed Verification → Authenticated Evidence → Independently Confirmed Challenge Outcome`
+`Authorized Target + Natural-Language Task → Autonomous Discovery → Governed Verification → Authenticated Evidence → Interactive Case Workspace → Findings / Review / Report → Independently Confirmed Challenge Outcome`
 
-A reusable improvement to actual investigation capability, supported by a persistent, auditable educational acceptance matrix.
+A complete Web security research workspace that exposes actual investigation decisions and evidence while supporting reproducible autonomous vulnerability verification.
 
 #### Acceptance criteria
 
+**Workspace acceptance**
+
+- An authenticated operator can find and open a Case through the Results table.
+- Results includes the agreed columns, functional navigation, filtering and sorting.
+- Every accessible Case has a stable authenticated Case Detail URL.
+- Case Detail shows real Discovery, executions, candidates, findings, evidence and reports.
+- The conversation Result card opens the corresponding Case Detail.
+- The Nodes tab renders actual persisted investigation nodes and authenticated relationships.
+- Repeated tool invocations remain distinguishable by execution identity.
+- Every represented graph edge has valid source-backed provenance.
+- Missing records never produce fabricated nodes or relationships.
+- Selecting an execution node opens the corresponding existing Inspector.
+- The operator can inspect recorded capability selection, executed controls, results and stopping reasons.
+- Available safe execution logs can be viewed and copied.
+- Missing logs are clearly marked unavailable.
+- Candidates, incomplete hypotheses and confirmed findings remain distinguishable.
+- Severity counts match authenticated finding data.
+- Foreign, substituted, stale and tampered references fail closed.
+- Read-only Case, Graph, Inspector, log and Report operations generate zero additional target requests.
+- Case and execution identities persist after restart.
+- The integrated Workspace passes RU/EN, Light/Dark and responsive browser acceptance.
+
+**Autonomous investigation acceptance**
+
 - Six distinct previously uncompleted authorized educational challenges are independently completed.
-- Each successful challenge has externally verifiable completion evidence, not merely a BeeScan status.
-- Positive verification is demonstrated for each of the three supported vulnerability families where the selected challenge setup supplies their required authorization and evidence.
-- The operator supplies Target, Scope, Task and necessary approved test access, but does not manually select the verification endpoint, profile or payload.
-- Each run records Case ID, child actions, selected capabilities, profiles, request counts, evidence references and outcome.
-- Selected actions are justified by observed source evidence.
-- At least two supported negative checks produce no false-positive Finding.
-- At least two incomplete/unsupported scenarios produce honest coverage.
+- Each completed challenge has independently verifiable external completion evidence.
+- Positive verification is demonstrated for each supported vulnerability family where the selected challenges provide the required authorization and evidence.
+- The operator provides Target, Scope, Task and approved test access, not manually selected endpoints or profiles.
+- Every run records Case ID, child actions, selected capabilities/profiles, request counts, evidence references and outcome.
+- Selected actions are justified by authenticated observations.
+- At least two negative checks produce no false-positive Finding.
+- At least two incomplete or unsupported scenarios retain honest coverage and stopping reasons.
 - At least one invalid or expired authorization refuses before target execution.
 - No challenge is counted as solved solely from CANDIDATE, NO_MATCH, PARTIAL or an LLM statement.
-- No lab-specific workaround is added to production selection logic.
-- Report/Review inspection generates zero additional target requests.
-- Completed Cases remain inspectable after restart.
-- Failures discovered during acceptance are fixed and retested within the same iteration.
-- No successful challenge is claimed without independent proof.
+- No laboratory-specific workaround is embedded in production selection logic.
+- Reusable defects discovered during acceptance are fixed and regression-tested within this iteration.
+- Successful Cases remain inspectable and reportable after restart.
 
 #### Checks
 
-- Baseline-versus-final challenge acceptance matrix.
+- Results, Case Detail, Graph and Inspector integration tests.
+- Signed node/edge provenance and stable execution identity tests.
+- Historical, incomplete, malformed and corrupted Case tests.
+- Execution-log redaction, limits and safe-copy tests.
+- Cross-principal, foreign-reference and authorization refusal tests.
+- HTML/Markdown injection and unsafe-link tests.
+- Read-only zero-target-request tests.
+- RU/EN, Light/Dark, desktop and mobile browser E2E.
+- BeeUI installed-wheel and embedded integration tests.
+- Baseline-versus-final six-challenge acceptance matrix.
 - Six independent positive challenge-completion records.
-- Source-selection, action eligibility and verification regression tests.
+- Discovery, action-selection, eligibility and verification regression tests.
 - False-positive and negative-control tests.
-- Exact request accounting and cumulative budget tests.
-- Scope, credential, network and provider isolation tests.
-- Resume, restart, provenance and evidence-integrity tests.
-- Real browser and host integration acceptance.
-- Full pytest, build, security review, independent BeeMCP review and hosted CI.
+- Request-accounting, budgets, Scope, network and provider-isolation tests.
+- Resume, restart, evidence-integrity and cleanup tests.
+- Full pytest, build and applicable security-sensitive checks.
+- Independent BeeMCP final review and hosted CI.
 
 #### DoD
 
-At least six previously uncompleted authorized PortSwigger/Hacker101 challenges are independently completed through the ordinary BeeScan workflow.
+An authenticated operator can use a complete BeeScan Research Workspace to inspect a real Case, follow actual execution relationships, understand investigation decisions, inspect available safe logs, identify why checks succeeded or failed and navigate to findings, evidence and reports.
 
-The outcome is supported by authenticated Case artifacts and independent challenge-completion evidence.
+At least six previously uncompleted authorized PortSwigger/Hacker101 challenges are independently completed through the ordinary autonomous investigation workflow.
 
-Reusable defects discovered during the campaign are corrected and regression-tested.
+All reusable defects discovered during the acceptance campaign are corrected and regression-tested within the same iteration.
 
-Controlled synthetic fixtures alone cannot satisfy this iteration.
+Companion BeeUI Iteration 15 is integrated and verified.
 
-If the six-challenge acceptance is incomplete, the iteration remains IN PROGRESS and no Bug Bounty readiness claim is made.
+No second execution runtime, graph database or frontend framework is introduced.
+
+Controlled synthetic fixtures alone cannot satisfy the real-world acceptance criteria.
+
+If the six-challenge acceptance is incomplete, BS-22 remains IN PROGRESS and no Bug Bounty readiness claim is made.
 
 ### Iteration BS-23 — BeeScan Security Knowledge Base MVP
 
