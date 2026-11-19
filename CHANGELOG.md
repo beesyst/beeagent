@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.94.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.93.0...beeagent-v0.94.0) (2026-11-19)
+
+
+### Features
+
+* **beescan:** add authenticated execution cards and inspector ([#378](https://github.com/beesyst/beeagent/issues/378)) ([b42a808](https://github.com/beesyst/beeagent/commit/b42a808dfd77fdb5de4219e5d96cbeeef2190612))
+
 ## [0.93.0](https://github.com/beesyst/beeagent/compare/beeagent-v0.92.0...beeagent-v0.93.0) (2026-11-18)
 
 
