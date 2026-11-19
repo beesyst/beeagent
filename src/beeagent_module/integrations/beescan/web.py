@@ -10,6 +10,7 @@ import secrets
 import stat
 import time
 import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import deepcopy
@@ -153,6 +154,22 @@ def principal(settings, actor, *, execute=False):
     return record["id"]
 
 
+def require_web_execution_authority(settings, actor):
+    actor_id = principal(settings, actor, execute=True)
+    config = settings["beescan"]["investigation"]
+    web = config.get("web", {})
+    if (
+        web.get("enabled") is not True
+        or actor_id not in web.get("principal_ids", [])
+        or config.get("enabled") is not True
+        or not any(
+            p.get("id") == "beescan" and p.get("enabled") is True
+            for p in settings.get("modules", {}).get("registry", [])
+        )
+    ):
+        raise PermissionError("web_investigation_not_approved")
+
+
 def _key(settings):
     name = settings["web"]["auth"]["session_secret_env"]
     key = os.getenv(name, "")
@@ -256,19 +273,7 @@ class _WebInvocation:
     def _verify_authority(self):
         if self.seal is not _SEAL or self.service.reload_settings() != self.settings:
             raise PermissionError("web_authority_changed")
-        actor_id = principal(self.settings, self.actor, execute=True)
-        config = self.settings["beescan"]["investigation"]
-        web = config.get("web", {})
-        if (
-            web.get("enabled") is not True
-            or actor_id not in web.get("principal_ids", [])
-            or config.get("enabled") is not True
-            or not any(
-                p.get("id") == "beescan" and p.get("enabled") is True
-                for p in self.settings.get("modules", {}).get("registry", [])
-            )
-        ):
-            raise PermissionError("web_investigation_not_approved")
+        require_web_execution_authority(self.settings, self.actor)
 
     def verify(self, policy=None):
         self._verify_authority()
@@ -406,6 +411,26 @@ class _WebInvocation:
                 api,
                 "web_owner.json",
                 {"binding": binding, "signature": _sign(self.settings, binding)},
+            )
+
+    def observe_execution(self, run_id, kind, status, **identity):
+        if not getattr(self, "conversation_binding", None):
+            return
+        from beeagent_module.integrations.beescan.dast import _api
+        from beeagent_module.integrations.beescan.executions import publish_lifecycle
+
+        try:
+            api = _api(self.service.storage, self.run_id, self.service.logger)
+            publish_lifecycle(
+                api,
+                self.settings,
+                self.run_id,
+                status,
+                execution={"run_id": run_id, "kind": kind, **identity},
+            )
+        except OSError, ValueError:
+            self.service.logger.warning(
+                "Web execution lifecycle unavailable: run_id=%s", self.run_id
             )
 
 
@@ -580,6 +605,12 @@ class WebInvestigations:
 
             api = _api(self.storage, run_id, self.logger)
             invocation.bind(api, run_id)
+            if run_id in self.conversations.pending:
+                from beeagent_module.integrations.beescan.executions import (
+                    publish_lifecycle,
+                )
+
+                publish_lifecycle(api, current, run_id, "QUEUED")
             if prior is None:
                 intake = {
                     "case_id": case_id,
@@ -694,6 +725,12 @@ class WebInvestigations:
                     "reason": reason,
                 },
             )
+            if conversation:
+                from beeagent_module.integrations.beescan.executions import (
+                    publish_lifecycle,
+                )
+
+                publish_lifecycle(api, settings, run_id, "REFUSED", reason=reason)
             os.fsync(runs)
         finally:
             os.close(runs)
@@ -731,7 +768,27 @@ class WebInvestigations:
         from beeagent_module.integrations.beescan.conversation import active_session
 
         token = active_session.set(self.conversations.resolver(invocation))
+        publish: Callable[[str, str | None], None] | None = None
         try:
+            if getattr(invocation, "conversation_binding", None):
+                from beeagent_module.integrations.beescan.dast import _api
+                from beeagent_module.integrations.beescan.executions import (
+                    publish_lifecycle,
+                )
+
+                api = _api(self.storage, invocation.run_id, self.logger)
+
+                def publish_status(status: str, reason: str | None) -> None:
+                    publish_lifecycle(
+                        api,
+                        invocation.settings,
+                        invocation.run_id,
+                        status,
+                        reason=reason,
+                    )
+
+                publish = publish_status
+                publish("RUNNING", None)
             from beeagent_module.integrations.beescan.investigation import (
                 is_multi_family_task,
             )
@@ -775,10 +832,30 @@ class WebInvestigations:
                     "web_receipt.json",
                     self._receipt(snapshot, invocation.settings),
                 )
+            elif publish and result.get("status") in {
+                "REFUSED",
+                "ERROR",
+                "TIMEOUT",
+                "PARTIAL",
+            }:
+                publish(result["status"], result.get("reason"))
             self.logger.info("BeeScan Web completed: run_id=%s", invocation.run_id)
         except Exception as error:
             record_failure(self.storage, self.logger, invocation.run_id, error, phase)
             try:
+                if publish:
+                    from beeagent_module.integrations.beescan.progress import (
+                        failure_reason,
+                    )
+
+                    publish(
+                        "TIMEOUT"
+                        if isinstance(error, TimeoutError)
+                        else "REFUSED"
+                        if isinstance(error, PermissionError)
+                        else "ERROR",
+                        failure_reason(error),
+                    )
                 from beeagent_module.integrations.beescan.dast import _api
 
                 snapshot = AssessmentSnapshot(self.storage)
@@ -1012,6 +1089,12 @@ class WebInvestigations:
                 else "Access-control candidate"
                 if state and state["schema_version"] in {5, 6}
                 else "External DAST candidate",
+                **(
+                    {"severity": finding["severity"].lower()}
+                    if isinstance(finding.get("severity"), str)
+                    and finding["severity"].lower() in {"high", "medium", "low"}
+                    else {}
+                ),
             }
             for finding in (result.get("findings", [])[:16] if authenticated else [])
             if type(finding) is dict

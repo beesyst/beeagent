@@ -1125,14 +1125,39 @@ def test_summary_initial_polling_match_and_no_untrusted_findings(
         status="CANDIDATE",
         evidence_authenticated=True,
         request_count=6,
+        request_count_exact=True,
+        findings=[
+            {
+                "finding_id": "finding-1",
+                "title": "Reviewed finding",
+                "status": "candidate",
+                "severity": "medium",
+            }
+        ],
+        finding_reviews={"finding-1": "verified"},
         metrics={"elapsed_seconds": 2.5},
     )
     view = service.conversations.view(case_id, actor)
     assert view["summary"]["runs"][0]["requests"] == 6
     assert view["summary"]["runs"][0]["candidates"] == 1
-    panel = presentation(view)["context"]
-    assert "Requests: 6" in json.dumps(panel)
-    assert panel["sections"][0]["items"][-1]["href"].startswith("/beescan?")
+    metrics = {
+        row["id"]: row for row in presentation(view)["context"]["sections"][0]["items"]
+    }
+    assert metrics["request_count"]["value"] == "6"
+    assert metrics["execution_count"]["value"] == "Unavailable"
+    assert metrics["candidates"]["value"] == "0"
+    assert metrics["verified"]["value"] == "1"
+    sections = presentation(view)["context"]["sections"]
+    assert sections[1]["inline"] is True
+    levels = {row["id"]: row for row in sections[1]["items"]}
+    assert {key: row["value"] for key, row in levels.items()} == {
+        "high": "0",
+        "medium": "1",
+        "low": "0",
+    }
+    assert levels["medium"]["tone"] == "yellow"
+    assert "tab=results&severity=medium" in levels["medium"]["href"]
+    assert "source_bound_continuation_unavailable" not in json.dumps(metrics)
 
 
 def test_operator_notes_use_signed_message_without_duplicate_context(conversation):

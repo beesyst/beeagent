@@ -280,6 +280,7 @@ def execute_discovery(
     invocation,
     *,
     execution_case_id=None,
+    action_id=None,
     request_limit=None,
     deadline_limit=None,
     continue_after_match=False,
@@ -408,6 +409,14 @@ def execute_discovery(
         authorize()
         failure_stage = "egress_start"
         session.start()
+        if action_id is not None or execution_case_id is None:
+            invocation.observe_execution(
+                case_id,
+                "verification",
+                "RUNNING",
+                action_id=action_id,
+                profile=invocation.profile_id,
+            )
         while queue and count < discovery_limit:
             preferred = next(
                 (n for n, entry in enumerate(queue) if entry[0] == count % 2), 0
@@ -805,6 +814,14 @@ def execute_discovery(
         "# Access investigation\n\n" + result.status + "\n\n" + result.reason + "\n",
     )
     save_case(api, state)
+    if action_id is not None or execution_case_id is None:
+        invocation.observe_execution(
+            case_id,
+            "verification",
+            "COMPLETED"
+            if result.status in {"CANDIDATE", "NO_MATCH"}
+            else result.status,
+        )
     credentials.clear()
     details.clear()
     return {"case_id": case_id, "status": result.status}

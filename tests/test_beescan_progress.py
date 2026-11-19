@@ -72,9 +72,8 @@ def test_live_parent_progress_is_read_only_and_stable(conversation, monkeypatch)
         messages = presentation(second, locale)["messages"]
         normalize_messages(messages)
         assert len({item["id"] for item in messages}) == len(messages)
-        assert (
-            "ещё не аутентифицированы" if locale == "ru" else "not yet authenticated"
-        ) in messages[-1]["text"]
+        assert all(item.get("kind") not in {"execution", "result"} for item in messages)
+        assert messages[0]["text"] == "What is CSRF?"
     service.conversations.running.clear()
     data["status"] = "TIMEOUT"
     restored = WebInvestigations(
@@ -408,7 +407,16 @@ def test_logical_case_history_keeps_requests_runs_and_conclusions(
         for link in item.get("links", [])
     )
     assert "Authenticated evidence" not in json.dumps(model)
-    assert "Lab completion: unknown" in json.dumps(model)
+    conclusions = [item for item in model["messages"] if item.get("kind") == "result"]
+    assert [item["id"] for item in conclusions] == [
+        f"result-web-{number:048x}" for number in range(2)
+    ]
+    assert all(
+        item["name"] == "Result"
+        and "tab=results" in item["result"]["href"]
+        and not item["text"]
+        for item in conclusions
+    )
     block = conversation_tests.workspace(service, {"run_id": case_id}, actor)["layout"]
     assert len(block) == 1 and block[0]["type"] == "chat_workspace"
     before = first["message_count"]
@@ -470,13 +478,34 @@ def test_contextual_investigation_uses_existing_protected_action(
     view = service.conversations.view(case_id, actor)
     assert view["next_actions"] == []
     assert view["next_action_reason"] == "source_bound_continuation_unavailable"
-    action = next(
-        item for item in presentation(view)["messages"] if item.get("actions")
-    )["actions"][0]
-    assert action["action_id"] == "beescan_investigate"
-    payload = action["args"]
+    block = conversation_tests.workspace(service, {"run_id": case_id}, actor)["layout"][
+        0
+    ]
+    assert block["composer"].get("primary") is None
+    payload = view["retry_actions"][0]
     assert payload["task"] == "Assess web security (fresh full retry)"
-    assert action["label"] == "Start fresh full retry"
+    assert block["context"]["title"] == "Summary"
+    assert not any(
+        row["id"] == "retry" for row in block["context"]["sections"][0]["items"]
+    )
+    assert block["context"] == presentation(view)["context"]
+    service.settings["beescan"]["investigation"]["web"]["principal_ids"].remove("alice")
+    assert not service.conversations.view(case_id, actor)["retry_actions"]
+    service.settings["beescan"]["investigation"]["web"]["principal_ids"].append("alice")
+    approval["excluded"] = True
+    refused = conversation_tests.workspace(service, {"run_id": case_id}, actor)[
+        "layout"
+    ][0]
+    assert refused["composer"].get("primary") is None
+    assert not any(
+        row.get("focus_primary") for row in refused["context"]["sections"][0]["items"]
+    )
+    assert "unavailable" in next(
+        row["value"]
+        for row in refused["context"]["sections"][0]["items"]
+        if row["id"] == "next"
+    )
+    approval["excluded"] = False
     with pytest.raises(PermissionError):
         service.conversations.execute(
             "beescan_investigate", payload, {"user_id": "bob", "role": "operator"}

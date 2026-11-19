@@ -600,6 +600,17 @@ def execute_dast_investigation(
         reason = "ok"
         candidate_target = None
         try:
+            if web_selected:
+                if web_invocation is None or _assessment is None:
+                    raise PermissionError("dast_web_invocation_required")
+                web_invocation.observe_execution(
+                    run_id,
+                    "verification",
+                    "RUNNING",
+                    action_id=_assessment.action.action_id,
+                    provider=intent.provider_id,
+                    profile=intent.profile,
+                )
             raw, records, count = run_zap(
                 transport,
                 origin=transport.origin,
@@ -803,6 +814,14 @@ def execute_dast_investigation(
                 _candidate_handoff(candidate_target)
                 status["reproduction"] = "PENDING_PARENT_PUBLICATION"
         _persist(artifacts, "investigation_status.json", status)
+        if web_selected:
+            if web_invocation is None:
+                raise PermissionError("dast_web_invocation_required")
+            from beeagent_module.integrations.beescan.executions import _DAST_STATES
+
+            web_invocation.observe_execution(
+                run_id, "verification", _DAST_STATES[execution.state.value]
+            )
         return status
     finally:
         if lock is not None:
